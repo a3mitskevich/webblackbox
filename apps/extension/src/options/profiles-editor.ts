@@ -29,6 +29,7 @@ import { openConfirmDialog } from "../shared/ui/dialogs.js";
 import { preserveFocus } from "../shared/ui/focus.js";
 import { el, readCheckbox, readField } from "./dom.js";
 import {
+  blocksLeavingProfileForm,
   captureInvalidRangeInputs,
   restoreInvalidRangeInputs,
   validateRangeInput,
@@ -45,7 +46,8 @@ import {
   duplicateIntoStore,
   reorderRules,
   ruleFromFormValues,
-  sortRulesForDisplay
+  sortRulesForDisplay,
+  stableJson
 } from "./profile-form-model.js";
 import { createProfileCard, createSandboxPanel, createTransferPanel } from "./profiles-view.js";
 import { testRulesForUrl } from "./rule-tester.js";
@@ -248,18 +250,6 @@ function discardDraft(editor: Editor): void {
   editor.deps.onChange?.();
 }
 
-function stableJson(value: unknown): string {
-  return JSON.stringify(value, (_key, entry: unknown) =>
-    entry && typeof entry === "object" && !Array.isArray(entry)
-      ? Object.fromEntries(
-          Object.entries(entry as Record<string, unknown>).sort(([left], [right]) =>
-            left.localeCompare(right)
-          )
-        )
-      : entry
-  );
-}
-
 /** The baseline goes through the same DOM read-back as later edits, so it compares equal. */
 function resetBaseline(editor: Editor): void {
   syncDraftFromDom(editor);
@@ -401,6 +391,10 @@ function handleAction(editor: Editor, target: HTMLElement, action: string, updat
   const profileId = target.closest<HTMLElement>("[data-profile-id]")?.dataset.profileId ?? "";
   const ruleIndex = Number(target.closest<HTMLElement>("[data-rule-index]")?.dataset.ruleIndex);
 
+  if (blocksLeavingProfileForm(action, editor.root)) {
+    return;
+  }
+
   switch (action) {
     case "profile-edit":
       return update(() => openProfileForm(state, profileId));
@@ -479,7 +473,9 @@ function bindEditor(editor: Editor): void {
   const { root, deps } = editor;
   // Every action first keeps what is typed in the page (rules, hosts, the open profile form).
   const update: Update = (mutate, options = {}) => {
-    const invalidRanges = captureInvalidRangeInputs(root);
+    const invalidRanges = captureInvalidRangeInputs(root, {
+      includeProfileForm: !options.discardFormEdits
+    });
     syncRulesFromDom(editor);
     editor.state.sandbox = readSandboxInputs(root, editor.state.sandbox);
 

@@ -273,3 +273,16 @@ export function deleteProfileFromStore(
 function toCaptureMode(value: string, fallback: CaptureMode): CaptureMode {
   return value === "lite" || value === "full" ? value : fallback;
 }
+
+/** JSON with object keys sorted, so equal drafts compare equal as strings. */
+export function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, entry: unknown) =>
+    entry && typeof entry === "object" && !Array.isArray(entry)
+      ? Object.fromEntries(
+          Object.entries(entry as Record<string, unknown>).sort(([left], [right]) =>
+            left.localeCompare(right)
+          )
+        )
+      : entry
+  );
+}

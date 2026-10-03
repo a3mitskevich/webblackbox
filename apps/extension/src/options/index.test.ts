@@ -301,6 +301,53 @@ describe("options page", () => {
     expect(saveButton().disabled).toBe(false);
   });
 
+  it("keeps a typed profile number only in its own open form", async () => {
+    installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
+    await importOptionsModule();
+
+    query<HTMLElement>("[data-profile-id='default'] [data-action='profile-edit']").click();
+    typeText("#pf-mousemoveHz", "999");
+    query<HTMLElement>("[data-action='rule-add']").click();
+
+    expect(query<HTMLInputElement>("#pf-mousemoveHz").value).toBe("999");
+    expect(saveButton().disabled).toBe(true);
+
+    // Cancel on the form discards the typed value together with its error.
+    query<HTMLElement>("[data-action='profile-cancel']").click();
+
+    expect(document.querySelector("#pf-mousemoveHz")).toBeNull();
+    expect(saveState()).toBe("Unsaved changes");
+    expect(saveButton().disabled).toBe(false);
+
+    query<HTMLElement>("[data-profile-id='default'] [data-action='profile-edit']").click();
+
+    expect(query<HTMLInputElement>("#pf-mousemoveHz").value).not.toBe("999");
+    expect(query<HTMLInputElement>("#pf-mousemoveHz").hasAttribute("aria-invalid")).toBe(false);
+  });
+
+  it("does not leave a profile form that holds an out-of-range number", async () => {
+    installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
+    await importOptionsModule();
+
+    query<HTMLElement>("[data-profile-id='default'] [data-action='profile-edit']").click();
+    typeText("#pf-mousemoveHz", "999");
+
+    for (const action of ["profile-duplicate", "profile-apply"]) {
+      query<HTMLElement>(`[data-action='${action}']`).click();
+
+      expect(query<HTMLElement>("[data-profile-form]").dataset.profileForm).toBe("default");
+      expect(document.activeElement).toBe(query("#pf-mousemoveHz"));
+    }
+
+    typeText("#pf-mousemoveHz", "60");
+    query<HTMLElement>("[data-action='profile-duplicate']").click();
+
+    // The new profile's form starts from its own values, never from the typed one.
+    expect(query<HTMLElement>("[data-profile-form]").dataset.profileForm).not.toBe("default");
+    expect(query<HTMLInputElement>("#pf-mousemoveHz").hasAttribute("aria-invalid")).toBe(false);
+    expect(saveButton().disabled).toBe(false);
+  });
+
   it("validates a rule's title pattern and selector inline", async () => {
     installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
     await importOptionsModule();

@@ -45,14 +45,28 @@ export function validateRangeInput(input: HTMLInputElement, t: Translate): void 
   reportFieldProblem(input, invalid ? t("optionsErrorRange", { min, max }) : null);
 }
 
-export type InvalidRangeInputs = ReadonlyArray<{ id: string; value: string }>;
+export type InvalidRangeInputs = ReadonlyArray<{ id: string; owner: string; value: string }>;
+
+/** The rule row or profile form an input belongs to; ids repeat across profile forms. */
+function ownerOf(input: Element): string {
+  const rule = input.closest<HTMLElement>("[data-rule-id]")?.dataset.ruleId;
+  const form = input.closest<HTMLElement>("[data-profile-form]")?.dataset.profileForm;
+
+  return rule !== undefined ? `rule:${rule}` : form !== undefined ? `profile:${form}` : "";
+}
 
 /** Out-of-range numbers as typed; the draft only holds them clamped. */
-export function captureInvalidRangeInputs(root: HTMLElement): InvalidRangeInputs {
+export function captureInvalidRangeInputs(
+  root: HTMLElement,
+  options: { includeProfileForm: boolean }
+): InvalidRangeInputs {
   return Array.from(
     root.querySelectorAll<HTMLInputElement>("input[type='number'][aria-invalid='true']"),
-    (input) => ({ id: input.id, value: input.value })
-  ).filter((entry) => entry.id !== "");
+    (input) => ({ id: input.id, owner: ownerOf(input), value: input.value })
+  ).filter(
+    (entry) =>
+      entry.id !== "" && (options.includeProfileForm || !entry.owner.startsWith("profile:"))
+  );
 }
 
 /**
@@ -64,12 +78,30 @@ export function restoreInvalidRangeInputs(
   inputs: InvalidRangeInputs,
   t: Translate
 ): void {
-  for (const { id, value } of inputs) {
+  for (const { id, owner, value } of inputs) {
     const input = root.ownerDocument.getElementById(id);
 
-    if (input instanceof HTMLInputElement && root.contains(input)) {
+    if (input instanceof HTMLInputElement && root.contains(input) && ownerOf(input) === owner) {
       input.value = value;
       validateRangeInput(input, t);
     }
   }
+}
+
+/** Actions that close or replace the open profile form. */
+const FORM_LEAVING_ACTIONS = new Set(["profile-edit", "profile-duplicate", "profile-apply"]);
+
+/**
+ * Leaving the profile form would fold its out-of-range numbers into the draft clamped, without a
+ * word; instead the action waits and focus goes to the first such number.
+ */
+export function blocksLeavingProfileForm(action: string, root: HTMLElement): boolean {
+  const invalid = FORM_LEAVING_ACTIONS.has(action)
+    ? root.querySelector<HTMLInputElement>(
+        "[data-profile-form] input[type='number'][aria-invalid='true']"
+      )
+    : null;
+
+  invalid?.focus();
+  return invalid !== null;
 }
