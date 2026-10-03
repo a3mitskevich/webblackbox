@@ -1,6 +1,7 @@
 import type { CapturePolicy } from "@webblackbox/protocol";
 
 import type { ChromeApi } from "../shared/chrome-api.js";
+import { readManagedEnterprisePolicy } from "../shared/options-storage.js";
 import type { ProfileCatalogEntry, ProfilePreviewResponse } from "../shared/messages.js";
 import {
   PROFILES_STORAGE_KEY,
@@ -36,10 +37,10 @@ export async function loadProfilesState(
   const local = await chromeApi?.storage?.local
     ?.get([PROFILES_STORAGE_KEY, keys.legacyOptionsKey])
     .catch(() => undefined);
-  const managed = await chromeApi?.storage?.managed
-    ?.get(keys.enterprisePolicyKey)
-    .catch(() => undefined);
-  const managedPolicy = asRecord(managed?.[keys.enterprisePolicyKey]) ?? managed;
+  const managedPolicy = await readManagedEnterprisePolicy(
+    chromeApi?.storage?.managed,
+    keys.enterprisePolicyKey
+  );
 
   return resolveProfilesState({
     rawProfilesStore: local?.[PROFILES_STORAGE_KEY],

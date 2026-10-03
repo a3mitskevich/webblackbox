@@ -7,6 +7,36 @@ import {
 export const OPTIONS_STORAGE_VERSION = 1;
 export const ENTERPRISE_POLICY_STORAGE_KEY = "enterprisePolicy";
 
+type ManagedStorageArea = {
+  get(keys?: string[] | string | Record<string, unknown> | null): Promise<Record<string, unknown>>;
+};
+
+/**
+ * Enterprise policy from `chrome.storage.managed`: the `enterprisePolicy` object, or the flat
+ * top-level layout the managed schema also accepts. Chrome returns only the keys asked for, so
+ * the whole area is read. Never throws; null when managed storage is unavailable.
+ */
+export async function readManagedEnterprisePolicy(
+  managed: ManagedStorageArea | undefined,
+  key: string = ENTERPRISE_POLICY_STORAGE_KEY
+): Promise<Record<string, unknown> | null> {
+  try {
+    const values = await managed?.get(null);
+
+    if (!values || typeof values !== "object") {
+      return null;
+    }
+
+    const scoped = values[key];
+
+    return scoped !== null && typeof scoped === "object" && !Array.isArray(scoped)
+      ? (scoped as Record<string, unknown>)
+      : values;
+  } catch {
+    return null;
+  }
+}
+
 export type EnterpriseRecorderPolicy = {
   siteAllowlist: string[];
   siteDenylist: string[];

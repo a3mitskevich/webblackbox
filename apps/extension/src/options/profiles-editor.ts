@@ -1,5 +1,6 @@
 import type { ChromeApi } from "../shared/chrome-api.js";
 import type { ExtensionMessageKey } from "../shared/i18n.js";
+import { readManagedEnterprisePolicy } from "../shared/options-storage.js";
 import { previewRedaction, type RedactionSandboxKind } from "../shared/redaction-sandbox.js";
 import { CAPTURE_CATEGORY_KEYS, CAPTURE_CATEGORY_LEVELS } from "../shared/profiles/categories.js";
 import {
@@ -111,10 +112,10 @@ async function loadState(deps: ProfilesEditorDeps): Promise<ProfilesState> {
   const local = await deps.chromeApi?.storage?.local
     ?.get([PROFILES_STORAGE_KEY, deps.legacyOptionsKey])
     .catch(() => undefined);
-  const managed = await deps.chromeApi?.storage?.managed
-    ?.get(deps.enterprisePolicyKey)
-    .catch(() => undefined);
-  const managedPolicy = managed?.[deps.enterprisePolicyKey] ?? managed;
+  const managedPolicy = await readManagedEnterprisePolicy(
+    deps.chromeApi?.storage?.managed,
+    deps.enterprisePolicyKey
+  );
 
   return resolveProfilesState({
     rawProfilesStore: local?.[PROFILES_STORAGE_KEY],

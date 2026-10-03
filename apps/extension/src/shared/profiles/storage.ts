@@ -22,7 +22,7 @@ import {
   type RecordingProfile,
   type RecordingProfilesStore
 } from "./model.js";
-import { BUILT_IN_PROFILES, createDefaultProfile } from "./presets.js";
+import { BUILT_IN_PROFILES, createBaseProfile, createDefaultProfile } from "./presets.js";
 
 /** Why the effective store looks the way it does; surfaced in the options page. */
 export type ProfilesStoreIssue =
@@ -232,7 +232,9 @@ export function parseManagedProfilesPolicy(value: unknown): ManagedProfilesPolic
 
   const issues: ProfilesStoreIssue[] = [];
   const profiles = parseProfiles(
-    Array.isArray(record.profiles) ? record.profiles.slice(0, MAX_PROFILES) : [],
+    Array.isArray(record.profiles)
+      ? record.profiles.slice(0, MAX_PROFILES).map(withManagedProfileDefaults)
+      : [],
     issues,
     { allowReserved: true }
   ).map((profile) => ({ ...profile, id: toManagedId(profile.id) }));
@@ -246,6 +248,45 @@ export function parseManagedProfilesPolicy(value: unknown): ManagedProfilesPolic
   }));
 
   return { profiles, rules, issues };
+}
+
+const MANAGED_PROFILE_BLOCKS = [
+  "categories",
+  "redaction",
+  "network",
+  "pointer",
+  "sampling",
+  "recorder",
+  "export"
+] as const;
+
+/**
+ * Admins write profiles by hand in a policy, where leaving out a block is natural (Chrome's
+ * schema cannot require them). Missing blocks and fields are filled from the base profile
+ * (today's defaults) so such a profile is not dropped; anything present is still validated.
+ */
+function withManagedProfileDefaults(entry: unknown): unknown {
+  const record = asRecord(entry);
+
+  if (!record) {
+    return entry;
+  }
+
+  const base = createBaseProfile({ id: "managed", name: "Managed" });
+  const blocks = Object.fromEntries(
+    MANAGED_PROFILE_BLOCKS.map((key) => {
+      const value = asRecord(record[key]);
+      return [key, value ? { ...base[key], ...value } : (record[key] ?? base[key])];
+    })
+  );
+
+  return {
+    base: base.base,
+    unmaskSelectors: base.unmaskSelectors,
+    sitePolicies: base.sitePolicies,
+    ...record,
+    ...blocks
+  };
 }
 
 /** Serializes the store for `chrome.storage.local` after a final validation pass. */

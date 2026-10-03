@@ -27,12 +27,18 @@ function fakeChrome(options: {
     storage: {
       local: { get: vi.fn(async () => options.local ?? {}), set: vi.fn() },
       managed: {
-        get: vi.fn(async () => {
+        // Like Chrome: only the requested keys come back; `null` returns everything.
+        get: vi.fn(async (keys?: string | null) => {
           if (options.managed instanceof Error) {
             throw options.managed;
           }
 
-          return options.managed ?? {};
+          const values = options.managed ?? {};
+          return typeof keys === "string"
+            ? keys in values
+              ? { [keys]: values[keys] }
+              : {}
+            : values;
         })
       }
     },
@@ -75,6 +81,15 @@ describe("loadProfilesState", () => {
     const state = await loadProfilesState(api, KEYS);
 
     expect(state.legacy).toBe(false);
+    expect(state.rules.map((rule) => rule.id)).toEqual(["managed:stage"]);
+  });
+});
+
+describe("loadProfilesState with a flat managed policy", () => {
+  it("reads managed rules set as top-level policy keys", async () => {
+    const { api } = fakeChrome({ managed: { rules: [STAGE_RULE] } });
+    const state = await loadProfilesState(api, KEYS);
+
     expect(state.rules.map((rule) => rule.id)).toEqual(["managed:stage"]);
   });
 });

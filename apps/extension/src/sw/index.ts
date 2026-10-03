@@ -66,6 +66,7 @@ import {
   ENTERPRISE_POLICY_STORAGE_KEY,
   isEnterpriseOriginAllowed,
   normalizeEnterprisePolicy,
+  readManagedEnterprisePolicy,
   type EnterpriseRecorderPolicy
 } from "../shared/options-storage.js";
 import { resolveModeRecorderConfig } from "../shared/recorder-config.js";
@@ -4901,14 +4902,9 @@ function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture
 }
 
 async function loadEnterprisePolicy(): Promise<EnterpriseRecorderPolicy> {
-  try {
-    const values = await chromeApi?.storage?.managed?.get(ENTERPRISE_POLICY_STORAGE_KEY);
-    const scoped = asRecord(values?.[ENTERPRISE_POLICY_STORAGE_KEY]);
-
-    return normalizeEnterprisePolicy(scoped ?? values ?? {});
-  } catch {
-    return normalizeEnterprisePolicy({});
-  }
+  return normalizeEnterprisePolicy(
+    (await readManagedEnterprisePolicy(chromeApi?.storage?.managed)) ?? {}
+  );
 }
 
 function withSessionCapturePolicy(

@@ -47,7 +47,7 @@ The same policy object may ship read-only recording profiles and site rules. The
 }
 ```
 
-Profiles use the same JSON shape as the options page export (`Export JSON`). Hosts listed in the enterprise `siteAllowlist` also allow extended profiles such as QA and Full capture.
+Profiles use the same JSON shape as the options page export (`Export JSON`). Only `id` and `name` are required: missing blocks and fields (`categories`, `redaction`, `network`, `pointer`, `sampling`, `recorder`, `export`, `base`, `unmaskSelectors`, `sitePolicies`) take the Default profile's values, and a profile with an invalid value is skipped and reported on the options page. Hosts listed in the enterprise `siteAllowlist` also allow extended profiles such as QA and Full capture.
 
 ## Self-Hosted Share Server
 

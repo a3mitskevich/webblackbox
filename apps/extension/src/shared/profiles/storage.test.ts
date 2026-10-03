@@ -222,6 +222,27 @@ describe("resolveProfilesState", () => {
   });
 });
 
+describe("parseManagedProfilesPolicy", () => {
+  it("fills blocks an admin left out and still rejects invalid values", () => {
+    const managed = parseManagedProfilesPolicy({
+      profiles: [
+        { id: "corp-qa", name: "Corp QA", base: "full", categories: { console: "allow" } },
+        { id: "bad", name: "Bad", categories: { console: "everything" } }
+      ]
+    });
+    const profile = managed.profiles[0];
+
+    expect(managed.profiles.map((entry) => entry.id)).toEqual(["managed:corp-qa"]);
+    expect(profile?.categories.console).toBe("allow");
+    expect(profile?.categories.inputs).toBe(createDefaultProfile().categories.inputs);
+    expect(profile?.redaction).toEqual(createDefaultProfile().redaction);
+    expect(profile?.export).toEqual(createDefaultProfile().export);
+    expect(managed.issues).toEqual([
+      expect.objectContaining({ kind: "invalid-profile", index: 1 })
+    ]);
+  });
+});
+
 describe("general settings form and the Default profile", () => {
   const edited = {
     ...createDefaultProfile(),
