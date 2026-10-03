@@ -125,6 +125,7 @@ describe("ActionSpanTracker", () => {
     const tracker = new ActionSpanTracker(1_500);
     const drag = tracker.assign(createEvent("user.drag.end", 100, { kind: "pointer" }));
     const followUp = tracker.assign(createEvent("user.click", 110));
+    const secondClick = tracker.assign(createEvent("user.click", 140));
     const cancelled = tracker.assign(
       createEvent("user.drag.end", 2_000, { kind: "pointer", cancelled: true })
     );
@@ -132,6 +133,7 @@ describe("ActionSpanTracker", () => {
 
     expect(drag.ref?.act).toBeDefined();
     expect(followUp.ref?.act).toBe(drag.ref?.act);
+    expect(secondClick.ref?.act).not.toBe(drag.ref?.act);
     expect(cancelled.ref?.act).toBeUndefined();
     expect(laterClick.ref?.act).toBeDefined();
     expect(laterClick.ref?.act).not.toBe(drag.ref?.act);

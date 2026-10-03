@@ -1,4 +1,5 @@
 import {
+  POINTER_FOLLOW_UP_CLICK_MS,
   createActionId,
   extractRequestId,
   type EventReference,
@@ -17,15 +18,15 @@ const ACTION_START_EVENTS = new Set([
 ]);
 
 const KEYBOARD_ACTION_KEYS = new Set(["Enter", "NumpadEnter", "Space"]);
-/** The click a browser fires right after a pointer drag belongs to the drag's action. */
-const DRAG_FOLLOW_UP_CLICK_MS = 150;
+
 const NETWORK_TERMINAL_EVENTS = new Set(["network.finished", "network.failed"]);
 
 type ActionState = {
   id: string;
   startedAtMono: number;
   expiresAtMono: number;
-  startType: string;
+  /** Open while the drag that started this action still expects the browser's click. */
+  awaitsFollowUpClick: boolean;
 };
 
 export class ActionSpanTracker {
@@ -38,7 +39,13 @@ export class ActionSpanTracker {
   public constructor(private readonly actionWindowMs: number) {}
 
   public assign(event: WebBlackboxEvent): WebBlackboxEvent {
-    const isActionStart = this.isActionStartEvent(event) && !this.isDragFollowUpClick(event);
+    if (this.currentAction && this.isDragFollowUpClick(event, this.currentAction)) {
+      // The browser adds one click per drag: it joins the drag's action, and only once.
+      this.currentAction = { ...this.currentAction, awaitsFollowUpClick: false };
+      return this.withRef(event, { act: this.currentAction.id });
+    }
+
+    const isActionStart = this.isActionStartEvent(event);
 
     if (isActionStart) {
       this.sequence += 1;
@@ -46,7 +53,7 @@ export class ActionSpanTracker {
         id: createActionId(this.sequence),
         startedAtMono: event.mono,
         expiresAtMono: event.mono + this.actionWindowMs,
-        startType: event.type
+        awaitsFollowUpClick: event.type === "user.drag.end"
       };
       return this.withRef(event, { act: this.currentAction.id });
     }
@@ -107,13 +114,11 @@ export class ActionSpanTracker {
     return typeof key === "string" && KEYBOARD_ACTION_KEYS.has(key);
   }
 
-  private isDragFollowUpClick(event: WebBlackboxEvent): boolean {
-    const action = this.currentAction;
+  private isDragFollowUpClick(event: WebBlackboxEvent, action: ActionState): boolean {
     return (
       event.type === "user.click" &&
-      action !== null &&
-      action.startType === "user.drag.end" &&
-      event.mono - action.startedAtMono <= DRAG_FOLLOW_UP_CLICK_MS
+      action.awaitsFollowUpClick &&
+      event.mono - action.startedAtMono <= POINTER_FOLLOW_UP_CLICK_MS
     );
   }
 
