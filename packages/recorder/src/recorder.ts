@@ -75,7 +75,14 @@ export class WebBlackboxRecorder {
     }
 
     // Inline bodies skip key/value redaction: they get value masking under the body policy instead.
-    const detached = detachInlineNetworkBody(normalized.eventType, normalized.payload);
+    const detached = detachInlineNetworkBody(
+      normalized.eventType,
+      stripUnreadableActionDetail(
+        normalized.eventType,
+        normalized.payload,
+        this.config.capturePolicy ?? DEFAULT_CAPTURE_POLICY
+      )
+    );
     const shouldKeepBody = this.hooks.shouldKeepInlineNetworkBody;
     const redactedPayload = attachInlineNetworkBody(
       redactPayload(detached.payload, this.config.redaction, {
@@ -252,6 +259,50 @@ type PrivacyViolationPayload = {
   policyMode: CapturePolicy["mode"] | "missing";
   redacted: true;
 };
+
+const READABLE_TARGET_KEYS = ["target", "dropTarget"] as const;
+
+/**
+ * Readable target labels leave the page only when the profile allows readable actions, and
+ * selected text only when it also allows raw DOM. The capture agent already follows the policy;
+ * this keeps a misbehaving or stale page script from bypassing it.
+ */
+function stripUnreadableActionDetail(
+  eventType: WebBlackboxEventType,
+  payload: unknown,
+  policy: CapturePolicy
+): unknown {
+  const row = eventType.startsWith("user.") ? asRecord(payload) : null;
+
+  if (!row) {
+    return payload;
+  }
+
+  const readableAllowed = policy.categories.actions === "allow";
+  const selectionTextAllowed = readableAllowed && policy.categories.dom === "allow";
+  const next: Record<string, unknown> = { ...row };
+  let changed = false;
+
+  if (!readableAllowed) {
+    for (const key of READABLE_TARGET_KEYS) {
+      const target = asRecord(row[key]);
+
+      if (target && "readable" in target) {
+        next[key] = Object.fromEntries(
+          Object.entries(target).filter(([entryKey]) => entryKey !== "readable")
+        );
+        changed = true;
+      }
+    }
+  }
+
+  if (eventType === "user.selection" && !selectionTextAllowed && "text" in row) {
+    delete next.text;
+    changed = true;
+  }
+
+  return changed ? next : payload;
+}
 
 function classifyPrivacy(
   eventType: WebBlackboxEventType,
