@@ -427,8 +427,8 @@ const PIPELINE_BATCH_DRAIN_CHUNK_EVENTS = 160;
 const PIPELINE_BATCH_FLUSH_MS = 120;
 const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
 const SKIPPED_FULL_MODE_BODY_RESOURCE_TYPES = new Set(["Image", "Media", "Font"]);
+// Pointer samples are kept: the page samples them at the profile rate and drops them under load.
 const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
-  "mousemove",
   "scroll",
   "mutation",
   "vitals",
