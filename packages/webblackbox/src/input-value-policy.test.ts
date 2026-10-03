@@ -3,7 +3,11 @@
 import { DEFAULT_CAPTURE_POLICY, type CapturePolicy } from "@webblackbox/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MAX_CAPTURED_INPUT_VALUE_CHARS, readCapturableInputValue } from "./input-value-policy.js";
+import {
+  MAX_CAPTURED_INPUT_VALUE_CHARS,
+  notePasswordField,
+  readCapturableInputValue
+} from "./input-value-policy.js";
 
 function policy(
   inputs: CapturePolicy["categories"]["inputs"],
@@ -74,15 +78,58 @@ describe("readCapturableInputValue", () => {
     ).toBe("typed value");
   });
 
-  it("fails closed on invalid selectors and caps long values", () => {
+  it("fails closed on invalid blocked selectors and caps long values", () => {
     const input = field('<input data-field name="q" />');
     input.value = "x".repeat(MAX_CAPTURED_INPUT_VALUE_CHARS + 50);
 
+    expect(readCapturableInputValue(input, policy("allow"))).toHaveLength(
+      MAX_CAPTURED_INPUT_VALUE_CHARS
+    );
     expect(
       readCapturableInputValue(input, policy("allow", { blockedSelectors: ["[[bad"] }))
-    ).toHaveLength(MAX_CAPTURED_INPUT_VALUE_CHARS);
+    ).toBeUndefined();
     expect(
       readCapturableInputValue(input, policy("masked", { unmaskSelectors: ["[[bad"] }))
     ).toBeUndefined();
+  });
+
+  it("never captures a password field after the page reveals it", () => {
+    const input = field('<input data-field type="password" />');
+
+    notePasswordField(input);
+    input.type = "text";
+
+    expect(
+      readCapturableInputValue(input, policy("allow", { unmaskSelectors: ["input"] }))
+    ).toBeUndefined();
+  });
+
+  it("never captures password-named or payment card fields", () => {
+    for (const html of [
+      '<input data-field type="text" name="user_password" />',
+      '<input data-field type="text" id="pwd" />',
+      '<input data-field autocomplete="billing cc-number" />',
+      '<input data-field autocomplete="cc-csc" />',
+      '<input data-field autocomplete="cc-exp" />'
+    ]) {
+      expect(readCapturableInputValue(field(html), policy("allow"))).toBeUndefined();
+    }
+  });
+
+  it("lets a nearer blocked selector win over an unmasked ancestor", () => {
+    const sensitive = field('<form class="checkout"><input data-field data-sensitive /></form>');
+
+    expect(
+      readCapturableInputValue(sensitive, policy("allow", { unmaskSelectors: ["form.checkout"] }))
+    ).toBeUndefined();
+
+    const nested = field('<div data-sensitive><input data-field class="ok" /></div>');
+
+    expect(readCapturableInputValue(nested, policy("allow", { unmaskSelectors: [".ok"] }))).toBe(
+      "typed value"
+    );
+    expect(readCapturableInputValue(nested, policy("masked", { unmaskSelectors: ["div"] }))).toBe(
+      "typed value"
+    );
   });
 });

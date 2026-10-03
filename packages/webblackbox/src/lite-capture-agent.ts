@@ -8,7 +8,7 @@ import { snapdom } from "@zumer/snapdom";
 
 import type { LiteCaptureAgentOptions, LiteCaptureSampling, LiteCaptureState } from "./types.js";
 import { INJECTED_MESSAGE_SOURCE, type InjectedCaptureWindowMessage } from "./injected-hooks.js";
-import { readCapturableInputValue } from "./input-value-policy.js";
+import { notePasswordField, readCapturableInputValue } from "./input-value-policy.js";
 
 const PRE_RECORDING_BUFFER_MAX = 400;
 const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
@@ -450,6 +450,7 @@ export class LiteCaptureAgent {
       (event: KeyboardEvent) => {
         this.markUserActivity();
         this.recordEditableInteraction(event.target);
+        notePasswordField(event.target);
         if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "m") {
           this.emitMarker("Keyboard marker");
         }
