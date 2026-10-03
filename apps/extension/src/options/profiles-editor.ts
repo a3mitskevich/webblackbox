@@ -1,7 +1,6 @@
-import { previewRedaction, type RedactionSandboxKind } from "@webblackbox/recorder";
-
 import type { ChromeApi } from "../shared/chrome-api.js";
 import type { ExtensionMessageKey } from "../shared/i18n.js";
+import { previewRedaction, type RedactionSandboxKind } from "../shared/redaction-sandbox.js";
 import { CAPTURE_CATEGORY_KEYS, CAPTURE_CATEGORY_LEVELS } from "../shared/profiles/categories.js";
 import {
   DEFAULT_PROFILE_ID,

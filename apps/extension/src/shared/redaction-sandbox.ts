@@ -1,6 +1,5 @@
 import { redactBodyText, type RedactionProfile } from "@webblackbox/protocol";
-
-import { createRedactionHashKey, redactPayload } from "./redaction.js";
+import { createRedactionHashKey, redactPayload } from "@webblackbox/recorder";
 
 /** What kind of sample the redaction sandbox receives. */
 export type RedactionSandboxKind = "body" | "event" | "headers" | "url";

@@ -5,6 +5,5 @@ export * from "./normalizer.js";
 export * from "./plugins.js";
 export * from "./recorder.js";
 export * from "./redaction.js";
-export * from "./redaction-sandbox.js";
 export * from "./ring-buffer.js";
 export * from "./types.js";
