@@ -1,9 +1,7 @@
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 
-import { readReadableSelector } from "./pointer-insights.js";
+import { findGestureClickIds, isLongPress, readReadableSelector } from "./pointer-insights.js";
 
-/** A click this soon after a long press or drag is the browser's follow-up click, not a new one. */
-const FOLLOW_UP_CLICK_MS = 150;
 const HASHED_SELECTOR_PATTERN = /^selector:|\[REDACTED|\[(?:id|class):t_/;
 
 /** Events that turn into Playwright statements (the rest would only eat the action budget). */
@@ -25,7 +23,7 @@ export function isPlaywrightReplayableEvent(event: WebBlackboxEvent): boolean {
     case "user.auxclick":
       return asNumber(asRecord(event.data)?.button) === 1;
     case "user.pointerup":
-      return asRecord(event.data)?.longPress === true;
+      return isLongPress(event);
     default:
       return false;
   }
@@ -38,23 +36,13 @@ export function isPlaywrightReplayableEvent(event: WebBlackboxEvent): boolean {
  */
 export function buildPlaywrightActionLines(events: readonly WebBlackboxEvent[]): string[] {
   const lines: string[] = [];
-  let suppressClickUntilMono = Number.NEGATIVE_INFINITY;
+  // The long press or drag itself is replayed; the click the browser added after it is not.
+  const gestureClicks = findGestureClickIds(events);
 
   for (const event of events) {
-    if (event.type === "user.click" && event.mono <= suppressClickUntilMono) {
-      continue;
+    if (!gestureClicks.has(event.id)) {
+      lines.push(...toPlaywrightLines(event, asRecord(event.data)));
     }
-
-    const data = asRecord(event.data);
-
-    if (
-      (event.type === "user.pointerup" && data?.longPress === true) ||
-      event.type === "user.drag.end"
-    ) {
-      suppressClickUntilMono = event.mono + FOLLOW_UP_CLICK_MS;
-    }
-
-    lines.push(...toPlaywrightLines(event, data));
   }
 
   return lines;
@@ -68,7 +56,7 @@ function toPlaywrightLines(
     case "nav.commit":
     case "nav.hash": {
       const url = asString(data?.url);
-      return url ? [`  await page.goto(${JSON.stringify(url)});`] : [];
+      return url ? [`  await page.goto(${toJsLiteral(url)});`] : [];
     }
     case "user.click":
     case "user.dblclick":
@@ -80,13 +68,13 @@ function toPlaywrightLines(
         ? clickLines(event, data, "click", { button: "middle" })
         : [];
     case "user.pointerup":
-      return data?.longPress === true
-        ? clickLines(event, data, "click", { delay: Math.round(asNumber(data.holdMs) ?? 0) })
+      return isLongPress(event)
+        ? clickLines(event, data, "click", { delay: Math.round(asNumber(data?.holdMs) ?? 0) })
         : [];
     case "user.hover": {
       const selector = readSelector(data?.target);
       return selector
-        ? [`  await page.hover(${JSON.stringify(selector)});`]
+        ? [`  await page.hover(${toJsLiteral(selector)});`]
         : [skipped(event, data?.target)];
     }
     case "user.drag.end":
@@ -102,7 +90,7 @@ function toPlaywrightLines(
     }
     case "user.keydown": {
       const key = asString(data?.key);
-      return key ? [`  await page.keyboard.press(${JSON.stringify(key)});`] : [];
+      return key ? [`  await page.keyboard.press(${toJsLiteral(key)});`] : [];
     }
     case "user.marker":
       return ["  // Marker captured during session"];
@@ -123,31 +111,33 @@ function clickLines(
     return [skipped(event, data?.target)];
   }
 
-  const args = [JSON.stringify(selector), ...(options ? [JSON.stringify(options)] : [])];
+  const args = [toJsLiteral(selector), ...(options ? [JSON.stringify(options)] : [])];
   return [`  await page.${method}(${args.join(", ")});`];
 }
 
 function dragLines(data: Record<string, unknown> | null): string[] {
+  if (data?.cancelled === true || data?.dropped === false) {
+    return ["  // drag skipped (cancelled before the drop)"];
+  }
+
   const source = readSelector(data?.target);
   const destination = readSelector(data?.dropTarget);
 
   if (data?.kind === "dnd" && source && destination) {
-    return [`  await page.dragAndDrop(${JSON.stringify(source)}, ${JSON.stringify(destination)});`];
+    return [`  await page.dragAndDrop(${toJsLiteral(source)}, ${toJsLiteral(destination)});`];
   }
 
-  const startX = asNumber(data?.startX);
-  const startY = asNumber(data?.startY);
-  const x = asNumber(data?.x);
-  const y = asNumber(data?.y);
+  const start = toPagePoint(data, asNumber(data?.startX), asNumber(data?.startY));
+  const end = toPagePoint(data, asNumber(data?.x), asNumber(data?.y));
 
-  if (startX === undefined || startY === undefined || x === undefined || y === undefined) {
+  if (!start || !end) {
     return ["  // drag skipped (no coordinates)"];
   }
 
   return [
-    `  await page.mouse.move(${startX}, ${startY});`,
+    `  await page.mouse.move(${start.x}, ${start.y});`,
     "  await page.mouse.down();",
-    `  await page.mouse.move(${x}, ${y}, { steps: 10 });`,
+    `  await page.mouse.move(${end.x}, ${end.y}, { steps: 10 });`,
     "  await page.mouse.up();"
   ];
 }
@@ -155,9 +145,8 @@ function dragLines(data: Record<string, unknown> | null): string[] {
 function wheelLines(data: Record<string, unknown> | null): string[] {
   const deltaX = asNumber(data?.deltaX) ?? 0;
   const deltaY = asNumber(data?.deltaY) ?? 0;
-  const x = asNumber(data?.x);
-  const y = asNumber(data?.y);
-  const move = x !== undefined && y !== undefined ? [`  await page.mouse.move(${x}, ${y});`] : [];
+  const point = toPagePoint(data, asNumber(data?.x), asNumber(data?.y));
+  const move = point ? [`  await page.mouse.move(${point.x}, ${point.y});`] : [];
   const wheel = `  await page.mouse.wheel(${deltaX}, ${deltaY});`;
 
   return data?.zoom === true
@@ -179,10 +168,37 @@ function inputLines(data: Record<string, unknown> | null): string[] {
   }
 
   if (!value || value === "[MASKED]") {
-    return [`  // input on ${JSON.stringify(selector)} was masked in capture`];
+    return [`  // input on ${toJsLiteral(selector)} was masked in capture`];
   }
 
-  return [`  await page.fill(${JSON.stringify(selector)}, ${JSON.stringify(value)});`];
+  return [`  await page.fill(${toJsLiteral(selector)}, ${toJsLiteral(value)});`];
+}
+
+/**
+ * Frame-relative client point moved into the top viewport that `page.mouse` uses, by the
+ * recorded same-origin `frameOffset` (cross-origin frames record none and stay as they are).
+ */
+function toPagePoint(
+  data: Record<string, unknown> | null,
+  x: number | undefined,
+  y: number | undefined
+): { x: number; y: number } | null {
+  if (x === undefined || y === undefined) {
+    return null;
+  }
+
+  const offset = asRecord(data?.frameOffset);
+  return { x: x + (asNumber(offset?.x) ?? 0), y: y + (asNumber(offset?.y) ?? 0) };
+}
+
+/**
+ * JavaScript string literal for archive text. JSON leaves U+2028/U+2029 raw, and those end a
+ * `//` comment, so a crafted archive could otherwise put code into the generated test.
+ */
+function toJsLiteral(value: string): string {
+  return JSON.stringify(value)
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }
 
 function skipped(event: WebBlackboxEvent, target: unknown): string {

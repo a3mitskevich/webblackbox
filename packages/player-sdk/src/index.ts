@@ -1545,7 +1545,6 @@ export class WebBlackboxPlayer {
     return JSON.stringify(har, null, 2);
   }
 
-  /** Generates a Markdown bug report for the selected range. */
   /** Pointer actions for the pointer lane: clicks, right/middle clicks, holds, drags, wheel, hover. */
   public getPointerTimeline(range?: PlayerRange): PointerTimelineEntry[] {
     return buildPointerTimeline(this.query({ range }));
@@ -1556,6 +1555,7 @@ export class WebBlackboxPlayer {
     return detectPointerSignals(this.query({ range }));
   }
 
+  /** Generates a Markdown bug report for the selected range. */
   public generateBugReport(options: BugReportOptions = {}): string {
     const maxItems = Math.max(5, options.maxItems ?? 20);
     const scoped = this.query({ range: options.range });

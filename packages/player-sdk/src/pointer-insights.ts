@@ -1,4 +1,8 @@
-import type { WebBlackboxEvent, WebBlackboxEventType } from "@webblackbox/protocol";
+import {
+  POINTER_DRAG_THRESHOLD_PX,
+  type WebBlackboxEvent,
+  type WebBlackboxEventType
+} from "@webblackbox/protocol";
 
 /** Kind of pointer action shown on the pointer lane. */
 export type PointerActionKind =
@@ -72,12 +76,19 @@ export type RageClickOptions = {
 
 export type DeadClickOptions = {
   windowMs?: number;
+  /**
+   * Capture-time mono of an event. Reaction probes store the click's capture mono, so a caller
+   * that re-timed the events (the Player's wall-clock fallback) passes the original values here.
+   */
+  captureMonoOf?: (event: WebBlackboxEvent) => number;
 };
 
 export const RAGE_CLICK_MIN_CLICKS = 3;
 export const RAGE_CLICK_WINDOW_MS = 1_000;
 export const RAGE_CLICK_RADIUS_PX = 30;
 export const DEAD_CLICK_WINDOW_MS = 1_000;
+/** A click this soon after a held or dragged press is the browser's follow-up click, not a new one. */
+export const GESTURE_FOLLOW_UP_CLICK_MS = 150;
 
 const KIND_LABELS: Record<PointerActionKind, string> = {
   click: "Click",
@@ -98,6 +109,10 @@ const REACTION_EXEMPT_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT", "OPTION", "
 const REACTION_EXEMPT_ROLES = new Set(["textbox", "searchbox", "combobox", "checkbox", "radio"]);
 const DOM_REACTION_TYPES = new Set<WebBlackboxEventType>(["dom.mutation.batch", "dom.rrweb.event"]);
 const CLICK_MONO_TOLERANCE_MS = 1;
+/** What the recorder's redaction leaves in place of a string: an HMAC digest or a marker. */
+const MASKED_VALUE_PATTERN = /^(?:[0-9a-f]{64}|\[REDACTED[^\]]*\])$/;
+
+type ReactionProbe = { clickMono: number; mutated: boolean };
 
 /** Pointer actions worth a mark on the timeline, in session order. */
 export function buildPointerTimeline(events: readonly WebBlackboxEvent[]): PointerTimelineEntry[] {
@@ -139,7 +154,40 @@ export function describePointerTarget(value: unknown): string | undefined {
 /** Readable CSS selector recorded for a target (never the hashed `selector`). */
 export function readReadableSelector(value: unknown): string | undefined {
   const css = asString(asRecord(asRecord(value)?.readable)?.css);
-  return css && css.length > 0 ? css : undefined;
+  return css && !MASKED_VALUE_PATTERN.test(css) ? css : undefined;
+}
+
+/** A primary-button press held still long enough (the capture agent's `longPress`). */
+export function isLongPress(event: WebBlackboxEvent): boolean {
+  const data = asRecord(event.data);
+  const button = asNumber(data?.button);
+  return (
+    event.type === "user.pointerup" &&
+    data?.longPress === true &&
+    (button === undefined || button === 0)
+  );
+}
+
+/**
+ * Ids of clicks the browser fired to finish a long press or a drag (including a text-selection
+ * drag): they are part of that gesture, not separate clicks.
+ */
+export function findGestureClickIds(events: readonly WebBlackboxEvent[]): Set<string> {
+  const ids = new Set<string>();
+  let gestureEndMono = Number.NEGATIVE_INFINITY;
+
+  for (const event of events) {
+    if (event.type === "user.drag.end" || isGesturePress(event)) {
+      gestureEndMono = event.mono;
+    } else if (
+      event.type === "user.click" &&
+      event.mono - gestureEndMono <= GESTURE_FOLLOW_UP_CLICK_MS
+    ) {
+      ids.add(event.id);
+    }
+  }
+
+  return ids;
 }
 
 /**
@@ -153,7 +201,10 @@ export function detectRageClicks(
   const minClicks = options.minClicks ?? RAGE_CLICK_MIN_CLICKS;
   const windowMs = options.windowMs ?? RAGE_CLICK_WINDOW_MS;
   const radiusPx = options.radiusPx ?? RAGE_CLICK_RADIUS_PX;
-  const clicks = events.filter((event) => event.type === "user.click" && readPoint(event));
+  const gestureClicks = findGestureClickIds(events);
+  const clicks = events.filter(
+    (event) => event.type === "user.click" && !gestureClicks.has(event.id) && readPoint(event)
+  );
   const findings: RageClickFinding[] = [];
   let burst: WebBlackboxEvent[] = [];
 
@@ -198,19 +249,31 @@ export function detectDeadClicks(
   options: DeadClickOptions = {}
 ): { findings: DeadClickFinding[]; coverage: boolean } {
   const windowMs = options.windowMs ?? DEAD_CLICK_WINDOW_MS;
-  const reactions = events.filter((event) => event.type === "user.click.reaction");
+  const captureMonoOf = options.captureMonoOf ?? ((event: WebBlackboxEvent) => event.mono);
+  const probes = indexReactionProbes(events);
   const hasDomEvents = events.some((event) => DOM_REACTION_TYPES.has(event.type));
+  const gestureClicks = findGestureClickIds(events);
+  const lastMono = events.reduce(
+    (max, event) => Math.max(max, event.mono),
+    Number.NEGATIVE_INFINITY
+  );
   const findings: DeadClickFinding[] = [];
 
   events.forEach((event, index) => {
-    if (event.type !== "user.click" || isReactionExempt(event)) {
+    if (event.type !== "user.click" || isReactionExempt(event) || gestureClicks.has(event.id)) {
       return;
     }
 
-    const probe = findReactionProbe(reactions, event.mono);
+    const probe = findReactionProbe(probes, captureMonoOf(event));
+
+    // Without a probe, a click in the last window had no chance to show a reaction before Stop.
+    if (!probe && lastMono - event.mono < windowMs) {
+      return;
+    }
+
     const evidence = probe ? "reaction-probe" : hasDomEvents ? "dom-events" : null;
 
-    if (evidence === null || (probe && asRecord(probe.data)?.mutated === true)) {
+    if (evidence === null || probe?.mutated === true) {
       return;
     }
 
@@ -228,11 +291,14 @@ export function detectDeadClicks(
     });
   });
 
-  return { findings, coverage: reactions.length > 0 || hasDomEvents };
+  return { findings, coverage: probes.length > 0 || hasDomEvents };
 }
 
-export function detectPointerSignals(events: readonly WebBlackboxEvent[]): PointerSignals {
-  const dead = detectDeadClicks(events);
+export function detectPointerSignals(
+  events: readonly WebBlackboxEvent[],
+  options: Pick<DeadClickOptions, "captureMonoOf"> = {}
+): PointerSignals {
+  const dead = detectDeadClicks(events, options);
 
   return {
     rageClicks: detectRageClicks(events),
@@ -254,7 +320,7 @@ function resolvePointerKind(event: WebBlackboxEvent): PointerActionKind | null {
     case "user.auxclick":
       return asNumber(data?.button) === 1 ? "middle" : null;
     case "user.pointerup":
-      return data?.longPress === true ? "hold" : null;
+      return isLongPress(event) ? "hold" : null;
     case "user.drag.end":
       return data?.kind === "dnd" ? "dnd" : "drag";
     case "user.wheel":
@@ -371,14 +437,52 @@ function toRageFinding(
   };
 }
 
+function isGesturePress(event: WebBlackboxEvent): boolean {
+  return (
+    event.type === "user.pointerup" &&
+    (isLongPress(event) ||
+      (asNumber(asRecord(event.data)?.distance) ?? 0) >= POINTER_DRAG_THRESHOLD_PX)
+  );
+}
+
+/** Reaction probes sorted by the capture mono of their click, for binary search. */
+function indexReactionProbes(events: readonly WebBlackboxEvent[]): ReactionProbe[] {
+  const probes: ReactionProbe[] = [];
+
+  for (const event of events) {
+    const data = event.type === "user.click.reaction" ? asRecord(event.data) : null;
+    const clickMono = asNumber(data?.clickMono);
+
+    if (clickMono !== undefined) {
+      probes.push({ clickMono, mutated: data?.mutated === true });
+    }
+  }
+
+  return probes.sort((left, right) => left.clickMono - right.clickMono);
+}
+
 function findReactionProbe(
-  reactions: readonly WebBlackboxEvent[],
+  probes: readonly ReactionProbe[],
   clickMono: number
-): WebBlackboxEvent | undefined {
-  return reactions.find((reaction) => {
-    const recorded = asNumber(asRecord(reaction.data)?.clickMono);
-    return recorded !== undefined && Math.abs(recorded - clickMono) <= CLICK_MONO_TOLERANCE_MS;
-  });
+): ReactionProbe | undefined {
+  let low = 0;
+  let high = probes.length;
+
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    const probe = probes[middle];
+
+    if (probe && probe.clickMono < clickMono - CLICK_MONO_TOLERANCE_MS) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  const candidate = probes[low];
+  return candidate && Math.abs(candidate.clickMono - clickMono) <= CLICK_MONO_TOLERANCE_MS
+    ? candidate
+    : undefined;
 }
 
 function hasFollowUpReaction(

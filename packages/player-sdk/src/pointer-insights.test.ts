@@ -101,6 +101,15 @@ describe("pointer timeline", () => {
     expect(entries[5]?.label).toContain("to div (#zone)");
   });
 
+  it("labels a held right button as a right click only", () => {
+    const entries = buildPointerTimeline([
+      event("user.pointerup", 10, { x: 1, y: 1, button: 2, holdMs: 700, longPress: true }),
+      event("user.contextmenu", 12, { x: 1, y: 1, button: 2, target: saveButton })
+    ]);
+
+    expect(entries.map((entry) => entry.kind)).toEqual(["right"]);
+  });
+
   it("describes hashed targets by tag only", () => {
     expect(describePointerTarget({ tag: "BUTTON", idToken: "t_abc" })).toBe("button");
     expect(describePointerTarget(undefined)).toBeUndefined();
@@ -167,6 +176,44 @@ describe("dead clicks", () => {
     expect(findings[0]).toMatchObject({ mono: 1_000, evidence: "dom-events" });
   });
 
+  it("matches probes by capture mono when the events were re-timed", () => {
+    const dead = click(1_000);
+    const probe = reaction(1_000, true);
+    // The Player's wall-clock fallback replaces mono with t; probes keep the capture mono.
+    const retimed = [dead, probe].map((item) => ({ ...item, mono: item.t }));
+    const rawMono = new Map([dead, probe].map((item) => [item.id, item.mono]));
+    const earlier = event("dom.mutation.batch", dead.t - 500, { count: 1 });
+    const tail = event("user.marker", dead.t + 5_000, {});
+    const session = [earlier, ...retimed, tail];
+
+    // Unmatched, the probe's "mutated" verdict is lost and the click looks dead.
+    expect(detectDeadClicks(session).findings).toHaveLength(1);
+    expect(
+      detectDeadClicks(session, {
+        captureMonoOf: (item) => rawMono.get(item.id) ?? item.mono
+      }).findings
+    ).toHaveLength(0);
+  });
+
+  it("skips the browser's click after a drag or long press and clicks at the session tail", () => {
+    const afterSelection = click(1_020);
+    const afterHold = click(3_010);
+    const lastClick = click(9_500);
+    const { findings } = detectDeadClicks([
+      event("dom.mutation.batch", 10, { count: 1 }),
+      event("user.pointerup", 1_000, { x: 1, y: 1, button: 0, distance: 120 }),
+      afterSelection,
+      event("user.pointerup", 3_000, { x: 1, y: 1, button: 0, holdMs: 700, longPress: true }),
+      afterHold,
+      event("dom.mutation.batch", 9_000, { count: 1 }),
+      lastClick,
+      event("user.marker", 9_900, {})
+    ]);
+
+    expect(findings).toEqual([]);
+    expect(detectRageClicks([click(0), afterSelection, click(1_100)])).toHaveLength(0);
+  });
+
   it("reports missing coverage instead of guessing", () => {
     const { findings, coverage } = detectDeadClicks([click(1_000), click(3_000)]);
 
@@ -224,6 +271,57 @@ describe("Playwright action lines", () => {
       "  await page.mouse.up();",
       "  await page.mouse.move(5, 6);",
       "  await page.mouse.wheel(0, 240);"
+    ]);
+  });
+
+  it("shifts iframe points into the page and skips cancelled drags", () => {
+    const frameOffset = { x: 300, y: 200 };
+
+    expect(
+      buildPlaywrightActionLines([
+        event("user.drag.end", 10, {
+          kind: "pointer",
+          startX: 10,
+          startY: 20,
+          x: 110,
+          y: 20,
+          frameOffset
+        }),
+        event("user.drag.end", 20, {
+          kind: "pointer",
+          startX: 1,
+          startY: 1,
+          x: 90,
+          y: 1,
+          cancelled: true
+        }),
+        event("user.drag.end", 30, { kind: "dnd", x: 9, y: 9, dropped: false, target: saveButton }),
+        event("user.wheel", 40, { x: 5, y: 6, deltaX: 0, deltaY: 100, frameOffset })
+      ])
+    ).toEqual([
+      "  await page.mouse.move(310, 220);",
+      "  await page.mouse.down();",
+      "  await page.mouse.move(410, 220, { steps: 10 });",
+      "  await page.mouse.up();",
+      "  // drag skipped (cancelled before the drop)",
+      "  // drag skipped (cancelled before the drop)",
+      "  await page.mouse.move(305, 206);",
+      "  await page.mouse.wheel(0, 100);"
+    ]);
+  });
+
+  it("never emits a masked selector or a raw line separator", () => {
+    const masked = { tag: "A", readable: { css: "f".repeat(64) } };
+    const sneaky = { tag: "INPUT", readable: { css: "#q" } };
+
+    expect(
+      buildPlaywrightActionLines([
+        click(10, 1, 1, masked),
+        event("user.input", 20, { target: sneaky, value: "x\u2028process.exit(1)" })
+      ])
+    ).toEqual([
+      "  // user.click skipped (no selector)",
+      '  await page.fill("#q", "x\\u2028process.exit(1)");'
     ]);
   });
 
