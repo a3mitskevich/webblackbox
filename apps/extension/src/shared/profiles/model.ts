@@ -221,8 +221,9 @@ export const profileRuleSchema = z
           .refine(isCompilableRegex, "titleRegex must be a valid regular expression")
           .refine(
             isSafeRegexSource,
-            "titleRegex is too complex: no quantified groups containing quantifiers or |, no " +
-              "backreferences, and at most two of * + {n,} (a trailing .* is free)"
+            "titleRegex is too slow to match safely: avoid quantified groups containing " +
+              "quantifiers or |, backreferences and long chains of quantifiers; start with ^ " +
+              "or drop a leading .* to make room"
           )
           .optional(),
         selectorPresent: patternSchema.optional(),

@@ -4,14 +4,14 @@
  */
 
 /** Longest page title a title regex is tested against. */
-export const MAX_MATCHED_TITLE_LENGTH = 256;
+export const MAX_MATCHED_TITLE_LENGTH = 128;
 
 /**
- * Upper bound on the backtracking paths of an accepted title regex: the product of what every
- * quantifier and alternation can try. Two unbounded quantifiers (e.g. `.*a.*b`) fit with a
- * small margin; a third does not.
+ * Upper bound on the backtracking paths of an accepted title regex, retries at every start
+ * position of an unanchored pattern included. Calibrated in V8: the worst accepted patterns
+ * (`(a|a)` ×14, `a?` ×14, `.*a.*b`) stay under ~100 ms cold and ~10 ms warm on a 128-char title.
  */
-export const MAX_TITLE_REGEX_BACKTRACKING = 300_000;
+export const MAX_TITLE_REGEX_BACKTRACKING = 2_200_000;
 
 type GlobToken = { kind: "literal"; char: string } | { kind: "star"; crossesSegments: boolean };
 type RegexGroup = { quantified: boolean; alternated: boolean; branches: number };
@@ -50,17 +50,22 @@ export function matchesGlob(text: string, pattern: string): boolean {
  * - a quantified group that contains a quantifier or an alternation, at any depth
  *   (`(a+)+`, `((a|aa))*`): exponential backtracking;
  * - backreferences;
- * - sequences of quantifiers and alternations whose combined backtracking (each unbounded
- *   quantifier counts as a title's length) exceeds {@link MAX_TITLE_REGEX_BACKTRACKING}:
- *   polynomial blow-ups such as `.*a.*b.*c` or `a{0,256}a{0,256}a{0,256}b`.
- * A trailing `.*` or `.+` never backtracks and is free, so `.*foo.*bar.*` is accepted.
+ * - patterns whose backtracking paths exceed {@link MAX_TITLE_REGEX_BACKTRACKING}. Each
+ *   top-level branch costs the product of what its quantifiers and inner alternations can try
+ *   (an unbounded quantifier counts as a whole title), times every start position unless the
+ *   branch starts with `^`; branches add up. A quantifier ending a branch never backtracks and
+ *   is free, so `.*foo.*bar.*` costs the same as `.*foo.*bar`.
  */
 export function isSafeRegexSource(source: string): boolean {
+  const startPositions = MAX_MATCHED_TITLE_LENGTH + 1;
   const groups: RegexGroup[] = [];
-  let topLevelBranches = 1;
+  let finishedBranches = 0;
+  let branchPaths = 1;
+  let branchAnchored = source.startsWith("^");
   let lastAtomGroup: RegexGroup | null = null;
-  let backtracking = 1;
   let index = 0;
+  const totalPaths = (): number =>
+    finishedBranches + branchPaths * (branchAnchored ? 1 : startPositions);
 
   while (index < source.length) {
     const char = source[index] ?? "";
@@ -91,7 +96,7 @@ export function isSafeRegexSource(source: string): boolean {
         parent.alternated ||= group.alternated;
       }
 
-      backtracking *= group.branches;
+      branchPaths *= group.branches;
       atomGroup = group;
       index += 1;
     } else if (char === "|") {
@@ -101,7 +106,9 @@ export function isSafeRegexSource(source: string): boolean {
         current.alternated = true;
         current.branches += 1;
       } else {
-        topLevelBranches += 1;
+        finishedBranches = totalPaths();
+        branchPaths = 1;
+        branchAnchored = source[index + 1] === "^";
       }
 
       index += 1;
@@ -120,15 +127,15 @@ export function isSafeRegexSource(source: string): boolean {
 
       // A trailing `?` makes the quantifier lazy; it is not a second quantifier.
       const end = index + quantifier.length + (source[index + quantifier.length] === "?" ? 1 : 0);
-      const isTrailing = end === source.length && groups.length === 0;
+      const endsBranch = groups.length === 0 && (end === source.length || source[end] === "|");
 
-      backtracking *= isTrailing && quantifier.isUnbounded ? 1 : quantifier.choices;
+      branchPaths *= endsBranch && quantifier.isUnbounded ? 1 : quantifier.choices;
       index = end;
     } else {
       index += 1;
     }
 
-    if (backtracking * topLevelBranches > MAX_TITLE_REGEX_BACKTRACKING) {
+    if (totalPaths() > MAX_TITLE_REGEX_BACKTRACKING) {
       return false;
     }
 
