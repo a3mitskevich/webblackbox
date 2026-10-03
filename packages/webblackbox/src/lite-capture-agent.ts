@@ -9,6 +9,10 @@ import { snapdom } from "@zumer/snapdom";
 import type { LiteCaptureAgentOptions, LiteCaptureSampling, LiteCaptureState } from "./types.js";
 import { INJECTED_MESSAGE_SOURCE, type InjectedCaptureWindowMessage } from "./injected-hooks.js";
 import {
+  SCRIPT_SOURCE_MAP_RAW_TYPE,
+  startScriptSourceMapScanner
+} from "./script-source-map-scanner.js";
+import {
   notePasswordField,
   readCapturableInputValue,
   watchPasswordFieldReveals
@@ -205,6 +209,7 @@ export class LiteCaptureAgent {
   private disposed = false;
   private readonly stopWatchingPasswordReveals: () => void;
   private pendingQuietRecoverySummary = false;
+  private stopScriptSourceMapScanner: (() => void) | null = null;
 
   /** Creates and installs capture hooks for the current page context. */
   public constructor(private readonly options: LiteCaptureAgentOptions) {
@@ -247,6 +252,9 @@ export class LiteCaptureAgent {
     this.mode = state.mode ?? this.mode;
     this.sampling = sanitizeSamplingConfig(state.sampling);
     this.capturePolicy = state.capturePolicy ?? this.capturePolicy;
+    this.syncScriptSourceMapScanner(
+      state.active && state.scriptSourceMaps === true && this.mode === "lite"
+    );
 
     if (typeof state.sid === "string") {
       this.sid = state.sid;
@@ -341,6 +349,7 @@ export class LiteCaptureAgent {
     }
 
     this.disposed = true;
+    this.syncScriptSourceMapScanner(false);
     this.stopWatchingPasswordReveals();
     this.stopMutationAndSnapshots();
     this.removeIndicator();
@@ -975,6 +984,21 @@ export class LiteCaptureAgent {
     this.installInjectedMessageBridge();
     this.captureInstalled = true;
     this.emitLifecycleEvent("visibilitychange", { state: document.visibilityState });
+  }
+
+  /** Lite sessions whose profile asks for it report each script's source map reference. */
+  private syncScriptSourceMapScanner(enabled: boolean): void {
+    if (enabled && !this.stopScriptSourceMapScanner) {
+      this.stopScriptSourceMapScanner = startScriptSourceMapScanner({
+        emit: (reference) => this.queueEvent(SCRIPT_SOURCE_MAP_RAW_TYPE, reference)
+      });
+      return;
+    }
+
+    if (!enabled && this.stopScriptSourceMapScanner) {
+      this.stopScriptSourceMapScanner();
+      this.stopScriptSourceMapScanner = null;
+    }
   }
 
   private teardownCapture(): void {

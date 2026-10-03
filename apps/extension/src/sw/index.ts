@@ -56,10 +56,21 @@ import {
   isHostAllowedForExtendedCapture,
   isSameProfileSelection,
   resolveProfileExportRequirements,
+  resolveSourceMapCapture,
   selectRecordingProfile,
   toArchivedProfileInfo,
-  type ProfileSelection
+  type ProfileSelection,
+  type SourceMapCapture
 } from "../shared/profiles/resolve.js";
+import {
+  DEBUGGER_SCRIPT_CACHE_BYTES,
+  loadSourceMapForEmbedding,
+  SCRIPT_RAW_TYPE,
+  scriptRecordFromResponse,
+  scriptRecordFromScriptParsed,
+  ScriptSourceMapTracker,
+  type RawScriptRecord
+} from "./source-maps.js";
 import type { ProfilesState } from "../shared/profiles/storage.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
@@ -179,6 +190,7 @@ type SessionRuntime = {
   removeCdpListeners: Array<() => void>;
   heapSnapshotCapture: HeapSnapshotCaptureState | null;
   cleanupTimer: ReturnType<typeof setTimeout> | null;
+  scriptSourceMaps: ScriptSourceMapTracker;
 };
 
 type ScreenRecordingRuntime = {
@@ -445,7 +457,8 @@ const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
   "unhandledrejection",
   "resourceError",
   "sse",
-  "notice"
+  "notice",
+  SCRIPT_RAW_TYPE
 ]);
 const FULL_MODE_FOLLOWUP_METHODS = new Set([
   "Target.attachedToTarget",
@@ -610,7 +623,8 @@ function syncContentPortRecordingState(port: PortLike): void {
       sid: runtime.sid,
       mode: runtime.mode,
       sampling,
-      capturePolicy: runtime.config.capturePolicy
+      capturePolicy: runtime.config.capturePolicy,
+      ...toScriptScanStatus(runtime)
     });
   } catch (error) {
     logPortSendFailure("sw.recording-status", error, {
@@ -828,7 +842,8 @@ async function handleInboundMessage(
       sid: runtime.sid,
       mode: runtime.mode,
       sampling,
-      capturePolicy: runtime.config.capturePolicy
+      capturePolicy: runtime.config.capturePolicy,
+      ...toScriptScanStatus(runtime)
     };
   }
 
@@ -1014,7 +1029,8 @@ async function startSession(
     queue: Promise.resolve(),
     removeCdpListeners: [],
     heapSnapshotCapture: null,
-    cleanupTimer: null
+    cleanupTimer: null,
+    scriptSourceMaps: new ScriptSourceMapTracker()
   };
 
   runtime.recorder = new WebBlackboxRecorder(
@@ -1091,7 +1107,8 @@ async function startSession(
     sid,
     mode,
     sampling,
-    capturePolicy: recorderConfig.capturePolicy
+    capturePolicy: recorderConfig.capturePolicy,
+    ...toScriptScanStatus(runtime)
   });
   pushSessionList();
   await persistRuntimeState();
@@ -1548,6 +1565,10 @@ async function applySessionProfileSelection(
     return;
   }
 
+  if (runtime.cdpRouter) {
+    await enableScriptDebugger(runtime, runtime.cdpRouter, { tabId: runtime.tabId });
+  }
+
   await notifyTabStatus(
     runtime.tabId,
     true,
@@ -1596,6 +1617,11 @@ function ingestRawEvent(rawEvent: RawRecorderEvent): void {
   }
 
   if (shouldSkipFullModeContentRawEvent(runtime, rawEvent)) {
+    return;
+  }
+
+  if (rawEvent.source === "content" && rawEvent.rawType === SCRIPT_RAW_TYPE) {
+    recordScriptSourceMap(runtime, readContentScriptRecord(rawEvent.payload));
     return;
   }
 
@@ -2590,6 +2616,13 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
         }
       }
 
+      // One event per parsed script (eval and extension code included): handled inline instead
+      // of through the recorder or the best-effort follow-up queue.
+      if (event.method === "Debugger.scriptParsed") {
+        recordScriptSourceMap(runtime, scriptRecordFromScriptParsed(cdpPayload));
+        return;
+      }
+
       ingestRawEvent({
         source: "cdp",
         rawType: event.method,
@@ -2629,6 +2662,7 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
     await router.enableAutoAttach(runtime.tabId);
     await router.send({ tabId: runtime.tabId }, "DOMStorage.enable").catch(() => undefined);
     await router.send({ tabId: runtime.tabId }, "Performance.enable").catch(() => undefined);
+    await enableScriptDebugger(runtime, router, { tabId: runtime.tabId });
 
     runtime.cdpRouter = router;
 
@@ -2700,6 +2734,7 @@ async function processFullModeEvent(
   }
 
   if (method === "Network.responseReceived") {
+    recordScriptSourceMap(runtime, scriptRecordFromResponse(payload));
     const requestId = typeof payload?.requestId === "string" ? payload.requestId : undefined;
     const response = asRecord(payload?.response);
     const resourceType = typeof payload?.type === "string" ? payload.type : undefined;
@@ -2770,9 +2805,134 @@ async function primeChildCdpSession(
     await runtime.cdpRouter
       .send({ tabId: runtime.tabId, sessionId: childSessionId }, "Performance.enable")
       .catch(() => undefined);
+    await enableScriptDebugger(runtime, runtime.cdpRouter, {
+      tabId: runtime.tabId,
+      sessionId: childSessionId
+    });
   } catch {
     runtime.enabledCdpSessions.delete(childSessionId);
   }
+}
+
+function resolveRuntimeSourceMapCapture(runtime: SessionRuntime): SourceMapCapture {
+  return resolveSourceMapCapture(runtime.profile.selection.profile, runtime.mode);
+}
+
+/** Lite pages scan their own scripts for map references when the profile asks for it. */
+function toScriptScanStatus(runtime: SessionRuntime): { scriptSourceMaps?: true } {
+  return runtime.mode === "lite" && resolveRuntimeSourceMapCapture(runtime).mode !== "off"
+    ? { scriptSourceMaps: true }
+    : {};
+}
+
+/**
+ * Turns on `Debugger.scriptParsed` (which also reports scripts loaded before recording started)
+ * when the profile records source maps. Pauses are skipped so `debugger;` statements and
+ * breakpoints never stop the page.
+ */
+async function enableScriptDebugger(
+  runtime: SessionRuntime,
+  router: CdpRouter,
+  target: { tabId: number; sessionId?: string }
+): Promise<void> {
+  if (resolveRuntimeSourceMapCapture(runtime).mode === "off") {
+    return;
+  }
+
+  try {
+    await router.send(target, "Debugger.enable", {
+      maxScriptsCacheSize: DEBUGGER_SCRIPT_CACHE_BYTES
+    });
+    await router.send(target, "Debugger.setSkipAllPauses", { skip: true });
+  } catch (error) {
+    console.warn("[WebBlackbox] failed to enable script source map capture", {
+      sid: runtime.sid,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+/** Lite scanner records arrive as content events with full URLs. */
+function readContentScriptRecord(payload: unknown): RawScriptRecord | null {
+  const row = asRecord(payload);
+  const url = typeof row?.url === "string" ? row.url : "";
+  const sourceMapUrl = typeof row?.sourceMapUrl === "string" ? row.sourceMapUrl : "";
+  const origin = row?.origin === "header" ? "header" : row?.origin === "comment" ? "comment" : null;
+
+  return url && sourceMapUrl && origin ? { url, sourceMapUrl, origin } : null;
+}
+
+/**
+ * Records a script's source map reference once per session and, when the profile embeds maps,
+ * stores the map as a blob and records it in a follow-up event.
+ */
+function recordScriptSourceMap(runtime: SessionRuntime, record: RawScriptRecord | null): void {
+  if (!record || runtime.stopping) {
+    return;
+  }
+
+  const capture = resolveRuntimeSourceMapCapture(runtime);
+
+  if (capture.mode === "off" || !runtime.scriptSourceMaps.markRecorded(record)) {
+    return;
+  }
+
+  ingestScriptRecord(runtime, record);
+
+  if (capture.mode !== "embed" || !runtime.scriptSourceMaps.reserveEmbed(record)) {
+    return;
+  }
+
+  enqueue(
+    runtime,
+    async () => {
+      await embedScriptSourceMap(runtime, record, capture.maxMapBytes);
+    },
+    { bestEffort: true }
+  );
+}
+
+async function embedScriptSourceMap(
+  runtime: SessionRuntime,
+  record: RawScriptRecord,
+  maxMapBytes: number
+): Promise<void> {
+  if (runtime.stopping) {
+    return;
+  }
+
+  const tracker = runtime.scriptSourceMaps;
+  const result = await loadSourceMapForEmbedding(record, {
+    maxBytes: Math.min(maxMapBytes, tracker.remainingEmbedBytes())
+  });
+
+  if (!result.ok) {
+    ingestScriptRecord(runtime, { ...record, mapError: result.error });
+    return;
+  }
+
+  tracker.addEmbeddedBytes(result.bytes.byteLength);
+  const contentHash = await runtime.pipeline.putBlob("application/json", result.bytes);
+
+  ingestScriptRecord(runtime, {
+    ...record,
+    map: { contentHash, size: result.bytes.byteLength }
+  });
+}
+
+function ingestScriptRecord(
+  runtime: SessionRuntime,
+  payload: RawScriptRecord & { map?: { contentHash: string; size: number }; mapError?: string }
+): void {
+  ingestRawEvent({
+    source: "system",
+    rawType: SCRIPT_RAW_TYPE,
+    sid: runtime.sid,
+    tabId: runtime.tabId,
+    t: Date.now(),
+    mono: monotonicTime(),
+    payload
+  });
 }
 
 async function captureResponseBody(
@@ -5232,6 +5392,8 @@ async function notifyTabStatus(
     return;
   }
 
+  const runtime = active ? sessionsByTab.get(tabId) : undefined;
+
   await chromeApi.tabs
     .sendMessage(tabId, {
       kind: "sw.recording-status",
@@ -5239,7 +5401,8 @@ async function notifyTabStatus(
       sid,
       mode,
       sampling,
-      capturePolicy
+      capturePolicy,
+      ...(runtime ? toScriptScanStatus(runtime) : {})
     })
     .catch(() => undefined);
 }

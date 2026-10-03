@@ -12,7 +12,13 @@ import {
   findCategoriesAboveCeiling,
   type CaptureCategoryKey
 } from "./categories.js";
-import { DEFAULT_PROFILE_ID, withoutRedactionUnmask, type RecordingProfile } from "./model.js";
+import {
+  DEFAULT_PROFILE_ID,
+  DEFAULT_SOURCE_MAP_MAX_BYTES,
+  withoutRedactionUnmask,
+  type ProfileSourceMapMode,
+  type RecordingProfile
+} from "./model.js";
 import { BUILT_IN_PROFILE_IDS, findBuiltInProfile, STANDARD_CAPTURE_CEILING } from "./presets.js";
 import { findMatchingRule, matchesHostPattern, type ProfilePageContext } from "./rules.js";
 import type { ProfilesState } from "./storage.js";
@@ -245,6 +251,25 @@ export function toArchivedProfileInfo(selection: ProfileSelection): ArchivedProf
   };
 }
 
+export type SourceMapCapture = {
+  mode: ProfileSourceMapMode;
+  maxMapBytes: number;
+};
+
+/**
+ * Effective source map capture for a profile on a transport. Without an explicit setting, Full
+ * mode records map references (the debugger reports them for free) and Lite records nothing.
+ */
+export function resolveSourceMapCapture(
+  profile: Pick<RecordingProfile, "sourceMaps">,
+  mode: CaptureMode
+): SourceMapCapture {
+  return {
+    mode: profile.sourceMaps?.mode ?? (mode === "full" ? "metadata" : "off"),
+    maxMapBytes: profile.sourceMaps?.maxMapBytes ?? DEFAULT_SOURCE_MAP_MAX_BYTES
+  };
+}
+
 /** Same profile, rule and gate outcome: no need to reconfigure the recorder. */
 export function isSameProfileSelection(left: ProfileSelection, right: ProfileSelection): boolean {
   return (
@@ -271,6 +296,15 @@ function downgradeToFullPreset(profile: RecordingProfile): RecordingProfile {
     recorder: { ...profile.recorder },
     sitePolicies: profile.sitePolicies,
     ...(profile.basePolicy ? { basePolicy: profile.basePolicy } : {}),
+    // Map references stay; storing maps (site source code) does not survive the downgrade.
+    ...(profile.sourceMaps
+      ? {
+          sourceMaps: {
+            ...profile.sourceMaps,
+            mode: profile.sourceMaps.mode === "embed" ? "metadata" : profile.sourceMaps.mode
+          }
+        }
+      : {}),
     export: { ...profile.export }
   };
 }

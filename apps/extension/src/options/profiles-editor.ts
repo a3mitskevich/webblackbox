@@ -322,6 +322,18 @@ function createProfileForm(profile: RecordingProfile, t: Translate): HTMLElement
       { value: "both", label: t("popupFullVisualBoth") },
       { value: "none", label: t("popupFullVisualNone") }
     ]),
+    labeledSelect(t("optionsProfileSourceMaps"), "sourceMaps", profile.sourceMaps?.mode ?? "", [
+      { value: "", label: t("optionsProfileSourceMapsAuto") },
+      { value: "off", label: t("optionsProfileSourceMapsOff") },
+      { value: "metadata", label: t("optionsProfileSourceMapsMetadata") },
+      { value: "embed", label: t("optionsProfileSourceMapsEmbed") }
+    ]),
+    labeledInput(
+      t("optionsProfileSourceMapMaxBytes"),
+      "sourceMapMaxBytes",
+      profile.sourceMaps?.maxMapBytes?.toString() ?? "",
+      "number"
+    ),
     labeledCheckbox(
       t("optionsProfileRequireEncryption"),
       "requireEncryption",
@@ -685,6 +697,8 @@ function syncOpenProfileForm(card: HTMLElement, editor: EditorState): void {
     excludeUrls: readField(form, "excludeUrls"),
     mousemoveHz: readField(form, "mousemoveHz"),
     visual: readField(form, "visual"),
+    sourceMaps: readField(form, "sourceMaps"),
+    sourceMapMaxBytes: readField(form, "sourceMapMaxBytes"),
     requireEncryption: readCheckbox(form, "requireEncryption"),
     blockOnFindings: readCheckbox(form, "blockOnFindings")
   });

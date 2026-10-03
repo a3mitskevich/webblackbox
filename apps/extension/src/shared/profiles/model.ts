@@ -31,6 +31,9 @@ export const MIN_RULE_PRIORITY = -1000;
 export const MAX_RULE_PRIORITY = 1000;
 export const MAX_MOUSEMOVE_HZ = 240;
 export const MAX_BODY_CAPTURE_BYTES = 8 * 1024 * 1024;
+/** Default and hard cap for one source map embedded at record time. */
+export const DEFAULT_SOURCE_MAP_MAX_BYTES = 8 * 1024 * 1024;
+export const MAX_SOURCE_MAP_BYTES = 32 * 1024 * 1024;
 
 /** Visual capture a profile pins; absent = the popup's choice (today's behaviour). */
 export type ProfileVisualCapture = "none" | "screenshots" | "recording" | "both";
@@ -54,6 +57,19 @@ export type ProfilePointerSettings = {
   wheel: boolean;
 };
 
+/**
+ * Source map capture: `metadata` records each script's map reference, `embed` also stores the
+ * map in the archive. A profile without `sourceMaps` uses metadata in Full mode (CDP) and
+ * nothing in Lite mode, where capture refetches scripts.
+ */
+export type ProfileSourceMapMode = "off" | "metadata" | "embed";
+
+export type ProfileSourceMapSettings = {
+  mode: ProfileSourceMapMode;
+  /** Largest map embedded; absent = `DEFAULT_SOURCE_MAP_MAX_BYTES`. */
+  maxMapBytes?: number;
+};
+
 export type ProfileExportSettings = {
   encryption: "required" | "optional";
   privacyScanner: "block" | "warn";
@@ -72,6 +88,7 @@ export type RecordingProfile = {
   network: ProfileNetworkSettings;
   pointer: ProfilePointerSettings;
   visual?: ProfileVisualCapture;
+  sourceMaps?: ProfileSourceMapSettings;
   sampling: Partial<SamplingProfile>;
   recorder: {
     ringBufferMinutes?: number;
@@ -179,6 +196,13 @@ export const recordingProfileSchema = z
       })
       .strict(),
     visual: z.enum(["none", "screenshots", "recording", "both"]).optional(),
+    sourceMaps: z
+      .object({
+        mode: z.enum(["off", "metadata", "embed"]),
+        maxMapBytes: positiveIntSchema.max(MAX_SOURCE_MAP_BYTES).optional()
+      })
+      .strict()
+      .optional(),
     sampling: samplingSchema,
     recorder: z
       .object({

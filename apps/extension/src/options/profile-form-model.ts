@@ -9,9 +9,11 @@ import {
   DEFAULT_PROFILE_ID,
   MAX_BODY_CAPTURE_BYTES,
   MAX_MOUSEMOVE_HZ,
+  MAX_SOURCE_MAP_BYTES,
   MAX_RULE_PRIORITY,
   MIN_RULE_PRIORITY,
   type ProfileRule,
+  type ProfileSourceMapMode,
   type ProfileVisualCapture,
   type RecordingProfile,
   type RecordingProfilesStore
@@ -33,6 +35,9 @@ export type ProfileFormValues = {
   excludeUrls: string;
   mousemoveHz: string;
   visual: string;
+  /** `""` = automatic (metadata in Full mode, off in Lite). */
+  sourceMaps: string;
+  sourceMapMaxBytes: string;
   requireEncryption: boolean;
   blockOnFindings: boolean;
 };
@@ -55,6 +60,7 @@ export type RuleFormValues = {
 };
 
 const VISUAL_VALUES: readonly ProfileVisualCapture[] = ["none", "screenshots", "recording", "both"];
+const SOURCE_MAP_MODES: readonly ProfileSourceMapMode[] = ["off", "metadata", "embed"];
 
 export function splitLines(value: string): string[] {
   return value
@@ -113,8 +119,10 @@ export function applyProfileFormValues(
   const bodyMaxBytes = parseOptionalInt(values.bodyMaxBytes, 0, MAX_BODY_CAPTURE_BYTES);
   const mousemoveHz = parseOptionalInt(values.mousemoveHz, 1, MAX_MOUSEMOVE_HZ);
   const visual = VISUAL_VALUES.find((entry) => entry === values.visual);
+  const sourceMapMode = SOURCE_MAP_MODES.find((entry) => entry === values.sourceMaps);
+  const sourceMapMaxBytes = parseOptionalInt(values.sourceMapMaxBytes, 1, MAX_SOURCE_MAP_BYTES);
   const withoutVisual = Object.fromEntries(
-    Object.entries(profile).filter(([key]) => key !== "visual")
+    Object.entries(profile).filter(([key]) => key !== "visual" && key !== "sourceMaps")
   ) as RecordingProfile;
 
   return {
@@ -142,6 +150,14 @@ export function applyProfileFormValues(
       ...(mousemoveHz !== undefined ? { mousemoveHz } : {})
     },
     ...(visual ? { visual } : {}),
+    ...(sourceMapMode
+      ? {
+          sourceMaps: {
+            mode: sourceMapMode,
+            ...(sourceMapMaxBytes !== undefined ? { maxMapBytes: sourceMapMaxBytes } : {})
+          }
+        }
+      : {}),
     export: {
       encryption: values.requireEncryption ? "required" : "optional",
       privacyScanner: values.blockOnFindings ? "block" : "warn"

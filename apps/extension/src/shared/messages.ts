@@ -120,6 +120,8 @@ export type RecordingStatusMessage = {
     | "bodyCaptureMaxBytes"
   >;
   capturePolicy?: CapturePolicy;
+  /** Lite pages scan their scripts for source map references. */
+  scriptSourceMaps?: boolean;
 };
 
 export type FreezeNoticeMessage = {

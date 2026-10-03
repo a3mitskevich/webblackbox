@@ -27,6 +27,8 @@ export type LiteCaptureState = {
   mode?: SessionMetadata["mode"] | "freeze";
   sampling?: Partial<LiteCaptureSampling>;
   capturePolicy?: CapturePolicy;
+  /** Scan same-origin scripts for source map references (lite mode only). */
+  scriptSourceMaps?: boolean;
 };
 
 /**
