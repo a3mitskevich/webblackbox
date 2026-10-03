@@ -73,6 +73,7 @@ import {
   buildLiteNetworkResponseRawEvent
 } from "./lite-network-baseline.js";
 import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
+import { createOffscreenPortConnector, OFFSCREEN_UNAVAILABLE_ERROR } from "./offscreen-port.js";
 import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
   buildRequestMetaKey,
@@ -446,14 +447,37 @@ const PORT_DEBUG_LOG_FLAG = "__WEBBLACKBOX_DEBUG_PORT__";
 const PERF_WARN_MS = 40;
 const OFFSCREEN_REQUEST_TIMEOUT_DEFAULT_MS = 30_000;
 const OFFSCREEN_REQUEST_TIMEOUT_EXPORT_MS = 12 * 60_000;
-const OFFSCREEN_PORT_READY_MAX_ATTEMPTS = 200;
+const OFFSCREEN_PORT_READY_TIMEOUT_MS = 5_000;
 const OFFSCREEN_PORT_READY_WAIT_MS = 25;
+const OFFSCREEN_CONNECT_REQUEST_KIND = "sw.offscreen-connect";
 const STOP_DRAIN_ACK_TIMEOUT_MS = 3_000;
 const CDP_ARTIFACT_TIMEOUT_MS = 5_000;
 const CDP_HEAP_SNAPSHOT_TIMEOUT_MS = 8_000;
 const SCREEN_RECORDING_OFFSCREEN_SOURCE = "tab";
 
 console.info("[WebBlackbox] service worker booted");
+
+const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
+  {
+    getPort: () => offscreenPort,
+    hasDocument: hasOffscreenDocument,
+    createDocument: createOffscreenDocument,
+    closeDocument: async () => {
+      await chromeApi?.offscreen?.closeDocument();
+    },
+    requestReconnect: async () => {
+      await chromeApi?.runtime?.sendMessage({ kind: OFFSCREEN_CONNECT_REQUEST_KIND });
+    },
+    wait
+  },
+  {
+    portWaitMs: OFFSCREEN_PORT_READY_TIMEOUT_MS,
+    pollMs: OFFSCREEN_PORT_READY_WAIT_MS
+  }
+);
+const orphanedOffscreenCleanup = closeOrphanedOffscreenDocument().catch((error) => {
+  console.warn("[WebBlackbox] failed to close orphaned offscreen document", error);
+});
 
 void restoreRuntimeState();
 
@@ -2038,7 +2062,7 @@ function shouldRetryOffscreenRequest(
   return (
     message.includes("Pipeline session not found") ||
     message.includes("Offscreen pipeline disconnected") ||
-    message.includes("Offscreen pipeline is unavailable")
+    message.includes(OFFSCREEN_UNAVAILABLE_ERROR)
   );
 }
 
@@ -2051,21 +2075,8 @@ function resolveOffscreenRequestTimeoutMs(requestOp: OffscreenPipelineRequest["o
 }
 
 async function ensureOffscreenPortReady(): Promise<PortLike> {
-  if (offscreenPort) {
-    return offscreenPort;
-  }
-
-  await ensureOffscreenDocument();
-
-  for (let attempt = 0; attempt < OFFSCREEN_PORT_READY_MAX_ATTEMPTS; attempt += 1) {
-    if (offscreenPort) {
-      return offscreenPort;
-    }
-
-    await wait(OFFSCREEN_PORT_READY_WAIT_MS);
-  }
-
-  throw new Error("Offscreen pipeline is unavailable.");
+  await orphanedOffscreenCleanup;
+  return offscreenPortConnector.ensurePort();
 }
 
 function handleOffscreenRuntimeMessage(rawMessage: unknown, port: PortLike): boolean {
@@ -4146,19 +4157,44 @@ function normalizeLiteNetworkTimestamp(candidate: unknown): number {
 }
 
 async function ensureOffscreenDocument(): Promise<void> {
-  if (!chromeApi?.offscreen?.createDocument || !chromeApi.runtime?.getURL) {
+  await orphanedOffscreenCleanup;
+
+  if (await hasOffscreenDocument()) {
     return;
   }
 
-  const offscreenUrl = chromeApi.runtime.getURL(OFFSCREEN_PATH);
-  const contexts = chromeApi.runtime.getContexts
-    ? await chromeApi.runtime.getContexts({
-        contextTypes: ["OFFSCREEN_DOCUMENT"],
-        documentUrls: [offscreenUrl]
-      })
-    : [];
+  await createOffscreenDocument();
+}
 
-  if (contexts.length > 0) {
+async function hasOffscreenDocument(): Promise<boolean> {
+  if (!chromeApi?.runtime?.getContexts || !chromeApi.runtime.getURL) {
+    return false;
+  }
+
+  const contexts = await chromeApi.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [chromeApi.runtime.getURL(OFFSCREEN_PATH)]
+  });
+
+  return contexts.length > 0;
+}
+
+/**
+ * An offscreen document that outlives a service worker restart keeps pipelines and
+ * capture streams the new worker no longer tracks (runtime sessions are not restored),
+ * and its port died with the old worker. Close it so the next session starts clean.
+ */
+async function closeOrphanedOffscreenDocument(): Promise<void> {
+  if (sessionsBySid.size > 0 || !(await hasOffscreenDocument())) {
+    return;
+  }
+
+  console.info("[WebBlackbox] closing offscreen document orphaned by a service worker restart");
+  await chromeApi?.offscreen?.closeDocument();
+}
+
+async function createOffscreenDocument(): Promise<void> {
+  if (!chromeApi?.offscreen?.createDocument) {
     return;
   }
 
