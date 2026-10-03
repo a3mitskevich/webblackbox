@@ -9,6 +9,7 @@ import {
   WEBBLACKBOX_EVENT_TYPES,
   WEBBLACKBOX_PROTOCOL_VERSION
 } from "./constants.js";
+import { scriptSourceMapDataSchema } from "./script.js";
 
 const recordStringUnknown = z.record(z.string(), z.unknown());
 
@@ -608,7 +609,8 @@ const specializedDataSchemas = {
   "storage.cookie.snapshot": storageSnapshotDataSchema,
   "storage.local.snapshot": storageSnapshotDataSchema,
   "storage.idb.snapshot": storageSnapshotDataSchema,
-  "perf.vitals": perfVitalsDataSchema
+  "perf.vitals": perfVitalsDataSchema,
+  "sys.script": scriptSourceMapDataSchema
 } as const;
 
 export function getEventPayloadSchema(type: z.infer<typeof webBlackboxEventTypeSchema>): z.ZodType {

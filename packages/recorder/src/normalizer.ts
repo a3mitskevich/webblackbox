@@ -16,6 +16,7 @@ import {
   sanitizeOptionalUrl,
   stripUndefined
 } from "./normalizer-utils.js";
+import { normalizeScriptSourceMapPayload } from "./script-source-map.js";
 import type { EventNormalizer, RawRecorderEvent } from "./types.js";
 
 const CDP_EVENT_MAP: Record<string, WebBlackboxEventType> = {
@@ -66,12 +67,20 @@ const CONTENT_EVENT_MAP: Record<string, WebBlackboxEventType> = {
   cookieSnapshot: "storage.cookie.snapshot",
   sse: "network.sse.message"
 };
+/** Raw type of script → source map records from the debugger (system) or the lite scanner. */
+const SCRIPT_RAW_TYPE = "script";
 let fallbackRequestSequence = 0;
 
 export class DefaultEventNormalizer implements EventNormalizer {
   public normalize(
     input: RawRecorderEvent
   ): { eventType: WebBlackboxEventType; payload: unknown } | null {
+    if (input.rawType === SCRIPT_RAW_TYPE && input.source !== "cdp") {
+      const payload = normalizeScriptSourceMapPayload(input.payload);
+
+      return payload ? { eventType: "sys.script", payload } : null;
+    }
+
     if (input.source === "cdp") {
       const eventType = CDP_EVENT_MAP[input.rawType];
 

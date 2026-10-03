@@ -7,4 +7,5 @@ export * from "./messages.js";
 export * from "./network.js";
 export * from "./privacy.js";
 export * from "./schemas.js";
+export * from "./script.js";
 export * from "./types.js";
