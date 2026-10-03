@@ -2,6 +2,7 @@ export * from "./blob.js";
 export * from "./constants.js";
 export * from "./defaults.js";
 export * from "./ids.js";
+export * from "./keyboard-privacy.js";
 export * from "./messages.js";
 export * from "./network.js";
 export * from "./privacy.js";
