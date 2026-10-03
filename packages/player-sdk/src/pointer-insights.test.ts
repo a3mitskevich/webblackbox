@@ -359,6 +359,26 @@ describe("Playwright action lines", () => {
     expect(selectPlaywrightActions([hold, click(20), next], 2)).toEqual([hold, next]);
   });
 
+  it("never presses a key the capture redacted", () => {
+    expect(
+      buildPlaywrightActionLines([
+        event("user.keydown", 10, { key: "Enter" }),
+        event("user.keydown", 20, { key: "[REDACTED]" }),
+        event("user.keydown", 30, { key: "[MASKED]" }),
+        event("user.keydown", 40, { key: "a", redacted: true }),
+        event("user.keydown", 50, { key: "" }),
+        event("user.keydown", 60, { key: "f".repeat(64) })
+      ])
+    ).toEqual([
+      '  await page.keyboard.press("Enter");',
+      "  // keydown skipped (key redacted in capture)",
+      "  // keydown skipped (key redacted in capture)",
+      "  // keydown skipped (key redacted in capture)",
+      "  // keydown skipped (key redacted in capture)",
+      "  // keydown skipped (key redacted in capture)"
+    ]);
+  });
+
   it("comments out targets the profile kept hashed", () => {
     const lines = buildPlaywrightActionLines([
       click(10, 1, 1, { tag: "BUTTON", selector: "selector:0123456789ab" }),

@@ -109,7 +109,7 @@ const REACTION_EXEMPT_ROLES = new Set(["textbox", "searchbox", "combobox", "chec
 const DOM_REACTION_TYPES = new Set<WebBlackboxEventType>(["dom.mutation.batch", "dom.rrweb.event"]);
 const CLICK_MONO_TOLERANCE_MS = 1;
 /** What the recorder's redaction leaves in place of a string: an HMAC digest or a marker. */
-const MASKED_VALUE_PATTERN = /^(?:[0-9a-f]{64}|\[REDACTED[^\]]*\])$/;
+const MASKED_VALUE_PATTERN = /^(?:[0-9a-f]{64}|\[(?:REDACTED|MASKED)[^\]]*\])$/;
 
 type ReactionProbe = { clickMono: number; mutated: boolean };
 
@@ -153,7 +153,12 @@ export function describePointerTarget(value: unknown): string | undefined {
 /** Readable CSS selector recorded for a target (never the hashed `selector`). */
 export function readReadableSelector(value: unknown): string | undefined {
   const css = asString(asRecord(asRecord(value)?.readable)?.css);
-  return css && !MASKED_VALUE_PATTERN.test(css) ? css : undefined;
+  return css && !isMaskedValue(css) ? css : undefined;
+}
+
+/** True for a string the capture or the recorder replaced: an HMAC digest or a redaction marker. */
+export function isMaskedValue(value: string): boolean {
+  return MASKED_VALUE_PATTERN.test(value);
 }
 
 /** A primary-button press held still long enough (the capture agent's `longPress`). */

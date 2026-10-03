@@ -1,6 +1,11 @@
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 
-import { findGestureClickIds, isLongPress, readReadableSelector } from "./pointer-insights.js";
+import {
+  findGestureClickIds,
+  isLongPress,
+  isMaskedValue,
+  readReadableSelector
+} from "./pointer-insights.js";
 
 const HASHED_SELECTOR_PATTERN = /^selector:|\[REDACTED|\[(?:id|class):t_/;
 
@@ -102,10 +107,8 @@ function toPlaywrightLines(
       const y = asNumber(data?.scrollY) ?? 0;
       return [`  await page.evaluate(([x, y]) => window.scrollTo(x, y), [${x}, ${y}] as const);`];
     }
-    case "user.keydown": {
-      const key = asString(data?.key);
-      return key ? [`  await page.keyboard.press(${toJsLiteral(key)});`] : [];
-    }
+    case "user.keydown":
+      return keydownLines(data);
     case "user.marker":
       return ["  // Marker captured during session"];
     default:
@@ -171,6 +174,17 @@ function wheelLines(data: Record<string, unknown> | null): string[] {
         "  await page.keyboard.up('Control');"
       ]
     : [...move, wheel];
+}
+
+/** A key the capture redacted (masked, hashed, flagged or empty) is never pressed. */
+function keydownLines(data: Record<string, unknown> | null): string[] {
+  const key = asString(data?.key);
+
+  if (!key || isMaskedValue(key) || data?.redacted === true || data?.masked === true) {
+    return ["  // keydown skipped (key redacted in capture)"];
+  }
+
+  return [`  await page.keyboard.press(${toJsLiteral(key)});`];
 }
 
 function inputLines(data: Record<string, unknown> | null): string[] {
