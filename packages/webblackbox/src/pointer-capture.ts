@@ -7,7 +7,7 @@ import {
   type PointerKind
 } from "@webblackbox/protocol";
 
-import { isCoveredByBlockedSelector } from "./input-value-policy.js";
+import { isCoveredByBlockedSelector, isNeverCapturedField } from "./input-value-policy.js";
 import {
   allowsSelectionText,
   readFrameOffset,
@@ -724,15 +724,12 @@ function readSelectionState(policy: CapturePolicy): SelectionState | null {
   };
 }
 
-/** Password fields and fields under a blocked selector do not even report a selection length. */
+/** Never-captured (password-like) and blocked fields do not even report a selection length. */
 function isPrivateField(
   field: HTMLInputElement | HTMLTextAreaElement,
   policy: CapturePolicy
 ): boolean {
-  return (
-    (field instanceof HTMLInputElement && field.type.toLowerCase() === "password") ||
-    isCoveredByBlockedSelector(field, policy.redaction)
-  );
+  return isNeverCapturedField(field) || isCoveredByBlockedSelector(field, policy.redaction);
 }
 
 /**

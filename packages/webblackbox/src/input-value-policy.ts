@@ -185,7 +185,8 @@ export function isCoveredByBlockedSelector(element: Element, redaction: Redactio
   return unmaskedAt === null || !blockedAt.contains(unmaskedAt);
 }
 
-function isNeverCapturedField(field: EditableField): boolean {
+/** Password fields (now or earlier), password-like names and secret autocomplete tokens. */
+export function isNeverCapturedField(field: EditableField): boolean {
   const isPasswordNow =
     field instanceof HTMLInputElement && field.type.toLowerCase() === "password";
 

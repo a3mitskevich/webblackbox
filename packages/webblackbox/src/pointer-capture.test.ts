@@ -339,16 +339,17 @@ describe("pointer capture", () => {
     agent.dispose();
   });
 
-  it("reports no selection inside a password field", async () => {
-    document.body.insertAdjacentHTML(
-      "beforeend",
-      `<input id="pw" type="password" value="hunter2hunter2" />`
-    );
+  it.each([
+    `<input id="private" type="password" value="hunter2hunter2" />`,
+    `<input id="private" type="text" autocomplete="one-time-code" value="123456789" />`,
+    `<input id="private" type="text" name="new-password" value="hunter2hunter2" />`
+  ])("reports no selection inside a never-captured field: %s", async (html) => {
+    document.body.insertAdjacentHTML("beforeend", html);
     const { agent, ofType } = createAgent({ pointer: ALL_POINTER, capturePolicy: READABLE_POLICY });
-    const field = element<HTMLInputElement>("#pw");
+    const field = element<HTMLInputElement>("#private");
 
     field.focus();
-    field.setSelectionRange(0, 7);
+    field.setSelectionRange(0, 5);
     document.dispatchEvent(new Event("selectionchange"));
     await vi.advanceTimersByTimeAsync(400);
 
