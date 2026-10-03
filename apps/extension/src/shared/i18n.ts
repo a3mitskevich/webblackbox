@@ -145,6 +145,7 @@ const EXTENSION_MESSAGES = {
     optionsRuleAdd: "Add rule",
     optionsRuleName: "Name",
     optionsRuleProfile: "Profile",
+    optionsRuleProfileMissing: "Missing profile: {id}",
     optionsRulePriority: "Priority",
     optionsRuleEnabled: "Enabled",
     optionsRuleHosts: "Hosts",
@@ -167,6 +168,10 @@ const EXTENSION_MESSAGES = {
     optionsProfilesImportNoChanges: "The file matches the current profiles.",
     optionsProfilesImportSummary:
       "Profiles: +{added} −{removed} ~{changed}. Rules: +{rulesAdded} −{rulesRemoved} ~{rulesChanged}.",
+    optionsProfilesImportDefault: "Default profile: {from} → {to}",
+    optionsProfilesImportHosts:
+      "Hosts allowed for extended profiles: added {added}; removed {removed}",
+    optionsProfilesImportChanged: "Changed: {items}",
     optionsProfilesError: "Error: {error}",
     optionsSandboxTitle: "Redaction sandbox",
     optionsSandboxHint: "Paste a sample to see what the selected profile hides.",
@@ -363,6 +368,7 @@ const EXTENSION_MESSAGES = {
     optionsRuleAdd: "添加规则",
     optionsRuleName: "名称",
     optionsRuleProfile: "配置",
+    optionsRuleProfileMissing: "配置不存在：{id}",
     optionsRulePriority: "优先级",
     optionsRuleEnabled: "启用",
     optionsRuleHosts: "主机",
@@ -385,6 +391,9 @@ const EXTENSION_MESSAGES = {
     optionsProfilesImportNoChanges: "文件与当前配置一致。",
     optionsProfilesImportSummary:
       "配置：+{added} −{removed} ~{changed}。规则：+{rulesAdded} −{rulesRemoved} ~{rulesChanged}。",
+    optionsProfilesImportDefault: "默认配置：{from} → {to}",
+    optionsProfilesImportHosts: "允许扩展配置的主机：新增 {added}；移除 {removed}",
+    optionsProfilesImportChanged: "已更改：{items}",
     optionsProfilesError: "错误：{error}",
     optionsSandboxTitle: "脱敏沙箱",
     optionsSandboxHint: "粘贴示例，查看所选配置会隐藏哪些内容。",

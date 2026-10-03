@@ -69,16 +69,27 @@ function setField(root: ParentNode, name: string, value: string): void {
 }
 
 async function mount(storage: ReturnType<typeof createStorage>): Promise<HTMLElement> {
+  return (await mountWithHandle(storage)).container;
+}
+
+async function mountWithHandle(storage: ReturnType<typeof createStorage>) {
   const container = document.createElement("div");
   document.body.append(container);
-  await mountProfilesEditor(container, {
+  const handle = await mountProfilesEditor(container, {
     chromeApi: storage.chromeApi,
     t,
     locale: "en",
     legacyOptionsKey: "webblackbox.options",
     enterprisePolicyKey: "enterprisePolicy"
   });
-  return container;
+  return { container, handle };
+}
+
+function savedStore(storage: ReturnType<typeof createStorage>) {
+  return storage.data[PROFILES_STORAGE_KEY] as {
+    profiles: Array<{ id: string; name: string; redaction: Record<string, unknown> }>;
+    rules: Array<{ id: string; profileId: string }>;
+  };
 }
 
 describe("profiles editor", () => {
@@ -197,6 +208,94 @@ describe("profiles editor", () => {
 
     expect(container.querySelectorAll(".wb-profiles__rule")).toHaveLength(1);
     expect(storage.data[PROFILES_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it("saves edits still open in the profile form, and Cancel discards them", async () => {
+    const storage = createStorage();
+    const container = await mount(storage);
+
+    click(rowOf(container, BUILT_IN_PROFILE_IDS.full), "[data-action='profile-duplicate']");
+    setField(container, "name", "Not applied yet");
+    click(container, "[data-action='profiles-save']");
+    await flush();
+
+    expect(savedStore(storage).profiles.map((profile) => profile.name)).toContain(
+      "Not applied yet"
+    );
+
+    click(rowOf(container, "default"), "[data-action='profile-edit']");
+    setField(container, "name", "Discarded");
+    click(container, "[data-action='profile-cancel']");
+    click(container, "[data-action='profiles-save']");
+    await flush();
+
+    expect(savedStore(storage).profiles.map((profile) => profile.name)).not.toContain("Discarded");
+  });
+
+  it("keeps a rule whose profile no longer exists selectable", async () => {
+    const storage = createStorage({
+      [PROFILES_STORAGE_KEY]: {
+        schemaVersion: 2,
+        defaultProfileId: "default",
+        profiles: [],
+        rules: [{ id: "r1", profileId: "managed:gone", priority: 0, enabled: true, match: {} }],
+        extendedCaptureHosts: []
+      }
+    });
+    const container = await mount(storage);
+    const select = container.querySelector<HTMLSelectElement>('[name="ruleProfile"]');
+
+    expect(select?.value).toBe("managed:gone");
+    expect(select?.selectedOptions[0]?.textContent).toBe("Missing profile: managed:gone");
+
+    click(container, "[data-action='profiles-save']");
+    await flush();
+
+    expect(savedStore(storage).rules).toEqual([
+      expect.objectContaining({ id: "r1", profileId: "managed:gone" })
+    ]);
+  });
+
+  it("shows host and default changes in the import preview", async () => {
+    const container = await mount(createStorage());
+    const file = createProfilesExportFile({
+      schemaVersion: 2,
+      defaultProfileId: "default",
+      profiles: [],
+      rules: [],
+      extendedCaptureHosts: ["*.corp.test"]
+    });
+    const input = container.querySelector<HTMLInputElement>('input[name="profilesImport"]');
+
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [{ text: async () => JSON.stringify(file) }]
+    });
+    input?.dispatchEvent(new Event("change"));
+    await flush();
+
+    expect(
+      [...container.querySelectorAll("[data-import-detail]")].map((node) => node.textContent)
+    ).toEqual(["Hosts allowed for extended profiles: added *.corp.test; removed —"]);
+  });
+
+  it("folds a general settings save into the unsaved draft", async () => {
+    const storage = createStorage();
+    const { container, handle } = await mountWithHandle(storage);
+
+    click(rowOf(container, BUILT_IN_PROFILE_IDS.full), "[data-action='profile-duplicate']");
+    click(container, "[data-action='profile-apply']");
+    handle.applyGeneralOptions({
+      optionsVersion: 1,
+      redaction: { blockedSelectors: [".from-general-form"] }
+    });
+    click(container, "[data-action='profiles-save']");
+    await flush();
+
+    const saved = savedStore(storage);
+
+    expect(saved.profiles.map((profile) => profile.id)).toEqual(["default", "profile-2"]);
+    expect(saved.profiles[0]?.redaction.blockedSelectors).toEqual([".from-general-form"]);
   });
 
   it("previews redaction with the selected profile", async () => {

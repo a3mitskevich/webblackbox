@@ -16,6 +16,7 @@ import {
   parseManagedProfilesPolicy,
   resolveProfilesState,
   serializeProfilesStore,
+  syncDefaultProfileWithLegacyOptions,
   type ProfilesState
 } from "../shared/profiles/storage.js";
 import {
@@ -53,6 +54,11 @@ export type ProfilesEditorDeps = {
   enterprisePolicyKey: string;
 };
 
+export type ProfilesEditorHandle = {
+  /** Folds a general settings save into the draft's Default profile. */
+  applyGeneralOptions(payload: unknown): void;
+};
+
 type EditorState = {
   profilesState: ProfilesState;
   draft: RecordingProfilesStore;
@@ -76,7 +82,7 @@ const SANDBOX_KINDS: Array<{ value: RedactionSandboxKind; key: ExtensionMessageK
 export async function mountProfilesEditor(
   container: HTMLElement,
   deps: ProfilesEditorDeps
-): Promise<void> {
+): Promise<ProfilesEditorHandle> {
   const profilesState = await loadState(deps);
   const editor: EditorState = {
     profilesState,
@@ -86,6 +92,19 @@ export async function mountProfilesEditor(
   const rerender = (): void => render(container, editor, deps, rerender);
 
   rerender();
+
+  return {
+    applyGeneralOptions: (payload) => {
+      const card = container.querySelector<HTMLElement>(".wb-profiles");
+
+      if (card) {
+        syncDraftFromDom(card, editor);
+      }
+
+      editor.draft = syncDefaultProfileWithLegacyOptions(editor.draft, payload);
+      rerender();
+    }
+  };
 }
 
 async function loadState(deps: ProfilesEditorDeps): Promise<ProfilesState> {
@@ -325,10 +344,19 @@ function createRulesSection(
   const profileOptions = catalog.map((profile) => ({ value: profile.id, label: profile.name }));
 
   for (const rule of editor.draft.rules) {
+    // A rule may target a profile that was deleted or dropped from managed policy; keep its id
+    // selectable so the next sync does not blank it and block saving.
+    const ruleProfileOptions = catalog.some((profile) => profile.id === rule.profileId)
+      ? profileOptions
+      : [
+          ...profileOptions,
+          { value: rule.profileId, label: t("optionsRuleProfileMissing", { id: rule.profileId }) }
+        ];
+
     section.append(
       el("fieldset", { className: "wb-profiles__rule", dataset: { ruleId: rule.id } }, [
         labeledInput(t("optionsRuleName"), "ruleName", rule.name ?? ""),
-        labeledSelect(t("optionsRuleProfile"), "ruleProfile", rule.profileId, profileOptions),
+        labeledSelect(t("optionsRuleProfile"), "ruleProfile", rule.profileId, ruleProfileOptions),
         labeledInput(t("optionsRulePriority"), "rulePriority", String(rule.priority), "number"),
         labeledCheckbox(t("optionsRuleEnabled"), "ruleEnabled", rule.enabled),
         labeledTextarea(t("optionsRuleHosts"), "ruleHosts", joinLines(rule.match.hosts ?? [])),
@@ -392,11 +420,37 @@ function createTransferSection(editor: EditorState, t: Translate): HTMLElement {
             })
           : t("optionsProfilesImportNoChanges")
       }),
+      ...describeImportDetails(diff, t).map((text) =>
+        el("p", { className: "wb-options-help", dataset: { importDetail: "" }, text })
+      ),
       button(t("optionsProfilesImportApply"), "profiles-import-apply", "accent")
     );
   }
 
   return section;
+}
+
+/** Lines a reviewer needs before applying an import: what changes beyond the counts. */
+function describeImportDetails(diff: ProfilesDiff, t: Translate): string[] {
+  const changed = [...diff.profiles.changed, ...diff.rules.changed].map(
+    (entry) => `${entry.name} (${entry.fields.join(", ")})`
+  );
+  const hosts = diff.extendedCaptureHosts;
+
+  return [
+    ...(diff.defaultProfileId ? [t("optionsProfilesImportDefault", diff.defaultProfileId)] : []),
+    ...(hosts.added.length > 0 || hosts.removed.length > 0
+      ? [
+          t("optionsProfilesImportHosts", {
+            added: hosts.added.join(", ") || "—",
+            removed: hosts.removed.join(", ") || "—"
+          })
+        ]
+      : []),
+    ...(changed.length > 0
+      ? [t("optionsProfilesImportChanged", { items: changed.join("; ") })]
+      : [])
+  ];
 }
 
 function createSandboxSection(
@@ -446,8 +500,14 @@ function bindEditor(
     target.closest<HTMLElement>("[data-profile-id]")?.dataset.profileId ?? "";
   const findProfile = (id: string): RecordingProfile | undefined =>
     buildCatalog(editor).find((profile) => profile.id === id);
-  const update = (mutate: () => void): void => {
+  // Every action first keeps what is typed in the page (rules, hosts, the open profile form).
+  const update = (mutate: () => void, options: { discardFormEdits?: boolean } = {}): void => {
     syncRulesFromDom(card, editor);
+
+    if (!options.discardFormEdits) {
+      syncOpenProfileForm(card, editor);
+    }
+
     mutate();
     rerender();
   };
@@ -485,11 +545,16 @@ function bindEditor(
           editor.editingId = undefined;
         });
       case "profile-apply":
-        return update(() => applyEditedProfile(card, editor));
-      case "profile-cancel":
         return update(() => {
           editor.editingId = undefined;
         });
+      case "profile-cancel":
+        return update(
+          () => {
+            editor.editingId = undefined;
+          },
+          { discardFormEdits: true }
+        );
       case "rule-add":
         return update(() => {
           editor.draft = { ...editor.draft, rules: [...editor.draft.rules, newRule(editor)] };
@@ -503,11 +568,11 @@ function bindEditor(
           };
         });
       case "profiles-save":
-        syncRulesFromDom(card, editor);
+        syncDraftFromDom(card, editor);
         void saveDraft(editor, deps).then(rerender);
         return;
       case "profiles-export":
-        syncRulesFromDom(card, editor);
+        syncDraftFromDom(card, editor);
         downloadExport(editor.draft);
         return;
       case "profiles-import-apply":
@@ -532,19 +597,38 @@ function bindEditor(
         return;
       }
 
-      void file.text().then((text) => {
-        syncRulesFromDom(card, editor);
-        const preview = previewProfilesImport(text, editor.draft);
-        editor.importPreview = preview.ok ? { next: preview.next, diff: preview.diff } : undefined;
-        editor.status = preview.ok
-          ? undefined
-          : { text: t("optionsProfilesError", { error: preview.error }), error: true };
-        rerender();
-      });
+      void file
+        .text()
+        .then((text) => {
+          syncDraftFromDom(card, editor);
+          const preview = previewProfilesImport(text, editor.draft);
+          editor.importPreview = preview.ok
+            ? { next: preview.next, diff: preview.diff }
+            : undefined;
+          editor.status = preview.ok
+            ? undefined
+            : { text: t("optionsProfilesError", { error: preview.error }), error: true };
+        })
+        .catch((error: unknown) => {
+          editor.importPreview = undefined;
+          editor.status = {
+            text: t("optionsProfilesError", {
+              error: error instanceof Error ? error.message : String(error)
+            }),
+            error: true
+          };
+        })
+        .finally(rerender);
     });
 }
 
-function applyEditedProfile(card: HTMLElement, editor: EditorState): void {
+function syncDraftFromDom(card: HTMLElement, editor: EditorState): void {
+  syncRulesFromDom(card, editor);
+  syncOpenProfileForm(card, editor);
+}
+
+/** Folds the open profile form into the draft; the form stays open. */
+function syncOpenProfileForm(card: HTMLElement, editor: EditorState): void {
   const form = card.querySelector<HTMLFormElement>(".wb-profiles__form");
   const profile = editor.draft.profiles.find((entry) => entry.id === editor.editingId);
 
@@ -576,7 +660,6 @@ function applyEditedProfile(card: HTMLElement, editor: EditorState): void {
     ...editor.draft,
     profiles: editor.draft.profiles.map((entry) => (entry.id === profile.id ? next : entry))
   };
-  editor.editingId = undefined;
 }
 
 /** Rule rows and the extended host list are plain inputs; fold them into the draft. */

@@ -15,11 +15,12 @@ import {
 } from "../shared/performance-budget.js";
 import { PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
 import {
+  applyDefaultProfileToGeneralForm,
   parseProfilesStore,
   serializeProfilesStore,
   syncDefaultProfileWithLegacyOptions
 } from "../shared/profiles/storage.js";
-import { mountProfilesEditor } from "./profiles-editor.js";
+import { mountProfilesEditor, type ProfilesEditorHandle } from "./profiles-editor.js";
 
 const STORAGE_KEY = "webblackbox.options";
 
@@ -35,6 +36,8 @@ type OptionsState = {
   performanceBudget: PerformanceBudgetConfig;
 };
 
+let profilesEditor: ProfilesEditorHandle | undefined;
+
 if (root) {
   bootstrap(root).catch((error) => {
     renderError(root, error);
@@ -48,7 +51,7 @@ async function bootstrap(container: HTMLElement): Promise<void> {
 
   container.replaceChildren(generalContainer, profilesContainer);
   render(generalContainer, options);
-  await mountProfilesEditor(profilesContainer, {
+  profilesEditor = await mountProfilesEditor(profilesContainer, {
     chromeApi,
     t,
     locale,
@@ -232,7 +235,21 @@ function render(container: HTMLElement, options: OptionsState): void {
   });
 }
 
+/** Once profiles are saved, the general form shows the Default profile's matching fields. */
 async function loadOptionsState(): Promise<OptionsState> {
+  const state = await loadLegacyOptionsState();
+  const values = await chromeApi?.storage?.local.get(PROFILES_STORAGE_KEY);
+  const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
+
+  return parsed
+    ? {
+        ...state,
+        recorderConfig: applyDefaultProfileToGeneralForm(state.recorderConfig, parsed.store)
+      }
+    : state;
+}
+
+async function loadLegacyOptionsState(): Promise<OptionsState> {
   const values = await chromeApi?.storage?.local.get(STORAGE_KEY);
   const stored = values?.[STORAGE_KEY];
 
@@ -282,6 +299,8 @@ async function saveOptionsState(options: OptionsState): Promise<void> {
   await syncSavedProfilesWithGeneralOptions(payload).catch((error) => {
     console.warn("[WebBlackbox] failed to sync the Default profile with general options", error);
   });
+  // The editor's unsaved draft must not write the old Default values back on its next save.
+  profilesEditor?.applyGeneralOptions(payload);
 }
 
 /** Once profiles are saved, the general form edits the Default profile's matching fields. */

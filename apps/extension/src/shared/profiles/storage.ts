@@ -77,16 +77,35 @@ export function migrateLegacyOptionsToProfiles(legacyOptions: unknown): Recordin
   };
 }
 
+/** Redaction fields the legacy general settings form shows and edits. */
+const GENERAL_FORM_REDACTION_KEYS = [
+  "blockedSelectors",
+  "redactHeaders",
+  "redactBodyPatterns",
+  "hashSensitiveValues"
+] as const;
+
+type GeneralFormFields = {
+  ringBufferMinutes: number;
+  freezeOnError: boolean;
+  sampling: object;
+  redaction: Pick<RecordingProfile["redaction"], (typeof GENERAL_FORM_REDACTION_KEYS)[number]>;
+};
+
 /**
- * Mirrors the legacy general settings form (sampling, ring buffer, freeze-on-error, redaction
- * lists) onto the Default profile of an existing v2 store, so that form keeps working after
- * profiles have been saved. Categories and every profile-only setting stay untouched.
+ * Mirrors the legacy general settings form (sampling, ring buffer, freeze-on-error and the
+ * redaction lists it shows) onto the Default profile, so that form keeps working after profiles
+ * have been saved. Only the fields the form edits are copied: categories, cookie names and every
+ * profile-only setting stay as the profile has them.
  */
 export function syncDefaultProfileWithLegacyOptions(
   store: RecordingProfilesStore,
   legacyOptions: unknown
 ): RecordingProfilesStore {
   const migrated = migrateLegacyDefaultProfile(legacyOptions);
+  const formRedaction = Object.fromEntries(
+    GENERAL_FORM_REDACTION_KEYS.map((key) => [key, migrated.redaction[key]])
+  );
 
   return {
     ...store,
@@ -94,12 +113,44 @@ export function syncDefaultProfileWithLegacyOptions(
       profile.id === DEFAULT_PROFILE_ID
         ? {
             ...profile,
-            redaction: migrated.redaction,
-            sampling: migrated.sampling,
-            recorder: migrated.recorder
+            redaction: { ...profile.redaction, ...formRedaction },
+            sampling: { ...profile.sampling, ...migrated.sampling },
+            recorder: { ...profile.recorder, ...migrated.recorder }
           }
         : profile
     )
+  };
+}
+
+/**
+ * The general settings form's values with the Default profile's current ones filled in, so the
+ * form shows (and saves back) what the profiles editor last saved instead of stale v1 options.
+ */
+export function applyDefaultProfileToGeneralForm<TForm extends GeneralFormFields>(
+  form: TForm,
+  store: RecordingProfilesStore
+): TForm {
+  const profile = store.profiles.find((entry) => entry.id === DEFAULT_PROFILE_ID);
+
+  if (!profile) {
+    return form;
+  }
+
+  return {
+    ...form,
+    ...(profile.recorder.ringBufferMinutes !== undefined
+      ? { ringBufferMinutes: profile.recorder.ringBufferMinutes }
+      : {}),
+    ...(profile.recorder.freezeOnError !== undefined
+      ? { freezeOnError: profile.recorder.freezeOnError }
+      : {}),
+    sampling: { ...form.sampling, ...profile.sampling },
+    redaction: {
+      ...form.redaction,
+      ...Object.fromEntries(
+        GENERAL_FORM_REDACTION_KEYS.map((key) => [key, structuredClone(profile.redaction[key])])
+      )
+    }
   };
 }
 

@@ -13,11 +13,13 @@ import {
 } from "./model.js";
 import { BUILT_IN_PROFILE_IDS, createDefaultProfile, duplicateProfile } from "./presets.js";
 import {
+  applyDefaultProfileToGeneralForm,
   migrateLegacyOptionsToProfiles,
   parseManagedProfilesPolicy,
   parseProfilesStore,
   resolveProfilesState,
-  serializeProfilesStore
+  serializeProfilesStore,
+  syncDefaultProfileWithLegacyOptions
 } from "./storage.js";
 
 const OPTIONS_PAGE_V1 = {
@@ -217,6 +219,49 @@ describe("resolveProfilesState", () => {
       ["managed:m2", BUILT_IN_PROFILE_IDS.qa],
       ["u1", "default"]
     ]);
+  });
+});
+
+describe("general settings form and the Default profile", () => {
+  const edited = {
+    ...createDefaultProfile(),
+    redaction: {
+      ...createDefaultProfile().redaction,
+      blockedSelectors: [".from-editor"],
+      redactCookieNames: ["editor_cookie"]
+    },
+    sampling: { scrollHz: 7 },
+    recorder: { ringBufferMinutes: 4 },
+    unmaskSelectors: [".order-id"]
+  };
+
+  it("copies only the fields the form edits onto the Default profile", () => {
+    const synced = syncDefaultProfileWithLegacyOptions(storeWith({ profiles: [edited] }), {
+      ...DEFAULT_RECORDER_CONFIG,
+      optionsVersion: 1,
+      redaction: { ...DEFAULT_RECORDER_CONFIG.redaction, blockedSelectors: [".from-form"] }
+    });
+    const profile = synced.profiles[0];
+
+    expect(profile?.redaction.blockedSelectors).toEqual([".from-form"]);
+    expect(profile?.redaction.redactCookieNames).toEqual(["editor_cookie"]);
+    expect(profile?.unmaskSelectors).toEqual([".order-id"]);
+    expect(profile?.categories).toEqual(edited.categories);
+  });
+
+  it("shows the Default profile's values in the form", () => {
+    const form = applyDefaultProfileToGeneralForm(
+      structuredClone(DEFAULT_RECORDER_CONFIG),
+      storeWith({ profiles: [edited] })
+    );
+
+    expect(form.redaction.blockedSelectors).toEqual([".from-editor"]);
+    expect(form.redaction.redactCookieNames).toEqual(
+      DEFAULT_RECORDER_CONFIG.redaction.redactCookieNames
+    );
+    expect(form.sampling.scrollHz).toBe(7);
+    expect(form.sampling.mousemoveHz).toBe(DEFAULT_RECORDER_CONFIG.sampling.mousemoveHz);
+    expect(form.ringBufferMinutes).toBe(4);
   });
 });
 
