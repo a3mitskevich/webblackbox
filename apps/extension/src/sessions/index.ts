@@ -17,6 +17,8 @@ const { locale, t, formatMode, formatRelativeTime, formatDuration, formatByteSiz
 const root = document.getElementById("sessions-root");
 
 let sessions: SessionListItem[] = [];
+/** Exports started on this page, by sid, so a blocked one can be confirmed and re-sent. */
+const pendingExports = new Map<string, { passphrase: string; acknowledged: boolean }>();
 
 if (root) {
   render(root);
@@ -30,9 +32,55 @@ if (root) {
       return;
     }
 
-    if (typed.kind === "sw.export-status" && typed.ok && typed.privacyWarning) {
-      window.alert(formatExportPrivacyWarning(typed.privacyWarning));
+    if (typed.kind === "sw.export-status") {
+      handleExportStatus(typed);
     }
+  });
+}
+
+function handleExportStatus(
+  status: Extract<ExtensionOutboundMessage, { kind: "sw.export-status" }>
+) {
+  const pending = pendingExports.get(status.sid);
+
+  if (status.ok) {
+    pendingExports.delete(status.sid);
+
+    if (status.privacyWarning) {
+      window.alert(formatExportPrivacyWarning(status.privacyWarning));
+    }
+
+    return;
+  }
+
+  // Failures of exports started elsewhere (e.g. the popup) are reported there.
+  if (!pending) {
+    return;
+  }
+
+  pendingExports.delete(status.sid);
+  const error = status.error || t("unknownError");
+
+  if (
+    status.privacyBlocked === true &&
+    !pending.acknowledged &&
+    window.confirm(t("popupPrivacyBlockedConfirm", { error }))
+  ) {
+    requestExport(status.sid, pending.passphrase, true);
+    return;
+  }
+
+  window.alert(t("popupExportFailed", { error }));
+}
+
+function requestExport(sid: string, passphrase: string, acknowledgePrivacyFindings: boolean): void {
+  pendingExports.set(sid, { passphrase, acknowledged: acknowledgePrivacyFindings });
+  postUiMessage({
+    kind: "ui.export",
+    sid,
+    ...(hasDialogPassphrase(passphrase) ? { passphrase } : {}),
+    saveAs: false,
+    ...(acknowledgePrivacyFindings ? { acknowledgePrivacyFindings: true } : {})
   });
 }
 
@@ -335,12 +383,7 @@ function bindActions(container: HTMLElement): void {
         return;
       }
 
-      postUiMessage({
-        kind: "ui.export",
-        sid,
-        ...(hasDialogPassphrase(passphrase) ? { passphrase } : {}),
-        saveAs: false
-      });
+      requestExport(sid, passphrase, false);
     });
   });
 

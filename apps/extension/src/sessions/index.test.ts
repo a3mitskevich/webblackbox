@@ -169,6 +169,63 @@ describe("sessions page rendering", () => {
     });
   });
 
+  it("confirms and re-sends an export the privacy scanner blocked, and reports failures", async () => {
+    const port = new FakePort();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => undefined);
+    installChromeStub(port);
+
+    await importSessionsModule();
+
+    port.emit({
+      kind: "sw.session-list",
+      sessions: [{ sid: "sid-qa", tabId: 7, mode: "full", startedAt: Date.now(), active: false }]
+    });
+    await flushSessions();
+
+    document.querySelector<HTMLButtonElement>("button[data-export]")?.click();
+    await flushSessions();
+    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
+    if (!passphraseInput) {
+      throw new Error("missing passphrase input");
+    }
+    passphraseInput.value = "secret";
+    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
+    await flushSessions();
+    port.postMessage.mockClear();
+
+    port.emit({
+      kind: "sw.export-status",
+      sid: "sid-qa",
+      ok: false,
+      error: "Privacy scanner blocked export: jwt",
+      privacyBlocked: true
+    });
+    await flushSessions();
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(port.postMessage).toHaveBeenCalledWith({
+      kind: "ui.export",
+      sid: "sid-qa",
+      passphrase: "secret",
+      saveAs: false,
+      acknowledgePrivacyFindings: true
+    });
+
+    port.emit({ kind: "sw.export-status", sid: "sid-qa", ok: false, error: "disk full" });
+    await flushSessions();
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy).toHaveBeenCalledWith("Export failed: disk full");
+
+    alertSpy.mockClear();
+    port.emit({ kind: "sw.export-status", sid: "other", ok: false, error: "popup export" });
+    await flushSessions();
+
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
   it("alerts when an exported session has privacy findings", async () => {
     const port = new FakePort();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => undefined);
