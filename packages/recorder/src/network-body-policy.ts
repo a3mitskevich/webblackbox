@@ -4,7 +4,7 @@ import {
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
-import { asRecord, asString } from "./normalizer-utils.js";
+import { asRecord, asString, omitKeys } from "./normalizer-utils.js";
 
 /** Upper bound of body text inspected by the masker, so huge frames stay cheap on the hot path. */
 export const MAX_INLINE_BODY_SCAN_CHARS = 64 * 1024;
@@ -208,8 +208,4 @@ function stringifyBody(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function omitKeys(row: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(row).filter(([key]) => !keys.includes(key)));
 }

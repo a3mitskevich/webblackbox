@@ -10,6 +10,7 @@ import {
 } from "@webblackbox/protocol";
 
 import { ActionSpanTracker } from "./action-span.js";
+import { applyErrorTextPolicy } from "./error-text-policy.js";
 import { FreezePolicy } from "./freeze.js";
 import {
   attachInlineNetworkBody,
@@ -74,8 +75,13 @@ export class WebBlackboxRecorder {
       return {};
     }
 
+    const policyPayload = applyErrorTextPolicy(
+      normalized.eventType,
+      normalized.payload,
+      this.config.capturePolicy
+    );
     // Inline bodies skip key/value redaction: they get value masking under the body policy instead.
-    const detached = detachInlineNetworkBody(normalized.eventType, normalized.payload);
+    const detached = detachInlineNetworkBody(normalized.eventType, policyPayload);
     const shouldKeepBody = this.hooks.shouldKeepInlineNetworkBody;
     const redactedPayload = attachInlineNetworkBody(
       redactPayload(detached.payload, this.config.redaction, {

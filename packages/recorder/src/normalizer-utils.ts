@@ -64,3 +64,10 @@ export function sanitizeOptionalUrl(value: string | undefined): string | undefin
 export function compactText(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, Math.max(0, maxLength - 3))}...` : value;
 }
+
+export function omitKeys(
+  row: Record<string, unknown>,
+  keys: readonly string[]
+): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(row).filter(([key]) => !keys.includes(key)));
+}
