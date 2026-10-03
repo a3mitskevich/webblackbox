@@ -124,7 +124,9 @@ function redactValue(input: unknown, context: RedactionContext): unknown {
 
       if (
         (normalizedKey === "value" || normalizedKey === "text") &&
-        (shouldMaskBySelector(source, profile) || shouldMaskByCookieName(source, profile))
+        (shouldMaskBySelector(source, profile) ||
+          shouldMaskByCookieName(source, profile) ||
+          hasSensitiveStorageKey(source, profile))
       ) {
         output[key] = typeof value === "string" ? maskString(value, context) : REDACTED;
         continue;
@@ -333,6 +335,14 @@ function shouldMaskByCookieName(
   }
 
   return shouldRedactCookieName(cookieName, profile);
+}
+
+/** `{ key, value }` records (storage ops and snapshot entries): the key name decides. */
+function hasSensitiveStorageKey(
+  source: Record<string, unknown>,
+  profile: RedactionProfile
+): boolean {
+  return typeof source.key === "string" && isSensitiveKey(source.key.toLowerCase(), profile);
 }
 
 function isSensitiveKey(key: string, profile: RedactionProfile): boolean {

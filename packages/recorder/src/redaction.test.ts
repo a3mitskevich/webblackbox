@@ -102,6 +102,24 @@ describe("redactPayload headers", () => {
 });
 
 describe("redactPayload URL fields", () => {
+  it("masks storage values whose key name is sensitive and keeps neutral ones", () => {
+    const redacted = redactPayload(
+      {
+        op: "setItem",
+        key: "authToken",
+        value: "opaque-session-abc",
+        entries: [
+          { key: "theme", value: "dark" },
+          { key: "user_password", value: "hunter2" }
+        ]
+      },
+      PLAIN_PROFILE
+    ) as { value: string; entries: Array<{ value: string }> };
+
+    expect(redacted.value).toBe("[REDACTED]");
+    expect(redacted.entries.map((entry) => entry.value)).toEqual(["dark", "[REDACTED]"]);
+  });
+
   it("sanitizes referrer and src payload fields", () => {
     const redacted = redactPayload(
       {

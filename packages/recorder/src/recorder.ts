@@ -572,8 +572,13 @@ function hasStorageDetail(payload: unknown): boolean {
   return (
     hasBlobReference(row) ||
     typeof row.key === "string" ||
+    typeof row.name === "string" ||
+    typeof row.value === "string" ||
     Array.isArray(row.names) ||
+    Array.isArray(row.keys) ||
+    Array.isArray(row.lengths) ||
     Array.isArray(row.databaseNames) ||
+    Array.isArray(row.entries) ||
     asRecord(row.entries) !== null
   );
 }
