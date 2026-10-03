@@ -3253,11 +3253,10 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
 
   const policy = runtime.config.capturePolicy;
 
-  // The page agent records storage itself (inline, through the redactor); these CDP snapshots
-  // would duplicate it with key and cookie names in blobs the redactor never sees.
-  if (policy && capturesPageStorageInFullMode(policy.categories)) {
-    return;
-  }
+  // The page agent records localStorage and IndexedDB itself (inline, through the redactor);
+  // the CDP snapshots below would duplicate them in blobs the redactor never sees. Cookie names
+  // stay on CDP: `document.cookie` cannot see HttpOnly cookies.
+  const pageRecordsStorage = !!policy && capturesPageStorageInFullMode(policy.categories);
 
   const cookies =
     policy?.categories.cookies === "names-only"
@@ -3294,7 +3293,7 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
     });
   }
 
-  const localStorageMode = resolveLocalStorageSnapshotMode(policy);
+  const localStorageMode = pageRecordsStorage ? null : resolveLocalStorageSnapshotMode(policy);
   const localStorageData = localStorageMode
     ? await evaluateExpression(runtime, buildLocalStorageSnapshotExpression(localStorageMode))
     : null;
@@ -3324,7 +3323,7 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
   }
 
   const origin =
-    policy?.categories.indexedDb === "names-only"
+    !pageRecordsStorage && policy?.categories.indexedDb === "names-only"
       ? await evaluateExpression(runtime, "location.origin")
       : null;
 

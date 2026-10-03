@@ -27,7 +27,7 @@ const URL_ATTRIBUTES = new Set([
 const DROPPED_ATTRIBUTES = new Set(["srcdoc"]);
 /** `<meta>` whose `content` is kept; others (CSRF tokens, verification codes…) lose it. */
 const KEPT_META_NAMES = new Set(["viewport", "theme-color", "color-scheme", "description"]);
-/** Attribute names that mark a secret value whatever the profile's redaction lists say. */
+/** Attribute name words that mark a secret value whatever the profile's redaction lists say. */
 const SENSITIVE_ATTRIBUTE_NAME_PARTS = [
   "csrf",
   "xsrf",
@@ -38,9 +38,12 @@ const SENSITIVE_ATTRIBUTE_NAME_PARTS = [
   "session",
   "signature",
   "otp",
-  "api-key",
-  "apikey"
+  "apikey",
+  "api_key"
 ];
+/** Parts that are several words run together; matched without separators. */
+const COMPOUND_NAME_PARTS = new Set(["apikey", "accesskey", "privatekey", "authkey"]);
+const CSS_URL_PATTERN = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;
 /** Elements whose `value` attribute is form data (inputs are handled field by field). */
 const VALUE_ATTRIBUTE_ELEMENTS = new Set(["BUTTON", "OPTION", "PARAM", "DATA", "METER"]);
 
@@ -174,10 +177,15 @@ function maskBlockedElements(
     }
   }
 
+  // Tracked here, not by attribute: a page could forge the marker to skip masking.
+  const masked = new Set<Element>();
+
   for (const element of blocked) {
-    if (element.hasAttribute(MASKED_ATTRIBUTE)) {
+    if (masked.has(element)) {
       continue;
     }
+
+    masked.add(element);
 
     for (const attribute of Array.from(element.attributes)) {
       if (!MASKED_KEPT_ATTRIBUTES.has(attribute.name)) {
@@ -201,20 +209,54 @@ function sanitizeAttributes(element: Element, context: SanitizeContext): void {
   ).toLowerCase();
 
   for (const attribute of Array.from(element.attributes)) {
-    const name = attribute.name.toLowerCase();
+    // `localName` drops namespace prefixes (`xlink:href` → `href`).
+    const name = attribute.localName.toLowerCase();
 
-    if (DROPPED_ATTRIBUTES.has(name) || name.startsWith("on")) {
-      element.removeAttribute(attribute.name);
+    if (DROPPED_ATTRIBUTES.has(name) || isEventHandlerAttribute(element, name)) {
+      element.removeAttributeNode(attribute);
     } else if (isMeta && name === "content" && !KEPT_META_NAMES.has(metaName)) {
-      element.removeAttribute(attribute.name);
+      element.removeAttributeNode(attribute);
     } else if (URL_ATTRIBUTES.has(name)) {
-      element.setAttribute(attribute.name, sanitizeUrlForPrivacy(attribute.value));
+      attribute.value = sanitizeUrlForPrivacy(attribute.value);
     } else if (name === "srcset" || name === "imagesrcset") {
-      element.setAttribute(attribute.name, sanitizeSrcset(attribute.value));
-    } else if (context.sensitiveNameParts.some((part) => name.includes(part))) {
-      element.setAttribute(attribute.name, MASKED_TEXT);
+      attribute.value = sanitizeSrcset(attribute.value);
+    } else if (name === "style") {
+      attribute.value = sanitizeCssUrls(attribute.value);
+    } else if (hasSensitiveNameWord(name, context.sensitiveNameParts)) {
+      attribute.value = MASKED_TEXT;
     }
   }
+
+  if (element.localName === "style" && element.textContent) {
+    element.textContent = sanitizeCssUrls(element.textContent);
+  }
+}
+
+/** `onclick`, `onerror`…: only names the element knows as handlers (`one` is kept). */
+function isEventHandlerAttribute(element: Element, name: string): boolean {
+  return /^on[a-z]+$/.test(name) && name in element;
+}
+
+/**
+ * Single-word parts match whole words of the name (`data-session-id`, not `data-hotpath`);
+ * compound parts (`api_key`, `apikey`) match the name with its separators removed.
+ */
+function hasSensitiveNameWord(name: string, parts: readonly string[]): boolean {
+  const words = name.split(/[-_:.]+/);
+  const collapsed = words.join("");
+
+  return parts.some((part) => {
+    const collapsedPart = part.replace(/[-_:.\s]+/g, "");
+    return COMPOUND_NAME_PARTS.has(collapsedPart) || collapsedPart !== part
+      ? collapsed.includes(collapsedPart)
+      : words.includes(part);
+  });
+}
+
+function sanitizeCssUrls(css: string): string {
+  return css.replace(CSS_URL_PATTERN, (match, quote: string, url: string) =>
+    url.startsWith("data:") ? match : `url(${quote}${sanitizeUrlForPrivacy(url)}${quote})`
+  );
 }
 
 function sanitizeSrcset(value: string): string {
@@ -236,12 +278,14 @@ function stripFieldValues(root: Element | DocumentFragment, keepInputValues: boo
     }
   }
 
-  if (keepInputValues) {
-    return;
+  for (const textarea of Array.from(root.querySelectorAll("textarea"))) {
+    if (!keepInputValues || isNeverCapturedField(textarea)) {
+      textarea.textContent = "";
+    }
   }
 
-  for (const textarea of Array.from(root.querySelectorAll("textarea"))) {
-    textarea.textContent = "";
+  if (keepInputValues) {
+    return;
   }
 
   for (const element of Array.from(root.querySelectorAll("[value]"))) {

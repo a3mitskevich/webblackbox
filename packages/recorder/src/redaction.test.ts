@@ -129,7 +129,9 @@ describe("redactPayload URL fields", () => {
           { key: "jwt", value: jwt },
           { key: "profile", value: `Bearer ${"a".repeat(24)}` },
           { key: "cache", value: JSON.stringify({ id: jwt }) },
-          { key: "theme", value: "dark" }
+          { key: "sessionId", value: "abc-123-opaque" },
+          { key: "theme", value: "dark" },
+          { key: "authorName", value: "Ann" }
         ]
       },
       PLAIN_PROFILE
@@ -140,7 +142,9 @@ describe("redactPayload URL fields", () => {
       "[REDACTED]",
       "[REDACTED]",
       "[REDACTED]",
-      "dark"
+      "[REDACTED]",
+      "dark",
+      "Ann"
     ]);
   });
 

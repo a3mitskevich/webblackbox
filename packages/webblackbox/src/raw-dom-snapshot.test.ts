@@ -108,6 +108,38 @@ describe("serializeRawDom", () => {
     document.head.innerHTML = "";
   });
 
+  it("masks blocked elements even when the page forges the masked marker", () => {
+    document.body.innerHTML =
+      '<div class="secret" data-webblackbox-masked="x">card 4111111111111111</div>';
+
+    expect(serializeRawDom(document, OPTIONS)?.html).not.toContain("4111111111111111");
+  });
+
+  it("strips queries from namespaced and CSS URLs, keeping ordinary attributes", () => {
+    document.body.innerHTML = `
+      <svg><a xlink:href="https://h.test/p?token=XLINK-SECRET"><text>x</text></a></svg>
+      <div class="secret" style="background:url(/a.png?token=MASKED-STYLE-SECRET)">x</div>
+      <div style="background:url('/b.png?sig=STYLE-SECRET')" one="keep-one" data-hotpath="keep-hot">y</div>
+      <style>.hero { background: url("/c.png?X-Amz-Signature=CSS-SECRET"); }</style>
+      <textarea name="otp">TEXTAREA-OTP</textarea>`;
+
+    const html = serializeRawDom(document, { ...OPTIONS, keepInputValues: true })?.html ?? "";
+
+    for (const secret of [
+      "XLINK-SECRET",
+      "MASKED-STYLE-SECRET",
+      "STYLE-SECRET",
+      "CSS-SECRET",
+      "TEXTAREA-OTP"
+    ]) {
+      expect(html, secret).not.toContain(secret);
+    }
+
+    expect(html).toContain('one="keep-one"');
+    expect(html).toContain('data-hotpath="keep-hot"');
+    expect(html).toContain("/b.png");
+  });
+
   it("fails closed on an invalid blocked selector and caps the size", () => {
     document.body.innerHTML = `<p>${"x".repeat(RAW_DOM_SNAPSHOT_MAX_CHARS)}</p>`;
 

@@ -15,7 +15,7 @@ const NEVER_CAPTURED_AUTOCOMPLETE_TOKENS = new Set([
   "cc-exp-month",
   "cc-exp-year"
 ]);
-const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode/i;
+const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode|(?:^|[^a-z])otp(?:[^a-z]|$)/i;
 
 type PasswordFieldRegistry = {
   /**

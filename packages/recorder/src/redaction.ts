@@ -358,11 +358,24 @@ function hasSensitiveStorageKey(
   }
 
   const key = source.key.toLowerCase();
-  const value = typeof source.value === "string" ? source.value : "";
+  // Words of the key (`sessionId` → session, id), so `auth` does not match `author`.
+  const keyWords = source.key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/);
+  const value =
+    typeof source.value === "string"
+      ? source.value
+      : typeof source.text === "string"
+        ? source.text
+        : "";
 
   return (
     isSensitiveKey(key, profile) ||
-    profile.redactCookieNames.some((name) => name.length > 0 && key.includes(name.toLowerCase())) ||
+    profile.redactCookieNames.some(
+      (name) =>
+        name.length > 0 && (key === name.toLowerCase() || keyWords.includes(name.toLowerCase()))
+    ) ||
     CREDENTIAL_VALUE_PATTERNS.some((pattern) => pattern.test(value))
   );
 }

@@ -256,7 +256,10 @@ function countsOnlySnapshot(
   count: number
 ): RawRecorderEvent {
   const kept = Object.fromEntries(
-    Object.entries(payload).filter(([key]) => COUNTS_ONLY_SNAPSHOT_KEYS.has(key))
+    Object.entries(payload).filter(
+      ([key, value]) =>
+        COUNTS_ONLY_SNAPSHOT_KEYS.has(key) && (key !== "reason" || typeof value === "string")
+    )
   );
 
   return storageSnapshot(rawEvent, {
