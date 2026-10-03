@@ -116,6 +116,8 @@ The `DefaultEventNormalizer` handles mapping from raw source events to `WebBlack
 | `Page.frameNavigated`                                           | `nav.commit`       |
 | `Page.navigatedWithinDocument`                                  | `nav.hash`         |
 
+CDP `Network.*` payloads pass through a field allowlist: ids, timing, sanitized URLs, method, status, MIME type, sizes, normalized headers and the initiator type. Everything else — raw header text, security details, initiator stacks, base64 `postDataEntries`, WebSocket `payloadData` — is dropped.
+
 ### Content Script Events
 
 | Raw Type                                             | WebBlackbox Event                                                 |
@@ -219,6 +221,8 @@ Redaction is applied recursively through nested objects and supports:
 - Optional HMAC-SHA-256 hashing (per-session key) for value correlation within a session
 
 Network body blobs are redacted separately with `redactBodyText` / `redactBodyBytes` from `@webblackbox/protocol`, which mask the values of sensitive keys in JSON, form, query, XML and `key: value` text.
+
+Inline bodies — textual request bodies (`network.request` → `request.postData`), WebSocket text frames (`network.ws.frame` → `frame.payloadPreview`) and SSE messages (`network.sse.message` → `data`) — follow the same rule as `network.body`. They are kept only when `capturePolicy.categories.network` is `"body-allowlist"`, value-masked with `redactBodyText` and size-capped (64 KiB, 512 and 800 characters). Otherwise only sizes survive (`postDataSize`, `frame.payloadLength`/`opcode`, SSE `dataSize`).
 
 ## Plugins
 

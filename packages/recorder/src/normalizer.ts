@@ -4,6 +4,7 @@ import {
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
+import { normalizeCdpNetworkPayload } from "./cdp-network.js";
 import {
   asArray,
   asBoolean,
@@ -80,10 +81,7 @@ export class DefaultEventNormalizer implements EventNormalizer {
 
       return {
         eventType,
-        payload:
-          eventType === "console.entry"
-            ? normalizeCdpConsolePayload(input.rawType, input.payload)
-            : input.payload
+        payload: normalizeCdpPayload(eventType, input.rawType, input.payload)
       };
     }
 
@@ -152,6 +150,22 @@ export class DefaultEventNormalizer implements EventNormalizer {
 }
 
 type ConsoleLevel = "log" | "info" | "warn" | "error" | "debug";
+
+function normalizeCdpPayload(
+  eventType: WebBlackboxEventType,
+  rawType: string,
+  payload: unknown
+): unknown {
+  if (eventType === "console.entry") {
+    return normalizeCdpConsolePayload(rawType, payload);
+  }
+
+  if (eventType.startsWith("network.")) {
+    return normalizeCdpNetworkPayload(rawType, payload);
+  }
+
+  return payload;
+}
 
 function normalizeCdpConsolePayload(rawType: string, payload: unknown): Record<string, unknown> {
   if (rawType === "Log.entryAdded") {

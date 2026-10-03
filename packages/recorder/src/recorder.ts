@@ -11,6 +11,7 @@ import {
 
 import { ActionSpanTracker } from "./action-span.js";
 import { FreezePolicy } from "./freeze.js";
+import { attachInlineNetworkBody, detachInlineNetworkBody } from "./network-body-policy.js";
 import { DefaultEventNormalizer } from "./normalizer.js";
 import type { RecorderPlugin, RecorderPluginContext } from "./plugins.js";
 import { createRedactionHashKey, redactPayload } from "./redaction.js";
@@ -63,9 +64,18 @@ export class WebBlackboxRecorder {
       return {};
     }
 
-    const redactedPayload = redactPayload(normalized.payload, this.config.redaction, {
-      hashKey: this.redactionHashKey
-    });
+    // Inline bodies skip key/value redaction: they get value masking under the body policy instead.
+    const detached = detachInlineNetworkBody(normalized.eventType, normalized.payload);
+    const redactedPayload = attachInlineNetworkBody(
+      redactPayload(detached.payload, this.config.redaction, {
+        hashKey: this.redactionHashKey
+      }),
+      detached.body,
+      {
+        capturePolicy: this.config.capturePolicy,
+        redactBodyPatterns: this.config.redaction.redactBodyPatterns
+      }
+    );
     const privacy = classifyPrivacy(
       normalized.eventType,
       redactedPayload,
