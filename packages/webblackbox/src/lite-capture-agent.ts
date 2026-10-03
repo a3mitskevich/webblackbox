@@ -8,7 +8,11 @@ import { snapdom } from "@zumer/snapdom";
 
 import type { LiteCaptureAgentOptions, LiteCaptureSampling, LiteCaptureState } from "./types.js";
 import { INJECTED_MESSAGE_SOURCE, type InjectedCaptureWindowMessage } from "./injected-hooks.js";
-import { notePasswordField, readCapturableInputValue } from "./input-value-policy.js";
+import {
+  notePasswordField,
+  readCapturableInputValue,
+  watchPasswordFieldReveals
+} from "./input-value-policy.js";
 
 const PRE_RECORDING_BUFFER_MAX = 400;
 const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
@@ -513,12 +517,15 @@ export class LiteCaptureAgent {
       "focus",
       (event: FocusEvent) => {
         this.markUserActivity();
+        notePasswordField(event.target);
         this.queueEvent("focus", {
           target: this.resolveTargetPayload(event.target, "fast")
         });
       },
       INPUT_OPTIONS_TRUE
     );
+
+    this.cleanupCallbacks.push(watchPasswordFieldReveals(document));
 
     this.listen(
       document,

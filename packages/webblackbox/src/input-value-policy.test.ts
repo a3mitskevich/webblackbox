@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   MAX_CAPTURED_INPUT_VALUE_CHARS,
   notePasswordField,
-  readCapturableInputValue
+  readCapturableInputValue,
+  watchPasswordFieldReveals
 } from "./input-value-policy.js";
 
 function policy(
@@ -102,6 +103,17 @@ describe("readCapturableInputValue", () => {
     expect(
       readCapturableInputValue(input, policy("allow", { unmaskSelectors: ["input"] }))
     ).toBeUndefined();
+  });
+
+  it("never captures a password field revealed before anyone typed in it", async () => {
+    const stop = watchPasswordFieldReveals(document);
+    const input = field('<input data-field type="password" name="pin_code" />');
+
+    input.setAttribute("type", "text");
+    await Promise.resolve();
+    stop();
+
+    expect(readCapturableInputValue(input, policy("allow"))).toBeUndefined();
   });
 
   it("never captures password-named or payment card fields", () => {

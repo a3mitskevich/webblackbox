@@ -23,6 +23,33 @@ const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode/i;
  */
 const seenPasswordFields = new WeakSet<Element>();
 
+/**
+ * Remembers every field the page switches away from `type="password"` (a "show password"
+ * toggle), even when nobody typed while it was hidden. Returns the disconnect function.
+ */
+export function watchPasswordFieldReveals(root: Node): () => void {
+  if (typeof MutationObserver === "undefined") {
+    return () => undefined;
+  }
+
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.oldValue?.toLowerCase() === "password" && record.target instanceof Element) {
+        seenPasswordFields.add(record.target);
+      }
+    }
+  });
+
+  observer.observe(root, {
+    attributes: true,
+    attributeFilter: ["type"],
+    attributeOldValue: true,
+    subtree: true
+  });
+
+  return () => observer.disconnect();
+}
+
 /** Remembers a password field before the page can reveal it (call on keydown/focus). */
 export function notePasswordField(target: EventTarget | null): void {
   if (target instanceof HTMLInputElement && target.type.toLowerCase() === "password") {

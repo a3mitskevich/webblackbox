@@ -993,7 +993,10 @@ describe("LiteCaptureAgent", () => {
         summaryMode: "pressure",
         reason: "pressure-recovery"
       });
-      expect(observe).toHaveBeenCalledTimes(2);
+      // DOM mutation observes only; the password-reveal watcher observes `type` once at start.
+      expect(observe.mock.calls.filter(([, options]) => options?.childList === true)).toHaveLength(
+        2
+      );
 
       agent.dispose();
     } finally {
@@ -1077,7 +1080,10 @@ describe("LiteCaptureAgent", () => {
         summaryMode: "pressure",
         reason: "pressure-recovery"
       });
-      expect(observe).toHaveBeenCalledTimes(2);
+      // DOM mutation observes only; the password-reveal watcher observes `type` once at start.
+      expect(observe.mock.calls.filter(([, options]) => options?.childList === true)).toHaveLength(
+        2
+      );
 
       agent.dispose();
     } finally {
