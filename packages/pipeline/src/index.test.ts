@@ -129,6 +129,29 @@ describe("pipeline", () => {
     expect(indexes.request.some((entry) => entry.reqId === "R-1")).toBe(true);
   });
 
+  it("keeps the page title out of the plaintext manifest", async () => {
+    const title = "Inbox (3) - alice@example.com";
+
+    for (const options of [{}, FULL_EXPORT_OPTIONS, { passphrase: "pw-123456" }]) {
+      const pipeline = new FlightRecorderPipeline({
+        session: { ...SESSION, sid: "S-title", title },
+        storage: new MemoryPipelineStorage()
+      });
+
+      await pipeline.start();
+      await pipeline.ingest(createEvent("E-title-1", "network.request", 1, { reqId: "R-1" }));
+      await pipeline.flush();
+
+      const exported = await pipeline.exportBundle(options);
+      const zip = await JSZip.loadAsync(exported.bytes);
+      const manifest = await zip.file("manifest.json")?.async("string");
+
+      expect(manifest).toBeDefined();
+      expect(JSON.parse(manifest ?? "{}").site).toEqual({ origin: "https://example.com/" });
+      expect(manifest).not.toContain("alice@example.com");
+    }
+  });
+
   it("indexes request ids from nested request payloads", async () => {
     const storage = new MemoryPipelineStorage();
     const pipeline = new FlightRecorderPipeline({

@@ -713,9 +713,10 @@ export class FlightRecorderPipeline {
       protocolVersion: 1,
       createdAt: new Date().toISOString(),
       mode: this.options.session.mode,
+      // The manifest stays readable even in encrypted archives, so the page title (which can
+      // carry names, emails or document titles) is never written here.
       site: {
-        origin: sanitizeUrlForPrivacy(this.options.session.url),
-        title: this.options.session.title
+        origin: sanitizeUrlForPrivacy(this.options.session.url)
       },
       chunkCodec,
       redactionProfile: this.options.redactionProfile ?? {
