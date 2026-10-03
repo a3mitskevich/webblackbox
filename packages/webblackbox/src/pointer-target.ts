@@ -1,5 +1,6 @@
 import {
   READABLE_TARGET_TEXT_MAX_CHARS,
+  allowsReadablePointerTargets,
   type CapturePolicy,
   type PointerTargetRect,
   type PointerViewportGeometry,
@@ -92,16 +93,6 @@ export function readDataTestId(target: Element): string | undefined {
   return undefined;
 }
 
-/** Readable targets are only kept when the profile allows readable actions. */
-export function allowsReadableActions(policy: CapturePolicy): boolean {
-  return policy.categories.actions === "allow";
-}
-
-/** Selected text needs readable actions and raw DOM: it is page content, not just a label. */
-export function allowsSelectionText(policy: CapturePolicy): boolean {
-  return allowsReadableActions(policy) && policy.categories.dom === "allow";
-}
-
 /**
  * Human-readable description of a pointer target, or undefined when the profile keeps targets
  * hashed or the element sits under a blocked selector. Field values are never read: only labels.
@@ -110,7 +101,10 @@ export function buildReadableTarget(
   element: Element,
   policy: CapturePolicy
 ): ReadablePointerTarget | undefined {
-  if (!allowsReadableActions(policy) || isCoveredByBlockedSelector(element, policy.redaction)) {
+  if (
+    !allowsReadablePointerTargets(policy) ||
+    isCoveredByBlockedSelector(element, policy.redaction)
+  ) {
     return undefined;
   }
 

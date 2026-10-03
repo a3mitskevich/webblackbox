@@ -1,5 +1,6 @@
 import {
   POINTER_DRAG_THRESHOLD_PX,
+  allowsSelectionText,
   POINTER_LONG_PRESS_MS,
   SELECTION_TEXT_MAX_CHARS,
   type CapturePolicy,
@@ -9,7 +10,6 @@ import {
 
 import { isCoveredByBlockedSelector, isNeverCapturedField } from "./input-value-policy.js";
 import {
-  allowsSelectionText,
   readFrameOffset,
   readViewportGeometry,
   resolveInteractiveElement,

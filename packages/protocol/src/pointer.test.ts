@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_CAPTURE_POLICY,
   DEFAULT_POINTER_CAPTURE_OPTIONS,
   DEFAULT_RECORDER_CONFIG,
+  stripUnreadablePointerDetail,
   recorderConfigSchema,
   validateEvent,
   validateEventData,
@@ -130,5 +132,40 @@ describe("pointer protocol", () => {
         pointer: { hover: true }
       }).success
     ).toBe(false);
+  });
+});
+
+describe("stripUnreadablePointerDetail", () => {
+  const readableTarget = { tag: "BUTTON", readable: { text: "Save", css: "#save" } };
+  const allow = (dom: "allow" | "masked") => ({
+    ...DEFAULT_CAPTURE_POLICY,
+    categories: { ...DEFAULT_CAPTURE_POLICY.categories, actions: "allow" as const, dom }
+  });
+
+  it("drops readable targets and selection text the policy does not allow", () => {
+    const drag = { kind: "dnd", target: readableTarget, dropTarget: readableTarget };
+
+    expect(stripUnreadablePointerDetail("user.drag.end", drag, DEFAULT_CAPTURE_POLICY)).toEqual({
+      kind: "dnd",
+      target: { tag: "BUTTON" },
+      dropTarget: { tag: "BUTTON" }
+    });
+    expect(
+      stripUnreadablePointerDetail("user.selection", { length: 4, text: "abcd" }, allow("masked"))
+    ).toEqual({ length: 4 });
+  });
+
+  it("returns the same payload when everything is allowed or nothing applies", () => {
+    const click = { x: 1, y: 1, target: readableTarget };
+    const selection = { length: 4, text: "abcd" };
+    const network = { target: readableTarget };
+
+    expect(stripUnreadablePointerDetail("user.click", click, allow("masked"))).toBe(click);
+    expect(stripUnreadablePointerDetail("user.selection", selection, allow("allow"))).toBe(
+      selection
+    );
+    expect(stripUnreadablePointerDetail("network.request", network, DEFAULT_CAPTURE_POLICY)).toBe(
+      network
+    );
   });
 });

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { CapturePolicy } from "./types.js";
+
 /**
  * Optional pointer signals a recording profile turns on. Clicks, presses, right/middle clicks
  * and pointer geometry are always captured; these add the noisier streams.
@@ -267,3 +269,56 @@ export const userHoverDataSchema = z
     dwellMs: finiteNumber.nonnegative()
   })
   .strict();
+
+const READABLE_TARGET_KEYS = ["target", "dropTarget"] as const;
+
+/** Readable pointer targets (labels, readable selectors) are kept only under `actions: "allow"`. */
+export function allowsReadablePointerTargets(policy: CapturePolicy): boolean {
+  return policy.categories.actions === "allow";
+}
+
+/** Selected text is page content, not just a label: it also needs `dom: "allow"`. */
+export function allowsSelectionText(policy: CapturePolicy): boolean {
+  return allowsReadablePointerTargets(policy) && policy.categories.dom === "allow";
+}
+
+/**
+ * Drops the readable target detail and selected text a policy does not allow from a `user.*`
+ * payload. Returns the payload itself when nothing had to go, otherwise a new object.
+ */
+export function stripUnreadablePointerDetail(
+  eventType: string,
+  payload: unknown,
+  policy: CapturePolicy
+): unknown {
+  if (!eventType.startsWith("user.") || !isPlainRecord(payload)) {
+    return payload;
+  }
+
+  const next: Record<string, unknown> = { ...payload };
+  let changed = false;
+
+  if (!allowsReadablePointerTargets(policy)) {
+    for (const key of READABLE_TARGET_KEYS) {
+      const target = payload[key];
+
+      if (isPlainRecord(target) && "readable" in target) {
+        next[key] = Object.fromEntries(
+          Object.entries(target).filter(([entryKey]) => entryKey !== "readable")
+        );
+        changed = true;
+      }
+    }
+  }
+
+  if (eventType === "user.selection" && "text" in payload && !allowsSelectionText(policy)) {
+    delete next.text;
+    changed = true;
+  }
+
+  return changed ? next : payload;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
