@@ -1,17 +1,18 @@
 import type { CaptureMode, FreezeReason } from "@webblackbox/protocol";
 
 import { getChromeApi } from "./chrome-api.js";
-import { EN_MESSAGES, type ExtensionMessageKey } from "./locales/en.js";
-import { ZH_CN_MESSAGES } from "./locales/zh-cn.js";
+import EN_MESSAGES from "./locales/en.json" with { type: "json" };
+import ZH_CN_MESSAGES from "./locales/zh-CN.json" with { type: "json" };
 
 export type ExtensionLocale = "en" | "zh-CN";
+
+/** English is the reference dictionary; `locales.test.ts` keeps every other locale's keys equal. */
+export type ExtensionMessageKey = keyof typeof EN_MESSAGES;
 
 const EXTENSION_MESSAGES: Record<ExtensionLocale, Record<ExtensionMessageKey, string>> = {
   en: EN_MESSAGES,
   "zh-CN": ZH_CN_MESSAGES
 };
-
-export type { ExtensionMessageKey };
 
 export function createExtensionI18n(
   options: {
