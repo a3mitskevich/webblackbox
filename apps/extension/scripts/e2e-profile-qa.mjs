@@ -28,6 +28,12 @@ const passphrase = "webblackbox-qa-e2e-passphrase";
 const CONSOLE_MARKER = "qa-console-marker-7f3a";
 const DEFAULT_CONSOLE_MARKER = "default-console-marker-c41d";
 const BODY_MARKER = "qa-body-marker-91c2";
+// A JWT-shaped value: the blocking privacy scanner reports it, so the export needs the
+// acknowledgement and the popup (the control page below) shows an alert() about the findings.
+const SCANNER_FINDING =
+  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJxYS1lMmUifQ.c2lnbmF0dXJlLWZvci1xYS1lMmUtdGVzdA";
+/** Upper bound for any single CDP command, so a blocked page fails the run instead of hanging. */
+const CDP_COMMAND_TIMEOUT_MS = 60_000;
 const QA_RULE = {
   id: "e2e-local-qa",
   name: "Local QA",
@@ -104,6 +110,11 @@ async function main() {
   );
   await page.send("Runtime.enable");
   await popup.send("Runtime.enable");
+  // The popup alerts when an export has privacy findings; an open dialog blocks every
+  // Runtime.evaluate on that page, so dialogs are accepted as they open.
+  const dialogs = [];
+  await acceptDialogs(popup, dialogs);
+  await acceptDialogs(page, dialogs);
   await sleep(1_000);
 
   await popup.evaluate(`
@@ -264,6 +275,11 @@ async function main() {
   assert(!jsonBody.includes("hunter2"), "Sensitive body value was not masked", { jsonBody });
   assert(!manifestText.includes("alice@example.com"), "Page title leaked into the manifest");
   assert(swExceptions.length === 0, "Service worker threw", swExceptions);
+  assert(
+    exported.privacyWarning?.findingCount > 0,
+    "Export did not report the planted scanner finding",
+    exported
+  );
 
   console.log(`Archive: ${archivePath} (${bytes.byteLength} bytes)`);
   console.log(`Profile: ${JSON.stringify(profileConfig.data.profile)}`);
@@ -272,6 +288,7 @@ async function main() {
   console.log(`Profile switch: ${JSON.stringify(switchConfig.data.profileChange)}`);
   console.log(`JSON body: ${jsonBody.slice(0, 200)}`);
   console.log(`Plaintext export refused: ${plaintext.error}`);
+  console.log(`Dialogs accepted: ${JSON.stringify(dialogs)}`);
   console.log(`Chrome log: ${chromeLogPath}`);
   console.log("Profile QA E2E passed.");
 
@@ -296,7 +313,8 @@ function startDemoServer() {
   const body = JSON.stringify({
     marker: BODY_MARKER,
     orders: [{ id: 42, status: "shipped" }],
-    password: "hunter2"
+    password: "hunter2",
+    reference: SCANNER_FINDING
   });
 
   return new Promise((resolvePort, reject) => {
@@ -367,6 +385,14 @@ async function resolveChromeBinary(candidates) {
   }
 
   throw new Error("Chrome binary not found. Set WB_E2E_CHROME_BIN.");
+}
+
+async function acceptDialogs(client, log) {
+  await client.send("Page.enable");
+  client.on("Page.javascriptDialogOpening", (params) => {
+    log.push(String(params?.message ?? "").slice(0, 120));
+    void client.send("Page.handleJavaScriptDialog", { accept: true }).catch(() => undefined);
+  });
 }
 
 async function openTarget(url) {
@@ -482,7 +508,16 @@ class CdpClient {
     const id = ++this.sequence;
 
     return new Promise((resolveSend, reject) => {
-      this.pending.set(id, { resolve: resolveSend, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP ${method} did not answer within ${CDP_COMMAND_TIMEOUT_MS} ms`));
+      }, CDP_COMMAND_TIMEOUT_MS);
+      const settle = (callback) => (value) => {
+        clearTimeout(timer);
+        callback(value);
+      };
+
+      this.pending.set(id, { resolve: settle(resolveSend), reject: settle(reject) });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
