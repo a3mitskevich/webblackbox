@@ -1,5 +1,6 @@
 import type { ProfileRule, ProfileRuleMatch } from "./model.js";
-import { isSafeRegexSource, matchesGlob, MAX_MATCHED_TITLE_LENGTH } from "./safe-pattern.js";
+import { matchesGlob } from "./safe-pattern.js";
+import { compileTitleRegex, type TitleMatcher } from "./title-regex.js";
 
 /** What the rule engine knows about the page; DOM-derived signals are optional. */
 export type ProfilePageContext = {
@@ -223,17 +224,24 @@ function matchesQuery(params: URLSearchParams, query: Record<string, string | tr
   );
 }
 
+/** Compiled title matchers by source; rules are few and re-evaluated on every navigation. */
+const titleMatchers = new Map<string, TitleMatcher | null>();
+const MAX_CACHED_TITLE_MATCHERS = 256;
+
 function matchesTitle(title: string | undefined, regex: string): boolean {
-  // Stored rules are validated on read; this also covers rules built in memory.
-  if (typeof title !== "string" || !isSafeRegexSource(regex)) {
+  if (typeof title !== "string") {
     return false;
   }
 
-  try {
-    return new RegExp(regex, "i").test(title.slice(0, MAX_MATCHED_TITLE_LENGTH));
-  } catch {
-    return false;
+  if (!titleMatchers.has(regex)) {
+    if (titleMatchers.size >= MAX_CACHED_TITLE_MATCHERS) {
+      titleMatchers.clear();
+    }
+
+    titleMatchers.set(regex, compileTitleRegex(regex));
   }
+
+  return titleMatchers.get(regex)?.(title) ?? false;
 }
 
 function matchesMetaTag(

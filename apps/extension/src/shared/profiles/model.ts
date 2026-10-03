@@ -12,7 +12,7 @@ import {
 import { z } from "zod";
 
 import { CAPTURE_CATEGORY_LEVELS, type CaptureCategories } from "./categories.js";
-import { isSafeRegexSource } from "./safe-pattern.js";
+import { compileTitleRegex } from "./title-regex.js";
 
 /** `chrome.storage.local` key of the v2 profiles store. */
 export const PROFILES_STORAGE_KEY = "webblackbox.profiles";
@@ -220,10 +220,8 @@ export const profileRuleSchema = z
           .max(MAX_TITLE_REGEX_LENGTH)
           .refine(isCompilableRegex, "titleRegex must be a valid regular expression")
           .refine(
-            isSafeRegexSource,
-            "titleRegex is too slow to match safely: avoid quantified groups containing " +
-              "quantifiers or |, backreferences and long chains of quantifiers; start with ^ " +
-              "or drop a leading .* to make room"
+            (value) => compileTitleRegex(value) !== null,
+            "titleRegex cannot use backreferences or lookarounds, or is too large"
           )
           .optional(),
         selectorPresent: patternSchema.optional(),
