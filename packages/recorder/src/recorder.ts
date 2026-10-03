@@ -13,7 +13,7 @@ import { ActionSpanTracker } from "./action-span.js";
 import { FreezePolicy } from "./freeze.js";
 import { DefaultEventNormalizer } from "./normalizer.js";
 import type { RecorderPlugin, RecorderPluginContext } from "./plugins.js";
-import { redactPayload } from "./redaction.js";
+import { createRedactionHashKey, redactPayload } from "./redaction.js";
 import { EventRingBuffer } from "./ring-buffer.js";
 import type { EventNormalizer, RawRecorderEvent, RecorderIngestResult } from "./types.js";
 
@@ -32,6 +32,9 @@ export class WebBlackboxRecorder {
   private readonly freezePolicy: FreezePolicy;
 
   private readonly pluginContext: RecorderPluginContext;
+
+  // Per-session HMAC key for hashed sensitive values; memory-only, never exported.
+  private readonly redactionHashKey = createRedactionHashKey();
 
   public constructor(
     private readonly config: RecorderConfig,
@@ -60,7 +63,9 @@ export class WebBlackboxRecorder {
       return {};
     }
 
-    const redactedPayload = redactPayload(normalized.payload, this.config.redaction);
+    const redactedPayload = redactPayload(normalized.payload, this.config.redaction, {
+      hashKey: this.redactionHashKey
+    });
     const privacy = classifyPrivacy(
       normalized.eventType,
       redactedPayload,
