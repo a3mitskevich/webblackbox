@@ -13,6 +13,11 @@ export const MAX_MATCHED_TITLE_LENGTH = 256;
 
 /** Largest compiled program; bounds the work per title character. */
 const MAX_PROGRAM_SIZE = 4_000;
+/**
+ * Most AST nodes visited while compiling. Repeats of empty groups (`((){99}){99}…`) emit no
+ * instructions, so the program cap alone would not stop exponential compile time.
+ */
+const MAX_COMPILE_STEPS = MAX_PROGRAM_SIZE * 4;
 
 export type TitleMatcher = (title: string) => boolean;
 
@@ -253,8 +258,15 @@ function emitProgram(root: RegexNode): Instruction[] {
   };
   // Titles are capped, so counts beyond the cap behave like the cap (or like no upper bound).
   const repetitionLimit = MAX_MATCHED_TITLE_LENGTH + 1;
+  let compileSteps = 0;
 
   const emit = (node: RegexNode): void => {
+    compileSteps += 1;
+
+    if (compileSteps > MAX_COMPILE_STEPS) {
+      throw new UnsupportedRegexError("pattern is too complex");
+    }
+
     switch (node.kind) {
       case "char":
         push({ op: "char", test: node.test });

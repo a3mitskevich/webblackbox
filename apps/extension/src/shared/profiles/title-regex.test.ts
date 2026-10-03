@@ -143,6 +143,8 @@ describe("compileTitleRegex", () => {
   });
 
   it("rejects syntax it cannot match in linear time, and oversized programs", () => {
+    const started = performance.now();
+
     for (const source of [
       "(a)\\1",
       "(?<x>a)\\k<x>",
@@ -151,10 +153,14 @@ describe("compileTitleRegex", () => {
       "(?<=a)b",
       "(?<!a)b",
       "((a{60}){60}){60}",
+      "(((((){99}){99}){99}){99}){99}",
+      "((((((?:){99}){99}){99}){99}){99}){99}",
       "(unclosed",
       "*a"
     ]) {
       expect(compileTitleRegex(source), source).toBeNull();
     }
+
+    expect(performance.now() - started).toBeLessThan(FAST_MATCH_MS);
   });
 });
