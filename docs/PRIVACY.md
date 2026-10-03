@@ -24,7 +24,7 @@ What the extension records is decided by the recording profile in effect. The `D
 
 Profiles whose capture levels exceed the standard Full ceiling are **extended**. Safeguards:
 
-- Extended profiles only run on hosts named by a site rule that selects them, by the profile store's extended-capture host list, or by the enterprise site allowlist. Elsewhere the Full preset is used instead, and the archive records the downgrade.
+- Extended profiles only run on hosts named by a site rule that selects them, by the profile store's extended-capture host list, or by the enterprise site allowlist. Elsewhere the profile runs at the Full preset levels instead: its own redaction lists, retention and export rules are kept, nothing it turned down is turned back on, unmask selectors are dropped, and the archive records the downgrade. Leaving an allowed host applies the downgrade at once, before the page is probed for DOM-based rules.
 - Site rules only pick a profile; recording always starts manually.
 - Input values are never recorded for password fields (type or password/one-time-code autocomplete), whatever the profile says, nor for fields inside `blockedSelectors` unless a profile unmask selector explicitly re-allows them. Unmask selectors can never expose password fields, and any unmask list makes a profile extended.
 - Body values after sensitive keys are still masked, and the privacy scanner still runs.
