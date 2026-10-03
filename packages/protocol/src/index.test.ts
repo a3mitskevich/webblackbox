@@ -135,6 +135,12 @@ describe("protocol", () => {
 
     expect(exportManifestSchema.safeParse(manifestWithIterations(120_000)).success).toBe(true);
     expect(
+      exportManifestSchema.safeParse({
+        ...manifestWithIterations(120_000),
+        stats: { eventCount: 1, chunkCount: 1, blobCount: 0, durationMs: 40.375 }
+      }).success
+    ).toBe(true);
+    expect(
       exportManifestSchema.safeParse(manifestWithIterations(ARCHIVE_KDF_DEFAULT_ITERATIONS)).success
     ).toBe(true);
     expect(

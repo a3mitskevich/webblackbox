@@ -255,7 +255,8 @@ export const exportStatsSchema = z
     eventCount: z.number().int().nonnegative(),
     chunkCount: z.number().int().nonnegative(),
     blobCount: z.number().int().nonnegative(),
-    durationMs: z.number().int().nonnegative()
+    // Derived from wall-clock event timestamps, which are fractional (timeOrigin + now()).
+    durationMs: z.number().finite().nonnegative()
   })
   .strict();
 
