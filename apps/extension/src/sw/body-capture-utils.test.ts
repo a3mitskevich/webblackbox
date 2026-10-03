@@ -224,6 +224,27 @@ describe("applyBodyUrlFilters", () => {
     ).toBe(enabled);
   });
 
+  it("never keeps bodies of extension or browser-internal URLs, even without filters", () => {
+    for (const url of [
+      "chrome-extension://abcdefghijklmnop/injected.js",
+      "chrome-extension:/",
+      "moz-extension://uuid/content.js",
+      "chrome://new-tab-page/",
+      "devtools://devtools/bundled/inspector.js",
+      "about:blank"
+    ]) {
+      expect(applyBodyUrlFilters(enabled, url, undefined).enabled, url).toBe(false);
+      expect(
+        applyBodyUrlFilters(enabled, url, { includeUrls: ["*"], excludeUrls: [] }).enabled,
+        url
+      ).toBe(false);
+    }
+
+    expect(applyBodyUrlFilters(enabled, "https://a.test/chrome-extension.js", undefined)).toBe(
+      enabled
+    );
+  });
+
   it("disables bodies for excluded URLs and URLs outside the include list", () => {
     const filters = {
       includeUrls: ["https://api.stage.test/*"],
