@@ -170,7 +170,8 @@ export function readCapturableInputValue(
   return field.value.slice(0, MAX_CAPTURED_INPUT_VALUE_CHARS);
 }
 
-function isNeverCapturedField(field: EditableField): boolean {
+/** Password, one-time-code and payment card fields: their values are never recorded anywhere. */
+export function isNeverCapturedField(field: EditableField): boolean {
   const isPasswordNow =
     field instanceof HTMLInputElement && field.type.toLowerCase() === "password";
 

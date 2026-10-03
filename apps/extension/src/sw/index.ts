@@ -49,6 +49,8 @@ import {
   resolveModeBaseConfig,
   shouldInjectPageHooksForMode
 } from "../shared/mode-profile.js";
+import { isPageEventKeptInFullMode } from "webblackbox/capture-scope";
+import { materializeLiteRawEvent } from "webblackbox/lite-materializer";
 import {
   AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
@@ -155,7 +157,6 @@ type SessionRuntime = {
   lastViewport: ViewportState | null;
   lastActionScreenshotMono: number;
   lastIncidentCaptureAt: number;
-  lastNavigationSnapshotAt: number;
   queueDepth: number;
   droppedBestEffortTasks: number;
   pipelineEventBuffer: WebBlackboxEvent[];
@@ -414,7 +415,6 @@ const FULL_MODE_BODY_CAPTURE_MAX_PER_MINUTE = 80;
 const FULL_MODE_BODY_CAPTURE_MAX_PER_SESSION = 2_000;
 const FULL_MODE_INCIDENT_CAPTURE_COOLDOWN_MS = 15_000;
 const FULL_MODE_MIN_SCREENSHOT_INTERVAL_MS = 12_000;
-const FULL_MODE_NAV_SNAPSHOT_COOLDOWN_MS = 30_000;
 const FREEZE_NOTICE_COOLDOWN_MS = 20_000;
 const FREEZE_BADGE_HIGHLIGHT_MS = 15_000;
 const PERFORMANCE_BUDGET_BREACH_COOLDOWN_MS = 15_000;
@@ -469,7 +469,6 @@ const LITE_BODY_REDACTED_TOKEN = "[REDACTED]";
 const LITE_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const LITE_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
 const LITE_DOM_SNAPSHOT_MAX_BYTES = 1_500 * 1024;
-const LITE_STORAGE_SNAPSHOT_MAX_BYTES = 600 * 1024;
 const CPU_PROFILE_SAMPLE_MS = 350;
 const HEAP_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024;
 const OPTIONS_STORAGE_KEY = "webblackbox.options";
@@ -991,7 +990,6 @@ async function startSession(
     lastViewport: null,
     lastActionScreenshotMono: Number.NEGATIVE_INFINITY,
     lastIncidentCaptureAt: Number.NEGATIVE_INFINITY,
-    lastNavigationSnapshotAt: Number.NEGATIVE_INFINITY,
     queueDepth: 0,
     droppedBestEffortTasks: 0,
     pipelineEventBuffer: [],
@@ -1649,10 +1647,13 @@ function shouldSkipFullModeContentRawEvent(
   runtime: SessionRuntime,
   rawEvent: RawRecorderEvent
 ): boolean {
+  const categories = runtime.config.capturePolicy?.categories;
+
   return (
     runtime.mode === "full" &&
     rawEvent.source === "content" &&
-    SKIPPED_FULL_MODE_CONTENT_RAW_TYPES.has(rawEvent.rawType)
+    SKIPPED_FULL_MODE_CONTENT_RAW_TYPES.has(rawEvent.rawType) &&
+    !(categories && isPageEventKeptInFullMode(rawEvent.rawType, categories))
   );
 }
 
@@ -1660,7 +1661,11 @@ function shouldMaterializeLiteContentEvent(
   runtime: SessionRuntime,
   rawEvent: RawRecorderEvent
 ): boolean {
-  if (runtime.mode !== "lite") {
+  const categories = runtime.config.capturePolicy?.categories;
+  const isKeptInFullMode =
+    categories !== undefined && isPageEventKeptInFullMode(rawEvent.rawType, categories);
+
+  if (runtime.mode !== "lite" && !isKeptInFullMode) {
     return false;
   }
 
@@ -1682,16 +1687,13 @@ function shouldMaterializeLiteContentEvent(
     return typeof payload.html === "string" && payload.html.length > 0;
   }
 
-  if (rawEvent.rawType === "localStorageSnapshot") {
-    return asRecord(payload.entries) !== null;
-  }
-
-  if (rawEvent.rawType === "indexedDbSnapshot") {
-    return Array.isArray(payload.databaseNames);
-  }
-
-  if (rawEvent.rawType === "cookieSnapshot") {
-    return Array.isArray(payload.names);
+  // Storage snapshots are always normalized to what the capture policy allows.
+  if (
+    rawEvent.rawType === "localStorageSnapshot" ||
+    rawEvent.rawType === "indexedDbSnapshot" ||
+    rawEvent.rawType === "cookieSnapshot"
+  ) {
+    return true;
   }
 
   if (rawEvent.rawType === "networkBody") {
@@ -1721,7 +1723,11 @@ async function materializeLiteContentEvent(
     rawEvent.rawType === "indexedDbSnapshot" ||
     rawEvent.rawType === "cookieSnapshot"
   ) {
-    return materializeLiteStorageSnapshot(runtime, rawEvent);
+    // Details stay inline (never in blobs) so the recorder's redactor and policy checks see them.
+    return materializeLiteRawEvent(rawEvent, {
+      config: runtime.config,
+      putBlob: (mime, bytes) => runtime.pipeline.putBlob(mime, bytes)
+    });
   }
 
   if (rawEvent.rawType === "networkBody") {
@@ -1808,90 +1814,6 @@ async function materializeLiteDomSnapshot(
       truncated
     }
   };
-}
-
-async function materializeLiteStorageSnapshot(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): Promise<RawRecorderEvent | null> {
-  const payload = asRecord(rawEvent.payload);
-
-  if (!payload) {
-    return null;
-  }
-
-  const reason = asString(payload.reason) ?? undefined;
-
-  if (rawEvent.rawType === "localStorageSnapshot") {
-    const entries = asRecord(payload.entries) ?? {};
-    const serialized = JSON.stringify(entries);
-    const encoded = encodeTextWithByteLimit(serialized, LITE_STORAGE_SNAPSHOT_MAX_BYTES);
-    const hash =
-      encoded.bytes.byteLength > 0
-        ? await runtime.pipeline.putBlob("application/json", encoded.bytes)
-        : undefined;
-    const count = normalizeNonNegativeInt(payload.count) ?? Object.keys(entries).length;
-
-    return {
-      ...rawEvent,
-      payload: {
-        hash,
-        count,
-        mode: "sample",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true || encoded.truncated
-      }
-    };
-  }
-
-  if (rawEvent.rawType === "indexedDbSnapshot") {
-    const names = asStringArray(payload.databaseNames, 400);
-    const serialized = JSON.stringify(names);
-    const encoded = encodeTextWithByteLimit(serialized, LITE_STORAGE_SNAPSHOT_MAX_BYTES);
-    const hash =
-      encoded.bytes.byteLength > 0
-        ? await runtime.pipeline.putBlob("application/json", encoded.bytes)
-        : undefined;
-    const count = normalizeNonNegativeInt(payload.count) ?? names.length;
-
-    return {
-      ...rawEvent,
-      payload: {
-        hash,
-        count,
-        mode: "schema-only",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true || encoded.truncated
-      }
-    };
-  }
-
-  if (rawEvent.rawType === "cookieSnapshot") {
-    const names = asStringArray(payload.names, 400);
-    const serialized = JSON.stringify(names);
-    const encoded = encodeTextWithByteLimit(serialized, LITE_STORAGE_SNAPSHOT_MAX_BYTES);
-    const hash =
-      encoded.bytes.byteLength > 0
-        ? await runtime.pipeline.putBlob("application/json", encoded.bytes)
-        : undefined;
-    const count = normalizeNonNegativeInt(payload.count) ?? names.length;
-
-    return {
-      ...rawEvent,
-      payload: {
-        hash,
-        count,
-        mode: "sample",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true || encoded.truncated
-      }
-    };
-  }
-
-  return rawEvent;
 }
 
 async function materializeLiteNetworkBody(
@@ -2745,10 +2667,6 @@ async function processFullModeEvent(
 
     return;
   }
-
-  if (method === "Page.frameNavigated" && shouldCaptureNavigationSnapshot(runtime)) {
-    await captureDomSnapshot(runtime, "navigation");
-  }
 }
 
 async function primeChildCdpSession(
@@ -2941,29 +2859,6 @@ async function captureIncidentArtifacts(runtime: SessionRuntime, reason: string)
   ]);
 }
 
-function shouldCaptureNavigationSnapshot(runtime: SessionRuntime): boolean {
-  if (runtime.stopping) {
-    return false;
-  }
-
-  if (runtime.config.capturePolicy?.categories.dom !== "allow") {
-    return false;
-  }
-
-  if (runtime.queueDepth >= Math.floor(BEST_EFFORT_QUEUE_MAX_PENDING / 4)) {
-    return false;
-  }
-
-  const now = Date.now();
-
-  if (now - runtime.lastNavigationSnapshotAt < FULL_MODE_NAV_SNAPSHOT_COOLDOWN_MS) {
-    return false;
-  }
-
-  runtime.lastNavigationSnapshotAt = now;
-  return true;
-}
-
 function handleFreezeNotice(runtime: SessionRuntime, reason: FreezeReason): void {
   if (runtime.stopping) {
     return;
@@ -2988,7 +2883,9 @@ async function captureFullModeArtifacts(runtime: SessionRuntime, reason: string)
   ];
 
   if (reason !== "session-start") {
-    tasks.push(captureDomSnapshot(runtime, reason), captureStorageSnapshots(runtime, reason));
+    // The DOM comes from the page agent's raw snapshot (`dom: allow`), which masks blocked
+    // selectors and field values; a CDP DOMSnapshot would carry both unmasked.
+    tasks.push(captureStorageSnapshots(runtime, reason));
   }
 
   if (shouldCaptureAdvancedProfiles(reason)) {
@@ -3344,54 +3241,6 @@ function createScreenRecordingId(sid: string): string {
       ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
       : Math.random().toString(36).slice(2, 14);
   return `VR-${sid}-${Date.now()}-${random}`;
-}
-
-async function captureDomSnapshot(runtime: SessionRuntime, reason: string): Promise<void> {
-  if (!runtime.cdpRouter) {
-    return;
-  }
-
-  if (runtime.config.capturePolicy?.categories.dom !== "allow") {
-    return;
-  }
-
-  const snapshot = await sendCdpCommand<Record<string, unknown>>(
-    runtime,
-    { tabId: runtime.tabId },
-    "DOMSnapshot.captureSnapshot",
-    {
-      computedStyles: [],
-      includeDOMRects: false,
-      includePaintOrder: false
-    }
-  );
-
-  if (!snapshot) {
-    return;
-  }
-
-  const bytes = new TextEncoder().encode(JSON.stringify(snapshot));
-  const hash = await runtime.pipeline.putBlob("application/json", bytes);
-  const documents = Array.isArray(snapshot.documents) ? snapshot.documents : [];
-  const firstDocument = documents[0] as Record<string, unknown> | undefined;
-  const nodes = firstDocument ? asRecord(firstDocument.nodes) : null;
-  const nodeNameArray = Array.isArray(nodes?.nodeName) ? nodes.nodeName : [];
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "cdp.dom.snapshot",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      snapshotId: `D-${Date.now()}`,
-      contentHash: hash,
-      source: "cdp",
-      nodeCount: nodeNameArray.length,
-      reason
-    }
-  });
 }
 
 async function captureStorageSnapshots(runtime: SessionRuntime, reason: string): Promise<void> {
@@ -3924,28 +3773,6 @@ function normalizeNonNegativeInt(value: unknown): number | undefined {
   }
 
   return Math.max(0, Math.round(candidate));
-}
-
-function asStringArray(value: unknown, limit: number): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const output: string[] = [];
-
-  for (const entry of value) {
-    if (typeof entry !== "string" || entry.length === 0) {
-      continue;
-    }
-
-    output.push(entry);
-
-    if (output.length >= limit) {
-      break;
-    }
-  }
-
-  return output;
 }
 
 function encodeTextWithByteLimit(

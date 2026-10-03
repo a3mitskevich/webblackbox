@@ -7,6 +7,15 @@ import type { RawRecorderEvent } from "@webblackbox/recorder";
 import { snapdom } from "@zumer/snapdom";
 
 import type { LiteCaptureAgentOptions, LiteCaptureSampling, LiteCaptureState } from "./types.js";
+import {
+  capStorageValue,
+  capturesPageStorageInFullMode,
+  capturesRawDom,
+  isPageEventKeptInFullMode,
+  STORAGE_SNAPSHOT_MAX_ITEMS,
+  STORAGE_SNAPSHOT_MAX_VALUE_CHARS
+} from "./capture-scope.js";
+import { serializeRawDom } from "./raw-dom-snapshot.js";
 import { INJECTED_MESSAGE_SOURCE, type InjectedCaptureWindowMessage } from "./injected-hooks.js";
 import {
   notePasswordField,
@@ -848,15 +857,18 @@ export class LiteCaptureAgent {
     );
   }
 
+  /** Full mode leaves the DOM to CDP unless the profile records the raw DOM. */
   private shouldCaptureDomSnapshots(): boolean {
     return (
-      this.mode !== "full" && this.isTopLevelFrame && this.capturePolicy.categories.dom !== "off"
+      (this.mode !== "full" || capturesRawDom(this.capturePolicy.categories)) &&
+      this.isTopLevelFrame &&
+      this.capturePolicy.categories.dom !== "off"
     );
   }
 
   private shouldCaptureStorageSnapshots(): boolean {
     return (
-      this.mode !== "full" &&
+      (this.mode !== "full" || capturesPageStorageInFullMode(this.capturePolicy.categories)) &&
       this.isTopLevelFrame &&
       (this.capturePolicy.categories.storage !== "off" ||
         this.capturePolicy.categories.indexedDb !== "off" ||
@@ -1063,6 +1075,11 @@ export class LiteCaptureAgent {
   private emitDomSnapshot(reason: string): void {
     const nodeCount = document.getElementsByTagName("*").length;
     const summaryMode = this.resolveDomSnapshotSummaryMode(nodeCount);
+
+    if (summaryMode !== "pressure" && this.emitRawDomSnapshot(reason, nodeCount)) {
+      return;
+    }
+
     const html = buildDomSnapshotSummaryHtml({
       href: readCurrentPageUrl(),
       title: document.title,
@@ -1089,6 +1106,37 @@ export class LiteCaptureAgent {
     });
   }
 
+  /** `dom: allow`: the page itself, masked by blocked selectors. False when not recorded. */
+  private emitRawDomSnapshot(reason: string, nodeCount: number): boolean {
+    const { categories, redaction } = this.capturePolicy;
+
+    if (!capturesRawDom(categories)) {
+      return false;
+    }
+
+    const snapshot = serializeRawDom(document, {
+      blockedSelectors: redaction.blockedSelectors,
+      keepInputValues: categories.inputs === "allow"
+    });
+
+    if (!snapshot) {
+      return false;
+    }
+
+    this.hasDomSnapshot = true;
+    this.queueEvent("snapshot", {
+      reason,
+      href: readCurrentPageUrl(),
+      title: document.title,
+      nodeCount,
+      htmlLength: snapshot.htmlLength,
+      truncated: snapshot.truncated,
+      html: snapshot.html,
+      summaryOnly: false
+    });
+    return true;
+  }
+
   private emitStorageSnapshots(reason: string): void {
     if (this.capturePolicy.categories.cookies !== "off") {
       this.emitCookieSnapshot(reason);
@@ -1104,30 +1152,76 @@ export class LiteCaptureAgent {
   }
 
   private emitCookieSnapshot(reason: string): void {
-    const count = document.cookie
+    const names = document.cookie
       .split(";")
       .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0).length;
+      .filter((entry) => entry.length > 0)
+      .map((entry) => entry.split("=")[0]?.trim() ?? "");
+    const showsNames = this.capturePolicy.categories.cookies === "names-only";
 
     this.queueEvent("cookieSnapshot", {
       reason,
-      count,
-      mode: "counts-only",
-      redacted: true
+      count: names.length,
+      mode: showsNames ? "names-only" : "counts-only",
+      redacted: true,
+      ...(showsNames
+        ? {
+            names: names.slice(0, STORAGE_SNAPSHOT_MAX_ITEMS),
+            truncated: names.length > STORAGE_SNAPSHOT_MAX_ITEMS
+          }
+        : {})
     });
   }
 
   private emitLocalStorageSnapshot(reason: string): void {
     const count = localStorage.length;
+    const level = this.capturePolicy.categories.storage;
 
     this.hasLocalStorageSnapshot = true;
 
+    if (level !== "names-only" && level !== "lengths-only" && level !== "allow") {
+      this.queueEvent("localStorageSnapshot", {
+        reason,
+        count,
+        truncated: false,
+        mode: "counts-only",
+        redacted: true
+      });
+      return;
+    }
+
+    const keys = readStorageKeys(localStorage, STORAGE_SNAPSHOT_MAX_ITEMS);
+    let truncated = count > keys.length;
+    let budget = STORAGE_SNAPSHOT_MAX_VALUE_CHARS;
+    const details: Record<string, unknown> = {};
+
+    if (level === "names-only") {
+      details.keys = keys;
+    } else if (level === "lengths-only") {
+      details.lengths = keys.map((key) => (localStorage.getItem(key) ?? "").length);
+    } else {
+      details.entries = keys.flatMap((key) => {
+        const value = localStorage.getItem(key) ?? "";
+
+        if (budget <= 0) {
+          truncated = true;
+          return [];
+        }
+
+        const entry = { key, valueLength: value.length, ...capStorageValue(value) };
+        budget -= entry.value.length;
+        return [entry];
+      });
+    }
+
+    // Values go through the recorder's redactor (sensitive key names mask their values).
     this.queueEvent("localStorageSnapshot", {
       reason,
       count,
-      truncated: false,
-      mode: "counts-only",
-      redacted: true
+      truncated,
+      mode: level,
+      redacted: level !== "allow",
+      ...details
     });
   }
 
@@ -1138,13 +1232,19 @@ export class LiteCaptureAgent {
 
     try {
       const rows = await indexedDB.databases();
+      const showsNames = this.capturePolicy.categories.indexedDb === "names-only";
+      const names = rows
+        .map((row) => row.name)
+        .filter((name): name is string => typeof name === "string")
+        .slice(0, STORAGE_SNAPSHOT_MAX_ITEMS);
 
       this.queueEvent("indexedDbSnapshot", {
         reason,
         count: rows.length,
-        mode: "counts-only",
+        mode: showsNames ? "names-only" : "counts-only",
         redacted: true,
-        truncated: false
+        truncated: showsNames && rows.length > names.length,
+        ...(showsNames ? { databaseNames: names } : {})
       });
     } catch {
       void 0;
@@ -1824,7 +1924,11 @@ export class LiteCaptureAgent {
   }
 
   private queueRawEvent(event: RawRecorderEvent): void {
-    if (this.mode === "full" && FULL_MODE_SKIPPED_RAW_TYPES.has(event.rawType)) {
+    if (
+      this.mode === "full" &&
+      FULL_MODE_SKIPPED_RAW_TYPES.has(event.rawType) &&
+      !isPageEventKeptInFullMode(event.rawType, this.capturePolicy.categories)
+    ) {
       return;
     }
 
@@ -2666,3 +2770,17 @@ function shouldBufferBeforeRecording(event: RawRecorderEvent): boolean {
 
 /** Default sanitized sampling profile used by `LiteCaptureAgent`. */
 export { DEFAULT_SAMPLING as DEFAULT_LITE_CAPTURE_SAMPLING };
+
+function readStorageKeys(storage: Storage, maxItems: number): string[] {
+  const keys: string[] = [];
+
+  for (let index = 0; index < storage.length && keys.length < maxItems; index += 1) {
+    const key = storage.key(index);
+
+    if (key !== null) {
+      keys.push(key);
+    }
+  }
+
+  return keys;
+}
