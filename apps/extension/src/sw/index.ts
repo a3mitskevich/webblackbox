@@ -3263,7 +3263,8 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
       ? await sendCdpCommand<{ cookies?: unknown[] }>(
           runtime,
           { tabId: runtime.tabId },
-          "Storage.getCookies"
+          // The page's cookies only; Storage.getCookies would list every site in the browser.
+          "Network.getCookies"
         )
       : null;
 

@@ -358,11 +358,8 @@ function hasSensitiveStorageKey(
   }
 
   const key = source.key.toLowerCase();
-  // Words of the key (`sessionId` → session, id), so `auth` does not match `author`.
-  const keyWords = source.key
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/);
+  // Cookie-style names match anywhere (`JSESSIONID`, `authstate`), except inside `author`.
+  const keyForNames = key.replace(/[^a-z0-9]+/g, "").replaceAll("author", "");
   const value =
     typeof source.value === "string"
       ? source.value
@@ -372,10 +369,10 @@ function hasSensitiveStorageKey(
 
   return (
     isSensitiveKey(key, profile) ||
-    profile.redactCookieNames.some(
-      (name) =>
-        name.length > 0 && (key === name.toLowerCase() || keyWords.includes(name.toLowerCase()))
-    ) ||
+    profile.redactCookieNames.some((name) => {
+      const normalized = name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      return normalized.length > 0 && keyForNames.includes(normalized);
+    }) ||
     CREDENTIAL_VALUE_PATTERNS.some((pattern) => pattern.test(value))
   );
 }

@@ -38,12 +38,18 @@ const SENSITIVE_ATTRIBUTE_NAME_PARTS = [
   "session",
   "signature",
   "otp",
+  "credential",
   "apikey",
-  "api_key"
+  "accesskey",
+  "privatekey"
 ];
-/** Parts that are several words run together; matched without separators. */
-const COMPOUND_NAME_PARTS = new Set(["apikey", "accesskey", "privatekey", "authkey"]);
-const CSS_URL_PATTERN = /url\(\s*(['"]?)(.*?)\1\s*\)/gi;
+/**
+ * A URL query inside CSS (`url(…)`, `@import "…"`, `image-set(…)`): from `?` up to a
+ * delimiter. One character class, so matching stays linear on any input.
+ */
+const CSS_QUERY_PATTERN = /\?[^\s"'()<>;,]*/g;
+/** Name parts matched as whole words only (short, often inside unrelated words). */
+const WORD_ONLY_NAME_PARTS = new Set(["otp"]);
 /** Elements whose `value` attribute is form data (inputs are handled field by field). */
 const VALUE_ATTRIBUTE_ELEMENTS = new Set(["BUTTON", "OPTION", "PARAM", "DATA", "METER"]);
 
@@ -220,10 +226,11 @@ function sanitizeAttributes(element: Element, context: SanitizeContext): void {
       attribute.value = sanitizeUrlForPrivacy(attribute.value);
     } else if (name === "srcset" || name === "imagesrcset") {
       attribute.value = sanitizeSrcset(attribute.value);
-    } else if (name === "style") {
-      attribute.value = sanitizeCssUrls(attribute.value);
-    } else if (hasSensitiveNameWord(name, context.sensitiveNameParts)) {
+    } else if (hasSensitiveNamePart(name, context.sensitiveNameParts)) {
       attribute.value = MASKED_TEXT;
+    } else if (name === "style" || attribute.value.includes("url(")) {
+      // Inline CSS and SVG paint attributes (`fill="url(…)"`, `mask`, `filter`…).
+      attribute.value = sanitizeCssUrls(attribute.value);
     }
   }
 
@@ -238,25 +245,24 @@ function isEventHandlerAttribute(element: Element, name: string): boolean {
 }
 
 /**
- * Single-word parts match whole words of the name (`data-session-id`, not `data-hotpath`);
- * compound parts (`api_key`, `apikey`) match the name with its separators removed.
+ * Attribute names are lowercased by HTML, so words run together (`data-csrftoken`): parts match
+ * the name without separators, except short ones that hide in other words (`otp` in
+ * `data-hotpath`), which must be a whole word.
  */
-function hasSensitiveNameWord(name: string, parts: readonly string[]): boolean {
+function hasSensitiveNamePart(name: string, parts: readonly string[]): boolean {
   const words = name.split(/[-_:.]+/);
   const collapsed = words.join("");
 
   return parts.some((part) => {
     const collapsedPart = part.replace(/[-_:.\s]+/g, "");
-    return COMPOUND_NAME_PARTS.has(collapsedPart) || collapsedPart !== part
-      ? collapsed.includes(collapsedPart)
-      : words.includes(part);
+    return WORD_ONLY_NAME_PARTS.has(collapsedPart)
+      ? words.includes(collapsedPart)
+      : collapsed.includes(collapsedPart);
   });
 }
 
 function sanitizeCssUrls(css: string): string {
-  return css.replace(CSS_URL_PATTERN, (match, quote: string, url: string) =>
-    url.startsWith("data:") ? match : `url(${quote}${sanitizeUrlForPrivacy(url)}${quote})`
-  );
+  return css.replace(CSS_QUERY_PATTERN, "");
 }
 
 function sanitizeSrcset(value: string): string {

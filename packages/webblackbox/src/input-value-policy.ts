@@ -15,7 +15,9 @@ const NEVER_CAPTURED_AUTOCOMPLETE_TOKENS = new Set([
   "cc-exp-month",
   "cc-exp-year"
 ]);
-const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode|(?:^|[^a-z])otp(?:[^a-z]|$)/i;
+const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode/i;
+/** Whole words of a field name or id that mark a one-time code (`otpCode`, `sms_otp`). */
+const ONE_TIME_CODE_WORDS = new Set(["otp", "totp", "mfa", "2fa"]);
 
 type PasswordFieldRegistry = {
   /**
@@ -179,7 +181,12 @@ export function isNeverCapturedField(field: EditableField): boolean {
     return true;
   }
 
-  if (PASSWORD_LIKE_NAME_PATTERN.test(`${field.name} ${field.id}`)) {
+  const nameAndId = `${field.name} ${field.id}`;
+
+  if (
+    PASSWORD_LIKE_NAME_PATTERN.test(nameAndId) ||
+    splitNameWords(nameAndId).some((word) => ONE_TIME_CODE_WORDS.has(word))
+  ) {
     return true;
   }
 
@@ -214,4 +221,14 @@ function nearestMatch(
   }
 
   return nearest;
+}
+
+/** `verifyOTP code` → verify, otp, code. */
+function splitNameWords(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0);
 }

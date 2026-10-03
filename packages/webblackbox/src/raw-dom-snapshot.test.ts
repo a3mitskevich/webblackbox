@@ -140,6 +140,39 @@ describe("serializeRawDom", () => {
     expect(html).toContain("/b.png");
   });
 
+  it("strips CSS URL queries in linear time and catches every CSS URL form", () => {
+    document.body.innerHTML = `
+      <style>@import "/x.css?token=IMPORT-SECRET"; .a { background: image-set("/i.png?token=SET-SECRET" 1x); }</style>
+      <div style="background:url(/a(1).png?token=PAREN-SECRET)">a</div>
+      <svg><rect fill="url(https://h.test/p?token=FILL-SECRET#g)"></rect></svg>
+      <div data-csrftoken="RUN-TOGETHER-SECRET" data-sessionid="SESSION-SECRET">b</div>`;
+
+    const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+
+    for (const secret of [
+      "IMPORT-SECRET",
+      "SET-SECRET",
+      "PAREN-SECRET",
+      "FILL-SECRET",
+      "RUN-TOGETHER-SECRET",
+      "SESSION-SECRET"
+    ]) {
+      expect(html, secret).not.toContain(secret);
+    }
+
+    for (const css of [`url(${" ".repeat(200_000)}`, "url(".repeat(100_000)]) {
+      document.body.innerHTML = "";
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.body.append(style);
+      const started = performance.now();
+
+      serializeRawDom(document, OPTIONS);
+
+      expect(performance.now() - started).toBeLessThan(1_000);
+    }
+  });
+
   it("fails closed on an invalid blocked selector and caps the size", () => {
     document.body.innerHTML = `<p>${"x".repeat(RAW_DOM_SNAPSHOT_MAX_CHARS)}</p>`;
 

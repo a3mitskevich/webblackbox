@@ -184,6 +184,8 @@ describe("readCapturableInputValue", () => {
     for (const html of [
       '<input data-field type="text" name="user_password" />',
       '<input data-field type="text" id="pwd" />',
+      '<input data-field type="text" name="otpCode" />',
+      '<input data-field type="text" id="verifyOTP" />',
       '<input data-field autocomplete="billing cc-number" />',
       '<input data-field autocomplete="cc-csc" />',
       '<input data-field autocomplete="cc-exp" />'

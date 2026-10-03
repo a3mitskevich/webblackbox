@@ -130,6 +130,8 @@ describe("redactPayload URL fields", () => {
           { key: "profile", value: `Bearer ${"a".repeat(24)}` },
           { key: "cache", value: JSON.stringify({ id: jwt }) },
           { key: "sessionId", value: "abc-123-opaque" },
+          { key: "JSESSIONID", value: "jsession-opaque" },
+          { key: "authstate", value: "state-opaque" },
           { key: "theme", value: "dark" },
           { key: "authorName", value: "Ann" }
         ]
@@ -138,6 +140,8 @@ describe("redactPayload URL fields", () => {
     ) as { entries: Array<{ value: string }> };
 
     expect(redacted.entries.map((entry) => entry.value)).toEqual([
+      "[REDACTED]",
+      "[REDACTED]",
       "[REDACTED]",
       "[REDACTED]",
       "[REDACTED]",
