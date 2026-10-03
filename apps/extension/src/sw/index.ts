@@ -59,6 +59,7 @@ import {
   normalizeBodyCaptureMaxBytes as normalizeBodyCaptureMaxBytesUtil,
   isTextualMimeType as isTextualMimeTypeUtil,
   normalizeMimeType as normalizeMimeTypeUtil,
+  isInlineRequestBodyAllowed,
   resolveFullBodyCaptureRule as resolveFullBodyCaptureRuleUtil,
   resolveLiteBodyCaptureRule as resolveLiteBodyCaptureRuleUtil,
   transformResponseBodyForCapture
@@ -955,7 +956,13 @@ async function startSession(
       },
       onFreeze: (reason) => {
         handleFreezeNotice(runtime, reason);
-      }
+      },
+      shouldKeepInlineNetworkBody: (context) =>
+        isInlineRequestBodyAllowed(context, (url, mimeType) =>
+          runtime.mode === "full"
+            ? resolveFullBodyCaptureRule(runtime, url, mimeType)
+            : resolveLiteBodyCaptureRule(runtime, url, mimeType)
+        )
     },
     undefined,
     recorderPlugins

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_REDACTION_PROFILE } from "@webblackbox/protocol";
 
 import {
+  isInlineRequestBodyAllowed,
   resolveFullBodyCaptureRule,
   resolveLiteBodyCaptureRule,
   transformResponseBodyForCapture
@@ -15,6 +16,47 @@ function decodeBase64ForTest(value: string): Uint8Array {
 }
 
 describe("body-capture utils", () => {
+  it("gates inline request bodies with the site body-capture rule", () => {
+    const config = {
+      sampling: { bodyCaptureMaxBytes: 64 * 1024 },
+      sitePolicies: [
+        {
+          originPattern: "https://bank.example.com",
+          mode: "full" as const,
+          enabled: true,
+          allowBodyCapture: false,
+          bodyMimeAllowlist: [],
+          pathAllowlist: [],
+          pathDenylist: []
+        }
+      ]
+    };
+    const resolveRule = (url: string, mimeType: string | undefined) =>
+      resolveFullBodyCaptureRule(config, url, mimeType);
+
+    expect(
+      isInlineRequestBodyAllowed(
+        {
+          eventType: "network.request",
+          url: "https://bank.example.com/login",
+          mimeType: "application/x-www-form-urlencoded"
+        },
+        resolveRule
+      )
+    ).toBe(false);
+    expect(
+      isInlineRequestBodyAllowed(
+        {
+          eventType: "network.request",
+          url: "https://app.example.com/login",
+          mimeType: "application/json; charset=utf-8"
+        },
+        resolveRule
+      )
+    ).toBe(true);
+    expect(isInlineRequestBodyAllowed({ eventType: "network.ws.frame" }, resolveRule)).toBe(true);
+  });
+
   it("disables full-mode body capture when matching policy denies body capture", () => {
     const rule = resolveFullBodyCaptureRule(
       {

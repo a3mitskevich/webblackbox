@@ -222,7 +222,7 @@ Redaction is applied recursively through nested objects and supports:
 
 Network body blobs are redacted separately with `redactBodyText` / `redactBodyBytes` from `@webblackbox/protocol`, which mask the values of sensitive keys in JSON, form, query, XML and `key: value` text.
 
-Inline bodies — textual request bodies (`network.request` → `request.postData`), WebSocket text frames (`network.ws.frame` → `frame.payloadPreview`) and SSE messages (`network.sse.message` → `data`) — follow the same rule as `network.body`. They are kept only when `capturePolicy.categories.network` is `"body-allowlist"`, value-masked with `redactBodyText` and size-capped (64 KiB, 512 and 800 characters). Otherwise only sizes survive (`postDataSize`, `frame.payloadLength`/`opcode`, SSE `dataSize`).
+Inline bodies — textual request bodies (`network.request` → `request.postData`), WebSocket text frames (`network.ws.frame` → `frame.payloadPreview`) and SSE messages (`network.sse.message` → `data`) — follow the same rule as `network.body`. They are kept only when `capturePolicy.categories.network` is `"body-allowlist"`, value-masked with `redactBodyText` and size-capped (64 KiB, 512 and 800 characters). Otherwise only sizes survive (`postDataSize`, `frame.payloadLength`/`opcode`, SSE `dataSize`). A host can add its own gate through the `shouldKeepInlineNetworkBody` recorder hook (it gets the event type, the unsanitized request URL and the request MIME type); the extension uses it to apply its site body-capture rules to request bodies, the same rules response bodies follow.
 
 ## Plugins
 

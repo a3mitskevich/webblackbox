@@ -11,7 +11,12 @@ import {
 
 import { ActionSpanTracker } from "./action-span.js";
 import { FreezePolicy } from "./freeze.js";
-import { attachInlineNetworkBody, detachInlineNetworkBody } from "./network-body-policy.js";
+import {
+  attachInlineNetworkBody,
+  detachInlineNetworkBody,
+  readInlineNetworkBodyContext,
+  type InlineNetworkBodyContext
+} from "./network-body-policy.js";
 import { DefaultEventNormalizer } from "./normalizer.js";
 import type { RecorderPlugin, RecorderPluginContext } from "./plugins.js";
 import { createRedactionHashKey, redactPayload } from "./redaction.js";
@@ -21,6 +26,11 @@ import type { EventNormalizer, RawRecorderEvent, RecorderIngestResult } from "./
 export type RecorderHooks = {
   onEvent?: (event: WebBlackboxEvent) => void;
   onFreeze?: (reason: FreezeReason, event: WebBlackboxEvent) => void;
+  /**
+   * Extra gate for inline body text the `body-allowlist` policy would keep (request `postData`,
+   * WebSocket preview, SSE `data`), e.g. site policies. Returning false keeps only sizes.
+   */
+  shouldKeepInlineNetworkBody?: (context: InlineNetworkBodyContext) => boolean;
 };
 
 export class WebBlackboxRecorder {
@@ -66,6 +76,7 @@ export class WebBlackboxRecorder {
 
     // Inline bodies skip key/value redaction: they get value masking under the body policy instead.
     const detached = detachInlineNetworkBody(normalized.eventType, normalized.payload);
+    const shouldKeepBody = this.hooks.shouldKeepInlineNetworkBody;
     const redactedPayload = attachInlineNetworkBody(
       redactPayload(detached.payload, this.config.redaction, {
         hashKey: this.redactionHashKey
@@ -73,7 +84,17 @@ export class WebBlackboxRecorder {
       detached.body,
       {
         capturePolicy: this.config.capturePolicy,
-        redactBodyPatterns: this.config.redaction.redactBodyPatterns
+        redactBodyPatterns: this.config.redaction.redactBodyPatterns,
+        isBodyAllowed: shouldKeepBody
+          ? () =>
+              shouldKeepBody(
+                readInlineNetworkBodyContext(
+                  normalized.eventType,
+                  nextRawEvent.payload,
+                  detached.payload
+                )
+              )
+          : undefined
       }
     );
     const privacy = classifyPrivacy(

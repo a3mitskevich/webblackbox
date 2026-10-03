@@ -4,7 +4,7 @@ import {
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
-import { asRecord } from "./normalizer-utils.js";
+import { asRecord, asString } from "./normalizer-utils.js";
 
 /** Upper bound of body text inspected by the masker, so huge frames stay cheap on the hot path. */
 export const MAX_INLINE_BODY_SCAN_CHARS = 64 * 1024;
@@ -31,6 +31,17 @@ export type DetachNetworkBodyResult = {
 export type AttachNetworkBodyOptions = {
   capturePolicy: CapturePolicy | undefined;
   redactBodyPatterns: readonly string[];
+  /** Extra gate on top of `body-allowlist` (e.g. site policies); called only when a body would be kept. */
+  isBodyAllowed?: () => boolean;
+};
+
+/** What a host-side inline body gate (see `RecorderHooks.shouldKeepInlineNetworkBody`) gets to see. */
+export type InlineNetworkBodyContext = {
+  eventType: WebBlackboxEventType;
+  /** Unsanitized request URL from the raw event, so site policy path rules match the real path. */
+  url?: string;
+  /** Request content type without parameters, lowercase. */
+  mimeType?: string;
 };
 
 /**
@@ -75,7 +86,10 @@ export function attachInlineNetworkBody(
     return payload;
   }
 
-  if (options.capturePolicy?.categories.network !== "body-allowlist") {
+  if (
+    options.capturePolicy?.categories.network !== "body-allowlist" ||
+    options.isBodyAllowed?.() === false
+  ) {
     return body.slot === "sse"
       ? { ...row, dataRedacted: true, dataSize: row.dataSize ?? body.text.length }
       : payload;
@@ -113,6 +127,23 @@ export function attachInlineNetworkBody(
       };
     }
   }
+}
+
+/** Builds the {@link InlineNetworkBodyContext} from the raw and the normalized payload. */
+export function readInlineNetworkBodyContext(
+  eventType: WebBlackboxEventType,
+  rawPayload: unknown,
+  payload: unknown
+): InlineNetworkBodyContext {
+  const raw = asRecord(rawPayload);
+  const headers = asRecord(asRecord(asRecord(payload)?.request)?.headers);
+  const contentType = asString(headers?.["content-type"]);
+
+  return {
+    eventType,
+    url: asString(asRecord(raw?.request)?.url) ?? asString(raw?.url),
+    mimeType: contentType?.split(";")[0]?.trim().toLowerCase() || undefined
+  };
 }
 
 function detachRequestBody(row: Record<string, unknown>): DetachNetworkBodyResult {

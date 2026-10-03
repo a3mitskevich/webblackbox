@@ -7,6 +7,7 @@ import {
   type RecorderConfig
 } from "@webblackbox/protocol";
 
+import type { InlineNetworkBodyContext } from "./network-body-policy.js";
 import { WebBlackboxRecorder } from "./recorder.js";
 import type { RawRecorderEvent } from "./types.js";
 
@@ -31,8 +32,13 @@ function createConfig(network: NetworkPolicy): RecorderConfig {
   };
 }
 
-function ingestCdp(network: NetworkPolicy, rawType: string, payload: unknown) {
-  const recorder = new WebBlackboxRecorder(createConfig(network));
+function ingestCdp(
+  network: NetworkPolicy,
+  rawType: string,
+  payload: unknown,
+  shouldKeepInlineNetworkBody?: (context: InlineNetworkBodyContext) => boolean
+) {
+  const recorder = new WebBlackboxRecorder(createConfig(network), { shouldKeepInlineNetworkBody });
   const raw: RawRecorderEvent = {
     source: "cdp",
     rawType,
@@ -182,6 +188,50 @@ describe("CDP Network allowlist", () => {
       expect(serialized).not.toContain("hunter2");
       expect(serialized).not.toContain(LOGIN_FORM_BASE64);
       expect(serialized).not.toContain("postDataEntries");
+    });
+
+    it("lets the host gate drop the body under body-allowlist, keeping only its size", () => {
+      const contexts: InlineNetworkBodyContext[] = [];
+      const event = ingestCdp(
+        "body-allowlist",
+        "Network.requestWillBeSent",
+        createRequestWillBeSent(),
+        (context) => {
+          contexts.push(context);
+          return false;
+        }
+      );
+      const data = event.data as { postDataSize?: number; request?: Record<string, unknown> };
+
+      expect(contexts).toEqual([
+        {
+          eventType: "network.request",
+          url: "https://app.example.com/api/session?code=OAUTH123",
+          mimeType: "application/x-www-form-urlencoded"
+        }
+      ]);
+      expect(data.request?.postData).toBeUndefined();
+      expect(data.request?.hasPostData).toBe(true);
+      expect(data.postDataSize).toBe(LOGIN_FORM.length);
+      expect(JSON.stringify(data)).not.toContain("hunter2");
+    });
+
+    it("does not consult the host gate when the policy already drops the body", () => {
+      let calls = 0;
+      const event = ingestCdp(
+        "metadata",
+        "Network.requestWillBeSent",
+        createRequestWillBeSent(),
+        () => {
+          calls += 1;
+          return true;
+        }
+      );
+
+      expect(calls).toBe(0);
+      expect(
+        (event.data as { request?: Record<string, unknown> }).request?.postData
+      ).toBeUndefined();
     });
 
     it("decodes base64 postDataEntries when postData is absent", () => {
