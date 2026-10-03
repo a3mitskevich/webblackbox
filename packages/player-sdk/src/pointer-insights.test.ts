@@ -359,24 +359,22 @@ describe("Playwright action lines", () => {
     expect(selectPlaywrightActions([hold, click(20), next], 2)).toEqual([hold, next]);
   });
 
-  it("never presses a key the capture redacted", () => {
-    expect(
-      buildPlaywrightActionLines([
-        event("user.keydown", 10, { key: "Enter" }),
-        event("user.keydown", 20, { key: "[REDACTED]" }),
-        event("user.keydown", 30, { key: "[MASKED]" }),
-        event("user.keydown", 40, { key: "a", redacted: true }),
-        event("user.keydown", 50, { key: "" }),
-        event("user.keydown", 60, { key: "f".repeat(64) })
-      ])
-    ).toEqual([
+  it("never presses a key the capture redacted, nor spends budget on it", () => {
+    const enter = event("user.keydown", 10, { key: "Enter" });
+    const redacted = [
+      event("user.keydown", 20, { key: "[REDACTED]" }),
+      event("user.keydown", 30, { key: "[MASKED]" }),
+      event("user.keydown", 40, { key: "a", redacted: true }),
+      event("user.keydown", 50, { key: "" }),
+      event("user.keydown", 60, { key: "f".repeat(64) })
+    ];
+    const tab = event("user.keydown", 70, { key: "Tab" });
+
+    expect(buildPlaywrightActionLines([enter, ...redacted, tab])).toEqual([
       '  await page.keyboard.press("Enter");',
-      "  // keydown skipped (key redacted in capture)",
-      "  // keydown skipped (key redacted in capture)",
-      "  // keydown skipped (key redacted in capture)",
-      "  // keydown skipped (key redacted in capture)",
-      "  // keydown skipped (key redacted in capture)"
+      '  await page.keyboard.press("Tab");'
     ]);
+    expect(selectPlaywrightActions([enter, ...redacted, tab], 2)).toEqual([enter, tab]);
   });
 
   it("comments out targets the profile kept hashed", () => {

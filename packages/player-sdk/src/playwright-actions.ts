@@ -22,9 +22,10 @@ export function isPlaywrightReplayableEvent(event: WebBlackboxEvent): boolean {
     case "user.wheel":
     case "user.input":
     case "user.scroll":
-    case "user.keydown":
     case "user.marker":
       return true;
+    case "user.keydown":
+      return readReplayableKey(asRecord(event.data)) !== null;
     case "user.auxclick":
       return asNumber(asRecord(event.data)?.button) === 1;
     case "user.pointerup":
@@ -176,15 +177,20 @@ function wheelLines(data: Record<string, unknown> | null): string[] {
     : [...move, wheel];
 }
 
-/** A key the capture redacted (masked, hashed, flagged or empty) is never pressed. */
 function keydownLines(data: Record<string, unknown> | null): string[] {
+  const key = readReplayableKey(data);
+  return key ? [`  await page.keyboard.press(${toJsLiteral(key)});`] : [];
+}
+
+/**
+ * The recorded key, or null when the capture redacted it (masked, hashed, flagged or empty).
+ * Redacted keys are skipped entirely, so typing into a protected field costs no action budget.
+ */
+function readReplayableKey(data: Record<string, unknown> | null): string | null {
   const key = asString(data?.key);
-
-  if (!key || isMaskedValue(key) || data?.redacted === true || data?.masked === true) {
-    return ["  // keydown skipped (key redacted in capture)"];
-  }
-
-  return [`  await page.keyboard.press(${toJsLiteral(key)});`];
+  return key && !isMaskedValue(key) && data?.redacted !== true && data?.masked !== true
+    ? key
+    : null;
 }
 
 function inputLines(data: Record<string, unknown> | null): string[] {
