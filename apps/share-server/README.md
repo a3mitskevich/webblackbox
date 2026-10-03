@@ -31,6 +31,9 @@ Set these environment variables for production-like deployments:
 - `WEBBLACKBOX_SHARE_BIND_HOST`: bind host for the HTTP server (default `127.0.0.1`).
 - `WEBBLACKBOX_SHARE_ALLOWED_ORIGIN`: CORS allow origin. Defaults to `same-origin`. Use `*` only for trusted environments.
 - `WEBBLACKBOX_SHARE_MAX_UPLOAD_BYTES`: max accepted upload body size in bytes (default `262144000`).
+- `WEBBLACKBOX_SHARE_MAX_UNCOMPRESSED_BYTES`: max total uncompressed size of an uploaded archive, and of its decoded event chunks, in bytes (default `1073741824`, 1 GiB). A single entry is also capped at 256 MiB or this value, whichever is lower. Larger archives are rejected with `413`.
+- `WEBBLACKBOX_SHARE_ANALYSIS_TIMEOUT_MS`: wall-clock budget for analyzing an upload (default `30000`). Each upload is analyzed in a worker thread that is terminated on timeout, and the upload is rejected with `413`.
+- `WEBBLACKBOX_SHARE_ANALYSIS_MAX_HEAP_MB`: V8 heap limit of the analysis worker in MiB (default `1024`). Exceeding it rejects the upload instead of crashing the server.
 - `WEBBLACKBOX_SHARE_ALLOW_PLAINTEXT_UPLOADS`: default `false`. Public deployments should keep this disabled so uploads must be encrypted before reaching the server.
 - `WEBBLACKBOX_SHARE_DEFAULT_TTL_MS`: default share lifetime in ms (default `604800000`, seven days).
 - `WEBBLACKBOX_SHARE_MAX_TTL_MS`: maximum accepted share lifetime in ms (default `2592000000`, 30 days).
