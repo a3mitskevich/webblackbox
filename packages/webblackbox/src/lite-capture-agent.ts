@@ -203,6 +203,7 @@ export class LiteCaptureAgent {
   private readonly selectorSalt = createSelectorSalt();
   private droppedLowPriorityEvents = 0;
   private disposed = false;
+  private readonly stopWatchingPasswordReveals: () => void;
   private pendingQuietRecoverySummary = false;
 
   /** Creates and installs capture hooks for the current page context. */
@@ -210,6 +211,9 @@ export class LiteCaptureAgent {
     const frameContext = resolveContentFrameContext(options.frameScope);
     this.frameMarker = frameContext.marker;
     this.isTopLevelFrame = frameContext.isTopLevel;
+    // Runs while idle too: a password revealed before Start must stay a password.
+    this.stopWatchingPasswordReveals =
+      typeof document === "undefined" ? () => undefined : watchPasswordFieldReveals(document);
   }
 
   /** Updates recording state and sampling profile from the host SDK. */
@@ -337,6 +341,7 @@ export class LiteCaptureAgent {
     }
 
     this.disposed = true;
+    this.stopWatchingPasswordReveals();
     this.stopMutationAndSnapshots();
     this.removeIndicator();
 
@@ -524,8 +529,6 @@ export class LiteCaptureAgent {
       },
       INPUT_OPTIONS_TRUE
     );
-
-    this.cleanupCallbacks.push(watchPasswordFieldReveals(document));
 
     this.listen(
       document,

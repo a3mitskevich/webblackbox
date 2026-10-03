@@ -105,15 +105,16 @@ describe("readCapturableInputValue", () => {
     ).toBeUndefined();
   });
 
-  it("never captures a password field revealed before anyone typed in it", async () => {
+  it("never captures a password field revealed before anyone typed in it", () => {
     const stop = watchPasswordFieldReveals(document);
     const input = field('<input data-field type="password" name="pin_code" />');
 
     input.setAttribute("type", "text");
-    await Promise.resolve();
+    // Read in the same task as the reveal, before the observer callback runs.
+    const value = readCapturableInputValue(input, policy("allow"));
     stop();
 
-    expect(readCapturableInputValue(input, policy("allow"))).toBeUndefined();
+    expect(value).toBeUndefined();
   });
 
   it("never captures password-named or payment card fields", () => {

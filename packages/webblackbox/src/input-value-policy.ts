@@ -22,6 +22,8 @@ const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode/i;
  * `text`, so the current type alone cannot tell a revealed password from a plain text field.
  */
 const seenPasswordFields = new WeakSet<Element>();
+/** Live reveal watchers; their queued records are read before any value is captured. */
+const revealWatchers = new Set<MutationObserver>();
 
 /**
  * Remembers every field the page switches away from `type="password"` (a "show password"
@@ -32,13 +34,7 @@ export function watchPasswordFieldReveals(root: Node): () => void {
     return () => undefined;
   }
 
-  const observer = new MutationObserver((records) => {
-    for (const record of records) {
-      if (record.oldValue?.toLowerCase() === "password" && record.target instanceof Element) {
-        seenPasswordFields.add(record.target);
-      }
-    }
-  });
+  const observer = new MutationObserver(rememberRevealedFields);
 
   observer.observe(root, {
     attributes: true,
@@ -46,8 +42,20 @@ export function watchPasswordFieldReveals(root: Node): () => void {
     attributeOldValue: true,
     subtree: true
   });
+  revealWatchers.add(observer);
 
-  return () => observer.disconnect();
+  return () => {
+    revealWatchers.delete(observer);
+    observer.disconnect();
+  };
+}
+
+function rememberRevealedFields(records: readonly MutationRecord[]): void {
+  for (const record of records) {
+    if (record.oldValue?.toLowerCase() === "password" && record.target instanceof Element) {
+      seenPasswordFields.add(record.target);
+    }
+  }
 }
 
 /** Remembers a password field before the page can reveal it (call on keydown/focus). */
@@ -72,6 +80,11 @@ export function readCapturableInputValue(
   policy: CapturePolicy
 ): string | undefined {
   const level = policy.categories.inputs;
+
+  // A reveal in the same task as this read has not reached the observer callback yet.
+  for (const watcher of revealWatchers) {
+    rememberRevealedFields(watcher.takeRecords());
+  }
 
   notePasswordField(field);
 
