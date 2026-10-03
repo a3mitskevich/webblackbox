@@ -71,4 +71,17 @@ describe("generatePlaywrightScriptFromEvents", () => {
     expect(script).toContain("button.first");
     expect(script).not.toContain("button.second");
   });
+
+  it("skips redacted keystrokes instead of pressing a placeholder key", () => {
+    const script = generatePlaywrightScriptFromEvents(
+      [
+        event("E-1", 100, "user.keydown", { key: "[REDACTED]", keyRedacted: true }),
+        event("E-2", 200, "user.keydown", { key: "Enter", code: "Enter" })
+      ],
+      { includeHarReplay: false }
+    );
+
+    expect(script).not.toContain("[REDACTED]");
+    expect(script).toContain('await page.keyboard.press("Enter");');
+  });
 });
