@@ -121,6 +121,22 @@ describe("ActionSpanTracker", () => {
     expect(lateEvent.ref?.act).toBeUndefined();
   });
 
+  it("keeps the click after a pointer drag in the drag's span and ignores cancelled drags", () => {
+    const tracker = new ActionSpanTracker(1_500);
+    const drag = tracker.assign(createEvent("user.drag.end", 100, { kind: "pointer" }));
+    const followUp = tracker.assign(createEvent("user.click", 110));
+    const cancelled = tracker.assign(
+      createEvent("user.drag.end", 2_000, { kind: "pointer", cancelled: true })
+    );
+    const laterClick = tracker.assign(createEvent("user.click", 4_000));
+
+    expect(drag.ref?.act).toBeDefined();
+    expect(followUp.ref?.act).toBe(drag.ref?.act);
+    expect(cancelled.ref?.act).toBeUndefined();
+    expect(laterClick.ref?.act).toBeDefined();
+    expect(laterClick.ref?.act).not.toBe(drag.ref?.act);
+  });
+
   it("returns original event for non-action events without mapping", () => {
     const tracker = new ActionSpanTracker(50);
     const event = createEvent("console.entry", 500, {

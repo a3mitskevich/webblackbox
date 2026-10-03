@@ -17,12 +17,15 @@ const ACTION_START_EVENTS = new Set([
 ]);
 
 const KEYBOARD_ACTION_KEYS = new Set(["Enter", "NumpadEnter", "Space"]);
+/** The click a browser fires right after a pointer drag belongs to the drag's action. */
+const DRAG_FOLLOW_UP_CLICK_MS = 150;
 const NETWORK_TERMINAL_EVENTS = new Set(["network.finished", "network.failed"]);
 
 type ActionState = {
   id: string;
   startedAtMono: number;
   expiresAtMono: number;
+  startType: string;
 };
 
 export class ActionSpanTracker {
@@ -35,14 +38,15 @@ export class ActionSpanTracker {
   public constructor(private readonly actionWindowMs: number) {}
 
   public assign(event: WebBlackboxEvent): WebBlackboxEvent {
-    const isActionStart = this.isActionStartEvent(event);
+    const isActionStart = this.isActionStartEvent(event) && !this.isDragFollowUpClick(event);
 
     if (isActionStart) {
       this.sequence += 1;
       this.currentAction = {
         id: createActionId(this.sequence),
         startedAtMono: event.mono,
-        expiresAtMono: event.mono + this.actionWindowMs
+        expiresAtMono: event.mono + this.actionWindowMs,
+        startType: event.type
       };
       return this.withRef(event, { act: this.currentAction.id });
     }
@@ -85,6 +89,11 @@ export class ActionSpanTracker {
   }
 
   private isActionStartEvent(event: WebBlackboxEvent): boolean {
+    if (event.type === "user.drag.end") {
+      // A cancelled drag (Esc, or a touch pan the browser turned into a scroll) did nothing.
+      return this.asRecord(event.data)?.cancelled !== true;
+    }
+
     if (ACTION_START_EVENTS.has(event.type)) {
       return true;
     }
@@ -96,6 +105,16 @@ export class ActionSpanTracker {
     const payload = this.asRecord(event.data);
     const key = payload?.key;
     return typeof key === "string" && KEYBOARD_ACTION_KEYS.has(key);
+  }
+
+  private isDragFollowUpClick(event: WebBlackboxEvent): boolean {
+    const action = this.currentAction;
+    return (
+      event.type === "user.click" &&
+      action !== null &&
+      action.startType === "user.drag.end" &&
+      event.mono - action.startedAtMono <= DRAG_FOLLOW_UP_CLICK_MS
+    );
   }
 
   private withRef(event: WebBlackboxEvent, refPatch: EventReference): WebBlackboxEvent {
