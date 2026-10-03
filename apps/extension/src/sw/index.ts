@@ -44,7 +44,11 @@ import {
   normalizePerformanceBudget,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
-import { shouldInjectPageHooksForMode } from "../shared/mode-profile.js";
+import {
+  applyFullModeVisualCapture,
+  resolveModeBaseConfig,
+  shouldInjectPageHooksForMode
+} from "../shared/mode-profile.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
   ENTERPRISE_POLICY_STORAGE_KEY,
@@ -366,7 +370,6 @@ const OFFSCREEN_PATH = "offscreen.html";
 const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
 const POINTER_STALE_MS = 2_500;
 const NETWORK_BODY_MAX_BYTES = 256 * 1024;
-const FULL_MODE_BODY_CAPTURE_MAX_BYTES = 128 * 1024;
 const FULL_MODE_BODY_CAPTURE_MAX_PER_MINUTE = 80;
 const FULL_MODE_BODY_CAPTURE_MAX_PER_SESSION = 2_000;
 const FULL_MODE_INCIDENT_CAPTURE_COOLDOWN_MS = 15_000;
@@ -4561,34 +4564,6 @@ function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture
   return value === "screenshots" || value === "recording" || value === "both" || value === "none";
 }
 
-function applyFullModeVisualCapture(
-  config: typeof DEFAULT_RECORDER_CONFIG,
-  mode: CaptureMode,
-  visualCapture: FullModeVisualCapture | undefined
-): typeof DEFAULT_RECORDER_CONFIG {
-  if (mode !== "full" || !visualCapture) {
-    return config;
-  }
-
-  const basePolicy =
-    config.capturePolicy ?? DEFAULT_RECORDER_CONFIG.capturePolicy ?? DEFAULT_CAPTURE_POLICY;
-  const screenshots = visualCapture === "screenshots" || visualCapture === "both" ? "allow" : "off";
-  const screenRecordings =
-    visualCapture === "recording" || visualCapture === "both" ? "allow" : "off";
-
-  return {
-    ...config,
-    capturePolicy: {
-      ...basePolicy,
-      categories: {
-        ...basePolicy.categories,
-        screenshots,
-        screenRecordings
-      }
-    }
-  };
-}
-
 async function loadEnterprisePolicy(): Promise<EnterpriseRecorderPolicy> {
   try {
     const values = await chromeApi?.storage?.managed?.get(ENTERPRISE_POLICY_STORAGE_KEY);
@@ -4641,45 +4616,6 @@ async function loadPerformanceBudgetConfig(): Promise<PerformanceBudgetConfig> {
   }
 
   return normalizePerformanceBudget(stored.performanceBudget);
-}
-
-function resolveModeBaseConfig(mode: CaptureMode): typeof DEFAULT_RECORDER_CONFIG {
-  const base: typeof DEFAULT_RECORDER_CONFIG = {
-    ...DEFAULT_RECORDER_CONFIG,
-    mode
-  };
-
-  if (mode === "full") {
-    return {
-      ...base,
-      freezeOnNetworkFailure: false,
-      freezeOnLongTaskSpike: false,
-      sampling: {
-        ...base.sampling,
-        mousemoveHz: 12,
-        scrollHz: 10,
-        domFlushMs: 180,
-        snapshotIntervalMs: 30_000,
-        screenshotIdleMs: 12_000,
-        bodyCaptureMaxBytes: FULL_MODE_BODY_CAPTURE_MAX_BYTES
-      }
-    };
-  }
-
-  return {
-    ...base,
-    freezeOnNetworkFailure: false,
-    freezeOnLongTaskSpike: false,
-    sampling: {
-      ...base.sampling,
-      mousemoveHz: 14,
-      scrollHz: 10,
-      domFlushMs: 160,
-      snapshotIntervalMs: 30_000,
-      screenshotIdleMs: base.sampling.screenshotIdleMs,
-      bodyCaptureMaxBytes: 0
-    }
-  };
 }
 
 async function updateSessionAnnotation(
