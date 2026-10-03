@@ -3,12 +3,23 @@ import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 import { getChromeApi } from "../shared/chrome-api.js";
 import { MODE_PRODUCT_PROFILES } from "../shared/mode-profile.js";
 import { createExtensionI18n } from "../shared/i18n.js";
-import { migrateStoredRecorderConfig, OPTIONS_STORAGE_VERSION } from "../shared/options-storage.js";
+import {
+  ENTERPRISE_POLICY_STORAGE_KEY,
+  migrateStoredRecorderConfig,
+  OPTIONS_STORAGE_VERSION
+} from "../shared/options-storage.js";
 import {
   DEFAULT_PERFORMANCE_BUDGET,
   normalizePerformanceBudget,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
+import { PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
+import {
+  parseProfilesStore,
+  serializeProfilesStore,
+  syncDefaultProfileWithLegacyOptions
+} from "../shared/profiles/storage.js";
+import { mountProfilesEditor } from "./profiles-editor.js";
 
 const STORAGE_KEY = "webblackbox.options";
 
@@ -32,7 +43,18 @@ if (root) {
 
 async function bootstrap(container: HTMLElement): Promise<void> {
   const options = await loadOptionsState();
-  render(container, options);
+  const generalContainer = document.createElement("div");
+  const profilesContainer = document.createElement("div");
+
+  container.replaceChildren(generalContainer, profilesContainer);
+  render(generalContainer, options);
+  await mountProfilesEditor(profilesContainer, {
+    chromeApi,
+    t,
+    locale,
+    legacyOptionsKey: STORAGE_KEY,
+    enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
+  });
 }
 
 function render(container: HTMLElement, options: OptionsState): void {
@@ -256,6 +278,25 @@ async function saveOptionsState(options: OptionsState): Promise<void> {
 
   await chromeApi?.storage?.local.set({
     [STORAGE_KEY]: payload
+  });
+  await syncSavedProfilesWithGeneralOptions(payload).catch((error) => {
+    console.warn("[WebBlackbox] failed to sync the Default profile with general options", error);
+  });
+}
+
+/** Once profiles are saved, the general form edits the Default profile's matching fields. */
+async function syncSavedProfilesWithGeneralOptions(payload: unknown): Promise<void> {
+  const values = await chromeApi?.storage?.local.get(PROFILES_STORAGE_KEY);
+  const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
+
+  if (!parsed) {
+    return;
+  }
+
+  await chromeApi?.storage?.local.set({
+    [PROFILES_STORAGE_KEY]: serializeProfilesStore(
+      syncDefaultProfileWithLegacyOptions(parsed.store, payload)
+    )
   });
 }
 

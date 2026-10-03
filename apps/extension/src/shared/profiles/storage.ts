@@ -77,6 +77,32 @@ export function migrateLegacyOptionsToProfiles(legacyOptions: unknown): Recordin
   };
 }
 
+/**
+ * Mirrors the legacy general settings form (sampling, ring buffer, freeze-on-error, redaction
+ * lists) onto the Default profile of an existing v2 store, so that form keeps working after
+ * profiles have been saved. Categories and every profile-only setting stay untouched.
+ */
+export function syncDefaultProfileWithLegacyOptions(
+  store: RecordingProfilesStore,
+  legacyOptions: unknown
+): RecordingProfilesStore {
+  const migrated = migrateLegacyDefaultProfile(legacyOptions);
+
+  return {
+    ...store,
+    profiles: store.profiles.map((profile) =>
+      profile.id === DEFAULT_PROFILE_ID
+        ? {
+            ...profile,
+            redaction: migrated.redaction,
+            sampling: migrated.sampling,
+            recorder: migrated.recorder
+          }
+        : profile
+    )
+  };
+}
+
 /** Validates a stored v2 store. Bad rows are dropped one by one; a bad envelope yields null. */
 export function parseProfilesStore(raw: unknown): ParsedProfilesStore | null {
   if (raw === undefined || raw === null) {

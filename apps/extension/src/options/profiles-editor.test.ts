@@ -1,0 +1,214 @@
+// @vitest-environment jsdom
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
+import { BUILT_IN_PROFILE_IDS } from "../shared/profiles/presets.js";
+import { createProfilesExportFile } from "../shared/profiles/transfer.js";
+import { translateExtensionMessage, type ExtensionMessageKey } from "../shared/i18n.js";
+import type { ChromeApi } from "../shared/chrome-api.js";
+import { mountProfilesEditor } from "./profiles-editor.js";
+
+const t = (key: ExtensionMessageKey, vars?: Record<string, string | number>): string =>
+  translateExtensionMessage("en", key, vars);
+
+function createStorage(initial: Record<string, unknown> = {}) {
+  const data: Record<string, unknown> = { ...initial };
+  const chromeApi = {
+    storage: {
+      local: {
+        get: vi.fn(async (keys: string[]) =>
+          Object.fromEntries(keys.filter((key) => key in data).map((key) => [key, data[key]]))
+        ),
+        set: vi.fn(async (values: Record<string, unknown>) => {
+          Object.assign(data, structuredClone(values));
+        })
+      }
+    }
+  } as unknown as ChromeApi;
+
+  return { data, chromeApi };
+}
+
+async function flush(): Promise<void> {
+  for (let index = 0; index < 4; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+function click(root: ParentNode, selector: string): void {
+  const element = root.querySelector<HTMLElement>(selector);
+
+  if (!element) {
+    throw new Error(`missing ${selector}`);
+  }
+
+  element.click();
+}
+
+function rowOf(root: ParentNode, profileId: string): HTMLElement {
+  const row = root.querySelector<HTMLElement>(`[data-profile-id="${profileId}"]`);
+
+  if (!row) {
+    throw new Error(`missing row ${profileId}`);
+  }
+
+  return row;
+}
+
+function setField(root: ParentNode, name: string, value: string): void {
+  const control = root.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+    `[name="${name}"]`
+  );
+
+  if (!control) {
+    throw new Error(`missing field ${name}`);
+  }
+
+  control.value = value;
+}
+
+async function mount(storage: ReturnType<typeof createStorage>): Promise<HTMLElement> {
+  const container = document.createElement("div");
+  document.body.append(container);
+  await mountProfilesEditor(container, {
+    chromeApi: storage.chromeApi,
+    t,
+    locale: "en",
+    legacyOptionsKey: "webblackbox.options",
+    enterprisePolicyKey: "enterprisePolicy"
+  });
+  return container;
+}
+
+describe("profiles editor", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("lists Default and the read-only presets", async () => {
+    const container = await mount(createStorage());
+    const rows = [...container.querySelectorAll<HTMLElement>("[data-profile-id]")];
+
+    expect(rows.map((row) => row.dataset.profileId)).toEqual([
+      "default",
+      BUILT_IN_PROFILE_IDS.lite,
+      BUILT_IN_PROFILE_IDS.full,
+      BUILT_IN_PROFILE_IDS.qa,
+      BUILT_IN_PROFILE_IDS.fullCapture
+    ]);
+    expect(rowOf(container, BUILT_IN_PROFILE_IDS.qa).textContent).toContain("read-only · extended");
+    expect(
+      rowOf(container, BUILT_IN_PROFILE_IDS.qa).querySelector("[data-action='profile-edit']")
+    ).toBeNull();
+  });
+
+  it("duplicates a preset, edits it, adds a rule and saves a valid store", async () => {
+    const storage = createStorage();
+    const container = await mount(storage);
+
+    click(rowOf(container, BUILT_IN_PROFILE_IDS.qa), "[data-action='profile-duplicate']");
+    setField(container, "name", "Stage QA");
+    setField(container, "category-inputs", "allow");
+    click(container, "[data-action='profile-apply']");
+    click(container, "[data-action='rule-add']");
+    setField(container, "ruleProfile", "profile-2");
+    setField(container, "ruleHosts", "*.stage.example.com");
+    setField(container, "extendedCaptureHosts", "localhost:*");
+    click(container, "[data-action='profiles-save']");
+    await flush();
+
+    const saved = storage.data[PROFILES_STORAGE_KEY] as {
+      profiles: Array<{ id: string; name: string; categories: Record<string, string> }>;
+      rules: Array<{ profileId: string; match: { hosts?: string[] } }>;
+      extendedCaptureHosts: string[];
+    };
+
+    expect(saved.profiles.map((profile) => [profile.id, profile.name])).toEqual([
+      ["default", "Default"],
+      ["profile-2", "Stage QA"]
+    ]);
+    expect(saved.profiles[1]?.categories.inputs).toBe("allow");
+    expect(saved.rules).toEqual([
+      expect.objectContaining({
+        profileId: "profile-2",
+        match: { hosts: ["*.stage.example.com"] }
+      })
+    ]);
+    expect(saved.extendedCaptureHosts).toEqual(["localhost:*"]);
+    expect(container.querySelector("[data-profiles-status]")?.textContent).toContain(
+      "Profiles saved"
+    );
+  });
+
+  it("shows validation errors instead of saving invalid rules", async () => {
+    const storage = createStorage();
+    const container = await mount(storage);
+
+    click(container, "[data-action='rule-add']");
+    setField(container, "ruleTitleRegex", "(");
+    click(container, "[data-action='profiles-save']");
+    await flush();
+
+    expect(storage.data[PROFILES_STORAGE_KEY]).toBeUndefined();
+    expect(container.querySelector("[data-profiles-status]")?.textContent).toContain("rule #1");
+  });
+
+  it("previews an import diff before applying it", async () => {
+    const storage = createStorage();
+    const container = await mount(storage);
+    const file = createProfilesExportFile({
+      schemaVersion: 2,
+      defaultProfileId: "default",
+      profiles: [],
+      rules: [
+        {
+          id: "stage",
+          profileId: BUILT_IN_PROFILE_IDS.qa,
+          priority: 1,
+          enabled: true,
+          match: { hosts: ["*.stage.test"] }
+        }
+      ],
+      extendedCaptureHosts: []
+    });
+    const input = container.querySelector<HTMLInputElement>('input[name="profilesImport"]');
+
+    if (!input) {
+      throw new Error("missing import input");
+    }
+
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [{ text: async () => JSON.stringify(file) }]
+    });
+    input.dispatchEvent(new Event("change"));
+    await flush();
+
+    expect(container.querySelector("[data-import-summary]")?.textContent).toBe(
+      "Profiles: +0 −0 ~0. Rules: +1 −0 ~0."
+    );
+
+    click(container, "[data-action='profiles-import-apply']");
+
+    expect(container.querySelectorAll(".wb-profiles__rule")).toHaveLength(1);
+    expect(storage.data[PROFILES_STORAGE_KEY]).toBeUndefined();
+  });
+
+  it("previews redaction with the selected profile", async () => {
+    const container = await mount(createStorage());
+
+    setField(container, "sandboxProfile", BUILT_IN_PROFILE_IDS.qa);
+    setField(container, "sandboxKind", "body");
+    setField(container, "sandboxInput", '{"password":"hunter2","user":"ann"}');
+    click(container, "[data-action='sandbox-run']");
+
+    expect(container.querySelector("[data-sandbox-output]")?.textContent).toBe(
+      '{"password":"[REDACTED]","user":"ann"}'
+    );
+  });
+});
