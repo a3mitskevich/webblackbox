@@ -3,6 +3,7 @@ import {
   createChromeDebuggerTransport,
   type CdpRouter
 } from "@webblackbox/cdp-router";
+import { IndexedDbPipelineStorage, sweepPipelineSessions } from "@webblackbox/pipeline/storage";
 import {
   createSessionId,
   DEFAULT_CAPTURE_POLICY,
@@ -82,6 +83,16 @@ import {
   upsertRequestMeta,
   type RequestMetaEntry
 } from "./request-meta.js";
+import {
+  parseStoppedSessionRecords,
+  pruneStoppedSessionRecords,
+  removeStoppedSessionRecord,
+  resolveStoppedSessionTtlMs,
+  shouldSweepStoredSession,
+  STOPPED_SESSIONS_STORAGE_KEY,
+  upsertStoppedSessionRecord,
+  type StoppedSessionRecord
+} from "./stopped-sessions.js";
 import {
   FULL_MODE_STORAGE_SNAPSHOT_MAX_ITEMS,
   buildLocalStorageSnapshotExpression,
@@ -359,9 +370,12 @@ const pendingOffscreenRequests = new Map<
 const offscreenSessionRecovery = new Map<string, Promise<void>>();
 let offscreenRequestSeq = 0;
 let freezeBadgeTimer: ReturnType<typeof setTimeout> | null = null;
+let stoppedSessionRecordsQueue: Promise<unknown> = Promise.resolve();
 let liteWebRequestCaptureCleanup: (() => void) | null = null;
 
 const OFFSCREEN_PATH = "offscreen.html";
+const PIPELINE_DB_NAME = "webblackbox-flight-recorder";
+const SERVICE_WORKER_BOOTED_AT = Date.now();
 const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
 const POINTER_STALE_MS = 2_500;
 const NETWORK_BODY_MAX_BYTES = 256 * 1024;
@@ -1086,6 +1100,9 @@ async function stopSession(tabId: number): Promise<void> {
   uninstallLiteWebRequestCaptureIfUnused();
   runtime.stoppedAt = Date.now();
   scheduleStoppedRuntimeCleanup(runtime);
+  await rememberStoppedSession(runtime).catch((error) => {
+    console.warn("[WebBlackbox] failed to persist stopped session record", error);
+  });
 
   if (sessionsByTab.size === 0) {
     await setIdleBadge();
@@ -4300,7 +4317,88 @@ function scheduleStoppedRuntimeCleanup(runtime: SessionRuntime): void {
 
   runtime.cleanupTimer = setTimeout(() => {
     void disposeStoppedSession(runtime);
-  }, STOPPED_SESSION_TTL_MS);
+  }, resolveRuntimeStoppedSessionTtlMs(runtime));
+}
+
+function resolveRuntimeStoppedSessionTtlMs(runtime: SessionRuntime): number {
+  return resolveStoppedSessionTtlMs(
+    STOPPED_SESSION_TTL_MS,
+    runtime.config.capturePolicy?.retention.localTtlMs
+  );
+}
+
+async function rememberStoppedSession(runtime: SessionRuntime): Promise<void> {
+  const stoppedAt = runtime.stoppedAt ?? Date.now();
+  const record: StoppedSessionRecord = {
+    sid: runtime.sid,
+    stoppedAt,
+    expiresAt: stoppedAt + resolveRuntimeStoppedSessionTtlMs(runtime)
+  };
+
+  await updateStoppedSessionRecords((records) => upsertStoppedSessionRecord(records, record));
+}
+
+async function forgetStoppedSession(sid: string): Promise<void> {
+  await updateStoppedSessionRecords((records) => removeStoppedSessionRecord(records, sid));
+}
+
+function updateStoppedSessionRecords(
+  update: (records: StoppedSessionRecord[]) => StoppedSessionRecord[]
+): Promise<StoppedSessionRecord[]> {
+  const task = stoppedSessionRecordsQueue.then(async () => {
+    const storage = chromeApi?.storage?.local;
+
+    if (!storage?.get || !storage.set) {
+      return [];
+    }
+
+    const values = await storage.get(STOPPED_SESSIONS_STORAGE_KEY);
+    const next = update(parseStoppedSessionRecords(values?.[STOPPED_SESSIONS_STORAGE_KEY]));
+    await storage.set({ [STOPPED_SESSIONS_STORAGE_KEY]: next });
+    return next;
+  });
+
+  stoppedSessionRecordsQueue = task.catch(() => undefined);
+  return task;
+}
+
+/**
+ * Deletes pipeline data that no live runtime can reach any more: sessions orphaned by
+ * a worker restart and stopped sessions past their retention. Runs on worker start,
+ * because the per-session cleanup timers die with the previous worker.
+ */
+async function sweepStalePipelineSessions(): Promise<void> {
+  if (!globalThis.indexedDB) {
+    return;
+  }
+
+  // Identity update: reads the records through the same queue as concurrent writers.
+  const records = await updateStoppedSessionRecords((current) => current);
+  const now = Date.now();
+  const recordsBySid = new Map(records.map((record) => [record.sid, record]));
+  const result = await sweepPipelineSessions(
+    new IndexedDbPipelineStorage(PIPELINE_DB_NAME),
+    (session) =>
+      shouldSweepStoredSession({
+        session,
+        liveSids: new Set(sessionsBySid.keys()),
+        records: recordsBySid,
+        now,
+        bootedAt: SERVICE_WORKER_BOOTED_AT
+      })
+  );
+  const deletedSids = new Set(result.deleted);
+
+  await updateStoppedSessionRecords((current) =>
+    pruneStoppedSessionRecords(current, now, deletedSids)
+  );
+
+  if (result.deleted.length > 0 || result.failed.length > 0) {
+    console.info("[WebBlackbox] swept stale pipeline sessions", {
+      deleted: result.deleted.length,
+      failed: result.failed
+    });
+  }
 }
 
 async function disposeStoppedSession(runtime: SessionRuntime): Promise<void> {
@@ -4322,6 +4420,9 @@ async function disposeStoppedSession(runtime: SessionRuntime): Promise<void> {
     })
     .catch(() => undefined);
   sessionsBySid.delete(runtime.sid);
+  await forgetStoppedSession(runtime.sid).catch((error) => {
+    console.warn("[WebBlackbox] failed to drop stopped session record", error);
+  });
 
   if (sessionsByTab.size === 0) {
     await setIdleBadge();
@@ -4938,6 +5039,9 @@ async function restoreRuntimeState(): Promise<void> {
   await setIdleBadge();
   pushSessionList();
   notifyOffscreenPipelineStatus();
+  await sweepStalePipelineSessions().catch((error) => {
+    console.warn("[WebBlackbox] failed to sweep stale pipeline sessions", error);
+  });
 }
 
 function notifyOffscreenPipelineStatus(): void {
