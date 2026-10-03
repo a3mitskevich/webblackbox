@@ -280,7 +280,7 @@ const result = await pipeline.exportBundle({
 
 When a passphrase is provided:
 
-- **KDF**: PBKDF2 with SHA-256, 120,000 iterations, random salt
+- **KDF**: PBKDF2 with SHA-256, 600,000 iterations (`ARCHIVE_KDF_DEFAULT_ITERATIONS`), random salt; readers accept 10,000–10,000,000 iterations from the manifest
 - **Encryption**: AES-GCM with per-file random IVs
 - **Scope**: Event chunks, indexes, and blobs are encrypted
 - **Manifest**: Remains unencrypted (contains encryption metadata)

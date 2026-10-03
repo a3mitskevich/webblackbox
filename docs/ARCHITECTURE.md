@@ -283,7 +283,7 @@ Page World          Extension World         Background
 ### Encryption Details
 
 - **Algorithm**: AES-GCM (256-bit key)
-- **Key Derivation**: PBKDF2 with SHA-256, 120,000 iterations
+- **Key Derivation**: PBKDF2 with SHA-256, 600,000 iterations for new exports (readers take the count from the manifest, so older 120,000-iteration archives still open; counts outside 10,000–10,000,000 are rejected)
 - **Salt**: Random 16-byte salt per archive
 - **IV**: Random 12-byte IV per file within the archive
 - **Scope**: Event chunks, indexes, and blobs; manifest remains readable
