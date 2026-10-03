@@ -337,12 +337,34 @@ function shouldMaskByCookieName(
   return shouldRedactCookieName(cookieName, profile);
 }
 
-/** `{ key, value }` records (storage ops and snapshot entries): the key name decides. */
+/** Values that are credentials whatever their key: JWTs, bearer tokens, private keys. */
+const CREDENTIAL_VALUE_PATTERNS = [
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
+  /\bBearer\s+[A-Za-z0-9._~+/=_-]{16,}/i,
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
+];
+
+/**
+ * `{ key, value }` records (storage ops and snapshot entries): the value is masked when the key
+ * name is sensitive (body patterns or a cookie-style name such as `session` or `jwt`) or when
+ * the value itself looks like a credential.
+ */
 function hasSensitiveStorageKey(
   source: Record<string, unknown>,
   profile: RedactionProfile
 ): boolean {
-  return typeof source.key === "string" && isSensitiveKey(source.key.toLowerCase(), profile);
+  if (typeof source.key !== "string") {
+    return false;
+  }
+
+  const key = source.key.toLowerCase();
+  const value = typeof source.value === "string" ? source.value : "";
+
+  return (
+    isSensitiveKey(key, profile) ||
+    profile.redactCookieNames.some((name) => name.length > 0 && key.includes(name.toLowerCase())) ||
+    CREDENTIAL_VALUE_PATTERNS.some((pattern) => pattern.test(value))
+  );
 }
 
 function isSensitiveKey(key: string, profile: RedactionProfile): boolean {

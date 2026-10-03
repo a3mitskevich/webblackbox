@@ -120,6 +120,30 @@ describe("redactPayload URL fields", () => {
     expect(redacted.entries.map((entry) => entry.value)).toEqual(["dark", "[REDACTED]"]);
   });
 
+  it("masks storage values under session-like key names or that look like credentials", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2lnbmF0dXJlLXZhbHVlLTE";
+    const redacted = redactPayload(
+      {
+        entries: [
+          { key: "session", value: "s3cr3t-opaque-value" },
+          { key: "jwt", value: jwt },
+          { key: "profile", value: `Bearer ${"a".repeat(24)}` },
+          { key: "cache", value: JSON.stringify({ id: jwt }) },
+          { key: "theme", value: "dark" }
+        ]
+      },
+      PLAIN_PROFILE
+    ) as { entries: Array<{ value: string }> };
+
+    expect(redacted.entries.map((entry) => entry.value)).toEqual([
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "dark"
+    ]);
+  });
+
   it("sanitizes referrer and src payload fields", () => {
     const redacted = redactPayload(
       {
