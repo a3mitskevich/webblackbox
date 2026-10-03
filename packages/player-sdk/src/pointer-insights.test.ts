@@ -1,11 +1,16 @@
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import { describe, expect, it } from "vitest";
 
-import { buildPlaywrightActionLines, isPlaywrightReplayableEvent } from "./playwright-actions.js";
+import {
+  buildPlaywrightActionLines,
+  isPlaywrightReplayableEvent,
+  selectPlaywrightActions
+} from "./playwright-actions.js";
 import {
   buildPointerTimeline,
   describePointerTarget,
   detectDeadClicks,
+  findGestureClickIds,
   detectRageClicks
 } from "./pointer-insights.js";
 
@@ -214,6 +219,21 @@ describe("dead clicks", () => {
     expect(detectRageClicks([click(0), afterSelection, click(1_100)])).toHaveLength(0);
   });
 
+  it("treats only the first click after a completed gesture as its follow-up", () => {
+    const followUp = click(1_010);
+    const userClick = click(1_060);
+    const afterCancelled = click(3_010);
+    const ids = findGestureClickIds([
+      event("user.drag.end", 1_000, { kind: "pointer", x: 1, y: 1 }),
+      followUp,
+      userClick,
+      event("user.drag.end", 3_000, { kind: "pointer", x: 1, y: 1, cancelled: true }),
+      afterCancelled
+    ]);
+
+    expect([...ids]).toEqual([followUp.id]);
+  });
+
   it("reports missing coverage instead of guessing", () => {
     const { findings, coverage } = detectDeadClicks([click(1_000), click(3_000)]);
 
@@ -323,6 +343,20 @@ describe("Playwright action lines", () => {
       "  // user.click skipped (no selector)",
       '  await page.fill("#q", "x\\u2028process.exit(1)");'
     ]);
+  });
+
+  it("spends the action budget on replayable actions, not on follow-up clicks", () => {
+    const hold = event("user.pointerup", 10, {
+      x: 1,
+      y: 1,
+      button: 0,
+      holdMs: 700,
+      longPress: true,
+      target: saveButton
+    });
+    const next = click(500);
+
+    expect(selectPlaywrightActions([hold, click(20), next], 2)).toEqual([hold, next]);
   });
 
   it("comments out targets the profile kept hashed", () => {

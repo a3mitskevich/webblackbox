@@ -1,4 +1,4 @@
-import { buildPlaywrightActionLines, isPlaywrightReplayableEvent } from "@webblackbox/player-sdk";
+import { buildPlaywrightActionLines, selectPlaywrightActions } from "@webblackbox/player-sdk";
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 
 export type PlayerPlaywrightScriptOptions = {
@@ -16,7 +16,7 @@ export function generatePlaywrightScriptFromEvents(
   const maxActions = Math.max(1, options.maxActions ?? 40);
   const includeHarReplay = options.includeHarReplay ?? true;
   const startUrl = options.startUrl ?? "about:blank";
-  const actions = events.filter(isPlaywrightReplayableEvent).slice(0, maxActions);
+  const actions = selectPlaywrightActions(events, maxActions);
 
   const lines = [
     "import { test } from '@playwright/test';",

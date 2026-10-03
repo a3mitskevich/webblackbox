@@ -30,6 +30,20 @@ export function isPlaywrightReplayableEvent(event: WebBlackboxEvent): boolean {
 }
 
 /**
+ * Events a Playwright script replays, capped at `maxActions`. The browser's click after a long
+ * press or drag is dropped first so it neither costs budget nor gets cut off from its gesture.
+ */
+export function selectPlaywrightActions(
+  events: readonly WebBlackboxEvent[],
+  maxActions: number
+): WebBlackboxEvent[] {
+  const gestureClicks = findGestureClickIds(events);
+  return events
+    .filter((event) => isPlaywrightReplayableEvent(event) && !gestureClicks.has(event.id))
+    .slice(0, maxActions);
+}
+
+/**
  * Playwright statements replaying recorded navigation and user actions, in order. Readable
  * selectors (recorded when the profile allows readable actions) are preferred; targets the
  * profile kept hashed become comments instead of selectors that cannot match.

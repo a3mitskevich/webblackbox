@@ -23,6 +23,8 @@ export const DEFAULT_POINTER_CAPTURE_OPTIONS: PointerCaptureOptions = {
 export const POINTER_LONG_PRESS_MS = 500;
 /** Movement (CSS px) from which a held pointer counts as a drag. */
 export const POINTER_DRAG_THRESHOLD_PX = 8;
+/** A click this soon after a long press or drag ends is the browser's follow-up, not a new one. */
+export const POINTER_FOLLOW_UP_CLICK_MS = 150;
 /** Longest visible text kept on a readable target. */
 export const READABLE_TARGET_TEXT_MAX_CHARS = 40;
 /** Longest selected text kept on `user.selection` when the profile allows it. */

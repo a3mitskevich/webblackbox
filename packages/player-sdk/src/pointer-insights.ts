@@ -1,5 +1,6 @@
 import {
   POINTER_DRAG_THRESHOLD_PX,
+  POINTER_FOLLOW_UP_CLICK_MS,
   type WebBlackboxEvent,
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
@@ -87,8 +88,6 @@ export const RAGE_CLICK_MIN_CLICKS = 3;
 export const RAGE_CLICK_WINDOW_MS = 1_000;
 export const RAGE_CLICK_RADIUS_PX = 30;
 export const DEAD_CLICK_WINDOW_MS = 1_000;
-/** A click this soon after a held or dragged press is the browser's follow-up click, not a new one. */
-export const GESTURE_FOLLOW_UP_CLICK_MS = 150;
 
 const KIND_LABELS: Record<PointerActionKind, string> = {
   click: "Click",
@@ -177,13 +176,15 @@ export function findGestureClickIds(events: readonly WebBlackboxEvent[]): Set<st
   let gestureEndMono = Number.NEGATIVE_INFINITY;
 
   for (const event of events) {
-    if (event.type === "user.drag.end" || isGesturePress(event)) {
+    if (isGestureEnd(event)) {
       gestureEndMono = event.mono;
     } else if (
       event.type === "user.click" &&
-      event.mono - gestureEndMono <= GESTURE_FOLLOW_UP_CLICK_MS
+      event.mono - gestureEndMono <= POINTER_FOLLOW_UP_CLICK_MS
     ) {
+      // The browser adds one click per gesture; any further click is the user's.
       ids.add(event.id);
+      gestureEndMono = Number.NEGATIVE_INFINITY;
     }
   }
 
@@ -437,11 +438,21 @@ function toRageFinding(
   };
 }
 
-function isGesturePress(event: WebBlackboxEvent): boolean {
+/** A completed long press or drag, after which the browser fires a click (cancelled ones do not). */
+function isGestureEnd(event: WebBlackboxEvent): boolean {
+  const data = asRecord(event.data);
+
+  if (data?.cancelled === true) {
+    return false;
+  }
+
+  if (event.type === "user.drag.end") {
+    return true;
+  }
+
   return (
     event.type === "user.pointerup" &&
-    (isLongPress(event) ||
-      (asNumber(asRecord(event.data)?.distance) ?? 0) >= POINTER_DRAG_THRESHOLD_PX)
+    (isLongPress(event) || (asNumber(data?.distance) ?? 0) >= POINTER_DRAG_THRESHOLD_PX)
   );
 }
 

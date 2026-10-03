@@ -14,7 +14,7 @@ import type {
 } from "@webblackbox/protocol";
 import { extractRequestId, inferBlobMime } from "@webblackbox/protocol";
 
-import { buildPlaywrightActionLines, isPlaywrightReplayableEvent } from "./playwright-actions.js";
+import { buildPlaywrightActionLines, selectPlaywrightActions } from "./playwright-actions.js";
 import {
   buildPointerTimeline,
   detectPointerSignals,
@@ -1689,9 +1689,7 @@ export class WebBlackboxPlayer {
     const name = options.name ?? "replay-from-webblackbox";
     const maxActions = Math.max(1, options.maxActions ?? 40);
     const includeHarReplay = options.includeHarReplay ?? true;
-    const actions = this.query({ range: options.range })
-      .filter(isPlaywrightReplayableEvent)
-      .slice(0, maxActions);
+    const actions = selectPlaywrightActions(this.query({ range: options.range }), maxActions);
 
     const lines = [
       "import { test } from '@playwright/test';",
@@ -1719,9 +1717,7 @@ export class WebBlackboxPlayer {
     const name = options.name ?? "replay-with-mocks";
     const maxActions = Math.max(1, options.maxActions ?? 40);
     const maxMocks = Math.max(1, options.maxMocks ?? 25);
-    const actions = this.query({ range: options.range })
-      .filter(isPlaywrightReplayableEvent)
-      .slice(0, maxActions);
+    const actions = selectPlaywrightActions(this.query({ range: options.range }), maxActions);
 
     const mockEntries = this.getNetworkWaterfall(options.range)
       .filter((entry) => Boolean(entry.responseBodyHash) && typeof entry.status === "number")
