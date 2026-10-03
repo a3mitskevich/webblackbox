@@ -24,6 +24,11 @@
       "path": "apps/extension/build/sw.js",
       "maxBytes": 850000,
       "maxGzipBytes": 150000
+    },
+    {
+      "path": "apps/extension/build/content.js",
+      "maxBytes": 30000,
+      "maxGzipBytes": 8000
     }
   ]
 }

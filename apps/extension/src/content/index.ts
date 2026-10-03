@@ -4,7 +4,6 @@ import { watchPasswordFieldReveals } from "webblackbox/input-value-policy";
 import type { LiteCaptureAgentOptions } from "webblackbox/types";
 
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
-import { loadExtensionLocale, translateExtensionMessage } from "../shared/i18n.js";
 import { PORT_NAMES, type ExtensionOutboundMessage } from "../shared/messages.js";
 import { CONTENT_EVENT_FLUSH_CHUNK, resolveContentEventFlushDelay } from "./flush-policy.js";
 
@@ -332,11 +331,8 @@ async function ensureCaptureAgent(): Promise<LiteCaptureAgent> {
     return captureAgentPromise;
   }
 
-  const moduleUrl = chromeApi?.runtime?.getURL?.("content-agent.js") ?? "./content-agent.js";
-
-  captureAgentPromise = import(moduleUrl)
-    .then((module) => {
-      const { createContentCaptureAgent } = module as ContentAgentModule;
+  captureAgentPromise = loadContentAgentModule()
+    .then(({ createContentCaptureAgent }) => {
       const options: LiteCaptureAgentOptions = {
         emitBatch,
         onMarker: emitMarker,
@@ -353,15 +349,24 @@ async function ensureCaptureAgent(): Promise<LiteCaptureAgent> {
   return captureAgentPromise;
 }
 
+/** The capture agent bundle also carries the UI dictionaries; the module map loads it once. */
+function loadContentAgentModule(): Promise<ContentAgentModule> {
+  const moduleUrl = chromeApi?.runtime?.getURL?.("content-agent.js") ?? "./content-agent.js";
+  return import(moduleUrl) as Promise<ContentAgentModule>;
+}
+
 async function emitKeyboardMarker(): Promise<void> {
   const statusVersion = recordingStatusVersion;
-  const [agent, locale] = await Promise.all([ensureCaptureAgent(), loadExtensionLocale()]);
+  const [agent, label] = await Promise.all([
+    ensureCaptureAgent(),
+    loadContentAgentModule().then((module) => module.loadKeyboardMarkerLabel())
+  ]);
 
   if (statusVersion !== recordingStatusVersion || !recordingActive) {
     return;
   }
 
-  agent.emitMarker(translateExtensionMessage(locale, "contentKeyboardMarker"));
+  agent.emitMarker(label);
 }
 
 async function requestRecordingStatusOnce(): Promise<void> {
