@@ -7,7 +7,11 @@ import type { RawRecorderEvent } from "@webblackbox/recorder";
 import { snapdom } from "@zumer/snapdom";
 
 import type { LiteCaptureAgentOptions, LiteCaptureSampling, LiteCaptureState } from "./types.js";
-import { INJECTED_MESSAGE_SOURCE, type InjectedCaptureWindowMessage } from "./injected-hooks.js";
+import {
+  INJECTED_MESSAGE_SOURCE,
+  INJECTED_RAW_EVENT_TYPES,
+  type InjectedCaptureWindowMessage
+} from "./injected-hooks.js";
 
 const PRE_RECORDING_BUFFER_MAX = 400;
 const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
@@ -77,6 +81,8 @@ const OBSERVED_MUTATION_ATTRIBUTES = [
   "href",
   "src"
 ];
+
+const INJECTED_RAW_EVENT_TYPE_SET: ReadonlySet<string> = new Set(INJECTED_RAW_EVENT_TYPES);
 
 const LOW_PRIORITY_RAW_TYPES = new Set([
   "mousemove",
@@ -153,6 +159,7 @@ export class LiteCaptureAgent {
   private mode: LiteCaptureState["mode"] = "lite";
   private sampling: LiteCaptureSampling = { ...DEFAULT_SAMPLING };
   private capturePolicy: CapturePolicy = DEFAULT_CAPTURE_POLICY;
+  private injectedBridgeNonce: string | null = null;
   private indicator: HTMLDivElement | null = null;
   private mutationObserver: MutationObserver | null = null;
   private snapshotTimer = 0;
@@ -241,6 +248,10 @@ export class LiteCaptureAgent {
 
     if (typeof state.sid === "string") {
       this.sid = state.sid;
+    }
+
+    if (typeof state.injectedBridgeNonce === "string" && state.injectedBridgeNonce.length > 0) {
+      this.injectedBridgeNonce = state.injectedBridgeNonce;
     }
 
     if (typeof state.tabId === "number" && Number.isFinite(state.tabId)) {
@@ -363,6 +374,12 @@ export class LiteCaptureAgent {
         return;
       }
 
+      // Page scripts share the window with the injected hooks and can post look-alike
+      // messages; once the host set a session nonce, unstamped messages are forgeries.
+      if (this.injectedBridgeNonce !== null && data.nonce !== this.injectedBridgeNonce) {
+        return;
+      }
+
       if (data.kind === "capture-event" && typeof data.rawType === "string") {
         this.queueInjectedRawEvent(data);
         return;
@@ -390,6 +407,10 @@ export class LiteCaptureAgent {
     t?: number;
     mono?: number;
   }): void {
+    if (!INJECTED_RAW_EVENT_TYPE_SET.has(event.rawType)) {
+      return;
+    }
+
     this.queueRawEvent({
       source: "content",
       rawType: event.rawType,

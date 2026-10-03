@@ -102,6 +102,25 @@ describe("lite-materializer", () => {
     });
   });
 
+  it("drops screenshot payloads that are not png/webp images", async () => {
+    const putBlob = vi.fn(async () => "hash-shot");
+
+    for (const dataUrl of [
+      `data:text/html;base64,${Buffer.from("<script>alert(1)</script>").toString("base64")}`,
+      "data:text/html,<script>alert(1)</script>",
+      `data:image/svg+xml;base64,${Buffer.from("<svg/>").toString("base64")}`
+    ]) {
+      const result = await materializeLiteRawEvent(createRawEvent("screenshot", { dataUrl }), {
+        config: cloneConfig(),
+        putBlob
+      });
+
+      expect(result).toBeNull();
+    }
+
+    expect(putBlob).not.toHaveBeenCalled();
+  });
+
   it("materializes network bodies with redaction and byte caps", async () => {
     const config = cloneConfig();
     config.sampling.bodyCaptureMaxBytes = 4 * 1024;
