@@ -22,6 +22,7 @@ import {
   summarizeNetworkIssues,
   summarizeSession
 } from "./session-tools.js";
+import { symbolicateArchiveStacks, symbolicateStackInput } from "./symbolicate-tools.js";
 
 export const SERVER_NAME = "webblackbox-mcp-server";
 export const SERVER_VERSION =
@@ -282,6 +283,19 @@ export function createServer(): McpServer {
           topPerfDiffs,
           includeStorageHashes
         })
+      );
+    }
+  );
+
+  server.tool(
+    "symbolicate_stack",
+    "Map minified stack traces from an archive (an event, its error events, or a pasted stack) " +
+      "to original sources using source maps embedded in the archive and an optional maps directory.",
+    symbolicateStackInput,
+    async ({ path, passphrase, eventId, stack, mapsDir, limit }) => {
+      // Both filesystem paths pass through here, so a directory guard can wrap them together.
+      return toTextPayload(
+        await symbolicateArchiveStacks({ path, passphrase, eventId, stack, mapsDir, limit })
       );
     }
   );

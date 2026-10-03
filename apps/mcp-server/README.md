@@ -75,24 +75,26 @@ node dist/cli.js --version
 
 ### Session analysis tools
 
-| Tool                         | Description                                                                                         |
-| ---------------------------- | --------------------------------------------------------------------------------------------------- |
-| `list_archives`              | Scan a directory for `.webblackbox` / `.zip` archives                                               |
-| `session_summary`            | Open one archive and return totals, top event types, top errors, slow/fails                         |
-| `query_events`               | Query events by text/type/level/request/time range with pagination                                  |
-| `network_issues`             | Return failed and slow network requests sorted by severity                                          |
-| `generate_bug_report`        | Generate markdown + GitHub/Jira issue artifacts from one archive                                    |
-| `export_har`                 | Export HAR JSON from an archive (optionally scoped by mono range)                                   |
-| `generate_playwright`        | Generate a Playwright script from captured actions (optional range/start URL/HAR replay wiring)     |
-| `summarize_actions`          | Summarize action spans with trigger/duration plus request, error, and screenshot context            |
-| `find_root_cause_candidates` | Find likely root-cause signals around errors (nearby failed requests, warn/error console, AI hints) |
-| `compare_sessions`           | Compare two archives (event/action/error/network/perf/storage deltas + endpoint-level regressions)  |
+| Tool                         | Description                                                                                                                                              |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_archives`              | Scan a directory for `.webblackbox` / `.zip` archives                                                                                                    |
+| `session_summary`            | Open one archive and return totals, top event types, top errors, slow/fails                                                                              |
+| `query_events`               | Query events by text/type/level/request/time range with pagination                                                                                       |
+| `network_issues`             | Return failed and slow network requests sorted by severity                                                                                               |
+| `generate_bug_report`        | Generate markdown + GitHub/Jira issue artifacts from one archive                                                                                         |
+| `export_har`                 | Export HAR JSON from an archive (optionally scoped by mono range)                                                                                        |
+| `generate_playwright`        | Generate a Playwright script from captured actions (optional range/start URL/HAR replay wiring)                                                          |
+| `summarize_actions`          | Summarize action spans with trigger/duration plus request, error, and screenshot context                                                                 |
+| `find_root_cause_candidates` | Find likely root-cause signals around errors (nearby failed requests, warn/error console, AI hints)                                                      |
+| `compare_sessions`           | Compare two archives (event/action/error/network/perf/storage deltas + endpoint-level regressions)                                                       |
+| `symbolicate_stack`          | Map minified stack traces (error events, one event, or a pasted stack) to original sources using maps embedded in the archive plus an optional `mapsDir` |
 
 ## Notes
 
 - Archive paths are resolved from the current working directory if relative.
 - Encrypted archives require `passphrase`.
 - `query_events` defaults to payload-hidden output (`includeData=false`) to avoid huge responses.
+- `symbolicate_stack` reads only `.map` files under `mapsDir` (symbolic links are skipped) and never fetches URLs recorded in the archive.
 - Range-scoped tools (`monoStart` / `monoEnd`) preload only intersecting chunks when opening archives.
 
 ## License
