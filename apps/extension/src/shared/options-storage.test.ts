@@ -6,7 +6,8 @@ import {
   isEnterpriseOriginAllowed,
   migrateStoredRecorderConfig,
   normalizeEnterprisePolicy,
-  OPTIONS_STORAGE_VERSION
+  OPTIONS_STORAGE_VERSION,
+  readManagedEnterprisePolicy
 } from "./options-storage.js";
 
 describe("options-storage", () => {
@@ -184,5 +185,33 @@ describe("enterprise recorder policy", () => {
 
     expect(lengthsOnlyConfig.capturePolicy?.categories.storage).toBe("counts-only");
     expect(namesOnlyConfig.capturePolicy?.categories.storage).toBe("counts-only");
+  });
+});
+
+describe("readManagedEnterprisePolicy", () => {
+  const area = (values: Record<string, unknown>) => ({
+    get: async (keys?: unknown) =>
+      typeof keys === "string" ? (keys in values ? { [keys]: values[keys] } : {}) : values
+  });
+
+  it("reads scoped, flat and mixed layouts", async () => {
+    await expect(
+      readManagedEnterprisePolicy(area({ enterprisePolicy: { siteAllowlist: ["a"] } }))
+    ).resolves.toEqual({ siteAllowlist: ["a"] });
+    await expect(readManagedEnterprisePolicy(area({ siteDenylist: ["b"] }))).resolves.toEqual({
+      siteDenylist: ["b"]
+    });
+    await expect(
+      readManagedEnterprisePolicy(
+        area({ enterprisePolicy: { siteAllowlist: ["a"] }, siteDenylist: ["b"] })
+      )
+    ).resolves.toEqual({ siteAllowlist: ["a"], siteDenylist: ["b"] });
+  });
+
+  it("never throws", async () => {
+    await expect(readManagedEnterprisePolicy(undefined)).resolves.toBeNull();
+    await expect(
+      readManagedEnterprisePolicy({ get: async () => Promise.reject(new Error("no policy")) })
+    ).resolves.toBeNull();
   });
 });

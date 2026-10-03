@@ -12,9 +12,9 @@ type ManagedStorageArea = {
 };
 
 /**
- * Enterprise policy from `chrome.storage.managed`: the `enterprisePolicy` object, or the flat
- * top-level layout the managed schema also accepts. Chrome returns only the keys asked for, so
- * the whole area is read. Never throws; null when managed storage is unavailable.
+ * Enterprise policy from `chrome.storage.managed`: the `enterprisePolicy` object, the flat
+ * top-level layout the managed schema also accepts, or both (scoped keys win). Chrome returns
+ * only the keys asked for, so the whole area is read. Never throws; null when unavailable.
  */
 export async function readManagedEnterprisePolicy(
   managed: ManagedStorageArea | undefined,
@@ -28,10 +28,11 @@ export async function readManagedEnterprisePolicy(
     }
 
     const scoped = values[key];
+    const flat = Object.fromEntries(Object.entries(values).filter(([entry]) => entry !== key));
 
     return scoped !== null && typeof scoped === "object" && !Array.isArray(scoped)
-      ? (scoped as Record<string, unknown>)
-      : values;
+      ? { ...flat, ...(scoped as Record<string, unknown>) }
+      : flat;
   } catch {
     return null;
   }
