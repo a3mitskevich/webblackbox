@@ -222,6 +222,40 @@ describe("CDP Runtime errors under the console policy", () => {
       }
     });
 
+    it("withholds text-only exception details and any unknown text field", () => {
+      const event = ingestCdp("metadata", "Runtime.exceptionThrown", {
+        timestamp: 1_700_000_001_000,
+        exceptionDetails: {
+          exceptionId: 6,
+          text: `Uncaught SyntaxError: Unexpected token '${EXCEPTION_MARKER}'`,
+          lineNumber: 3,
+          columnNumber: 7,
+          url: "",
+          stackTrace: {
+            callFrames: [{ functionName: "", url: SCRIPT_URL, lineNumber: 3, columnNumber: 7 }]
+          }
+        }
+      });
+      const content = ingestContent("metadata", "pageError", {
+        filename: "https://app.example.com/static/app.js",
+        description: EXCEPTION_MARKER,
+        error: { message: EXCEPTION_MARKER }
+      });
+
+      expect(event.data).toEqual({
+        source: "cdp.runtime",
+        filename: "https://app.example.com/static/app.js",
+        lineno: 4,
+        colno: 8,
+        exceptionId: 6,
+        timestamp: 1_700_000_001_000,
+        messageRedacted: true,
+        stackRedacted: true
+      });
+      expect(JSON.stringify(event)).not.toContain(EXCEPTION_MARKER);
+      expect(JSON.stringify(content)).not.toContain(EXCEPTION_MARKER);
+    });
+
     it("turns console text into a privacy violation", () => {
       const event = ingestCdp("metadata", "Runtime.consoleAPICalled", createConsoleApiCalled());
 

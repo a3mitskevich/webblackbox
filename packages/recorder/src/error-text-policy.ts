@@ -1,14 +1,23 @@
 import type { CapturePolicy, WebBlackboxEventType } from "@webblackbox/protocol";
 
-import { asRecord, omitKeys } from "./normalizer-utils.js";
+import { asRecord } from "./normalizer-utils.js";
 
-const EXCEPTION_TEXT_KEYS = ["message", "name", "stack", "text"] as const;
-const REJECTION_TEXT_KEYS = ["reason", "message", "stack", "text"] as const;
+/** Text-free fields an `error.*` event may keep under `console: metadata`; everything else goes. */
+const ERROR_METADATA_KEYS = [
+  "source",
+  "filename",
+  "lineno",
+  "colno",
+  "rejection",
+  "exceptionId",
+  "timestamp"
+] as const;
 
 /**
  * Under `console: metadata`, keeps uncaught exceptions and unhandled rejections as text-less
  * metadata, exactly like the page hooks do in lite mode (`messageRedacted`/`stackRedacted`,
- * `reasonRedacted`). This applies to every source, so full-mode CDP exceptions match lite.
+ * `reasonRedacted`). Only known text-free fields are kept, whatever the source, so full-mode CDP
+ * exceptions match lite.
  */
 export function applyErrorTextPolicy(
   eventType: WebBlackboxEventType,
@@ -26,16 +35,18 @@ export function applyErrorTextPolicy(
   }
 
   if (eventType === "error.exception") {
-    return {
-      ...omitKeys(row, EXCEPTION_TEXT_KEYS),
-      messageRedacted: true,
-      stackRedacted: true
-    };
+    return { ...pickMetadata(row), messageRedacted: true, stackRedacted: true };
   }
 
   if (eventType === "error.unhandledrejection") {
-    return { ...omitKeys(row, REJECTION_TEXT_KEYS), reasonRedacted: true };
+    return { ...pickMetadata(row), reasonRedacted: true };
   }
 
   return payload;
+}
+
+function pickMetadata(row: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    ERROR_METADATA_KEYS.filter((key) => row[key] !== undefined).map((key) => [key, row[key]])
+  );
 }

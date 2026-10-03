@@ -45,7 +45,7 @@ export function normalizeCdpExceptionPayload(payload: unknown): Record<string, u
     message: readText(message, MAX_EXCEPTION_MESSAGE_CHARS),
     name: exception?.subtype === "error" ? asString(exception.className) : undefined,
     stack: readText(stack, MAX_EXCEPTION_STACK_CHARS),
-    filename: sanitizeOptionalUrl(asString(details.url) ?? asString(topFrame?.url)),
+    filename: sanitizeOptionalUrl(asString(details.url) || asString(topFrame?.url)),
     lineno: toOneBased(details.lineNumber),
     colno: toOneBased(details.columnNumber),
     rejection: asString(details.text)?.startsWith(PROMISE_REJECTION_TEXT) ? true : undefined,
