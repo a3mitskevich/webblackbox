@@ -5,4 +5,5 @@ export * from "./hash.js";
 export * from "./indexer.js";
 export * from "./pipeline.js";
 export * from "./privacy.js";
+export * from "./session-sweep.js";
 export * from "./storage.js";
