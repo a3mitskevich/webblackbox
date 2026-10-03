@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createConcurrencyLimiter,
   loadSourceMapForEmbedding,
   scriptRecordFromResponse,
   scriptRecordFromScriptParsed,
@@ -92,13 +93,61 @@ describe("ScriptSourceMapTracker", () => {
     expect(tracker.reserveEmbed(other)).toBe(false);
   });
 
-  it("tracks the session byte budget", () => {
+  it("charges the session byte budget only for maps that still fit", () => {
     const tracker = new ScriptSourceMapTracker({ maxEmbeddedBytes: 100 });
 
-    tracker.addEmbeddedBytes(60);
+    expect(tracker.tryAddEmbeddedBytes(60)).toBe(true);
     expect(tracker.remainingEmbedBytes()).toBe(40);
-    tracker.addEmbeddedBytes(60);
+    // Two maps fetched concurrently against the same remaining budget: the second one no
+    // longer fits and is not counted.
+    expect(tracker.tryAddEmbeddedBytes(60)).toBe(false);
+    expect(tracker.remainingEmbedBytes()).toBe(40);
+    expect(tracker.tryAddEmbeddedBytes(40)).toBe(true);
     expect(tracker.remainingEmbedBytes()).toBe(0);
+  });
+});
+
+describe("createConcurrencyLimiter", () => {
+  it("runs at most the limit at once and starts waiting tasks in order", async () => {
+    const limit = createConcurrencyLimiter(2);
+    const releases: Array<() => void> = [];
+    const started: number[] = [];
+    let running = 0;
+    let peak = 0;
+
+    const tasks = [0, 1, 2, 3].map((index) =>
+      limit(async () => {
+        started.push(index);
+        running += 1;
+        peak = Math.max(peak, running);
+        await new Promise<void>((resolve) => releases.push(resolve));
+        running -= 1;
+        return index;
+      })
+    );
+
+    await vi.waitFor(() => expect(started).toEqual([0, 1]));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toEqual([0, 1, 2]));
+    // A task queued while a slot is being handed over must still wait its turn.
+    const late = limit(async () => {
+      started.push(4);
+      return 4;
+    });
+    releases.shift()?.();
+    releases.shift()?.();
+    await vi.waitFor(() => expect(started).toEqual([0, 1, 2, 3, 4]));
+    releases.shift()?.();
+
+    await expect(Promise.all([...tasks, late])).resolves.toEqual([0, 1, 2, 3, 4]);
+    expect(peak).toBe(2);
+  });
+
+  it("frees the slot when a task fails", async () => {
+    const limit = createConcurrencyLimiter(1);
+
+    await expect(limit(async () => Promise.reject(new Error("boom")))).rejects.toThrow("boom");
+    await expect(limit(async () => "next")).resolves.toBe("next");
   });
 });
 

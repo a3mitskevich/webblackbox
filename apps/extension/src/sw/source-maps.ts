@@ -10,6 +10,8 @@ export const SCRIPT_RAW_TYPE = "script";
 /** `Debugger.enable` keeps at most this many bytes of otherwise unreferenced script sources. */
 export const DEBUGGER_SCRIPT_CACHE_BYTES = 1_000_000;
 export const SOURCE_MAP_FETCH_TIMEOUT_MS = 10_000;
+/** Source maps fetched at the same time per session. */
+export const SOURCE_MAP_FETCH_CONCURRENCY = 2;
 
 const DEFAULT_LIMITS: ScriptSourceMapLimits = {
   maxScripts: 500,
@@ -127,9 +129,48 @@ export class ScriptSourceMapTracker {
     return Math.max(0, this.limits.maxEmbeddedBytes - this.embeddedBytes);
   }
 
-  public addEmbeddedBytes(bytes: number): void {
+  /**
+   * Counts a fetched map against the session byte budget; `false` (nothing counted) when it no
+   * longer fits. Maps are fetched concurrently, so the budget is charged once the size is known.
+   */
+  public tryAddEmbeddedBytes(bytes: number): boolean {
+    if (bytes > this.remainingEmbedBytes()) {
+      return false;
+    }
+
     this.embeddedBytes += bytes;
+    return true;
   }
+}
+
+/**
+ * Runs at most `limit` tasks at a time; the rest wait in arrival order. Map fetches go through
+ * this instead of the session queue so a slow map server never stalls capture work.
+ */
+export function createConcurrencyLimiter(limit: number): <T>(task: () => Promise<T>) => Promise<T> {
+  const waiting: Array<() => void> = [];
+  let running = 0;
+
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    if (running >= limit) {
+      // The finishing task hands its slot over, so `running` stays at the limit.
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    } else {
+      running += 1;
+    }
+
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+
+      if (next) {
+        next();
+      } else {
+        running -= 1;
+      }
+    }
+  };
 }
 
 export type SourceMapFetchResult = { ok: true; bytes: Uint8Array } | { ok: false; error: string };

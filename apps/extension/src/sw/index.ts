@@ -63,9 +63,11 @@ import {
   type SourceMapCapture
 } from "../shared/profiles/resolve.js";
 import {
+  createConcurrencyLimiter,
   DEBUGGER_SCRIPT_CACHE_BYTES,
   loadSourceMapForEmbedding,
   SCRIPT_RAW_TYPE,
+  SOURCE_MAP_FETCH_CONCURRENCY,
   scriptRecordFromResponse,
   scriptRecordFromScriptParsed,
   ScriptSourceMapTracker,
@@ -191,6 +193,7 @@ type SessionRuntime = {
   heapSnapshotCapture: HeapSnapshotCaptureState | null;
   cleanupTimer: ReturnType<typeof setTimeout> | null;
   scriptSourceMaps: ScriptSourceMapTracker;
+  scriptSourceMapFetches: <T>(task: () => Promise<T>) => Promise<T>;
 };
 
 type ScreenRecordingRuntime = {
@@ -1030,7 +1033,8 @@ async function startSession(
     removeCdpListeners: [],
     heapSnapshotCapture: null,
     cleanupTimer: null,
-    scriptSourceMaps: new ScriptSourceMapTracker()
+    scriptSourceMaps: new ScriptSourceMapTracker(),
+    scriptSourceMapFetches: createConcurrencyLimiter(SOURCE_MAP_FETCH_CONCURRENCY)
   };
 
   runtime.recorder = new WebBlackboxRecorder(
@@ -2883,13 +2887,16 @@ function recordScriptSourceMap(runtime: SessionRuntime, record: RawScriptRecord 
     return;
   }
 
-  enqueue(
-    runtime,
-    async () => {
-      await embedScriptSourceMap(runtime, record, capture.maxMapBytes);
-    },
-    { bestEffort: true }
-  );
+  // Fetched outside the session queue (which also carries pipeline flushes and CDP follow-ups),
+  // so slow or large maps never hold up capture; only the blob write is queued.
+  void runtime
+    .scriptSourceMapFetches(() => embedScriptSourceMap(runtime, record, capture.maxMapBytes))
+    .catch((error: unknown) => {
+      console.warn("[WebBlackbox] failed to embed source map", {
+        sid: runtime.sid,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
 }
 
 async function embedScriptSourceMap(
@@ -2906,17 +2913,32 @@ async function embedScriptSourceMap(
     maxBytes: Math.min(maxMapBytes, tracker.remainingEmbedBytes())
   });
 
+  // A late result must not land in a later session on the same tab.
+  if (runtime.stopping) {
+    return;
+  }
+
   if (!result.ok) {
     ingestScriptRecord(runtime, { ...record, mapError: result.error });
     return;
   }
 
-  tracker.addEmbeddedBytes(result.bytes.byteLength);
-  const contentHash = await runtime.pipeline.putBlob("application/json", result.bytes);
+  if (!tracker.tryAddEmbeddedBytes(result.bytes.byteLength)) {
+    ingestScriptRecord(runtime, { ...record, mapError: "session source map budget exhausted" });
+    return;
+  }
 
-  ingestScriptRecord(runtime, {
-    ...record,
-    map: { contentHash, size: result.bytes.byteLength }
+  enqueue(runtime, async () => {
+    if (runtime.stopping) {
+      return;
+    }
+
+    const contentHash = await runtime.pipeline.putBlob("application/json", result.bytes);
+
+    ingestScriptRecord(runtime, {
+      ...record,
+      map: { contentHash, size: result.bytes.byteLength }
+    });
   });
 }
 
