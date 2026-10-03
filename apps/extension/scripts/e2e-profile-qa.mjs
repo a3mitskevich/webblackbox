@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 // E2E: a site rule picks the QA profile on a matching host and the exported archive contains
-// console text and JSON response bodies; exporting without a passphrase is refused.
+// console text and JSON response bodies; navigating to a host without a rule switches back to the
+// Default profile mid-session (console text hidden again); exporting without a passphrase is refused.
 
 import { spawn, spawnSync } from "node:child_process";
 import { constants, createWriteStream } from "node:fs";
@@ -25,6 +26,7 @@ const baseUrl = `http://127.0.0.1:${remotePort}`;
 const passphrase = "webblackbox-qa-e2e-passphrase";
 
 const CONSOLE_MARKER = "qa-console-marker-7f3a";
+const DEFAULT_CONSOLE_MARKER = "default-console-marker-c41d";
 const BODY_MARKER = "qa-body-marker-91c2";
 const QA_RULE = {
   id: "e2e-local-qa",
@@ -145,9 +147,26 @@ async function main() {
   );
   await sleep(1_500);
 
-  const pageResult = await page.evaluate(`window.__runQaScenario()`);
+  const pageResult = await page.evaluate(
+    `window.__runQaScenario(${JSON.stringify(CONSOLE_MARKER)})`
+  );
   assert(pageResult?.marker === BODY_MARKER, "Demo request failed", pageResult);
   await sleep(2_500);
+
+  // Same tab, host without a rule: the session must switch to the Default profile.
+  const defaultUrl = `http://localhost:${appPort}/qa/`;
+  await page.send("Page.navigate", { url: defaultUrl });
+  await waitFor(
+    () =>
+      page.evaluate(
+        `(location.hostname === "localhost" && document.readyState === "complete" && typeof window.__runQaScenario === "function") || null`
+      ),
+    15_000,
+    "Navigation to the rule-free host did not finish"
+  );
+  await sleep(2_500);
+  await page.evaluate(`window.__runQaScenario(${JSON.stringify(DEFAULT_CONSOLE_MARKER)})`);
+  await sleep(2_000);
 
   const sid = await popup.evaluate(`
     chrome.storage.local.get("webblackbox.runtime.sessions").then(
@@ -191,6 +210,16 @@ async function main() {
   const profileConfig = events.find(
     (event) => event.type === "meta.config" && event.data?.profile?.id === "builtin:qa"
   );
+  const switchConfig = events.find(
+    (event) =>
+      event.type === "meta.config" &&
+      event.data?.profile?.id === "default" &&
+      event.data?.profileChange?.previous?.id === "builtin:qa"
+  );
+  const leakedDefaultConsole = events.some(
+    (event) =>
+      event.type === "console.entry" && JSON.stringify(event.data).includes(DEFAULT_CONSOLE_MARKER)
+  );
   const consoleEvent = events.find(
     (event) => event.type === "console.entry" && JSON.stringify(event.data).includes(CONSOLE_MARKER)
   );
@@ -207,6 +236,12 @@ async function main() {
   assert(profileConfig.data.profile.ruleId === QA_RULE.id, "meta.config misses the rule", {
     profile: profileConfig.data.profile
   });
+  assert(switchConfig, "No meta.config for the switch back to the Default profile", {
+    profiles: events
+      .filter((event) => event.type === "meta.config")
+      .map((event) => event.data?.profile)
+  });
+  assert(!leakedDefaultConsole, "Console text recorded after switching to the Default profile");
   assert(consoleEvent, "Console text missing from the QA archive", {
     types: [...new Set(events.map((event) => event.type))]
   });
@@ -220,6 +255,7 @@ async function main() {
   console.log(`Archive: ${archivePath} (${bytes.byteLength} bytes)`);
   console.log(`Profile: ${JSON.stringify(profileConfig.data.profile)}`);
   console.log(`Console event: ${JSON.stringify(consoleEvent.data).slice(0, 200)}`);
+  console.log(`Profile switch: ${JSON.stringify(switchConfig.data.profileChange)}`);
   console.log(`JSON body: ${jsonBody.slice(0, 200)}`);
   console.log(`Plaintext export refused: ${plaintext.error}`);
   console.log(`Chrome log: ${chromeLogPath}`);
@@ -233,8 +269,8 @@ function startDemoServer() {
 <html><head><meta charset="utf-8"><title>QA demo for alice@example.com</title></head>
 <body><h1>QA demo</h1><input name="password" type="password">
 <script>
-  window.__runQaScenario = async () => {
-    console.log(${JSON.stringify(CONSOLE_MARKER)}, { orderId: 42 });
+  window.__runQaScenario = async (marker) => {
+    console.log(marker, { orderId: 42 });
     const response = await fetch("/api/orders?env=qa", {
       method: "POST",
       headers: { "content-type": "application/json" },
