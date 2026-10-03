@@ -14,13 +14,29 @@ By default, WebBlackbox records metadata needed to debug a session:
 
 By default, WebBlackbox does not collect raw input values, DOM text, screenshots, storage values, cookies, raw headers, request bodies, or response bodies.
 
+## Recording Profiles
+
+What the extension records is decided by the recording profile in effect. The `Default` profile keeps the defaults above unchanged; read-only presets raise them:
+
+- `Lite` / `Full`: the defaults above on each transport (Full adds CDP screenshots).
+- `QA`: console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, raw DOM snapshots, screenshots.
+- `Full capture`: everything above plus input values, storage values, all textual bodies up to 1 MiB, optional tab video and 60 Hz pointer sampling.
+
+Profiles whose capture levels exceed the standard Full ceiling are **extended**. Safeguards:
+
+- Extended profiles only run on hosts named by a site rule that selects them, by the profile store's extended-capture host list, or by the enterprise site allowlist. Elsewhere the Full preset is used instead, and the archive records the downgrade.
+- Site rules only pick a profile; recording always starts manually.
+- Input values are never recorded for password fields (type or password/one-time-code autocomplete), whatever the profile says, nor for fields inside `blockedSelectors` unless a profile unmask selector explicitly re-allows them. Unmask selectors can never expose password fields, and any unmask list makes a profile extended.
+- Body values after sensitive keys are still masked, and the privacy scanner still runs.
+- Enterprise `dataCategoryCaps` remain a ceiling for every profile.
+
 ## Local Storage
 
 Captured sessions remain local until the user exports or shares an archive. Local stopped sessions are subject to retention controls, and enterprise policies can cap local retention.
 
 ## Export And Share
 
-Real-user archives must be encrypted before export or share. The public share server stores encrypted archive bytes and redacted public metadata. It does not receive archive passphrases or decryption keys, and it rejects encrypted uploads that leave private archive files, including event chunks, blobs, indexes, or privacy manifests, in plaintext.
+Real-user archives must be encrypted before export or share. A session that recorded under an extended profile (or a profile that requires encryption) cannot be exported without a passphrase, and the privacy scanner blocks its export until the user reviews and acknowledges the findings. The plaintext `manifest.json` carries only the sanitized origin, never the page title. The public share server stores encrypted archive bytes and redacted public metadata. It does not receive archive passphrases or decryption keys, and it rejects encrypted uploads that leave private archive files, including event chunks, blobs, indexes, or privacy manifests, in plaintext.
 
 Public share links expire, can be revoked, and generate redacted audit events. Audit records do not include captured payloads, passphrases, API keys, raw URLs, raw selectors, or archive plaintext.
 

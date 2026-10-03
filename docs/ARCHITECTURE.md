@@ -94,6 +94,16 @@ Sensitive data is redacted before it enters the pipeline:
 - DOM elements matching CSS selectors like `input[type='password']` are blocked
 - Optional HMAC-SHA-256 hashing with a per-session, never-exported key preserves correlation within a session without exposing raw values
 
+### Recording Profiles
+
+The extension resolves a recording profile before it builds the recorder config:
+
+- **Storage**: `chrome.storage.local["webblackbox.profiles"]` (schema v2, Zod-validated row by row). Without it, the v1 `webblackbox.options` record is migrated on read into an editable `Default` profile that reproduces the pre-profile config. Read-only presets (`Lite`, `Full`, `QA`, `Full capture`) live in code; managed policy can add read-only `managed:*` profiles and rules.
+- **Selection**: explicit popup choice → highest-priority matching site rule (hosts with subdomains/ports, path globs, query, title regex, meta tag, selector presence, incognito) → store default. DOM-derived signals are probed with `chrome.scripting` only when a rule needs them.
+- **Application**: the profile is rendered through the existing mode boundary into `RecorderConfig` (categories, redaction, unmask selectors, sampling, body MIME/size/URL filters, visual capture), then enterprise caps apply. Extended profiles outside their allowed hosts fall back to `Full`.
+- **Navigation**: rules are re-evaluated on URL change and page load; a profile switch reconfigures the recorder and page agents in place and writes a `meta.config` event. Every `meta.config` carries `profile` (id, name, source, rule, downgrade), which the Player shows.
+- **Export**: the strictest profile a session used decides whether a passphrase is required and whether privacy scanner findings block the export.
+
 ### 5. Separation of Concerns
 
 Each package has a single responsibility:
@@ -287,7 +297,7 @@ Page World          Extension World         Background
 - **Key Derivation**: PBKDF2 with SHA-256, 120,000 iterations
 - **Salt**: Random 16-byte salt per archive
 - **IV**: Random 12-byte IV per file within the archive
-- **Scope**: Event chunks, indexes, and blobs; manifest remains readable
+- **Scope**: Event chunks, indexes, and blobs; manifest remains readable and therefore holds only the sanitized origin (no page title)
 
 ### Permission Model
 
