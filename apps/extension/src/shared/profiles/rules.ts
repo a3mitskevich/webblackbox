@@ -1,4 +1,5 @@
 import type { ProfileRule, ProfileRuleMatch } from "./model.js";
+import { isSafeRegexSource, matchesGlob } from "./safe-pattern.js";
 
 /** What the rule engine knows about the page; DOM-derived signals are optional. */
 export type ProfilePageContext = {
@@ -18,7 +19,8 @@ export type ProfilePageSignalRequest = {
   needsTitle: boolean;
 };
 
-const MAX_TITLE_LENGTH = 512;
+// Short enough that the slowest regex `isSafeRegexSource` accepts stays in the milliseconds.
+const MAX_TITLE_LENGTH = 256;
 const DEFAULT_PORTS: Record<string, string> = {
   "http:": "80",
   "https:": "443",
@@ -28,16 +30,19 @@ const DEFAULT_PORTS: Record<string, string> = {
 
 /**
  * Picks the enabled rule with the highest priority whose every condition matches the page.
- * Ties keep list order (managed rules come first). Returns undefined when nothing matches.
+ * Ties keep list order (managed rules come first). Rules `isUsable` rejects (e.g. pointing to a
+ * deleted profile) are skipped so they never shadow lower-priority rules. Returns undefined when
+ * nothing matches.
  */
 export function findMatchingRule(
   rules: readonly ProfileRule[],
-  context: ProfilePageContext
+  context: ProfilePageContext,
+  isUsable: (rule: ProfileRule) => boolean = () => true
 ): ProfileRule | undefined {
   let best: ProfileRule | undefined;
 
   for (const rule of rules) {
-    if (!rule.enabled || !matchesRule(rule.match, context)) {
+    if (!rule.enabled || !isUsable(rule) || !matchesRule(rule.match, context)) {
       continue;
     }
 
@@ -140,17 +145,7 @@ export function matchesPathGlob(pathname: string, pattern: string): boolean {
     return false;
   }
 
-  const source = trimmed
-    .split("**")
-    .map((part) =>
-      part
-        .split("*")
-        .map((literal) => literal.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-        .join("[^/]*")
-    )
-    .join(".*");
-
-  return new RegExp(`^${source}$`).test(pathname);
+  return matchesGlob(pathname, trimmed);
 }
 
 /** Collects the DOM signals (meta names, selectors, title) any enabled rule depends on. */
@@ -231,7 +226,8 @@ function matchesQuery(params: URLSearchParams, query: Record<string, string | tr
 }
 
 function matchesTitle(title: string | undefined, regex: string): boolean {
-  if (typeof title !== "string") {
+  // Stored rules are validated on read; this also covers rules built in memory.
+  if (typeof title !== "string" || !isSafeRegexSource(regex)) {
     return false;
   }
 

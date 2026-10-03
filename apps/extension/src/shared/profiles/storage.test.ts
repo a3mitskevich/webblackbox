@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_PROFILE_ID,
+  MAX_PROFILES,
   PROFILES_SCHEMA_VERSION,
   type RecordingProfilesStore
 } from "./model.js";
@@ -224,6 +225,20 @@ describe("serializeProfilesStore", () => {
     expect(() =>
       serializeProfilesStore(storeWith({ profiles: [{ ...createDefaultProfile(), name: "" }] }))
     ).toThrow(/Profiles are invalid/);
+  });
+
+  it("rejects a store the reader would drop as a whole", () => {
+    const tooManyProfiles = Array.from({ length: MAX_PROFILES + 1 }, (_, index) => ({
+      ...createDefaultProfile(),
+      id: index === 0 ? DEFAULT_PROFILE_ID : `p${index}`
+    }));
+
+    expect(() =>
+      serializeProfilesStore(storeWith({ extendedCaptureHosts: ["x".repeat(501)] }))
+    ).toThrow(/Profiles are invalid: extendedCaptureHosts/);
+    expect(() => serializeProfilesStore(storeWith({ profiles: tooManyProfiles }))).toThrow(
+      /Profiles are invalid: profiles/
+    );
   });
 
   it("round-trips a valid store", () => {

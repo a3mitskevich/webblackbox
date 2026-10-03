@@ -228,6 +228,23 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.capturePolicy?.redaction.unmaskSelectors).toEqual([".order-id"]);
   });
 
+  it("never unmasks from a list hidden inside the redaction profile", () => {
+    const profile = {
+      ...duplicateProfile(preset(BUILT_IN_PROFILE_IDS.full), { id: "h" }),
+      redaction: { ...DEFAULT_REDACTION_PROFILE, unmaskSelectors: ["input"] }
+    };
+    const config = buildProfileRecorderConfig({ mode: "full", profile });
+
+    expect(isExtendedCaptureProfile(profile)).toBe(false);
+    expect(config.redaction.unmaskSelectors).toBeUndefined();
+    expect(config.capturePolicy?.redaction.unmaskSelectors).toBeUndefined();
+
+    const stored = v2State({ profiles: [createDefaultProfile(), profile] });
+    expect(stored.catalog.find((entry) => entry.id === "h")?.redaction.unmaskSelectors).toBe(
+      undefined
+    );
+  });
+
   it("stays under enterprise data category caps", () => {
     const config = applyEnterprisePolicyToRecorderConfig(
       buildProfileRecorderConfig({
@@ -390,6 +407,49 @@ describe("selectRecordingProfile", () => {
     });
 
     expect(selection.downgradedFrom?.id).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("keeps the profile's redaction and lower levels when it is downgraded", () => {
+    const raised = {
+      ...createDefaultProfile(),
+      categories: {
+        ...createDefaultProfile().categories,
+        console: "allow" as const,
+        dom: "off" as const
+      },
+      redaction: { ...DEFAULT_REDACTION_PROFILE, blockedSelectors: [".my-secret"] },
+      recorder: { ringBufferMinutes: 3 },
+      unmaskSelectors: [".order-id"]
+    };
+    const selection = selectRecordingProfile({
+      state: v2State({ profiles: [raised] }),
+      page: { url: foreign }
+    });
+
+    expect(selection.profile.id).toBe(BUILT_IN_PROFILE_IDS.full);
+    expect(selection.profile.categories.console).toBe(
+      preset(BUILT_IN_PROFILE_IDS.full).categories.console
+    );
+    expect(selection.profile.categories.dom).toBe("off");
+    expect(selection.profile.redaction.blockedSelectors).toEqual([".my-secret"]);
+    expect(selection.profile.recorder.ringBufferMinutes).toBe(3);
+    expect(selection.profile.unmaskSelectors).toEqual([]);
+    expect(isExtendedCaptureProfile(selection.profile)).toBe(false);
+  });
+
+  it("lets a lower-priority rule win over one pointing to a missing profile", () => {
+    const selection = selectRecordingProfile({
+      state: v2State({
+        rules: [
+          { ...qaRule, id: "ghost", profileId: "ghost", priority: 10 },
+          { ...qaRule, id: "lite", profileId: BUILT_IN_PROFILE_IDS.lite, priority: 1 }
+        ]
+      }),
+      page: { url: stage }
+    });
+
+    expect(selection.profile.id).toBe(BUILT_IN_PROFILE_IDS.lite);
+    expect(selection.rule?.id).toBe("lite");
   });
 
   it("ignores unknown explicit ids and rules to missing profiles", () => {

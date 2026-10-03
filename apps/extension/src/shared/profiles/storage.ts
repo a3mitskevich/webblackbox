@@ -207,13 +207,21 @@ export function serializeProfilesStore(store: RecordingProfilesStore): Recording
     throw new Error(`Profiles are invalid: ${describeIssues(issues)}`);
   }
 
-  return {
+  const serialized: RecordingProfilesStore = {
     schemaVersion: PROFILES_SCHEMA_VERSION,
     defaultProfileId: store.defaultProfileId,
     profiles: ensureDefaultProfile(profiles),
     rules,
     extendedCaptureHosts: [...store.extendedCaptureHosts]
   };
+  // The reader rejects a bad envelope as a whole, so never write one it would drop.
+  const envelope = recordingProfilesStoreSchema.safeParse(serialized);
+
+  if (!envelope.success) {
+    throw new Error(`Profiles are invalid: ${summarizeZodError(envelope.error)}`);
+  }
+
+  return { ...serialized, extendedCaptureHosts: [...envelope.data.extendedCaptureHosts] };
 }
 
 export function describeIssues(issues: readonly ProfilesStoreIssue[]): string {

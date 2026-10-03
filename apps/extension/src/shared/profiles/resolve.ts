@@ -7,8 +7,12 @@ import {
 import type { FullModeVisualCapture } from "../messages.js";
 import { applyFullModeVisualCapture, resolveModeBaseConfig } from "../mode-profile.js";
 import { resolveModeRecorderConfig } from "../recorder-config.js";
-import { findCategoriesAboveCeiling, type CaptureCategoryKey } from "./categories.js";
-import { DEFAULT_PROFILE_ID, type RecordingProfile } from "./model.js";
+import {
+  clampCategoriesToCeiling,
+  findCategoriesAboveCeiling,
+  type CaptureCategoryKey
+} from "./categories.js";
+import { DEFAULT_PROFILE_ID, withoutRedactionUnmask, type RecordingProfile } from "./model.js";
 import { BUILT_IN_PROFILE_IDS, findBuiltInProfile, STANDARD_CAPTURE_CEILING } from "./presets.js";
 import { findMatchingRule, matchesHostPattern, type ProfilePageContext } from "./rules.js";
 import type { ProfilesState } from "./storage.js";
@@ -50,7 +54,8 @@ export type ProfileExportRequirements = {
 /**
  * Picks the profile for a page: an explicit choice wins, then the best matching site rule,
  * then the store default. Extended profiles only run on hosts their rules (or the allowlists)
- * cover; elsewhere they are downgraded to the built-in Full preset.
+ * cover; elsewhere they run as the built-in Full preset, keeping their own redaction and
+ * retention settings and never more than Full captures.
  */
 export function selectRecordingProfile(input: {
   state: ProfilesState;
@@ -65,7 +70,9 @@ export function selectRecordingProfile(input: {
     input.requestedProfileId && input.requestedProfileId !== AUTO_PROFILE_ID
       ? byId(input.requestedProfileId)
       : undefined;
-  const rule = explicit ? undefined : findMatchingRule(state.rules, input.page);
+  const rule = explicit
+    ? undefined
+    : findMatchingRule(state.rules, input.page, (candidate) => !!byId(candidate.profileId));
   const ruleProfile = byId(rule?.profileId);
   const requested =
     explicit ?? ruleProfile ?? byId(state.store.defaultProfileId) ?? byId(DEFAULT_PROFILE_ID);
@@ -86,7 +93,7 @@ export function selectRecordingProfile(input: {
     })
   ) {
     return {
-      profile: fullPreset(),
+      profile: downgradeToFullPreset(profile),
       source,
       ...(ruleInfo ? { rule: ruleInfo } : {}),
       extended: false,
@@ -159,8 +166,9 @@ export function buildProfileRecorderConfig(input: {
 
 /** v1-shaped options record equivalent to a profile (only the keys the merge reads). */
 export function toLegacyOptionsRecord(profile: RecordingProfile): Record<string, unknown> {
+  // `profile.unmaskSelectors` is the only unmask source: the extended-capture gate reads it.
   const redaction = {
-    ...profile.redaction,
+    ...withoutRedactionUnmask(profile.redaction),
     ...(profile.unmaskSelectors.length > 0 ? { unmaskSelectors: [...profile.unmaskSelectors] } : {})
   };
   const sampling = {
@@ -225,6 +233,27 @@ export function isSameProfileSelection(left: ProfileSelection, right: ProfileSel
     left.rule?.id === right.rule?.id &&
     left.downgradedFrom?.id === right.downgradedFrom?.id
   );
+}
+
+/**
+ * The Full preset for an extended profile on a host outside its allowlist. Categories are the
+ * lower of the two levels, so nothing the profile turned down is turned back on, and the
+ * profile's redaction lists, sampling, retention, site policies and export rules are kept.
+ * Body filters, pointer rate, visuals and unmask selectors come from Full.
+ */
+function downgradeToFullPreset(profile: RecordingProfile): RecordingProfile {
+  const full = fullPreset();
+
+  return {
+    ...full,
+    categories: clampCategoriesToCeiling(profile.categories, full.categories),
+    redaction: withoutRedactionUnmask(profile.redaction),
+    sampling: { ...profile.sampling },
+    recorder: { ...profile.recorder },
+    sitePolicies: profile.sitePolicies,
+    ...(profile.basePolicy ? { basePolicy: profile.basePolicy } : {}),
+    export: { ...profile.export }
+  };
 }
 
 function fullPreset(): RecordingProfile {

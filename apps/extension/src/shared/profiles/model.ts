@@ -12,6 +12,7 @@ import {
 import { z } from "zod";
 
 import { CAPTURE_CATEGORY_LEVELS, type CaptureCategories } from "./categories.js";
+import { isSafeRegexSource, MAX_TITLE_REGEX_UNBOUNDED_QUANTIFIERS } from "./safe-pattern.js";
 
 /** `chrome.storage.local` key of the v2 profiles store. */
 export const PROFILES_STORAGE_KEY = "webblackbox.profiles";
@@ -159,7 +160,7 @@ export const recordingProfileSchema = z
     description: z.string().max(500).optional(),
     base: captureModeSchema,
     categories: categoriesSchema,
-    redaction: redactionProfileSchema,
+    redaction: redactionProfileSchema.transform(withoutRedactionUnmask),
     unmaskSelectors: patternListSchema,
     network: z
       .object({
@@ -218,6 +219,11 @@ export const profileRuleSchema = z
           .min(1)
           .max(MAX_TITLE_REGEX_LENGTH)
           .refine(isCompilableRegex, "titleRegex must be a valid regular expression")
+          .refine(
+            isSafeRegexSource,
+            `titleRegex is too complex: no nested or alternated quantified groups, no ` +
+              `backreferences, at most ${MAX_TITLE_REGEX_UNBOUNDED_QUANTIFIERS} of * + {n,}`
+          )
           .optional(),
         selectorPresent: patternSchema.optional(),
         metaTag: z
@@ -243,6 +249,17 @@ export const recordingProfilesStoreSchema = z
     extendedCaptureHosts: patternListSchema
   })
   .strict();
+
+/**
+ * Drops `unmaskSelectors` from a redaction profile. A profile keeps its unmask list only in
+ * `RecordingProfile.unmaskSelectors`, which the extended-capture gate checks; a second copy
+ * inside `redaction` would unmask fields without making the profile extended.
+ */
+export function withoutRedactionUnmask(redaction: RedactionProfile): RedactionProfile {
+  return Object.fromEntries(
+    Object.entries(redaction).filter(([key]) => key !== "unmaskSelectors")
+  ) as RedactionProfile;
+}
 
 export function isBuiltInProfileId(id: string): boolean {
   return id.startsWith(BUILT_IN_PROFILE_ID_PREFIX);
