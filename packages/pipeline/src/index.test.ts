@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
 
 import {
+  ARCHIVE_KDF_DEFAULT_ITERATIONS,
   DEFAULT_CAPTURE_POLICY,
   type SessionMetadata,
   type WebBlackboxEvent
@@ -849,6 +850,7 @@ describe("pipeline", () => {
 
     expect(parsed.events.length).toBeGreaterThanOrEqual(2);
     expect(parsed.manifest.encryption?.algorithm).toBe("AES-GCM");
+    expect(parsed.manifest.encryption?.kdf.iterations).toBe(ARCHIVE_KDF_DEFAULT_ITERATIONS);
     expect(parsed.manifest.encryption?.files["index/time.json"]).toBeDefined();
     expect(parsed.manifest.encryption?.files["index/req.json"]).toBeDefined();
     expect(parsed.manifest.encryption?.files["index/inv.json"]).toBeDefined();
@@ -869,6 +871,30 @@ describe("pipeline", () => {
         path.startsWith("events/")
       )
     ).toBe(true);
+  });
+
+  it("rejects encrypted archives whose manifest KDF iteration count is out of range", async () => {
+    const pipeline = new FlightRecorderPipeline({
+      session: SESSION,
+      storage: new MemoryPipelineStorage(),
+      maxChunkBytes: 128
+    });
+
+    await pipeline.start();
+    await pipeline.ingest(createEvent("E-kdf-1", "user.click", 100));
+
+    const exported = await pipeline.exportBundle({
+      ...FULL_EXPORT_OPTIONS,
+      passphrase: "secret-passphrase"
+    });
+
+    for (const iterations of [50_000_000, 1_000]) {
+      const tampered = await rewriteManifestKdfIterations(exported.bytes, iterations);
+
+      await expect(
+        readWebBlackboxArchive(tampered, { passphrase: "secret-passphrase" })
+      ).rejects.toThrow(/KDF iteration count .* outside the supported range/);
+    }
   });
 
   it("supports optional at-rest encryption for chunk/blob cache payloads", async () => {
@@ -1154,3 +1180,38 @@ describe("pipeline", () => {
     expect((await storage.listBlobs()).length).toBe(0);
   });
 });
+
+async function rewriteManifestKdfIterations(
+  source: Uint8Array,
+  iterations: number
+): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(source);
+  const manifest = JSON.parse((await zip.file("manifest.json")?.async("string")) ?? "{}");
+  const manifestText = JSON.stringify({
+    ...manifest,
+    encryption: {
+      ...manifest.encryption,
+      kdf: { ...manifest.encryption.kdf, iterations }
+    }
+  });
+  const integrity = JSON.parse((await zip.file("integrity/hashes.json")?.async("string")) ?? "{}");
+  const manifestSha256 = await sha256HexForTest(new TextEncoder().encode(manifestText));
+
+  zip.file("manifest.json", manifestText);
+  zip.file(
+    "integrity/hashes.json",
+    JSON.stringify({
+      manifestSha256,
+      files: { ...integrity.files, "manifest.json": manifestSha256 }
+    })
+  );
+
+  return zip.generateAsync({ type: "uint8array" });
+}
+
+async function sha256HexForTest(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join(
+    ""
+  );
+}
