@@ -133,6 +133,53 @@ describe("readCapturableInputValue", () => {
     expect(captureAgent.readCapturableInputValue(input, policy("allow"))).toBeUndefined();
   });
 
+  it("ignores a fake registry planted by the page", async () => {
+    const key = Symbol.for("webblackbox.passwordFieldRegistry");
+    const holder = globalThis as Record<symbol, unknown>;
+    const original = Object.getOwnPropertyDescriptor(holder, key);
+
+    Reflect.deleteProperty(holder, key);
+    holder[key] = { fields: { has: () => false, add: () => undefined }, watchers: new Set() };
+
+    try {
+      vi.resetModules();
+      const policyModule = await import("./input-value-policy.js");
+      const stop = policyModule.watchPasswordFieldReveals(document);
+      const revealed = field('<input data-field type="password" name="pin" />');
+
+      revealed.setAttribute("type", "text");
+      await Promise.resolve();
+      stop();
+
+      expect(policyModule.readCapturableInputValue(revealed, policy("allow"))).toBeUndefined();
+      expect(
+        policyModule.readCapturableInputValue(
+          field('<input data-field type="password" />'),
+          policy("allow")
+        )
+      ).toBeUndefined();
+    } finally {
+      Reflect.deleteProperty(holder, key);
+
+      if (original) {
+        Object.defineProperty(holder, key, original);
+      }
+    }
+  });
+
+  it("shares one watcher per root across repeated loads", () => {
+    const observeSpy = vi.spyOn(MutationObserver.prototype, "observe");
+    const stops = [
+      watchPasswordFieldReveals(document),
+      watchPasswordFieldReveals(document),
+      watchPasswordFieldReveals(document)
+    ];
+
+    expect(observeSpy.mock.calls.length).toBeLessThanOrEqual(1);
+    stops.forEach((stop) => stop());
+    observeSpy.mockRestore();
+  });
+
   it("never captures password-named or payment card fields", () => {
     for (const html of [
       '<input data-field type="text" name="user_password" />',

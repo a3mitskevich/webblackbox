@@ -25,22 +25,52 @@ type PasswordFieldRegistry = {
   fields: WeakSet<Element>;
   /** Live reveal watchers; their queued records are read before any value is captured. */
   watchers: Set<MutationObserver>;
+  /** One shared watcher per observed root, so repeated content script loads do not pile up. */
+  rootWatchers: WeakMap<Node, { observer: MutationObserver; users: number }>;
 };
 
 /**
  * Shared by every bundle in the same JavaScript realm: the extension's content script watches
  * from page load, while the capture agent that reads values is a separately loaded bundle.
+ * When the SDK runs in the page's own realm the page could plant a fake registry, so anything
+ * but genuine collections is replaced (and a live `type="password"` is always checked directly).
  */
 const PASSWORD_FIELD_REGISTRY_KEY = Symbol.for("webblackbox.passwordFieldRegistry");
-const registryHolder = globalThis as typeof globalThis & {
-  [PASSWORD_FIELD_REGISTRY_KEY]?: PasswordFieldRegistry;
-};
-const registry = (registryHolder[PASSWORD_FIELD_REGISTRY_KEY] ??= {
-  fields: new WeakSet<Element>(),
-  watchers: new Set<MutationObserver>()
-});
+const registry = resolvePasswordFieldRegistry();
 const seenPasswordFields = registry.fields;
 const revealWatchers = registry.watchers;
+
+function resolvePasswordFieldRegistry(): PasswordFieldRegistry {
+  const holder = globalThis as typeof globalThis & {
+    [PASSWORD_FIELD_REGISTRY_KEY]?: unknown;
+  };
+  const existing = holder[PASSWORD_FIELD_REGISTRY_KEY] as Partial<PasswordFieldRegistry> | null;
+
+  if (
+    existing?.fields instanceof WeakSet &&
+    existing.watchers instanceof Set &&
+    existing.rootWatchers instanceof WeakMap
+  ) {
+    return existing as PasswordFieldRegistry;
+  }
+
+  const created: PasswordFieldRegistry = {
+    fields: new WeakSet<Element>(),
+    watchers: new Set<MutationObserver>(),
+    rootWatchers: new WeakMap()
+  };
+
+  try {
+    Object.defineProperty(holder, PASSWORD_FIELD_REGISTRY_KEY, {
+      value: created,
+      configurable: true
+    });
+  } catch {
+    // A non-configurable planted value: keep this bundle's own registry.
+  }
+
+  return created;
+}
 
 /**
  * Remembers every field the page switches away from `type="password"` (a "show password"
@@ -51,7 +81,30 @@ export function watchPasswordFieldReveals(root: Node): () => void {
     return () => undefined;
   }
 
+  const shared = registry.rootWatchers.get(root) ?? createRootWatcher(root);
+  let stopped = false;
+
+  shared.users += 1;
+
+  return () => {
+    if (stopped) {
+      return;
+    }
+
+    stopped = true;
+    shared.users -= 1;
+
+    if (shared.users === 0) {
+      registry.rootWatchers.delete(root);
+      revealWatchers.delete(shared.observer);
+      shared.observer.disconnect();
+    }
+  };
+}
+
+function createRootWatcher(root: Node): { observer: MutationObserver; users: number } {
   const observer = new MutationObserver(rememberRevealedFields);
+  const shared = { observer, users: 0 };
 
   observer.observe(root, {
     attributes: true,
@@ -60,11 +113,8 @@ export function watchPasswordFieldReveals(root: Node): () => void {
     subtree: true
   });
   revealWatchers.add(observer);
-
-  return () => {
-    revealWatchers.delete(observer);
-    observer.disconnect();
-  };
+  registry.rootWatchers.set(root, shared);
+  return shared;
 }
 
 function rememberRevealedFields(records: readonly MutationRecord[]): void {
@@ -121,7 +171,10 @@ export function readCapturableInputValue(
 }
 
 function isNeverCapturedField(field: EditableField): boolean {
-  if (seenPasswordFields.has(field)) {
+  const isPasswordNow =
+    field instanceof HTMLInputElement && field.type.toLowerCase() === "password";
+
+  if (isPasswordNow || seenPasswordFields.has(field)) {
     return true;
   }
 
