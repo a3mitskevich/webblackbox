@@ -2,6 +2,7 @@ import * as zlib from "node:zlib";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_CAPTURE_POLICY } from "@webblackbox/protocol";
 import type { ChunkCodec, ChunkTimeIndexEntry, ExportManifest } from "@webblackbox/protocol";
 
 import { ArchiveLimitError, DEFAULT_ARCHIVE_LOAD_LIMITS, WebBlackboxPlayer } from "./index.js";
@@ -221,6 +222,38 @@ describe("archive load hardening", () => {
         /^Invalid archive manifest\.json: encryption\.kdf\.iterations: /
       );
     }
+  });
+
+  it("opens v0.5.0 archives whose privacy manifest policy predates screen recordings", async () => {
+    const legacyCategories = Object.fromEntries(
+      Object.entries(DEFAULT_CAPTURE_POLICY.categories).filter(
+        ([key]) => key !== "screenRecordings"
+      )
+    );
+    const legacyPrivacyManifest = {
+      schemaVersion: 1,
+      generatedAt: new Date(0).toISOString(),
+      effectivePolicy: { ...DEFAULT_CAPTURE_POLICY, categories: legacyCategories },
+      consent: DEFAULT_CAPTURE_POLICY.consent,
+      categories: [],
+      scanner: {
+        scannedAt: new Date(0).toISOString(),
+        preEncryption: true,
+        status: "passed",
+        findings: []
+      },
+      encryption: { archive: "plaintext" },
+      totals: { events: 1, blobs: 0, privacyViolations: 0 }
+    };
+    const archive = await createArchive({
+      extraFiles: { "privacy/manifest.json": JSON.stringify(legacyPrivacyManifest) }
+    });
+
+    const player = await WebBlackboxPlayer.open(archive);
+
+    expect(player.archive.privacyManifest?.effectivePolicy?.categories.screenRecordings).toBe(
+      "off"
+    );
   });
 
   it("opens encrypted archives written with legacy (120k) and current (600k) KDF iterations", async () => {

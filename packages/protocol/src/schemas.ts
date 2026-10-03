@@ -153,7 +153,8 @@ export const capturePolicySchema = z
         inputs: z.enum(["none", "length-only", "masked", "allow"]),
         dom: z.enum(["off", "wireframe", "masked", "allow"]),
         screenshots: z.enum(["off", "masked", "allow"]),
-        screenRecordings: z.enum(["off", "allow"]),
+        // Added in v0.6.0; v0.5.0 policies (stored options, archived privacy manifests) lack it.
+        screenRecordings: z.enum(["off", "allow"]).default("off"),
         console: z.enum(["off", "metadata", "sanitized", "allow"]),
         network: z.enum(["metadata", "headers-allowlist", "body-allowlist"]),
         storage: z.enum(["off", "counts-only", "names-only", "lengths-only", "allow"]),

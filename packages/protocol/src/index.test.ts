@@ -95,6 +95,21 @@ describe("protocol", () => {
     expect(DEFAULT_CAPTURE_POLICY.encryption.archive).toBe("required");
   });
 
+  it("defaults screenRecordings to off for capture policies written before v0.6.0", () => {
+    const legacyCategories = Object.fromEntries(
+      Object.entries(DEFAULT_CAPTURE_POLICY.categories).filter(
+        ([key]) => key !== "screenRecordings"
+      )
+    );
+    const result = capturePolicySchema.safeParse({
+      ...DEFAULT_CAPTURE_POLICY,
+      categories: legacyCategories
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.data?.categories.screenRecordings).toBe("off");
+  });
+
   it("parses export manifest schema", () => {
     const result = exportManifestSchema.safeParse({
       protocolVersion: 1,
