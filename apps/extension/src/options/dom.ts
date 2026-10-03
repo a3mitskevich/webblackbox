@@ -1,94 +1,63 @@
-/** Small DOM builders for the options editors (no innerHTML: every value is user data). */
+/** Small DOM helpers for the options editors (no innerHTML: every value is user data). */
 
-type ElementOptions = {
-  className?: string;
-  text?: string;
-  attrs?: Record<string, string>;
-  dataset?: Record<string, string>;
-};
+import { el } from "../shared/ui/dom.js";
+import { icon, type IconName } from "../shared/ui/icons.js";
 
-export function el<TTag extends keyof HTMLElementTagNameMap>(
-  tag: TTag,
-  options: ElementOptions = {},
-  children: Array<Node | string> = []
-): HTMLElementTagNameMap[TTag] {
-  const element = document.createElement(tag);
+export { el };
 
-  if (options.className) {
-    element.className = options.className;
-  }
-
-  if (options.text !== undefined) {
-    element.textContent = options.text;
-  }
-
-  for (const [name, value] of Object.entries(options.attrs ?? {})) {
-    element.setAttribute(name, value);
-  }
-
-  Object.assign(element.dataset, options.dataset ?? {});
-  element.append(...children);
-  return element;
-}
+export type ButtonVariant = "brand" | "muted" | "surface" | "accent" | "ghost" | "danger";
 
 export function button(
   text: string,
   action: string,
-  variant: "brand" | "muted" | "surface" | "accent" = "surface"
+  variant: ButtonVariant = "surface",
+  options: { small?: boolean; iconName?: IconName } = {}
 ): HTMLButtonElement {
-  const element = el("button", {
-    className: `wb-btn wb-btn--${variant}`,
-    text,
-    attrs: { type: "button" },
-    dataset: { action }
-  });
+  return el(
+    "button",
+    {
+      className: `wb-btn wb-btn--${variant}${options.small ? " wb-btn--small" : ""}`,
+      attrs: { type: "button" },
+      dataset: { action }
+    },
+    [...(options.iconName ? [icon(options.iconName)] : []), text]
+  );
+}
+
+export function iconButton(
+  label: string,
+  action: string,
+  name: IconName,
+  options: { danger?: boolean; disabled?: boolean } = {}
+): HTMLButtonElement {
+  const element = el(
+    "button",
+    {
+      className: options.danger ? "wb-icon-btn wb-icon-btn--danger" : "wb-icon-btn",
+      attrs: { type: "button", "aria-label": label, title: label },
+      dataset: { action }
+    },
+    [icon(name)]
+  );
+  element.disabled = options.disabled ?? false;
   return element;
 }
 
-export function labeledInput(
-  label: string,
-  name: string,
-  value: string,
-  type: "text" | "number" = "text"
-): HTMLLabelElement {
-  const input = el("input", { className: "wb-input", attrs: { type, name } });
-  input.value = value;
-  return el("label", { className: "wb-options-field-label" }, [label, input]);
-}
-
-export function labeledTextarea(label: string, name: string, value: string): HTMLLabelElement {
-  const textarea = el("textarea", { className: "wb-options-textarea", attrs: { name, rows: "3" } });
-  textarea.value = value;
-  return el("label", { className: "wb-options-field-label" }, [label, textarea]);
-}
-
-export function labeledSelect(
-  label: string,
-  name: string,
-  value: string,
-  options: Array<{ value: string; label: string }>
-): HTMLLabelElement {
-  const select = el("select", { className: "wb-input", attrs: { name } });
-
-  for (const option of options) {
-    select.append(el("option", { text: option.label, attrs: { value: option.value } }));
-  }
-
-  select.value = value;
-  return el("label", { className: "wb-options-field-label" }, [label, select]);
-}
-
-export function labeledCheckbox(label: string, name: string, checked: boolean): HTMLElement {
-  const input = el("input", { attrs: { type: "checkbox", name } });
-  input.checked = checked;
-  return el("label", { className: "wb-options-checkbox-row" }, [input, label]);
-}
-
-/** Reads a named control inside `scope` as text (or checkbox state as "true"/"false"). */
+/**
+ * Reads a named control inside `scope` as text: the checked radio of a group, checkbox state as
+ * "true"/"false", otherwise the value.
+ */
 export function readField(scope: ParentNode, name: string): string {
   const control = scope.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
     `[name="${name}"]`
   );
+
+  if (control instanceof HTMLInputElement && control.type === "radio") {
+    return (
+      scope.querySelector<HTMLInputElement>(`input[type="radio"][name="${name}"]:checked`)?.value ??
+      ""
+    );
+  }
 
   if (control instanceof HTMLInputElement && control.type === "checkbox") {
     return String(control.checked);

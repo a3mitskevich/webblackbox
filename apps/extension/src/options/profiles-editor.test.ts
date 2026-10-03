@@ -65,7 +65,25 @@ function setField(root: ParentNode, name: string, value: string): void {
     throw new Error(`missing field ${name}`);
   }
 
+  if (control instanceof HTMLInputElement && control.type === "radio") {
+    const radio = root.querySelector<HTMLInputElement>(`[name="${name}"][value="${value}"]`);
+
+    if (!radio) {
+      throw new Error(`missing option ${value} of ${name}`);
+    }
+
+    radio.checked = true;
+    return;
+  }
+
   control.value = value;
+}
+
+let lastHandle: Awaited<ReturnType<typeof mountProfilesEditor>> | undefined;
+
+async function saveProfiles(): Promise<void> {
+  await lastHandle?.save();
+  await flush();
 }
 
 async function mount(storage: ReturnType<typeof createStorage>): Promise<HTMLElement> {
@@ -82,6 +100,7 @@ async function mountWithHandle(storage: ReturnType<typeof createStorage>) {
     legacyOptionsKey: "webblackbox.options",
     enterprisePolicyKey: "enterprisePolicy"
   });
+  lastHandle = handle;
   return { container, handle };
 }
 
@@ -130,8 +149,7 @@ describe("profiles editor", () => {
     setField(container, "ruleProfile", "profile-2");
     setField(container, "ruleHosts", "*.stage.example.com");
     setField(container, "extendedCaptureHosts", "localhost:*");
-    click(container, "[data-action='profiles-save']");
-    await flush();
+    await saveProfiles();
 
     const saved = storage.data[PROFILES_STORAGE_KEY] as {
       profiles: Array<{ id: string; name: string; categories: Record<string, string> }>;
@@ -162,8 +180,7 @@ describe("profiles editor", () => {
 
     click(container, "[data-action='rule-add']");
     setField(container, "ruleTitleRegex", "(");
-    click(container, "[data-action='profiles-save']");
-    await flush();
+    await saveProfiles();
 
     expect(storage.data[PROFILES_STORAGE_KEY]).toBeUndefined();
     expect(container.querySelector("[data-profiles-status]")?.textContent).toContain("rule #1");
@@ -216,8 +233,7 @@ describe("profiles editor", () => {
 
     click(rowOf(container, BUILT_IN_PROFILE_IDS.full), "[data-action='profile-duplicate']");
     setField(container, "name", "Not applied yet");
-    click(container, "[data-action='profiles-save']");
-    await flush();
+    await saveProfiles();
 
     expect(savedStore(storage).profiles.map((profile) => profile.name)).toContain(
       "Not applied yet"
@@ -226,8 +242,7 @@ describe("profiles editor", () => {
     click(rowOf(container, "default"), "[data-action='profile-edit']");
     setField(container, "name", "Discarded");
     click(container, "[data-action='profile-cancel']");
-    click(container, "[data-action='profiles-save']");
-    await flush();
+    await saveProfiles();
 
     expect(savedStore(storage).profiles.map((profile) => profile.name)).not.toContain("Discarded");
   });
@@ -240,8 +255,7 @@ describe("profiles editor", () => {
     setField(container, "category-inputs", "allow");
     click(container, "[data-action='rule-add']");
     click(container, "[data-action='profile-cancel']");
-    click(container, "[data-action='profiles-save']");
-    await flush();
+    await saveProfiles();
 
     const saved = storage.data[PROFILES_STORAGE_KEY] as {
       profiles: Array<{ id: string; categories: Record<string, string> }>;
@@ -262,8 +276,7 @@ describe("profiles editor", () => {
       redaction: { blockedSelectors: [".from-general-form"] }
     });
     click(container, "[data-action='profile-cancel']");
-    click(container, "[data-action='profiles-save']");
-    await flush();
+    await saveProfiles();
 
     expect(savedStore(storage).profiles[0]?.redaction.blockedSelectors).toEqual([
       ".from-general-form"
@@ -286,8 +299,7 @@ describe("profiles editor", () => {
     expect(select?.value).toBe("managed:gone");
     expect(select?.selectedOptions[0]?.textContent).toBe("Missing profile: managed:gone");
 
-    click(container, "[data-action='profiles-save']");
-    await flush();
+    await saveProfiles();
 
     expect(savedStore(storage).rules).toEqual([
       expect.objectContaining({ id: "r1", profileId: "managed:gone" })
@@ -327,8 +339,7 @@ describe("profiles editor", () => {
       optionsVersion: 1,
       redaction: { blockedSelectors: [".from-general-form"] }
     });
-    click(container, "[data-action='profiles-save']");
-    await flush();
+    await saveProfiles();
 
     const saved = savedStore(storage);
 

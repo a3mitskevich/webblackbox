@@ -183,6 +183,37 @@ export function ruleFromFormValues(values: RuleFormValues): ProfileRule {
   };
 }
 
+/** Highest priority first; ties keep list order (the order the engine evaluates them in). */
+export function sortRulesForDisplay(rules: readonly ProfileRule[]): ProfileRule[] {
+  return rules
+    .map((rule, index) => ({ rule, index }))
+    .sort((left, right) => right.rule.priority - left.rule.priority || left.index - right.index)
+    .map((entry) => entry.rule);
+}
+
+/**
+ * Moves the rule at `from` to `to` in display order and renumbers priorities top to bottom, so
+ * the order on screen is the order the rules win in.
+ */
+export function reorderRules(
+  rules: readonly ProfileRule[],
+  from: number,
+  to: number
+): ProfileRule[] {
+  const ordered = sortRulesForDisplay(rules);
+
+  if (from < 0 || from >= ordered.length || to < 0 || to >= ordered.length || from === to) {
+    return ordered;
+  }
+
+  const moved = ordered[from];
+  const without = ordered.filter((_, index) => index !== from);
+  const next = moved ? [...without.slice(0, to), moved, ...without.slice(to)] : without;
+  const step = Math.max(1, Math.min(10, Math.floor(MAX_RULE_PRIORITY / next.length)));
+
+  return next.map((rule, index) => ({ ...rule, priority: (next.length - index) * step }));
+}
+
 /** Unique id with a readable prefix, e.g. `profile-3`. */
 export function createUniqueId(prefix: string, taken: readonly string[]): string {
   let index = taken.length + 1;
