@@ -461,7 +461,9 @@ function handleAction(editor: Editor, target: HTMLElement, action: string, updat
     case "profiles-import-apply":
       return update(() => {
         if (state.importPreview) {
-          applyImport(state, state.importPreview.text, editor.deps.t);
+          state.draft = state.importPreview.next;
+          state.importPreview = undefined;
+          closeProfileForm(state);
         }
       });
     case "sandbox-run":
@@ -631,19 +633,6 @@ function refreshImportPreview(state: EditorState, t: Translate): void {
     state.importPreview = undefined;
     state.status = { text: t("optionsProfilesError", { error: result.error }), error: true };
   }
-}
-
-function applyImport(state: EditorState, text: string, t: Translate): void {
-  const result = previewProfilesImport(text, state.draft);
-  state.importPreview = undefined;
-
-  if (!result.ok) {
-    state.status = { text: t("optionsProfilesError", { error: result.error }), error: true };
-    return;
-  }
-
-  state.draft = result.next;
-  closeProfileForm(state);
 }
 
 function openProfileForm(state: EditorState, id: string): void {
