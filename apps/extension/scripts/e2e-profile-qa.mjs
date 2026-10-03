@@ -210,11 +210,18 @@ async function main() {
   const profileConfig = events.find(
     (event) => event.type === "meta.config" && event.data?.profile?.id === "builtin:qa"
   );
+  // Leaving the rule's host first drops QA at once (no page probe), then the rules pick Default.
+  const gateConfig = events.find(
+    (event) =>
+      event.type === "meta.config" &&
+      event.data?.profileChange?.previous?.id === "builtin:qa" &&
+      event.data?.profile?.downgradedFrom?.id === "builtin:qa"
+  );
   const switchConfig = events.find(
     (event) =>
       event.type === "meta.config" &&
       event.data?.profile?.id === "default" &&
-      event.data?.profileChange?.previous?.id === "builtin:qa"
+      event.data?.profileChange?.reason === "navigation"
   );
   const leakedDefaultConsole = events.some(
     (event) =>
@@ -236,6 +243,11 @@ async function main() {
   assert(profileConfig.data.profile.ruleId === QA_RULE.id, "meta.config misses the rule", {
     profile: profileConfig.data.profile
   });
+  assert(gateConfig, "QA was not dropped as soon as the tab left the rule's host", {
+    profiles: events
+      .filter((event) => event.type === "meta.config")
+      .map((event) => event.data?.profile)
+  });
   assert(switchConfig, "No meta.config for the switch back to the Default profile", {
     profiles: events
       .filter((event) => event.type === "meta.config")
@@ -255,6 +267,7 @@ async function main() {
   console.log(`Archive: ${archivePath} (${bytes.byteLength} bytes)`);
   console.log(`Profile: ${JSON.stringify(profileConfig.data.profile)}`);
   console.log(`Console event: ${JSON.stringify(consoleEvent.data).slice(0, 200)}`);
+  console.log(`Host gate: ${JSON.stringify(gateConfig.data.profile)}`);
   console.log(`Profile switch: ${JSON.stringify(switchConfig.data.profileChange)}`);
   console.log(`JSON body: ${jsonBody.slice(0, 200)}`);
   console.log(`Plaintext export refused: ${plaintext.error}`);

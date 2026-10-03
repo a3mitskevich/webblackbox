@@ -1,3 +1,4 @@
+import { DEFAULT_CAPTURE_POLICY } from "@webblackbox/protocol";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ChromeApi } from "../shared/chrome-api.js";
@@ -7,6 +8,8 @@ import { selectRecordingProfile } from "../shared/profiles/resolve.js";
 import {
   buildProfilePreview,
   loadProfilesState,
+  mergeCapturedVisuals,
+  NO_CAPTURED_VISUALS,
   parsePageSignals,
   readTabPageContext
 } from "./profile-runtime.js";
@@ -165,5 +168,24 @@ describe("buildProfilePreview", () => {
       extended: false,
       downgradedFrom: "QA"
     });
+  });
+});
+
+describe("mergeCapturedVisuals", () => {
+  const categories = (screenshots: "off" | "allow", screenRecordings: "off" | "allow") => ({
+    capturePolicy: {
+      categories: { ...DEFAULT_CAPTURE_POLICY.categories, screenshots, screenRecordings }
+    }
+  });
+
+  it("keeps visuals an earlier profile allowed after a switch turns them off", () => {
+    const started = mergeCapturedVisuals(NO_CAPTURED_VISUALS, categories("allow", "allow"));
+    const switched = mergeCapturedVisuals(started, categories("off", "off"));
+
+    expect(switched).toEqual({ screenshots: true, screenRecordings: true });
+    expect(mergeCapturedVisuals(NO_CAPTURED_VISUALS, categories("off", "off"))).toEqual(
+      NO_CAPTURED_VISUALS
+    );
+    expect(mergeCapturedVisuals(NO_CAPTURED_VISUALS, {})).toEqual(NO_CAPTURED_VISUALS);
   });
 });

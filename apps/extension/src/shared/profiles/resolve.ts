@@ -83,6 +83,14 @@ export function selectRecordingProfile(input: {
   const ruleInfo =
     ruleProfile && rule ? { id: rule.id, ...(rule.name ? { name: rule.name } : {}) } : undefined;
 
+  const selection: ProfileSelection = {
+    profile,
+    source,
+    ...(ruleInfo ? { rule: ruleInfo } : {}),
+    extended,
+    legacy
+  };
+
   if (
     extended &&
     !isHostAllowedForExtendedCapture({
@@ -92,17 +100,28 @@ export function selectRecordingProfile(input: {
       enterpriseSiteAllowlist: input.enterpriseSiteAllowlist ?? []
     })
   ) {
-    return {
-      profile: downgradeToFullPreset(profile),
-      source,
-      ...(ruleInfo ? { rule: ruleInfo } : {}),
-      extended: false,
-      downgradedFrom: { id: profile.id, name: profile.name, reason: "host-not-allowed" },
-      legacy: false
-    };
+    return downgradeExtendedSelection(selection);
   }
 
-  return { profile, source, ...(ruleInfo ? { rule: ruleInfo } : {}), extended, legacy };
+  return selection;
+}
+
+/** The same selection running as the Full preset because the host is not allowed. */
+export function downgradeExtendedSelection(selection: ProfileSelection): ProfileSelection {
+  if (!selection.extended) {
+    return selection;
+  }
+
+  const { profile } = selection;
+
+  return {
+    profile: downgradeToFullPreset(profile),
+    source: selection.source,
+    ...(selection.rule ? { rule: { ...selection.rule } } : {}),
+    extended: false,
+    downgradedFrom: { id: profile.id, name: profile.name, reason: "host-not-allowed" },
+    legacy: false
+  };
 }
 
 /** Categories above the standard Full ceiling (or any unmask list) make a profile "extended". */

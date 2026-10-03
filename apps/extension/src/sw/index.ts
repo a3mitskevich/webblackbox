@@ -52,6 +52,8 @@ import {
 import {
   AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
+  downgradeExtendedSelection,
+  isHostAllowedForExtendedCapture,
   isSameProfileSelection,
   resolveProfileExportRequirements,
   selectRecordingProfile,
@@ -91,7 +93,14 @@ import {
 } from "./lite-network-baseline.js";
 import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
 import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
-import { buildProfilePreview, loadProfilesState, readTabPageContext } from "./profile-runtime.js";
+import {
+  buildProfilePreview,
+  loadProfilesState,
+  mergeCapturedVisuals,
+  NO_CAPTURED_VISUALS,
+  readTabPageContext,
+  type CapturedVisuals
+} from "./profile-runtime.js";
 import {
   buildRequestMetaKey,
   deleteRequestMeta,
@@ -114,7 +123,11 @@ type SessionProfileState = {
   selection: ProfileSelection;
   /** Every profile the session recorded under; export rules use the strictest. */
   history: ProfileSelection[];
+  /** Visual data any profile of the session allowed; the export keeps what was captured. */
+  visualsCaptured: CapturedVisuals;
   reevaluation: Promise<void>;
+  /** Bumped on every switch request; a re-evaluation from an older request is dropped. */
+  generation: number;
 };
 
 type SessionRuntime = {
@@ -946,7 +959,9 @@ async function startSession(
       visualCapture: options.visualCapture,
       selection: profileSelection,
       history: [profileSelection],
-      reevaluation: Promise.resolve()
+      visualsCaptured: mergeCapturedVisuals(NO_CAPTURED_VISUALS, recorderConfig),
+      reevaluation: Promise.resolve(),
+      generation: 0
     },
     url: metadata.url,
     scopeOrigin: resolveUrlOrigin(metadata.url),
@@ -1351,16 +1366,68 @@ async function resolveProfilePreview(
   return buildProfilePreview(state, selection);
 }
 
-/** Serializes profile re-evaluations per session; navigation bursts collapse into a chain. */
+/**
+ * Serializes profile re-evaluations per session. Only the latest request runs: older queued or
+ * in-flight ones are dropped, so a navigation burst costs one page probe, not one per step.
+ */
 function scheduleProfileReevaluation(
   runtime: SessionRuntime,
   reason: "navigation" | "page-loaded"
 ): void {
+  const generation = nextProfileGeneration(runtime);
+
   runtime.profile.reevaluation = runtime.profile.reevaluation
-    .then(() => reevaluateSessionProfile(runtime, reason))
+    .then(() => reevaluateSessionProfile(runtime, reason, generation))
     .catch((error) => {
       console.warn("[WebBlackbox] recording profile re-evaluation failed", error);
     });
+}
+
+function nextProfileGeneration(runtime: SessionRuntime): number {
+  const generation = runtime.profile.generation + 1;
+  runtime.profile = { ...runtime.profile, generation };
+  return generation;
+}
+
+function isProfileRequestCurrent(runtime: SessionRuntime, generation: number): boolean {
+  return runtime.profile.generation === generation && !runtime.stopping && !runtime.stoppedAt;
+}
+
+/**
+ * Drops an extended profile as soon as the tab leaves its allowed hosts. Unlike the full
+ * re-evaluation this needs no page probe, so nothing on the new host is captured under the
+ * extended profile while rules that read the DOM are still waiting for the page.
+ */
+async function enforceExtendedHostGate(runtime: SessionRuntime, rawUrl: string): Promise<void> {
+  const current = runtime.profile.selection;
+
+  if (!current.extended) {
+    return;
+  }
+
+  const generation = nextProfileGeneration(runtime);
+  const [state, enterprisePolicy] = await Promise.all([
+    loadSessionProfilesState(),
+    loadEnterprisePolicy()
+  ]);
+  const allowed = isHostAllowedForExtendedCapture({
+    url: rawUrl,
+    profileId: current.profile.id,
+    state,
+    enterpriseSiteAllowlist: enterprisePolicy.siteAllowlist
+  });
+
+  if (allowed) {
+    return;
+  }
+
+  await applySessionProfileSelection(
+    runtime,
+    downgradeExtendedSelection(current),
+    "navigation",
+    generation,
+    enterprisePolicy
+  );
 }
 
 /**
@@ -1370,9 +1437,10 @@ function scheduleProfileReevaluation(
  */
 async function reevaluateSessionProfile(
   runtime: SessionRuntime,
-  reason: "navigation" | "page-loaded"
+  reason: "navigation" | "page-loaded",
+  generation: number
 ): Promise<void> {
-  if (runtime.stopping || runtime.stoppedAt) {
+  if (!isProfileRequestCurrent(runtime, generation)) {
     return;
   }
 
@@ -1382,9 +1450,21 @@ async function reevaluateSessionProfile(
     runtime.profile.request,
     enterprisePolicy
   );
+
+  await applySessionProfileSelection(runtime, next, reason, generation, enterprisePolicy);
+}
+
+/** Switches a running session to `next` unless it is already active or the request is stale. */
+async function applySessionProfileSelection(
+  runtime: SessionRuntime,
+  next: ProfileSelection,
+  reason: "navigation" | "page-loaded",
+  generation: number,
+  enterprisePolicy: EnterpriseRecorderPolicy
+): Promise<void> {
   const previous = runtime.profile.selection;
 
-  if (isSameProfileSelection(previous, next) || runtime.stopping || runtime.stoppedAt) {
+  if (isSameProfileSelection(previous, next) || !isProfileRequestCurrent(runtime, generation)) {
     return;
   }
 
@@ -1394,8 +1474,9 @@ async function reevaluateSessionProfile(
     runtime.profile.visualCapture
   );
 
-  // The session may have stopped while the config was loading; never re-activate page agents.
-  if (runtime.stopping || runtime.stoppedAt) {
+  // The session may have stopped (never re-activate page agents) or a newer navigation may have
+  // been handled while the config was loading.
+  if (!isProfileRequestCurrent(runtime, generation)) {
     return;
   }
 
@@ -1413,7 +1494,8 @@ async function reevaluateSessionProfile(
   runtime.profile = {
     ...runtime.profile,
     selection: next,
-    history: [...runtime.profile.history, next]
+    history: [...runtime.profile.history, next],
+    visualsCaptured: mergeCapturedVisuals(runtime.profile.visualsCaptured, config)
   };
 
   ingestRawEvent({
@@ -1432,6 +1514,13 @@ async function reevaluateSessionProfile(
       }
     }
   });
+
+  if (runtime.screenRecording && config.capturePolicy?.categories.screenRecordings !== "allow") {
+    await stopScreenRecording(runtime, "profile-change").catch((error) => {
+      ingestScreenRecordingError(runtime, runtime.screenRecording, error, "profile-change");
+    });
+  }
+
   await notifyTabStatus(
     runtime.tabId,
     true,
@@ -1444,20 +1533,17 @@ async function reevaluateSessionProfile(
 }
 
 function resolveSessionExportPolicy(runtime: SessionRuntime, policy: ExportPolicy): ExportPolicy {
-  if (runtime.mode !== "full") {
+  if (runtime.mode !== "full" || !runtime.config.capturePolicy) {
     return policy;
   }
 
-  const categories = runtime.config.capturePolicy?.categories;
-
-  if (!categories) {
-    return policy;
-  }
+  // A mid-session switch must not drop visuals recorded while an earlier profile allowed them.
+  const { visualsCaptured } = runtime.profile;
 
   return {
     ...policy,
-    includeScreenshots: categories.screenshots !== "off",
-    includeScreenRecordings: categories.screenRecordings === "allow"
+    includeScreenshots: visualsCaptured.screenshots,
+    includeScreenRecordings: visualsCaptured.screenRecordings
   };
 }
 
@@ -4727,6 +4813,7 @@ async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void>
     pushSessionList();
   }
 
+  await enforceExtendedHostGate(runtime, rawUrl);
   scheduleProfileReevaluation(runtime, "navigation");
 }
 

@@ -1,3 +1,5 @@
+import type { CapturePolicy } from "@webblackbox/protocol";
+
 import type { ChromeApi } from "../shared/chrome-api.js";
 import type { ProfileCatalogEntry, ProfilePreviewResponse } from "../shared/messages.js";
 import {
@@ -103,6 +105,27 @@ export function buildProfilePreview(
           ...(selection.downgradedFrom ? { downgradedFrom: selection.downgradedFrom.name } : {})
         }
       : null
+  };
+}
+
+/** Visual data a session captured under any of its profiles. */
+export type CapturedVisuals = { screenshots: boolean; screenRecordings: boolean };
+
+export const NO_CAPTURED_VISUALS: CapturedVisuals = { screenshots: false, screenRecordings: false };
+
+/**
+ * Adds what `config` allows to what the session already captured. The export keeps visuals
+ * recorded while an earlier profile allowed them, even after a switch turned them off.
+ */
+export function mergeCapturedVisuals(
+  previous: CapturedVisuals,
+  config: { capturePolicy?: { categories: CapturePolicy["categories"] } }
+): CapturedVisuals {
+  const categories = config.capturePolicy?.categories;
+
+  return {
+    screenshots: previous.screenshots || (categories ? categories.screenshots !== "off" : false),
+    screenRecordings: previous.screenRecordings || categories?.screenRecordings === "allow"
   };
 }
 
