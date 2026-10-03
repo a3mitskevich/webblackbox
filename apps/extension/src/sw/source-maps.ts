@@ -41,13 +41,17 @@ export type ScriptSourceMapLimits = {
   maxEmbeddedBytes: number;
 };
 
-/** Record for a `Debugger.scriptParsed` event; `null` unless it is an http(s) script with a map. */
+/**
+ * Record for a `Debugger.scriptParsed` event; `null` unless it is an http(s) script with a map.
+ * Scripts named by a `//# sourceURL` comment are skipped: that URL is whatever the page's code
+ * claims, not where the script was loaded from.
+ */
 export function scriptRecordFromScriptParsed(params: unknown): RawScriptRecord | null {
   const row = asRecord(params);
   const url = asString(row?.url);
   const sourceMapUrl = asString(row?.sourceMapURL)?.trim();
 
-  if (!row || !url || !sourceMapUrl || !toScriptLocation(url)) {
+  if (!row || !url || !sourceMapUrl || row.hasSourceURL === true || !toScriptLocation(url)) {
     return null;
   }
 
@@ -177,7 +181,7 @@ export type SourceMapFetchResult = { ok: true; bytes: Uint8Array } | { ok: false
 
 type FetchLike = (
   input: string,
-  init: { credentials: "include"; signal: AbortSignal }
+  init: { credentials: "include" | "omit"; signal: AbortSignal }
 ) => Promise<{
   ok: boolean;
   status: number;
@@ -188,8 +192,11 @@ type FetchLike = (
 
 /**
  * Loads a script's source map for embedding: decodes inline `data:` maps or fetches http(s)
- * maps (page cookies included, as DevTools would), capped at `maxBytes`, and checks the result
- * is a version 3 source map. Never throws.
+ * maps, capped at `maxBytes`, and checks the result is a version 3 source map. Never throws.
+ *
+ * Map URLs come from the page (comments and headers), so cookies are sent only to the script's
+ * own origin; a map elsewhere is fetched without credentials, which keeps a page from making the
+ * extension send authenticated requests to other sites.
  */
 export async function loadSourceMapForEmbedding(
   record: RawScriptRecord,
@@ -211,6 +218,7 @@ export async function loadSourceMapForEmbedding(
         ? decodeDataUrl(reference.url, options.maxBytes)
         : await fetchCapped(
             reference.url,
+            isSameOrigin(reference.url, record.url) ? "include" : "omit",
             options.maxBytes,
             options.fetch ?? (globalThis.fetch as unknown as FetchLike),
             options.timeoutMs ?? SOURCE_MAP_FETCH_TIMEOUT_MS
@@ -257,8 +265,17 @@ function decodeDataUrl(url: string, maxBytes: number): Uint8Array {
   return bytes;
 }
 
+function isSameOrigin(left: string, right: string): boolean {
+  try {
+    return new URL(left).origin === new URL(right).origin;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchCapped(
   url: string,
+  credentials: "include" | "omit",
   maxBytes: number,
   fetchImpl: FetchLike,
   timeoutMs: number
@@ -267,7 +284,7 @@ async function fetchCapped(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetchImpl(url, { credentials: "include", signal: controller.signal });
+    const response = await fetchImpl(url, { credentials, signal: controller.signal });
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);

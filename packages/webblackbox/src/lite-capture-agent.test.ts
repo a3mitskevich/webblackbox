@@ -1394,6 +1394,21 @@ describe("LiteCaptureAgent", () => {
     agent.dispose();
   });
 
+  it("drops script source map records posted by the page", () => {
+    const { agent, emitBatch } = createAgent();
+
+    // The page can post injected-channel messages itself; a forged script record would make
+    // the extension fetch an attacker-chosen "source map".
+    dispatchInjectedEvents("script", 1);
+    dispatchInjectedEvents("mutation", 1);
+    agent.flush();
+
+    expect(emittedRawTypes(emitBatch)).toContain("mutation");
+    expect(emittedRawTypes(emitBatch)).not.toContain("script");
+
+    agent.dispose();
+  });
+
   it("suppresses mousemove capture while the event buffer is under pressure", () => {
     const { agent, emitBatch } = createAgent();
 

@@ -409,6 +409,12 @@ export class LiteCaptureAgent {
     t?: number;
     mono?: number;
   }): void {
+    // Script records make the extension fetch source maps; only the scanner may produce them,
+    // never page-world messages (which the page itself can forge).
+    if (event.rawType === SCRIPT_SOURCE_MAP_RAW_TYPE) {
+      return;
+    }
+
     this.queueRawEvent({
       source: "content",
       rawType: event.rawType,

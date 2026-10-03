@@ -49,6 +49,16 @@ describe("scriptRecordFromScriptParsed", () => {
     ).toBeNull();
     expect(scriptRecordFromScriptParsed(null)).toBeNull();
   });
+
+  it("ignores scripts named by a sourceURL comment, whose URL the page chooses", () => {
+    expect(
+      scriptRecordFromScriptParsed({
+        url: "https://bank.test/app.js",
+        sourceMapURL: "https://bank.test/api/account",
+        hasSourceURL: true
+      })
+    ).toBeNull();
+  });
 });
 
 describe("scriptRecordFromResponse", () => {
@@ -160,6 +170,20 @@ describe("loadSourceMapForEmbedding", () => {
     expect(fetchImpl).toHaveBeenCalledWith(
       "https://app.test/assets/main.4f3a.js.map",
       expect.objectContaining({ credentials: "include" })
+    );
+  });
+
+  it("sends no credentials to a map on another origin than its script", async () => {
+    const fetchImpl = vi.fn(async () => okResponse(MAP_JSON));
+    const result = await loadSourceMapForEmbedding(
+      { ...RECORD, sourceMapUrl: "https://bank.test/api/account" },
+      { maxBytes: 1_000, fetch: fetchImpl }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://bank.test/api/account",
+      expect.objectContaining({ credentials: "omit" })
     );
   });
 
