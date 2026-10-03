@@ -53,11 +53,16 @@ function profileOptions(
 }
 
 function describeRuleSummary(rule: ProfileRule, t: Translate): string {
-  const hosts = rule.match.hosts ?? [];
+  const { match } = rule;
+  const hosts = match.hosts ?? [];
   const parts = [
     ...hosts.slice(0, 2),
     ...(hosts.length > 2 ? [`+${hosts.length - 2}`] : []),
-    ...(rule.match.paths ?? []).slice(0, 1)
+    ...(match.paths ?? []).slice(0, 1),
+    ...(match.query ? [`?${formatQueryLines(match.query).split("\n").join("&")}`] : []),
+    ...(match.titleRegex ? [`title /${match.titleRegex}/`] : []),
+    ...(match.selectorPresent ? [match.selectorPresent] : []),
+    ...(match.metaTag ? [`meta ${match.metaTag.name}`] : [])
   ];
   return parts.length > 0 ? parts.join(" · ") : t("optionsRuleMatchesAll");
 }
