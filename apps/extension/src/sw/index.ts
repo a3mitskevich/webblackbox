@@ -1388,15 +1388,23 @@ async function reevaluateSessionProfile(
     return;
   }
 
+  const profileConfig = await buildSessionRecorderConfig(
+    runtime.mode,
+    next,
+    runtime.profile.visualCapture
+  );
+
+  // The session may have stopped while the config was loading; never re-activate page agents.
+  if (runtime.stopping || runtime.stoppedAt) {
+    return;
+  }
+
   const config = applyEnterprisePolicyToRecorderConfig(
-    withSessionCapturePolicy(
-      await buildSessionRecorderConfig(runtime.mode, next, runtime.profile.visualCapture),
-      {
-        tabId: runtime.tabId,
-        origin: runtime.scopeOrigin ?? "",
-        startedAt: runtime.startedAt
-      }
-    ),
+    withSessionCapturePolicy(profileConfig, {
+      tabId: runtime.tabId,
+      origin: runtime.scopeOrigin ?? "",
+      startedAt: runtime.startedAt
+    }),
     enterprisePolicy
   );
 
