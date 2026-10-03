@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import {
+  ARCHIVE_KDF_MAX_ITERATIONS,
+  ARCHIVE_KDF_MIN_ITERATIONS,
   CAPTURE_MODES,
   CHUNK_CODECS,
   EVENT_LEVELS,
@@ -264,7 +266,11 @@ export const exportEncryptionSchema = z
       .object({
         name: z.literal("PBKDF2"),
         hash: z.literal("SHA-256"),
-        iterations: z.number().int().positive(),
+        iterations: z
+          .number()
+          .int()
+          .min(ARCHIVE_KDF_MIN_ITERATIONS)
+          .max(ARCHIVE_KDF_MAX_ITERATIONS),
         saltBase64: z.string().min(1)
       })
       .strict(),
