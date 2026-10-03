@@ -59,6 +59,11 @@ const MIME_TYPES = {
   ".css": "text/css; charset=utf-8"
 };
 const BUTTON_MASKS = { left: 1, right: 2, middle: 4 };
+// Every wait is bounded: a CDP command, the export answer and the whole run each have a deadline.
+const COMMAND_TIMEOUT_MS = Number(process.env.WB_E2E_COMMAND_TIMEOUT_MS ?? "30000");
+const EXPORT_TIMEOUT_MS = Number(process.env.WB_E2E_EXPORT_TIMEOUT_MS ?? "120000");
+const RUN_TIMEOUT_MS = Number(process.env.WB_E2E_POINTER_TIMEOUT_MS ?? "600000");
+const CHROME_LOG_TAIL_LINES = 40;
 
 const chromeCandidates = [
   process.env.WB_E2E_CHROME_BIN,
@@ -72,11 +77,38 @@ const chromeCandidates = [
 
 const state = { chrome: null, logStream: null, server: null, clients: [] };
 
-main().catch(async (error) => {
+const watchdog = setTimeout(() => {
+  void fail(
+    new Error(`run did not finish within ${RUN_TIMEOUT_MS} ms (WB_E2E_POINTER_TIMEOUT_MS)`)
+  );
+}, RUN_TIMEOUT_MS);
+
+// A killed run must not leave its Chrome holding the DevTools port for the next run.
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.once(signal, () => void fail(new Error(`interrupted by ${signal}`)));
+}
+
+main()
+  .then(() => clearTimeout(watchdog))
+  .catch(fail);
+
+async function fail(error) {
+  clearTimeout(watchdog);
   console.error("Pointer E2E failed:", error instanceof Error ? error.message : String(error));
+  await printChromeLogTail();
   await cleanup();
   process.exit(1);
-});
+}
+
+async function printChromeLogTail() {
+  try {
+    const lines = (await readFile(chromeLogPath, "utf8")).trimEnd().split("\n");
+    console.error(`Chrome log tail (${chromeLogPath}):`);
+    console.error(lines.slice(-CHROME_LOG_TAIL_LINES).join("\n"));
+  } catch {
+    console.error(`Chrome log unavailable: ${chromeLogPath}`);
+  }
+}
 
 async function main() {
   assert(modes.length > 0, "WB_E2E_POINTER_MODES selects no mode (use lite, full or both)");
@@ -91,6 +123,7 @@ async function main() {
   const appPort = await startDemoServer();
   const demoUrl = `http://127.0.0.1:${appPort}/`;
 
+  await assertDevToolsPortFree();
   await rm(profileDir, { recursive: true, force: true });
   await mkdir(profileDir, { recursive: true });
   await mkdir(downloadDir, { recursive: true });
@@ -260,7 +293,9 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
   step(`[${mode}] session ${sid}`);
 
   const knownFiles = new Set(await readdir(downloadDir));
-  const exported = await popup.evaluate(`
+  const exported = await popup
+    .evaluate(
+      `
     chrome.runtime.sendMessage({
       kind: "ui.export",
       sid: ${JSON.stringify(sid)},
@@ -268,7 +303,12 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
       saveAs: false,
       acknowledgePrivacyFindings: true
     })
-  `);
+  `,
+      EXPORT_TIMEOUT_MS
+    )
+    .catch((error) => {
+      throw new Error(`[${mode}] ui.export for ${sid} did not answer: ${error.message}`);
+    });
   assert(exported?.ok === true, `Export of the ${mode} session failed`, exported);
   step(`[${mode}] export requested`);
   await popup.evaluate(`chrome.runtime.sendMessage({ kind: "ui.stop", tabId: ${tabId} })`);
@@ -690,6 +730,20 @@ function startChrome(binary) {
   state.chrome.stderr?.pipe(state.logStream);
 }
 
+/**
+ * Fails when something already answers on the DevTools port: Chrome would then fail to bind it
+ * and the run would silently drive that other browser (e.g. one left over by a killed run).
+ */
+async function assertDevToolsPortFree() {
+  const occupant = await fetchJson(`${baseUrl}/json/version`).catch(() => null);
+  assert(
+    occupant === null,
+    `DevTools port ${remotePort} is already in use (a Chrome left over from an earlier run?); ` +
+      "stop it or set WB_E2E_REMOTE_PORT",
+    occupant?.Browser
+  );
+}
+
 async function resolveChromeBinary(candidates) {
   for (const candidate of candidates) {
     if (isAbsolute(candidate)) {
@@ -798,9 +852,20 @@ class CdpClient {
   connect() {
     return new Promise((resolveOpen, reject) => {
       const socket = new WebSocket(this.wsUrl);
+      const timer = setTimeout(() => {
+        reject(new Error(`WebSocket did not open within ${COMMAND_TIMEOUT_MS} ms: ${this.wsUrl}`));
+        socket.close();
+      }, COMMAND_TIMEOUT_MS);
       this.socket = socket;
-      socket.addEventListener("open", () => resolveOpen());
-      socket.addEventListener("error", () => reject(new Error(`WebSocket failed: ${this.wsUrl}`)));
+      socket.addEventListener("open", () => {
+        clearTimeout(timer);
+        resolveOpen();
+      });
+      socket.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error(`WebSocket failed: ${this.wsUrl}`));
+      });
+      socket.addEventListener("close", () => this.rejectPending(`socket closed: ${this.wsUrl}`));
       socket.addEventListener("message", (event) => {
         const payload = JSON.parse(String(event.data));
 
@@ -828,21 +893,37 @@ class CdpClient {
     this.handlers.set(method, [...(this.handlers.get(method) ?? []), handler]);
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, timeoutMs = COMMAND_TIMEOUT_MS) {
     const id = ++this.sequence;
 
     return new Promise((resolveSend, reject) => {
-      this.pending.set(id, { resolve: resolveSend, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP ${method} got no answer within ${timeoutMs} ms`));
+      }, timeoutMs);
+      const settle = (callback) => (value) => {
+        clearTimeout(timer);
+        callback(value);
+      };
+      this.pending.set(id, { resolve: settle(resolveSend), reject: settle(reject) });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
 
-  async evaluate(expression) {
-    const result = await this.send("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true
-    });
+  rejectPending(reason) {
+    for (const pending of this.pending.values()) {
+      pending.reject(new Error(reason));
+    }
+
+    this.pending.clear();
+  }
+
+  async evaluate(expression, timeoutMs = COMMAND_TIMEOUT_MS) {
+    const result = await this.send(
+      "Runtime.evaluate",
+      { expression, awaitPromise: true, returnByValue: true },
+      timeoutMs
+    );
 
     if (result?.exceptionDetails) {
       throw new Error(
