@@ -2214,10 +2214,11 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
     router = createCdpRouter(createChromeDebuggerTransport());
 
     const unsubscribeEvent = router.onEvent((event) => {
-      const normalizedPayload = normalizeFullModePayload(event.method, event.params ?? {});
+      // Raw CDP params go to the recorder, whose normalizer allowlists fields and gates bodies.
+      const cdpPayload = event.params ?? {};
 
       if (event.method === "HeapProfiler.addHeapSnapshotChunk") {
-        const payload = asRecord(normalizedPayload);
+        const payload = asRecord(cdpPayload);
         const chunk = typeof payload?.chunk === "string" ? payload.chunk : undefined;
 
         if (chunk && runtime.heapSnapshotCapture) {
@@ -2241,7 +2242,7 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
         t: Date.now(),
         mono: monotonicTime(),
         cdpSessionId: event.sessionId,
-        payload: normalizedPayload
+        payload: cdpPayload
       });
 
       if (!FULL_MODE_FOLLOWUP_METHODS.has(event.method)) {
@@ -3449,32 +3450,6 @@ function isMimeAllowed(allowlist: string[], mimeType: string | undefined): boole
 
 function normalizeMimeType(value: string | null): string | undefined {
   return normalizeMimeTypeUtil(value);
-}
-
-function normalizeFullModePayload(method: string, params: unknown): unknown {
-  const payload = asRecord(params);
-
-  if (!payload) {
-    return params;
-  }
-
-  if (method === "Network.webSocketFrameReceived" || method === "Network.webSocketFrameSent") {
-    const response = asRecord(payload.response);
-    const rawData = typeof response?.payloadData === "string" ? response.payloadData : "";
-
-    return {
-      ...payload,
-      direction: method.endsWith("Sent") ? "sent" : "received",
-      frame: {
-        opcode: typeof response?.opcode === "number" ? response.opcode : undefined,
-        masked: response?.mask === true,
-        payloadLength: rawData.length,
-        payloadPreview: rawData.slice(0, 512)
-      }
-    };
-  }
-
-  return payload;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
