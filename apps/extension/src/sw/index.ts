@@ -1399,26 +1399,35 @@ function isProfileRequestCurrent(runtime: SessionRuntime, generation: number): b
  * re-evaluation this needs no page probe, so nothing on the new host is captured under the
  * extended profile while rules that read the DOM are still waiting for the page.
  */
-async function enforceExtendedHostGate(runtime: SessionRuntime, rawUrl: string): Promise<void> {
-  const current = runtime.profile.selection;
-
-  if (!current.extended) {
+async function enforceExtendedHostGate(
+  runtime: SessionRuntime,
+  rawUrl: string,
+  sessionUrl: string
+): Promise<void> {
+  if (!runtime.profile.selection.extended) {
     return;
   }
 
-  const generation = nextProfileGeneration(runtime);
+  // In-flight re-evaluations started on the previous URL must not re-apply the extended profile.
+  nextProfileGeneration(runtime);
   const [state, enterprisePolicy] = await Promise.all([
     loadSessionProfilesState(),
     loadEnterprisePolicy()
   ]);
-  const allowed = isHostAllowedForExtendedCapture({
-    url: rawUrl,
-    profileId: current.profile.id,
-    state,
-    enterpriseSiteAllowlist: enterprisePolicy.siteAllowlist
-  });
+  const current = runtime.profile.selection;
+  // Valid while the tab is still on this URL; a newer navigation runs its own gate.
+  const isStillOnUrl = (): boolean =>
+    !runtime.stopping && !runtime.stoppedAt && runtime.url === sessionUrl;
 
-  if (allowed) {
+  if (
+    !current.extended ||
+    isHostAllowedForExtendedCapture({
+      url: rawUrl,
+      profileId: current.profile.id,
+      state,
+      enterpriseSiteAllowlist: enterprisePolicy.siteAllowlist
+    })
+  ) {
     return;
   }
 
@@ -1426,7 +1435,7 @@ async function enforceExtendedHostGate(runtime: SessionRuntime, rawUrl: string):
     runtime,
     downgradeExtendedSelection(current),
     "navigation",
-    generation,
+    isStillOnUrl,
     enterprisePolicy
   );
 }
@@ -1452,7 +1461,13 @@ async function reevaluateSessionProfile(
     enterprisePolicy
   );
 
-  await applySessionProfileSelection(runtime, next, reason, generation, enterprisePolicy);
+  await applySessionProfileSelection(
+    runtime,
+    next,
+    reason,
+    () => isProfileRequestCurrent(runtime, generation),
+    enterprisePolicy
+  );
 }
 
 /** Switches a running session to `next` unless it is already active or the request is stale. */
@@ -1460,12 +1475,12 @@ async function applySessionProfileSelection(
   runtime: SessionRuntime,
   next: ProfileSelection,
   reason: "navigation" | "page-loaded",
-  generation: number,
+  isCurrent: () => boolean,
   enterprisePolicy: EnterpriseRecorderPolicy
 ): Promise<void> {
   const previous = runtime.profile.selection;
 
-  if (isSameProfileSelection(previous, next) || !isProfileRequestCurrent(runtime, generation)) {
+  if (isSameProfileSelection(previous, next) || !isCurrent()) {
     return;
   }
 
@@ -1477,7 +1492,7 @@ async function applySessionProfileSelection(
 
   // The session may have stopped (never re-activate page agents) or a newer navigation may have
   // been handled while the config was loading.
-  if (!isProfileRequestCurrent(runtime, generation)) {
+  if (!isCurrent()) {
     return;
   }
 
@@ -1520,6 +1535,12 @@ async function applySessionProfileSelection(
     await stopScreenRecording(runtime, "profile-change").catch((error) => {
       ingestScreenRecordingError(runtime, runtime.screenRecording, error, "profile-change");
     });
+  }
+
+  // A newer switch may have landed while recording was stopping; it notifies the page itself.
+  if (!isCurrent()) {
+    pushSessionList();
+    return;
   }
 
   await notifyTabStatus(
@@ -4814,7 +4835,9 @@ async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void>
     pushSessionList();
   }
 
-  await enforceExtendedHostGate(runtime, rawUrl);
+  await enforceExtendedHostGate(runtime, rawUrl, nextUrl).catch((error) => {
+    console.warn("[WebBlackbox] extended capture host gate failed", error);
+  });
   scheduleProfileReevaluation(runtime, "navigation");
 }
 
