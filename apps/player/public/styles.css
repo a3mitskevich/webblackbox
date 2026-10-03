@@ -2244,7 +2244,9 @@ input[type="file"],
   stroke: rgba(17, 24, 39, 0.85);
   stroke-width: 3;
   paint-order: stroke;
-  font: 600 11px/1 "IBM Plex Sans", sans-serif;
+  font:
+    600 11px/1 "IBM Plex Sans",
+    sans-serif;
 }
 
 .preview-trail-point {
