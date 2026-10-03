@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // E2E: real (CDP-dispatched) pointer input on the e2e demo is recorded in lite and full mode under
-// the Full capture profile: clicks with readable targets and geometry, right and middle clicks,
+// a Full-capture-like profile: clicks with readable targets and geometry, right and middle clicks,
 // a long press, a pointer drag, wheel, hover dwell, mousemove samples and click reactions. The
 // player SDK finds the rage/dead clicks, and the generated Playwright script replays on the demo.
 
@@ -31,10 +31,11 @@ const chromeLogPath = process.env.WB_E2E_LOG ?? `/tmp/webblackbox-pointer-${runI
 const baseUrl = `http://127.0.0.1:${remotePort}`;
 const passphrase = "webblackbox-pointer-e2e-passphrase";
 const VIEWPORT = { width: 1280, height: 1400 };
+const POINTER_PROFILE_ID = "e2e-pointer-profile";
 const POINTER_RULE = {
   id: "e2e-pointer",
   name: "Pointer E2E",
-  profileId: "builtin:full-capture",
+  profileId: POINTER_PROFILE_ID,
   priority: 10,
   enabled: true,
   match: { hosts: ["127.0.0.1:*"] }
@@ -83,6 +84,10 @@ async function main() {
   const { WebBlackboxPlayer } = await import(
     pathToFileURL(resolve(repoRoot, "packages/player-sdk/dist/index.js")).href
   );
+  const { DEFAULT_REDACTION_PROFILE } = await import(
+    pathToFileURL(resolve(repoRoot, "packages/protocol/dist/index.js")).href
+  );
+  const pointerProfile = createPointerProfile(DEFAULT_REDACTION_PROFILE);
   const appPort = await startDemoServer();
   const demoUrl = `http://127.0.0.1:${appPort}/`;
 
@@ -113,17 +118,22 @@ async function main() {
     20_000,
     "Extension service worker not found"
   );
+  step("service worker found");
   const extensionId = /^chrome-extension:\/\/([^/]+)\//.exec(swTarget.url)?.[1];
   const sw = await connect(swTarget.webSocketDebuggerUrl);
   const swExceptions = [];
   await sw.send("Runtime.enable");
+  step("sw runtime enabled");
   sw.on("Runtime.exceptionThrown", (params) => {
     swExceptions.push(params?.exceptionDetails?.text ?? "unknown");
   });
 
+  // A regular page has to exist before the extension page target answers CDP (as in the QA e2e).
+  await openTarget(demoUrl);
   const popup = await connect(
     (await openTarget(`chrome-extension://${extensionId}/popup.html`)).webSocketDebuggerUrl
   );
+  step("popup opened");
   await popup.send("Runtime.enable");
   await sleep(1_000);
   await popup.evaluate(`
@@ -131,13 +141,14 @@ async function main() {
       "webblackbox.profiles": {
         schemaVersion: 2,
         defaultProfileId: "default",
-        profiles: [],
+        profiles: [${JSON.stringify(pointerProfile)}],
         rules: [${JSON.stringify(POINTER_RULE)}],
         extendedCaptureHosts: []
       }
     }).then(() => true)
   `);
 
+  step("profiles store written");
   const results = [];
 
   for (const mode of modes) {
@@ -161,6 +172,45 @@ async function main() {
   await cleanup();
 }
 
+/**
+ * The Full capture preset with a 256 KiB body cap. With the preset's 1 MiB cap a full-mode export
+ * never answers (also on the base branch, independent of pointer capture); tracked separately.
+ */
+function createPointerProfile(redaction) {
+  return {
+    id: POINTER_PROFILE_ID,
+    name: "Pointer E2E",
+    base: "full",
+    categories: {
+      actions: "allow",
+      inputs: "allow",
+      dom: "allow",
+      screenshots: "allow",
+      screenRecordings: "allow",
+      console: "allow",
+      network: "body-allowlist",
+      storage: "allow",
+      indexedDb: "names-only",
+      cookies: "names-only",
+      cdp: "full",
+      heapProfiles: "off"
+    },
+    redaction,
+    unmaskSelectors: [],
+    network: {
+      bodyMimeAllowlist: ["text/*", "application/json"],
+      bodyMaxBytes: 256 * 1024,
+      includeUrls: [],
+      excludeUrls: []
+    },
+    pointer: { mousemoveHz: 60, hover: true, drag: true, wheel: true },
+    sampling: {},
+    recorder: {},
+    sitePolicies: [],
+    export: { encryption: "required", privacyScanner: "block" }
+  };
+}
+
 async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
   const target = await openTarget(demoUrl);
   const page = await connect(target.webSocketDebuggerUrl);
@@ -172,6 +222,7 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
     mobile: false
   });
   await waitForDemo(page);
+  step(`[${mode}] demo loaded`);
 
   const tabId = await popup.evaluate(`
     chrome.tabs.query({}).then((tabs) =>
@@ -192,8 +243,10 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
     25_000,
     `Recording indicator for ${mode} did not appear`
   );
+  step(`[${mode}] recording`);
   await sleep(1_500);
   await performPointerScenario(page);
+  step(`[${mode}] scenario done`);
   await sleep(2_500);
 
   const sid = await popup.evaluate(`
@@ -204,6 +257,7 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
     )
   `);
   assert(typeof sid === "string", "Active session not found", { sid });
+  step(`[${mode}] session ${sid}`);
 
   const knownFiles = new Set(await readdir(downloadDir));
   const exported = await popup.evaluate(`
@@ -216,6 +270,7 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
     })
   `);
   assert(exported?.ok === true, `Export of the ${mode} session failed`, exported);
+  step(`[${mode}] export requested`);
   await popup.evaluate(`chrome.runtime.sendMessage({ kind: "ui.stop", tabId: ${tabId} })`);
 
   const archivePath = await waitFor(
@@ -228,6 +283,7 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
     30_000,
     "Exported archive was not downloaded"
   );
+  step(`[${mode}] exported ${archivePath}`);
   const bytes = new Uint8Array(await readFile(archivePath));
   const player = await WebBlackboxPlayer.open(bytes, { passphrase });
   const events = player.query();
@@ -297,6 +353,7 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
     startUrl: demoUrl,
     maxActions: 200
   });
+  step(`[${mode}] replaying Playwright script`);
   const replay = await replayPlaywrightScript(script);
   assert(replay.actions >= 8, `[${mode}] Playwright replay ran too few actions`, {
     replay,
@@ -704,6 +761,10 @@ function assert(condition, message, details) {
   if (!condition) {
     throw new Error(details === undefined ? message : `${message} | ${JSON.stringify(details)}`);
   }
+}
+
+function step(message) {
+  console.log(`- ${message}`);
 }
 
 function sleep(ms) {
