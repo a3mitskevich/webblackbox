@@ -631,9 +631,14 @@ export class LiteCaptureAgent {
           Math.round(1000 / Math.max(1, this.sampling.mousemoveHz))
         );
 
-        // Full mode keeps page-side work minimal: nothing runs between samples.
-        if (this.mode === "full" && now - this.lastPointerTime < pointerGapMs) {
-          return;
+        // Full mode keeps page-side work minimal: nothing runs between samples, even while
+        // capture is suppressed, so the sample clock advances before the pressure check.
+        if (this.mode === "full") {
+          if (now - this.lastPointerTime < pointerGapMs) {
+            return;
+          }
+
+          this.lastPointerTime = now;
         }
 
         this.markUserActivity();
@@ -643,11 +648,13 @@ export class LiteCaptureAgent {
           return;
         }
 
-        if (now - this.lastPointerTime < pointerGapMs) {
-          return;
-        }
+        if (this.mode !== "full") {
+          if (now - this.lastPointerTime < pointerGapMs) {
+            return;
+          }
 
-        this.lastPointerTime = now;
+          this.lastPointerTime = now;
+        }
 
         this.queueEvent("mousemove", {
           x: round(event.clientX),
