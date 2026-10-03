@@ -1415,9 +1415,13 @@ async function enforceExtendedHostGate(
     loadEnterprisePolicy()
   ]);
   const current = runtime.profile.selection;
-  // Valid while the tab is still on this URL; a newer navigation runs its own gate.
+  // Valid while the tab is still on this URL and no other switch landed meanwhile; a newer
+  // navigation runs its own gate and re-evaluation.
   const isStillOnUrl = (): boolean =>
-    !runtime.stopping && !runtime.stoppedAt && runtime.url === sessionUrl;
+    !runtime.stopping &&
+    !runtime.stoppedAt &&
+    runtime.url === sessionUrl &&
+    runtime.profile.selection === current;
 
   if (
     !current.extended ||
@@ -1538,7 +1542,8 @@ async function applySessionProfileSelection(
   }
 
   // A newer switch may have landed while recording was stopping; it notifies the page itself.
-  if (!isCurrent()) {
+  // A newer request that kept this selection does not, so this one still has to.
+  if (runtime.stopping || runtime.stoppedAt || runtime.profile.selection !== next) {
     pushSessionList();
     return;
   }
