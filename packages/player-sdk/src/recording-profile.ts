@@ -66,7 +66,8 @@ export function describePrivacyViolation(event: WebBlackboxEvent): PrivacyViolat
   return {
     ...(blockedType ? { blockedType } : {}),
     ...(reason ? { reason } : {}),
-    subject: (reason && SUBJECT_BY_REASON[reason]) || "unknown"
+    subject:
+      (reason && Object.hasOwn(SUBJECT_BY_REASON, reason) && SUBJECT_BY_REASON[reason]) || "unknown"
   };
 }
 

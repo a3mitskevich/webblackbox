@@ -32,6 +32,9 @@ describe("describePrivacyViolation", () => {
       subject: "unknown"
     });
     expect(describePrivacyViolation(event("console.entry", {}))).toBeNull();
+    expect(
+      describePrivacyViolation(event("privacy.violation", { reason: "toString" }))?.subject
+    ).toBe("unknown");
   });
 });
 
