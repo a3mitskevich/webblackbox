@@ -29,6 +29,8 @@ import { openConfirmDialog } from "../shared/ui/dialogs.js";
 import { preserveFocus } from "../shared/ui/focus.js";
 import { el, readCheckbox, readField } from "./dom.js";
 import {
+  captureInvalidRangeInputs,
+  restoreInvalidRangeInputs,
   validateRangeInput,
   validateRuleTextFields,
   validateRuleTextInput
@@ -477,6 +479,7 @@ function bindEditor(editor: Editor): void {
   const { root, deps } = editor;
   // Every action first keeps what is typed in the page (rules, hosts, the open profile form).
   const update: Update = (mutate, options = {}) => {
+    const invalidRanges = captureInvalidRangeInputs(root);
     syncRulesFromDom(editor);
     editor.state.sandbox = readSandboxInputs(root, editor.state.sandbox);
 
@@ -487,7 +490,11 @@ function bindEditor(editor: Editor): void {
     mutate();
     // Edits made after picking the file are part of what the import replaces: list them too.
     refreshImportPreview(editor.state, deps.t);
-    preserveFocus(root, () => render(editor), { scopeAttributes: FOCUS_SCOPES });
+    const rerender = (): void => {
+      render(editor);
+      restoreInvalidRangeInputs(root, invalidRanges, deps.t);
+    };
+    preserveFocus(root, rerender, { scopeAttributes: FOCUS_SCOPES });
     deps.onChange?.();
   };
 

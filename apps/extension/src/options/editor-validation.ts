@@ -44,3 +44,32 @@ export function validateRangeInput(input: HTMLInputElement, t: Translate): void 
 
   reportFieldProblem(input, invalid ? t("optionsErrorRange", { min, max }) : null);
 }
+
+export type InvalidRangeInputs = ReadonlyArray<{ id: string; value: string }>;
+
+/** Out-of-range numbers as typed; the draft only holds them clamped. */
+export function captureInvalidRangeInputs(root: HTMLElement): InvalidRangeInputs {
+  return Array.from(
+    root.querySelectorAll<HTMLInputElement>("input[type='number'][aria-invalid='true']"),
+    (input) => ({ id: input.id, value: input.value })
+  ).filter((entry) => entry.id !== "");
+}
+
+/**
+ * Puts typed out-of-range numbers back after a render rebuilt their inputs from the clamped
+ * draft, so the error (and the Save block) stays until the user fixes the value.
+ */
+export function restoreInvalidRangeInputs(
+  root: HTMLElement,
+  inputs: InvalidRangeInputs,
+  t: Translate
+): void {
+  for (const { id, value } of inputs) {
+    const input = root.ownerDocument.getElementById(id);
+
+    if (input instanceof HTMLInputElement && root.contains(input)) {
+      input.value = value;
+      validateRangeInput(input, t);
+    }
+  }
+}

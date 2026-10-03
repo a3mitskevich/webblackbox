@@ -288,6 +288,14 @@ describe("options page", () => {
     expect(saveButton().disabled).toBe(true);
     expect(saveState()).toBe("Fix 1 field(s) before saving.");
 
+    // Another editor action re-renders the rules; the typed value and its error stay.
+    query<HTMLElement>("[data-action='rule-add']").click();
+    const priority = query<HTMLInputElement>("[data-rule-id='stage'] [name='rulePriority']");
+
+    expect(priority.value).toBe("99999999");
+    expect(priority.getAttribute("aria-invalid")).toBe("true");
+    expect(saveButton().disabled).toBe(true);
+
     typeText("[data-rule-id='stage'] [name='rulePriority']", "20");
 
     expect(saveButton().disabled).toBe(false);
