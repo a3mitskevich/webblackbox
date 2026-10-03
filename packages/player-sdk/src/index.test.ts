@@ -630,7 +630,7 @@ describe("WebBlackboxPlayer", () => {
 
     const script = player.generatePlaywrightScript({ name: "it's a test" });
     expect(script).toContain('test("it\'s a test", async ({ browser }) => {');
-    expect(script).toContain("  // input on #email process.exit(1) was masked in capture");
+    expect(script).toContain('  // input on "#email\\nprocess.exit(1)" was masked in capture');
     expect(script).not.toMatch(/^process\.exit/m);
   });
 
