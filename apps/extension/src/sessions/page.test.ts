@@ -6,6 +6,12 @@ import type { SessionListItem } from "../shared/messages.js";
 import { EMPTY_FILTERS, filterSessions, parseTagInput } from "./model.js";
 
 type PortMessageHandler = (message: unknown) => void;
+const DEFAULT_EXPORT_POLICY = {
+  includeScreenshots: false,
+  includeScreenRecordings: false,
+  maxArchiveBytes: 100 * 1024 * 1024,
+  recentWindowMs: 20 * 60 * 1000
+};
 
 class FakePort {
   readonly postMessage = vi.fn();
@@ -186,7 +192,8 @@ describe("sessions page", () => {
         kind: "ui.export",
         sid,
         passphrase: "team-secret",
-        saveAs: false
+        saveAs: false,
+        policy: DEFAULT_EXPORT_POLICY
       });
     }
   });
@@ -267,6 +274,44 @@ describe("sessions page", () => {
 
     expect(note()?.value).toBe("typed but not saved");
     expect(document.activeElement).toBe(note());
+  });
+
+  it("applies the archive limits and alert setting from Options", async () => {
+    localStorage.setItem(
+      "webblackbox.popup.export-policy",
+      JSON.stringify({ maxArchiveMb: 20, recentMinutes: 5, alertSensitiveFindings: false })
+    );
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => undefined);
+    const { port } = setup();
+    await load(port);
+
+    click("[data-export='sid-old']");
+    await flush();
+    click("[data-passphrase-submit]");
+    await flush();
+
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "ui.export",
+        sid: "sid-old",
+        policy: {
+          ...DEFAULT_EXPORT_POLICY,
+          maxArchiveBytes: 20 * 1024 * 1024,
+          recentWindowMs: 300_000
+        }
+      })
+    );
+
+    port.emit({
+      kind: "sw.export-status",
+      sid: "sid-old",
+      ok: true,
+      privacyWarning: { findingCount: 1, summary: "jwt", findings: [] }
+    });
+    await flush();
+
+    expect(alertSpy).not.toHaveBeenCalled();
+    localStorage.clear();
   });
 
   it("opens the Player once the export of that session finished", async () => {

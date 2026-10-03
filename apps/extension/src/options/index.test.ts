@@ -263,6 +263,36 @@ describe("options page", () => {
     expect(saveState()).toBe("All changes saved");
   });
 
+  it("drops a rejected chip entry's error when its section is reset", async () => {
+    installChromeStub();
+    await importOptionsModule();
+
+    typeText("#blockedSelectors-input", "div[").dispatchEvent(new Event("blur"));
+
+    expect(saveState()).toBe("Fix 1 field(s) before saving.");
+
+    const section =
+      query<HTMLElement>("#blockedSelectors-input").closest<HTMLElement>("[data-general-section]")
+        ?.dataset.generalSection;
+    query<HTMLElement>(`[data-action='section-reset'][data-section='${section}']`).click();
+
+    expect(saveState()).toBe("All changes saved");
+  });
+
+  it("blocks Save while a rule priority is out of range", async () => {
+    installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
+    await importOptionsModule();
+
+    typeText("[data-rule-id='stage'] [name='rulePriority']", "99999999");
+
+    expect(saveButton().disabled).toBe(true);
+    expect(saveState()).toBe("Fix 1 field(s) before saving.");
+
+    typeText("[data-rule-id='stage'] [name='rulePriority']", "20");
+
+    expect(saveButton().disabled).toBe(false);
+  });
+
   it("validates a rule's title pattern and selector inline", async () => {
     installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
     await importOptionsModule();

@@ -221,6 +221,13 @@ describe("profiles editor", () => {
       "Profiles: +0 −0 ~0. Rules: +1 −0 ~0."
     );
 
+    // A rule added after the preview is replaced too, so the preview now lists it.
+    click(container, "[data-action='rule-add']");
+
+    expect(container.querySelector("[data-import-summary]")?.textContent).toBe(
+      "Profiles: +0 −0 ~0. Rules: +1 −1 ~0."
+    );
+
     click(container, "[data-action='profiles-import-apply']");
 
     expect(container.querySelectorAll(".wb-profiles__rule")).toHaveLength(1);

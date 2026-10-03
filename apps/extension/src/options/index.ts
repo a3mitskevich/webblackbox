@@ -20,7 +20,6 @@ import {
   fieldGroup,
   installTooltipDismiss,
   PENDING_ERROR_EVENT,
-  pendingErrorKey,
   selectField,
   type PendingErrorDetail
 } from "./fields.js";
@@ -59,6 +58,11 @@ type PageState = {
   draft: GeneralDraft;
   /** Field id → inline error; Save is blocked while any remain. */
   errors: Map<string, string>;
+  /**
+   * Control behind each pending-text error. Renders replace controls (same ids, empty values),
+   * so an error whose control left the DOM is dropped.
+   */
+  pendingSources: Map<string, Element>;
   generalHosts: Record<GeneralSectionId, HTMLElement>;
   editor?: ProfilesEditorHandle;
   status?: { text: string; error: boolean };
@@ -82,6 +86,7 @@ async function bootstrap(container: HTMLElement): Promise<void> {
     baseline: loaded,
     draft: loaded,
     errors: new Map(),
+    pendingSources: new Map(),
     generalHosts,
     saving: false
   };
@@ -148,10 +153,12 @@ function bindPage(page: PageState): void {
   shell.content.addEventListener(PENDING_ERROR_EVENT, (event) => {
     const { key, error } = (event as CustomEvent<PendingErrorDetail>).detail;
 
-    if (error) {
+    if (error && event.target instanceof Element) {
       page.errors.set(key, error);
+      page.pendingSources.set(key, event.target);
     } else {
       page.errors.delete(key);
+      page.pendingSources.delete(key);
     }
 
     refreshSaveBar(page);
@@ -183,24 +190,20 @@ function bindPage(page: PageState): void {
 }
 
 function clearSectionErrors(page: PageState, section: GeneralSectionId): void {
-  page.generalHosts[section].querySelectorAll<HTMLInputElement>("input[name]").forEach((input) => {
-    page.errors.delete(input.name);
-    page.errors.delete(pendingErrorKey(input.name));
-    page.errors.delete(pendingErrorKey(input.id));
-  });
+  page.generalHosts[section]
+    .querySelectorAll<HTMLInputElement>("input[name]")
+    .forEach((input) => page.errors.delete(input.name));
 }
 
-/** Pending-text errors of chip lists that a re-render removed (closed form, deleted rule). */
+/**
+ * Pending-text errors whose control a render replaced (section reset, another profile form,
+ * deleted rule). A control that is still invalid after a render reports itself again.
+ */
 function dropDetachedPendingErrors(page: PageState): void {
-  const names = new Set(
-    Array.from(page.shell.content.querySelectorAll<HTMLElement>("input, textarea"), (input) =>
-      pendingErrorKey(input.id || input.getAttribute("name") || "")
-    )
-  );
-
-  for (const key of [...page.errors.keys()]) {
-    if (key.startsWith(pendingErrorKey("")) && !names.has(key)) {
+  for (const [key, source] of [...page.pendingSources]) {
+    if (!source.isConnected) {
       page.errors.delete(key);
+      page.pendingSources.delete(key);
     }
   }
 }
@@ -322,6 +325,7 @@ async function saveAll(page: PageState): Promise<void> {
 function cancelAll(page: PageState): void {
   page.draft = page.baseline;
   page.errors.clear();
+  page.pendingSources.clear();
   page.status = undefined;
   renderGeneral(page);
   page.editor?.cancel();

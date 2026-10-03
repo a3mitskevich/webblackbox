@@ -1,6 +1,6 @@
 import type { ExtensionMessageKey } from "../shared/i18n.js";
 import { compileTitleRegex } from "../shared/profiles/title-regex.js";
-import { isValidSelector, reportFieldProblem, setFieldError } from "./fields.js";
+import { isValidSelector, reportFieldProblem } from "./fields.js";
 
 /** Inline checks for the profile and rule editor inputs (values are read back from the DOM). */
 
@@ -14,7 +14,9 @@ const RULE_TEXT_VALIDATORS: Record<string, (value: string, t: Translate) => stri
 
 /** Shows the problem inline and reports it to the page, which then blocks Save. */
 export function validateRuleTextInput(input: HTMLInputElement, t: Translate): void {
-  const validate = RULE_TEXT_VALIDATORS[input.name];
+  const validate = Object.hasOwn(RULE_TEXT_VALIDATORS, input.name)
+    ? RULE_TEXT_VALIDATORS[input.name]
+    : undefined;
   const value = input.value.trim();
 
   if (validate) {
@@ -29,7 +31,10 @@ export function validateRuleTextFields(container: HTMLElement, t: Translate): vo
     .forEach((input) => validateRuleTextInput(input, t));
 }
 
-/** Optional numbers: empty means "inherit"; anything else must be a whole number in range. */
+/**
+ * Optional numbers: empty means "inherit"; anything else must be a whole number in range. An
+ * invalid value blocks Save; saving would otherwise clamp or drop it without a word.
+ */
 export function validateRangeInput(input: HTMLInputElement, t: Translate): void {
   const raw = input.value.trim();
   const value = Number(raw);
@@ -37,5 +42,5 @@ export function validateRangeInput(input: HTMLInputElement, t: Translate): void 
   const max = Number(input.max);
   const invalid = raw !== "" && (!Number.isInteger(value) || value < min || value > max);
 
-  setFieldError(input, invalid ? t("optionsErrorRange", { min, max }) : null);
+  reportFieldProblem(input, invalid ? t("optionsErrorRange", { min, max }) : null);
 }

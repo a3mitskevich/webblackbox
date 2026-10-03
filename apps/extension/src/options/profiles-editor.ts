@@ -93,7 +93,8 @@ type EditorState = {
   editingId?: string;
   /** The edited profile as it was when its form opened; Cancel restores it. */
   editingSnapshot?: RecordingProfile;
-  importPreview?: { next: RecordingProfilesStore; diff: ProfilesDiff };
+  /** The file replaces the draft; `diff` is kept against the current draft (see `update`). */
+  importPreview?: { text: string; next: RecordingProfilesStore; diff: ProfilesDiff };
   status?: { text: string; error: boolean };
   sandbox: SandboxState;
   openRuleIds: Set<string>;
@@ -460,9 +461,7 @@ function handleAction(editor: Editor, target: HTMLElement, action: string, updat
     case "profiles-import-apply":
       return update(() => {
         if (state.importPreview) {
-          state.draft = state.importPreview.next;
-          state.importPreview = undefined;
-          closeProfileForm(state);
+          applyImport(state, state.importPreview.text, editor.deps.t);
         }
       });
     case "sandbox-run":
@@ -484,6 +483,8 @@ function bindEditor(editor: Editor): void {
     }
 
     mutate();
+    // Edits made after picking the file are part of what the import replaces: list them too.
+    refreshImportPreview(editor.state, deps.t);
     preserveFocus(root, () => render(editor), { scopeAttributes: FOCUS_SCOPES });
     deps.onChange?.();
   };
@@ -600,7 +601,7 @@ async function importFile(editor: Editor, input: HTMLInputElement): Promise<void
     const text = await file.text();
     syncDraftFromDom(editor);
     const preview = previewProfilesImport(text, state.draft);
-    state.importPreview = preview.ok ? { next: preview.next, diff: preview.diff } : undefined;
+    state.importPreview = preview.ok ? { text, next: preview.next, diff: preview.diff } : undefined;
     state.status = preview.ok
       ? undefined
       : { text: deps.t("optionsProfilesError", { error: preview.error }), error: true };
@@ -615,6 +616,34 @@ async function importFile(editor: Editor, input: HTMLInputElement): Promise<void
   }
 
   render(editor);
+}
+
+function refreshImportPreview(state: EditorState, t: Translate): void {
+  if (!state.importPreview) {
+    return;
+  }
+
+  const result = previewProfilesImport(state.importPreview.text, state.draft);
+
+  if (result.ok) {
+    state.importPreview = { ...state.importPreview, diff: result.diff };
+  } else {
+    state.importPreview = undefined;
+    state.status = { text: t("optionsProfilesError", { error: result.error }), error: true };
+  }
+}
+
+function applyImport(state: EditorState, text: string, t: Translate): void {
+  const result = previewProfilesImport(text, state.draft);
+  state.importPreview = undefined;
+
+  if (!result.ok) {
+    state.status = { text: t("optionsProfilesError", { error: result.error }), error: true };
+    return;
+  }
+
+  state.draft = result.next;
+  closeProfileForm(state);
 }
 
 function openProfileForm(state: EditorState, id: string): void {

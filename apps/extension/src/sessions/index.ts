@@ -1,4 +1,5 @@
 import { getChromeApi } from "../shared/chrome-api.js";
+import { loadExportPolicyPrefs, toExportPolicy } from "../shared/export-policy-prefs.js";
 import { createExtensionI18n } from "../shared/i18n.js";
 import {
   PORT_NAMES,
@@ -195,8 +196,11 @@ function restoreAnnotationDraft(list: HTMLElement, draft: AnnotationDraft | unde
 function renderList(page: Page): void {
   const draft = state.expandedSid ? readAnnotationDraft(page.list, state.expandedSid) : undefined;
 
-  preserveFocus(page.root, () => renderListContent(page));
-  restoreAnnotationDraft(page.list, draft);
+  // The draft goes back before focus does, so the restored caret lands in the typed text.
+  preserveFocus(page.root, () => {
+    renderListContent(page);
+    restoreAnnotationDraft(page.list, draft);
+  });
 }
 
 function renderListContent(page: Page): void {
@@ -455,7 +459,7 @@ function handleExportStatus(
   if (status.ok) {
     pendingExports.delete(status.sid);
 
-    if (status.privacyWarning) {
+    if (status.privacyWarning && loadExportPolicyPrefs().alertSensitiveFindings) {
       window.alert(formatExportPrivacyWarning(status.privacyWarning));
     }
 
@@ -497,6 +501,8 @@ function requestExport(
     sid,
     ...(passphrase.length > 0 ? { passphrase } : {}),
     saveAs: false,
+    // Archive limits from Options, as in the popup; screenshots stay out as before.
+    policy: toExportPolicy(loadExportPolicyPrefs(), "none"),
     ...(options.acknowledged ? { acknowledgePrivacyFindings: true } : {})
   });
 }
