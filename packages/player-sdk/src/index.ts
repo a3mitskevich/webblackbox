@@ -16,6 +16,9 @@ import { extractRequestId, inferBlobMime } from "@webblackbox/protocol";
 
 /** Player lifecycle status. */
 export * from "./recording-profile.js";
+export * from "./source-map.js";
+export * from "./stack-trace.js";
+export * from "./symbolicate.js";
 
 export type PlayerStatus = "idle" | "loaded";
 
