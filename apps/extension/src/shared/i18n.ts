@@ -7,6 +7,14 @@ import ZH_CN_MESSAGES from "./locales/zh-CN.json" with { type: "json" };
 
 export type ExtensionLocale = "en" | "ru" | "zh-CN";
 
+/** What the user picked in Options; `auto` follows Chrome's UI language. */
+export type ExtensionLocalePreference = "auto" | ExtensionLocale;
+
+export const EXTENSION_LOCALES: readonly ExtensionLocale[] = ["en", "ru", "zh-CN"];
+
+/** `chrome.storage.local` key holding the {@link ExtensionLocalePreference}. */
+export const EXTENSION_LOCALE_STORAGE_KEY = "webblackbox.uiLocale";
+
 /** English is the reference dictionary; `locales.test.ts` keeps every other locale's keys equal. */
 export type ExtensionMessageKey = keyof typeof EN_MESSAGES;
 
@@ -19,9 +27,11 @@ const EXTENSION_MESSAGES: Record<ExtensionLocale, Record<ExtensionMessageKey, st
 export function createExtensionI18n(
   options: {
     pageTitleKey?: ExtensionMessageKey;
+    /** Resolved locale (see {@link loadExtensionLocale}); defaults to Chrome's UI language. */
+    locale?: ExtensionLocale;
   } = {}
 ) {
-  const locale = getExtensionLocale();
+  const locale = options.locale ?? getExtensionLocale();
 
   if (typeof document !== "undefined") {
     document.documentElement.lang = locale;
@@ -52,6 +62,48 @@ export function getExtensionLocale(): ExtensionLocale {
     typeof navigator !== "undefined" ? (navigator.language ?? navigator.languages?.[0]) : undefined;
 
   return normalizeExtensionLocale(uiLanguage ?? navigatorLanguage);
+}
+
+/** Anything other than a known locale (missing, tampered, from a newer build) means `auto`. */
+export function parseExtensionLocalePreference(value: unknown): ExtensionLocalePreference {
+  return EXTENSION_LOCALES.find((locale) => locale === value) ?? "auto";
+}
+
+export function resolveExtensionLocale(preference: ExtensionLocalePreference): ExtensionLocale {
+  return preference === "auto" ? getExtensionLocale() : preference;
+}
+
+/** Reads the stored preference; storage being unavailable or failing falls back to `auto`. */
+export async function loadExtensionLocalePreference(): Promise<ExtensionLocalePreference> {
+  const storage = getChromeApi()?.storage?.local;
+
+  if (!storage) {
+    return "auto";
+  }
+
+  try {
+    const stored = await storage.get(EXTENSION_LOCALE_STORAGE_KEY);
+    return parseExtensionLocalePreference(stored?.[EXTENSION_LOCALE_STORAGE_KEY]);
+  } catch {
+    return "auto";
+  }
+}
+
+export async function saveExtensionLocalePreference(
+  preference: ExtensionLocalePreference
+): Promise<void> {
+  const storage = getChromeApi()?.storage?.local;
+
+  if (!storage) {
+    throw new Error("chrome.storage.local is unavailable");
+  }
+
+  await storage.set({ [EXTENSION_LOCALE_STORAGE_KEY]: preference });
+}
+
+/** The locale extension pages render in: the Options choice, else Chrome's UI language. */
+export async function loadExtensionLocale(): Promise<ExtensionLocale> {
+  return resolveExtensionLocale(await loadExtensionLocalePreference());
 }
 
 export function normalizeExtensionLocale(candidate?: string | null): ExtensionLocale {
