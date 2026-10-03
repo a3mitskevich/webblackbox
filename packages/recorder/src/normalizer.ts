@@ -4,6 +4,17 @@ import {
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
+import {
+  asArray,
+  asBoolean,
+  asFiniteNumber,
+  asRecord,
+  asString,
+  compactText,
+  normalizeHeaderRecord,
+  sanitizeOptionalUrl,
+  stripUndefined
+} from "./normalizer-utils.js";
 import type { EventNormalizer, RawRecorderEvent } from "./types.js";
 
 const CDP_EVENT_MAP: Record<string, WebBlackboxEventType> = {
@@ -300,29 +311,6 @@ function buildFallbackReqId(method: string, url: string): string {
   return `content-${method.toUpperCase()}-${compactText(url, 120)}-${fallbackRequestSequence.toString(36)}`;
 }
 
-function normalizeHeaderRecord(value: unknown): Record<string, string> | undefined {
-  const row = asRecord(value);
-
-  if (!row) {
-    return undefined;
-  }
-
-  const output: Record<string, string> = {};
-
-  for (const [key, entry] of Object.entries(row).slice(0, 64)) {
-    if (typeof entry === "string") {
-      output[key.toLowerCase()] = compactText(entry, 500);
-      continue;
-    }
-
-    if (typeof entry === "number" || typeof entry === "boolean") {
-      output[key.toLowerCase()] = String(entry);
-    }
-  }
-
-  return Object.keys(output).length > 0 ? output : undefined;
-}
-
 function normalizeConsoleLevel(rawLevel: string): ConsoleLevel {
   const value = rawLevel.toLowerCase();
 
@@ -474,48 +462,6 @@ function stringifyConsoleArg(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function stripUndefined(value: Record<string, unknown>): Record<string, unknown> {
-  const output: Record<string, unknown> = {};
-
-  for (const [key, entry] of Object.entries(value)) {
-    if (entry !== undefined) {
-      output[key] = entry;
-    }
-  }
-
-  return output;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function asFiniteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function asBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function sanitizeOptionalUrl(value: string | undefined): string | undefined {
-  return value ? sanitizeUrlForPrivacy(value) : undefined;
-}
-
-function compactText(value: string, maxLength: number): string {
-  return value.length > maxLength ? `${value.slice(0, Math.max(0, maxLength - 3))}...` : value;
 }
 
 function tryNormalizeSystemEvent(rawType: string): WebBlackboxEventType | null {
