@@ -2002,11 +2002,7 @@ function updateRuntimeInteractionState(runtime: SessionRuntime, rawEvent: RawRec
     return;
   }
 
-  if (
-    rawEvent.rawType === "mousemove" ||
-    rawEvent.rawType === "click" ||
-    rawEvent.rawType === "dblclick"
-  ) {
+  if (POINTER_TRACKING_RAW_TYPES.has(rawEvent.rawType)) {
     const x = asFiniteNumber(payload.x);
     const y = asFiniteNumber(payload.y);
 
@@ -2020,6 +2016,16 @@ function updateRuntimeInteractionState(runtime: SessionRuntime, rawEvent: RawRec
     }
   }
 }
+
+const POINTER_TRACKING_RAW_TYPES = new Set([
+  "mousemove",
+  "click",
+  "dblclick",
+  "pointerdown",
+  "pointerup",
+  "contextmenu",
+  "auxclick"
+]);
 
 function shouldCaptureActionScreenshot(
   rawEvent: RawRecorderEvent,
