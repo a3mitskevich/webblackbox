@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -456,7 +457,172 @@ describe("share-server", () => {
     expect(html).not.toContain("?key=");
     expect(html).not.toContain(apiKey);
   });
+
+  it("never grants keyless loopback access from forwarded headers", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_SHARE_API_KEY: "",
+      WEBBLACKBOX_TRUST_X_FORWARDED_FOR: "true",
+      WEBBLACKBOX_TRUSTED_PROXIES: "127.0.0.1"
+    });
+
+    const direct = await sendRawRequest(server, "/api/share/list");
+    expect(direct.status).toBe(200);
+
+    for (const forwarded of ["127.0.0.1", "203.0.113.7, 127.0.0.1"]) {
+      const spoofed = await sendRawRequest(server, "/api/share/list", {
+        "x-forwarded-for": forwarded
+      });
+      expect(spoofed.status).toBe(401);
+    }
+
+    const realIp = await sendRawRequest(server, "/api/share/list", { "x-real-ip": "127.0.0.1" });
+    expect(realIp.status).toBe(401);
+  });
+
+  it("rejects foreign Host headers in keyless mode", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_SHARE_API_KEY: ""
+    });
+
+    const rebinding = await sendRawRequest(server, "/api/share/list", {
+      host: "attacker.example:8787"
+    });
+    expect(rebinding.status).toBe(403);
+    expect(JSON.parse(rebinding.body)).toEqual({ error: "Host not allowed." });
+
+    const preflight = await sendRawRequest(
+      server,
+      "/api/share/upload",
+      { host: "attacker.example" },
+      "OPTIONS"
+    );
+    expect(preflight.status).toBe(403);
+
+    for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+      const allowed = await sendRawRequest(server, "/api/share/list", {
+        host: `${host}:8787`
+      });
+      expect(allowed.status).toBe(200);
+    }
+  });
+
+  it("accepts configured public hosts in keyless mode", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_SHARE_API_KEY: "",
+      WEBBLACKBOX_SHARE_ALLOWED_HOSTS: "share.internal.example"
+    });
+
+    const response = await sendRawRequest(server, "/api/share/list", {
+      host: "share.internal.example"
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it("checks Host headers in keyed mode only when an allowlist is configured", async () => {
+    const openServer = await startShareServer();
+    const keyedDefault = await sendRawRequest(openServer, "/api/share/list", {
+      host: "share.example.com",
+      "x-webblackbox-api-key": apiKey
+    });
+    expect(keyedDefault.status).toBe(200);
+
+    const strictServer = await startShareServer({
+      WEBBLACKBOX_SHARE_ALLOWED_HOSTS: "share.example.com"
+    });
+    const allowed = await sendRawRequest(strictServer, "/api/share/list", {
+      host: "share.example.com",
+      "x-webblackbox-api-key": apiKey
+    });
+    const blocked = await sendRawRequest(strictServer, "/api/share/list", {
+      host: "other.example.com",
+      "x-webblackbox-api-key": apiKey
+    });
+    expect(allowed.status).toBe(200);
+    expect(blocked.status).toBe(403);
+  });
+
+  it("does not let rotating X-Forwarded-For entries bypass upload rate limits", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_TRUST_X_FORWARDED_FOR: "true",
+      WEBBLACKBOX_UPLOAD_RATE_LIMIT_MAX: "1"
+    });
+
+    const first = await sendRawRequest(
+      server,
+      "/api/share/upload",
+      { "x-webblackbox-api-key": apiKey, "x-forwarded-for": "198.51.100.1" },
+      "POST"
+    );
+    const second = await sendRawRequest(
+      server,
+      "/api/share/upload",
+      { "x-webblackbox-api-key": apiKey, "x-forwarded-for": "198.51.100.2" },
+      "POST"
+    );
+
+    expect(first.status).toBe(400);
+    expect(second.status).toBe(429);
+  });
+
+  it("rate limits by the right-most untrusted X-Forwarded-For hop behind a trusted proxy", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_TRUST_X_FORWARDED_FOR: "true",
+      WEBBLACKBOX_TRUSTED_PROXIES: "127.0.0.1",
+      WEBBLACKBOX_UPLOAD_RATE_LIMIT_MAX: "1"
+    });
+    const upload = (forwardedFor: string): Promise<RawResponse> =>
+      sendRawRequest(
+        server,
+        "/api/share/upload",
+        { "x-webblackbox-api-key": apiKey, "x-forwarded-for": forwardedFor },
+        "POST"
+      );
+
+    expect((await upload("10.9.9.1, 198.51.100.1")).status).toBe(400);
+    expect((await upload("10.9.9.2, 198.51.100.1")).status).toBe(429);
+    expect((await upload("198.51.100.1, 198.51.100.2")).status).toBe(400);
+  });
 });
+
+type RawResponse = {
+  status: number;
+  body: string;
+};
+
+async function sendRawRequest(
+  server: RunningShareServer,
+  path: string,
+  headers: Record<string, string> = {},
+  method = "GET"
+): Promise<RawResponse> {
+  const url = new URL(path, server.baseUrl);
+
+  return new Promise((resolvePromise, reject) => {
+    const request = httpRequest(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method,
+        headers
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () =>
+          resolvePromise({
+            status: response.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8")
+          })
+        );
+        response.on("error", reject);
+      }
+    );
+
+    request.on("error", reject);
+    request.end();
+  });
+}
 
 async function startShareServer(
   envOverrides: Record<string, string> = {}
