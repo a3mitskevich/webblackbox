@@ -81,8 +81,28 @@ async function main() {
   );
   await sleep(1_000);
 
+  await pageClient.evaluate(`
+    (() => {
+      window.__wbBridgeMessages = [];
+      window.addEventListener('message', (event) => {
+        if (event.data && event.data.source === 'webblackbox-injected') {
+          window.__wbBridgeMessages.push(typeof event.data.nonce === 'string' ? 'stamped' : 'unstamped');
+        }
+      });
+      return true;
+    })()
+  `);
   const first = await recordAndStop(popupClient, pageClient, pageUrl);
   console.log("First session:", JSON.stringify(first));
+
+  const bridgeMessages = await pageClient.evaluate(`window.__wbBridgeMessages`);
+  assert(
+    Array.isArray(bridgeMessages) &&
+      bridgeMessages.length > 0 &&
+      bridgeMessages.every((entry) => entry === "stamped"),
+    "Injected bridge messages must carry the session nonce",
+    { bridgeMessages }
+  );
 
   const offscreenBefore = await countOffscreenDocuments(popupClient);
   assert(offscreenBefore === 1, "Offscreen document should outlive the stopped session", {

@@ -27,8 +27,10 @@ import {
   type RawRecorderEvent,
   WebBlackboxRecorder
 } from "@webblackbox/recorder";
+import { INJECTED_BRIDGE_NONCE_SETTER_KEY } from "webblackbox/injected-hooks";
+import { decodeScreenshotDataUrl } from "webblackbox/lite-materializer";
 
-import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
+import { getChromeApi, type PortLike, type RuntimeMessageSender } from "../shared/chrome-api.js";
 import {
   PORT_NAMES,
   type ExportPrivacyWarning,
@@ -77,6 +79,13 @@ import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata
 import { createOffscreenPortConnector, OFFSCREEN_UNAVAILABLE_ERROR } from "./offscreen-port.js";
 import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
+  classifyMessageSender,
+  classifyPortSender,
+  isInboundKindAllowed,
+  type InboundSenderContext,
+  type SenderTrustContext
+} from "./port-sender.js";
+import {
   buildRequestMetaKey,
   deleteRequestMeta,
   getRequestMeta,
@@ -112,6 +121,8 @@ type SessionRuntime = {
   config: typeof DEFAULT_RECORDER_CONFIG;
   startedAt: number;
   stoppedAt?: number;
+  /** Secret shared with the injected page hooks and the content script of this session. */
+  injectedBridgeNonce: string;
   recorder: WebBlackboxRecorder;
   pipeline: SessionPipelineClient;
   cdpRouter: CdpRouter | null;
@@ -506,6 +517,20 @@ chromeApi?.runtime?.onConnect.addListener((port) => {
     return;
   }
 
+  const senderContext = resolvePortSenderContext(port);
+
+  if (senderContext === "untrusted") {
+    // Port names are chosen by the connecting script: never let an arbitrary frame
+    // claim the offscreen pipeline or receive session broadcasts.
+    console.warn("[WebBlackbox] rejected port from untrusted sender", {
+      portName: port.name,
+      tabId: port.sender?.tab?.id,
+      frameId: port.sender?.frameId
+    });
+    port.disconnect?.();
+    return;
+  }
+
   connectedPorts.add(port);
 
   if (port.name === PORT_NAMES.offscreen) {
@@ -528,7 +553,7 @@ chromeApi?.runtime?.onConnect.addListener((port) => {
 
     const message = parseInboundMessage(rawMessage);
 
-    if (!message) {
+    if (!message || !isInboundKindAllowed(message.kind, senderContext)) {
       return;
     }
 
@@ -557,6 +582,30 @@ chromeApi?.runtime?.onConnect.addListener((port) => {
   port.onDisconnect.addListener(onDisconnect);
 });
 
+function resolvePortSenderContext(port: PortLike): InboundSenderContext {
+  const trustContext = resolveSenderTrustContext();
+  return trustContext ? classifyPortSender(port.name, port.sender, trustContext) : "untrusted";
+}
+
+function resolveMessageSenderContext(sender: RuntimeMessageSender): InboundSenderContext {
+  const trustContext = resolveSenderTrustContext();
+  return trustContext ? classifyMessageSender(sender, trustContext) : "untrusted";
+}
+
+function resolveSenderTrustContext(): SenderTrustContext | null {
+  const runtime = chromeApi?.runtime;
+
+  if (!runtime?.id || typeof runtime.getURL !== "function") {
+    return null;
+  }
+
+  return {
+    extensionId: runtime.id,
+    extensionOrigin: runtime.getURL("").replace(/\/+$/, ""),
+    offscreenUrl: runtime.getURL(OFFSCREEN_PATH)
+  };
+}
+
 async function syncContentPortStateOnConnect(port: PortLike): Promise<void> {
   const tabId = port.sender?.tab?.id;
 
@@ -571,7 +620,7 @@ async function syncContentPortStateOnConnect(port: PortLike): Promise<void> {
   }
 
   if (shouldInjectHooksForMode(runtime.mode)) {
-    await ensureInjectedHooks(tabId);
+    await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
   }
 
   syncContentPortRecordingState(port);
@@ -599,7 +648,8 @@ function syncContentPortRecordingState(port: PortLike): void {
       sid: runtime.sid,
       mode: runtime.mode,
       sampling,
-      capturePolicy: runtime.config.capturePolicy
+      capturePolicy: runtime.config.capturePolicy,
+      injectedBridgeNonce: runtime.injectedBridgeNonce
     });
   } catch (error) {
     logPortSendFailure("sw.recording-status", error, {
@@ -613,7 +663,7 @@ function syncContentPortRecordingState(port: PortLike): void {
 chromeApi?.runtime?.onMessage.addListener((rawMessage, sender, sendResponse) => {
   const message = parseInboundMessage(rawMessage);
 
-  if (!message) {
+  if (!message || !isInboundKindAllowed(message.kind, resolveMessageSenderContext(sender))) {
     return;
   }
 
@@ -786,7 +836,7 @@ async function handleInboundMessage(
     }
 
     if (shouldInjectHooksForMode(runtime.mode)) {
-      await ensureInjectedHooks(tabId);
+      await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
     }
 
     const sampling = toStatusSampling(runtime);
@@ -804,7 +854,8 @@ async function handleInboundMessage(
       sid: runtime.sid,
       mode: runtime.mode,
       sampling,
-      capturePolicy: runtime.config.capturePolicy
+      capturePolicy: runtime.config.capturePolicy,
+      injectedBridgeNonce: runtime.injectedBridgeNonce
     };
   }
 
@@ -933,6 +984,7 @@ async function startSession(
     config: recorderConfig,
     startedAt,
     stoppedAt: undefined,
+    injectedBridgeNonce: createInjectedBridgeNonce(),
     recorder: new WebBlackboxRecorder(
       {
         ...recorderConfig,
@@ -1017,7 +1069,7 @@ async function startSession(
 
   if (shouldInjectHooksForMode(mode)) {
     await ensureContentScriptInjected(tabId);
-    await ensureInjectedHooks(tabId);
+    await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
   }
 
   if (mode === "full" && recorderConfig.capturePolicy?.categories.cdp !== "off") {
@@ -1036,7 +1088,15 @@ async function startSession(
   const sampling = toStatusSampling(runtime);
 
   await setRecordingBadge();
-  await notifyTabStatus(tabId, true, sid, mode, sampling, recorderConfig.capturePolicy);
+  await notifyTabStatus(
+    tabId,
+    true,
+    sid,
+    mode,
+    sampling,
+    recorderConfig.capturePolicy,
+    runtime.injectedBridgeNonce
+  );
   broadcast({
     kind: "sw.recording-status",
     active: true,
@@ -1071,14 +1131,15 @@ async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<
   }
 
   await ensureContentScriptInjected(tabId);
-  await ensureInjectedHooks(tabId);
+  await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
   await notifyTabStatus(
     tabId,
     true,
     runtime.sid,
     runtime.mode,
     toStatusSampling(runtime),
-    runtime.config.capturePolicy
+    runtime.config.capturePolicy,
+    runtime.injectedBridgeNonce
   );
 }
 
@@ -1427,7 +1488,7 @@ async function materializeLiteScreenshot(
     return null;
   }
 
-  const decoded = decodeDataUrl(dataUrl);
+  const decoded = decodeScreenshotDataUrl(dataUrl);
 
   if (
     !decoded ||
@@ -1444,7 +1505,7 @@ async function materializeLiteScreenshot(
   const reason = asString(payload.reason) ?? undefined;
   const viewport = normalizeScreenshotViewport(payload.viewport);
   const pointer = normalizeScreenshotPointer(payload.pointer);
-  const format = decoded.mime.includes("png") ? "png" : "webp";
+  const format = decoded.format;
 
   return {
     ...rawEvent,
@@ -3407,40 +3468,6 @@ function decodeBase64(value: string): Uint8Array {
   return bytes;
 }
 
-function decodeDataUrl(dataUrl: string): { mime: string; bytes: Uint8Array } | null {
-  if (!dataUrl.startsWith("data:")) {
-    return null;
-  }
-
-  const commaIndex = dataUrl.indexOf(",");
-
-  if (commaIndex <= 5) {
-    return null;
-  }
-
-  const header = dataUrl.slice(5, commaIndex);
-  const encoded = dataUrl.slice(commaIndex + 1);
-  const segments = header.split(";");
-  const mime = segments[0] && segments[0].length > 0 ? segments[0] : "application/octet-stream";
-  const isBase64 = segments.includes("base64");
-
-  try {
-    if (isBase64) {
-      return {
-        mime,
-        bytes: decodeBase64(encoded)
-      };
-    }
-
-    return {
-      mime,
-      bytes: new TextEncoder().encode(decodeURIComponent(encoded))
-    };
-  } catch {
-    return null;
-  }
-}
-
 function resolveLiteBodyCaptureRule(
   runtime: SessionRuntime,
   url: string,
@@ -3960,7 +3987,7 @@ function normalizeHashesManifest(value: unknown): HashesManifest {
   };
 }
 
-async function ensureInjectedHooks(tabId: number): Promise<void> {
+async function ensureInjectedHooks(tabId: number, bridgeNonce: string): Promise<void> {
   await chromeApi?.scripting
     ?.executeScript({
       target: { tabId },
@@ -3968,6 +3995,29 @@ async function ensureInjectedHooks(tabId: number): Promise<void> {
       files: ["injected.js"]
     })
     .catch(() => undefined);
+  // Hand the nonce over as a function argument rather than a DOM event, which page
+  // scripts could observe.
+  await chromeApi?.scripting
+    ?.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: applyInjectedBridgeNonce,
+      args: [INJECTED_BRIDGE_NONCE_SETTER_KEY, bridgeNonce]
+    })
+    .catch(() => undefined);
+}
+
+/** Runs in the page MAIN world; must stay self-contained (serialized by Chrome). */
+function applyInjectedBridgeNonce(setterKey: string, nonce: string): void {
+  const setter = (window as unknown as Record<string, unknown>)[setterKey];
+
+  if (typeof setter === "function") {
+    setter(nonce);
+  }
+}
+
+function createInjectedBridgeNonce(): string {
+  return crypto.randomUUID();
 }
 
 async function ensureContentScriptInjected(tabId: number): Promise<void> {
@@ -5090,7 +5140,8 @@ async function notifyTabStatus(
   sid?: string,
   mode?: CaptureMode,
   sampling?: RecordingSampling,
-  capturePolicy?: CapturePolicy
+  capturePolicy?: CapturePolicy,
+  injectedBridgeNonce?: string
 ): Promise<void> {
   if (!chromeApi?.tabs?.sendMessage) {
     return;
@@ -5103,7 +5154,8 @@ async function notifyTabStatus(
       sid,
       mode,
       sampling,
-      capturePolicy
+      capturePolicy,
+      injectedBridgeNonce
     })
     .catch(() => undefined);
 }
