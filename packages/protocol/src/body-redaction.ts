@@ -147,16 +147,21 @@ function redactJsonText(
     return null;
   }
 
-  const result = redactJsonValue(parsed, patterns, token);
+  try {
+    const result = redactJsonValue(parsed, patterns, token);
 
-  if (!result.redacted) {
-    return { value, redacted: false };
+    if (!result.redacted) {
+      return { value, redacted: false };
+    }
+
+    return {
+      value: JSON.stringify(result.value, null, value.includes("\n") ? 2 : undefined),
+      redacted: true
+    };
+  } catch {
+    // Nesting too deep for the recursive walk (stack overflow): fall back to the text scanner.
+    return null;
   }
-
-  return {
-    value: JSON.stringify(result.value, null, value.includes("\n") ? 2 : undefined),
-    redacted: true
-  };
 }
 
 function redactJsonValue(
@@ -325,15 +330,9 @@ function resolveSeparatedValue(value: string, start: number, separator: string):
 }
 
 function resolveXmlElementValue(value: string, keyEnd: number): Range | null {
-  const tagEnd = value.indexOf(">", keyEnd);
+  const tagEnd = findOpeningTagEnd(value, keyEnd);
 
   if (tagEnd === -1 || value[tagEnd - 1] === "/") {
-    return null;
-  }
-
-  const nextTag = value.indexOf("<", keyEnd);
-
-  if (nextTag !== -1 && nextTag < tagEnd) {
     return null;
   }
 
@@ -345,6 +344,23 @@ function resolveXmlElementValue(value: string, keyEnd: number): Range | null {
   }
 
   return range;
+}
+
+// Stops at the next `<` too, so `<key<key…` input cannot rescan the rest of the body per match.
+function findOpeningTagEnd(value: string, from: number): number {
+  for (let index = from; index < value.length; index += 1) {
+    const char = value[index];
+
+    if (char === ">") {
+      return index;
+    }
+
+    if (char === "<") {
+      return -1;
+    }
+  }
+
+  return -1;
 }
 
 function findClosingQuote(value: string, from: number, quote: string): number {

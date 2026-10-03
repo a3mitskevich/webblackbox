@@ -197,6 +197,25 @@ describe("redactBodyText", () => {
       expect(result.redacted).toBe(true);
       expect(performance.now() - startedAt).toBeLessThan(2_000);
     });
+
+    it("stays linear on unclosed XML-like tags", () => {
+      const source = "<token".repeat(400_000);
+      const startedAt = performance.now();
+      const result = redact(source);
+
+      expect(result.redacted).toBe(false);
+      expect(performance.now() - startedAt).toBeLessThan(1_000);
+    });
+  });
+
+  it("falls back to text scanning for JSON nested too deep to walk", () => {
+    const depth = 100_000;
+    const source = `${'{"a":'.repeat(depth)}{"password":"hunter2"}${"}".repeat(depth)}`;
+    const result = redact(source);
+
+    expect(result.redacted).toBe(true);
+    expect(result.value).toContain('"password":"[REDACTED]"');
+    expect(result.value).not.toContain("hunter2");
   });
 
   it("returns the input untouched without patterns or text", () => {
