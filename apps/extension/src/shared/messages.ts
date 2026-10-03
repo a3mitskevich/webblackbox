@@ -185,6 +185,8 @@ export type ProfilePreviewResponse = {
     ruleName?: string;
     extended: boolean;
     downgradedFrom?: string;
+    /** Visual capture the profile pins; absent = the popup's choice applies. */
+    visual?: FullModeVisualCapture;
   } | null;
 };
 

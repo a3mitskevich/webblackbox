@@ -103,7 +103,8 @@ export function buildProfilePreview(
           source: selection.source,
           ...(selection.rule?.name ? { ruleName: selection.rule.name } : {}),
           extended: selection.extended,
-          ...(selection.downgradedFrom ? { downgradedFrom: selection.downgradedFrom.name } : {})
+          ...(selection.downgradedFrom ? { downgradedFrom: selection.downgradedFrom.name } : {}),
+          ...(selection.profile.visual ? { visual: selection.profile.visual } : {})
         }
       : null
   };

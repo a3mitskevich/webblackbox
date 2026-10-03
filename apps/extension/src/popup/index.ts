@@ -1,11 +1,7 @@
-import {
-  DEFAULT_EXPORT_POLICY,
-  type CaptureMode,
-  type ExportPolicy,
-  type FreezeReason
-} from "@webblackbox/protocol";
+import type { CaptureMode, ExportPolicy, FreezeReason } from "@webblackbox/protocol";
 
 import { getChromeApi } from "../shared/chrome-api.js";
+import { loadExportPolicyPrefs, toExportPolicy } from "../shared/export-policy-prefs.js";
 import { createExtensionI18n } from "../shared/i18n.js";
 import {
   PORT_NAMES,
@@ -16,6 +12,8 @@ import {
   type ProfilePreviewResponse,
   type SessionListItem
 } from "../shared/messages.js";
+import { openChoiceDialog, openPassphraseDialog } from "../shared/ui/dialogs.js";
+import { el } from "../shared/ui/dom.js";
 import {
   createProfilePickerSection,
   loadProfileChoice,
@@ -23,63 +21,57 @@ import {
   saveProfileChoice,
   toStartProfileId
 } from "./profile-picker.js";
+import {
+  createLastSessionPanel,
+  createPopupHeader,
+  createPrivacyWarning,
+  createRecordingPanel,
+  createStartPanel,
+  createStateLine,
+  type BadgeKind,
+  type PopupFormatters
+} from "./view.js";
 
 const chromeApi = getChromeApi();
 const port = chromeApi?.runtime?.connect({ name: PORT_NAMES.popup });
 const extensionVersion = chromeApi?.runtime?.getManifest?.().version ?? "dev";
-const i18n = createExtensionI18n({
-  pageTitleKey: "pageTitlePopup"
-});
-const {
+const i18n = createExtensionI18n({ pageTitleKey: "pageTitlePopup" });
+const { t, formatMode, formatFreezeReason } = i18n;
+const format: PopupFormatters = {
   t,
   formatMode,
-  formatFreezeReason,
-  formatRelativeTime: formatLocaleRelativeTime,
-  formatByteSize: formatLocaleByteSize
-} = i18n;
+  formatRelativeTime: i18n.formatRelativeTime,
+  formatDuration: i18n.formatDuration,
+  formatByteSize: i18n.formatByteSize
+};
 
 const root = document.getElementById("popup-root");
-const POPUP_EXPORT_POLICY_STORAGE_KEY = "webblackbox.popup.export-policy";
 const POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY = "webblackbox.popup.full-visual-capture";
 const START_PENDING_TIMEOUT_MS = 45_000;
 const EXPORT_ACK_TIMEOUT_MS = 120_000;
-
-type PopupExportPolicyForm = {
-  alertSensitiveFindings: boolean;
-  maxArchiveMb: string;
-  recentMinutes: string;
-};
+const RECENT_FREEZE_WINDOW_MS = 10 * 60 * 1000;
+const MARKER_COMMAND = { kind: "sw.marker-command" } as const;
 
 const state: {
   tabId: number | null;
   sessions: SessionListItem[];
-  recording: { active: boolean; sid?: string; mode?: string };
   fullModeVisualCapture: FullModeVisualCapture;
   profileChoice: string;
   profilePreview?: ProfilePreviewResponse;
+  /** Engine picked in the popup; unset = the selected profile's recommendation. */
+  engineOverride?: CaptureMode;
   pendingStart?: { tabId: number; mode: CaptureMode; requestedAt: number };
   pendingExportSid?: string;
   exportPrivacyWarning?: ExportPrivacyWarning;
-  exportPolicyForm: PopupExportPolicyForm;
-  exportStatus?: string;
-  exportStatusIsError?: boolean;
+  statusText?: string;
+  statusIsError?: boolean;
   lastPrivacyAlertKey?: string;
   lastFreeze?: { sid: string; reason: FreezeReason; at: number };
 } = {
   tabId: null,
   sessions: [],
-  recording: { active: false },
   fullModeVisualCapture: "screenshots",
-  profileChoice: PROFILE_CHOICE_AUTO,
-  profilePreview: undefined,
-  pendingStart: undefined,
-  pendingExportSid: undefined,
-  exportPrivacyWarning: undefined,
-  exportPolicyForm: toPopupExportPolicyForm(DEFAULT_EXPORT_POLICY),
-  exportStatus: undefined,
-  exportStatusIsError: false,
-  lastPrivacyAlertKey: undefined,
-  lastFreeze: undefined
+  profileChoice: PROFILE_CHOICE_AUTO
 };
 
 let pendingStartTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -92,7 +84,6 @@ if (root) {
 
 async function bootstrap(container: HTMLElement): Promise<void> {
   state.tabId = await getActiveTabId();
-  state.exportPolicyForm = loadPopupExportPolicyForm();
   state.fullModeVisualCapture = loadPopupFullVisualCapture();
   state.profileChoice = loadProfileChoice();
 
@@ -166,158 +157,149 @@ async function withExportAckTimeout<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
+type PopupSessions = {
+  /** Recording session to show (the current tab's first). */
+  activeSession?: SessionListItem;
+  recordingHere: boolean;
+  /** Stopped session the Export button exports (the current tab's latest first). */
+  exportSession?: SessionListItem;
+};
+
+function selectSessions(): PopupSessions {
+  const byRecency = [...state.sessions].sort((left, right) => right.startedAt - left.startedAt);
+  const onTab = byRecency.filter((item) => item.tabId === state.tabId);
+  const activeSession = onTab.find((item) => item.active) ?? byRecency.find((item) => item.active);
+  const recordingHere = Boolean(activeSession && activeSession.tabId === state.tabId);
+  const exportSession = recordingHere
+    ? undefined
+    : (onTab.find((item) => !item.active) ?? byRecency.find((item) => !item.active));
+
+  return { activeSession, recordingHere, exportSession };
+}
+
+/** The engine Start uses: the popup's pick, else the profile's recommendation, else Lite. */
+function resolveEngine(): CaptureMode {
+  return state.engineOverride ?? state.profilePreview?.selection?.base ?? "lite";
+}
+
 function render(container: HTMLElement): void {
   const now = Date.now();
   const pendingStart = getFreshPendingStart(now);
-  const sortedSessions = [...state.sessions].sort((left, right) => {
-    const activeDiff = Number(right.active) - Number(left.active);
-
-    if (activeDiff !== 0) {
-      return activeDiff;
-    }
-
-    return right.startedAt - left.startedAt;
-  });
-  const tabSessions = sortedSessions
-    .filter((item) => item.tabId === state.tabId)
-    .sort((left, right) => right.startedAt - left.startedAt);
-  const activeSession =
-    tabSessions.find((item) => item.active) ?? sortedSessions.find((item) => item.active);
-  const exportSession = activeSession ?? tabSessions[0] ?? sortedSessions[0];
-  const activeOnCurrentTab = activeSession && activeSession.tabId === state.tabId;
-  const pendingOnCurrentTab = pendingStart && pendingStart.tabId === state.tabId;
-  const exportDisabled = !exportSession || Boolean(state.pendingExportSid);
-  const status = activeSession
-    ? activeOnCurrentTab
-      ? t("popupStatusRecordingCurrent", {
-          mode: formatMode(activeSession.mode)
-        })
-      : t("popupStatusRecordingOtherTab", {
-          mode: formatMode(activeSession.mode),
-          tabId: activeSession.tabId
-        })
-    : exportSession
-      ? exportSession.tabId === state.tabId
-        ? t("popupStatusIdleLastCurrent", {
-            mode: formatMode(exportSession.mode)
-          })
-        : t("popupStatusIdleLastOtherTab", {
-            mode: formatMode(exportSession.mode),
-            tabId: exportSession.tabId
-          })
-      : t("popupStatusIdle");
-  const summarySession = activeSession ?? exportSession;
-  const budgetAlerts = summarySession?.budgetAlertCount ?? 0;
-  const ringUsage = summarySession ? describeRingBufferUsage(summarySession, now) : null;
-  const captureSummary = summarySession
-    ? t("popupCaptureSummary", {
-        events: summarySession.eventCount ?? 0,
-        errors: summarySession.errorCount ?? 0,
-        budgetAlerts,
-        size: formatLocaleByteSize(summarySession.sizeBytes ?? 0)
-      })
-    : t("popupNoCapturedEvents");
+  const { activeSession, recordingHere, exportSession } = selectSessions();
   const recentFreeze =
-    state.lastFreeze && now - state.lastFreeze.at <= 10 * 60 * 1000 ? state.lastFreeze : null;
-  const incidentText = recentFreeze
-    ? t("popupRecentFreeze", {
-        reason: formatFreezeReason(recentFreeze.reason),
-        timeAgo: formatLocaleRelativeTime(recentFreeze.at, now)
+    state.lastFreeze && now - state.lastFreeze.at <= RECENT_FREEZE_WINDOW_MS
+      ? state.lastFreeze
+      : null;
+  const badge: BadgeKind = recentFreeze ? "alert" : activeSession ? "rec" : "idle";
+  const section = el("section", { className: "card wb-popup" }, [
+    createPopupHeader({ t, version: extensionVersion, badge, tabId: state.tabId }),
+    createStateLine(
+      describeStatus(activeSession, exportSession),
+      recentFreeze
+        ? `${t("popupLabelIncident")}: ${t("popupRecentFreeze", {
+            reason: formatFreezeReason(recentFreeze.reason),
+            timeAgo: format.formatRelativeTime(recentFreeze.at, now)
+          })}`
+        : null
+    )
+  ]);
+
+  if (activeSession) {
+    section.append(
+      createRecordingPanel({ session: activeSession, onCurrentTab: recordingHere, now, format })
+    );
+  }
+
+  if (!recordingHere) {
+    section.append(createStartArea(Boolean(pendingStart && pendingStart.tabId === state.tabId)));
+  }
+
+  if (exportSession) {
+    const prefs = loadExportPolicyPrefs();
+    section.append(
+      createLastSessionPanel({
+        session: exportSession,
+        now,
+        format,
+        exporting: Boolean(state.pendingExportSid),
+        limitsText: t("popupArchiveLimits", {
+          size: prefs.maxArchiveMb,
+          minutes: prefs.recentMinutes
+        })
       })
-    : t("popupIncidentNone");
-  const badgeText = recentFreeze
-    ? t("popupBadgeAlert")
-    : activeSession
-      ? t("popupBadgeRecording")
-      : t("popupBadgeIdle");
-  const badgeClass = recentFreeze ? "wb-popup__badge wb-popup__badge--alert" : "wb-popup__badge";
-  const exportStatusClass = state.exportStatusIsError
-    ? "wb-popup__status wb-popup__status--error"
-    : "wb-popup__status";
-  const startDisabled = Boolean(activeOnCurrentTab || pendingOnCurrentTab);
-  const section = document.createElement("section");
-  section.className = "card wb-popup";
-
-  const header = document.createElement("header");
-  header.className = "wb-popup__header";
-  header.append(createBrandLockup({ tight: true }));
-
-  const badge = document.createElement("span");
-  badge.className = badgeClass;
-  badge.textContent = badgeText;
-  header.append(badge);
-  section.append(header);
-
-  const meta = document.createElement("div");
-  meta.className = "wb-popup__meta";
-  meta.append(
-    createMetaLine(t("popupLabelTab"), String(state.tabId ?? "n/a")),
-    createMetaLine(t("popupLabelStatus"), status),
-    createMetaLine(t("popupLabelCapture"), captureSummary),
-    createMetaLine(t("popupLabelIncident"), incidentText)
-  );
-  section.append(meta);
-
-  if (ringUsage) {
-    section.append(createRingUsageSection(ringUsage));
+    );
   }
 
   section.append(
-    createProfilePickerSection({
-      preview: state.profilePreview,
-      choice: state.profileChoice,
-      disabled: startDisabled,
-      t,
-      formatMode
+    el("p", {
+      className: state.statusIsError
+        ? "wb-popup__status wb-popup__status--error"
+        : "wb-popup__status",
+      text: state.statusText ?? "",
+      attrs: { role: "status", "aria-live": "polite" }
     })
   );
 
-  const actions = document.createElement("div");
-  actions.className = "wb-popup__actions";
-  actions.append(
-    createActionButton(t("popupStartLite"), "wb-btn wb-btn--brand", "start-lite", startDisabled),
-    createActionButton(
-      t("popupStartFull"),
-      "wb-btn wb-btn--brand-alt",
-      "start-full",
-      startDisabled
-    ),
-    createActionButton(t("popupStop"), "wb-btn wb-btn--muted", "stop", !activeSession),
-    createActionButton(t("popupExport"), "wb-btn wb-btn--accent", "export", exportDisabled)
-  );
-  section.append(actions);
-
-  section.append(createFullModeRecordingSection(startDisabled));
-
-  const nav = document.createElement("div");
-  nav.className = "wb-popup__nav";
-  nav.append(
-    createActionButton(t("popupSessions"), "wb-btn wb-btn--surface", "open-sessions"),
-    createActionButton(t("popupOptions"), "wb-btn wb-btn--surface", "open-options")
-  );
-  section.append(nav);
-
-  section.append(createArchivePolicySection());
-
-  const exportStatus = document.createElement("p");
-  exportStatus.className = exportStatusClass;
-  exportStatus.textContent = state.exportStatus ?? "";
-  section.append(exportStatus);
-
   if (state.exportPrivacyWarning) {
-    section.append(createPrivacyWarningSection(state.exportPrivacyWarning));
+    section.append(
+      createPrivacyWarning(
+        t("popupExportPrivacyWarningTitle"),
+        formatExportPrivacyWarning(state.exportPrivacyWarning)
+      )
+    );
   }
 
-  const hint = document.createElement("p");
-  hint.className = "wb-popup__hint";
-  hint.textContent = t("popupMarkerHint");
-  section.append(hint);
+  section.append(
+    el("p", {
+      className: "wb-popup__footer",
+      text: `v${extensionVersion} · ${t("popupMarkerHint")}`
+    })
+  );
 
   container.replaceChildren(section);
-
-  writeExportPolicyFormToContainer(container, state.exportPolicyForm);
   bindActions(container, activeSession, exportSession);
-  bindExportPolicyForm(container);
+}
+
+function describeStatus(
+  activeSession: SessionListItem | undefined,
+  exportSession: SessionListItem | undefined
+): string {
+  if (activeSession) {
+    return activeSession.tabId === state.tabId
+      ? t("popupStatusRecordingCurrent", { mode: formatMode(activeSession.mode) })
+      : t("popupStatusRecordingOtherTab", {
+          mode: formatMode(activeSession.mode),
+          tabId: activeSession.tabId
+        });
+  }
+
+  if (!exportSession) {
+    return t("popupStatusIdle");
+  }
+
+  return exportSession.tabId === state.tabId
+    ? t("popupStatusIdleLastCurrent", { mode: formatMode(exportSession.mode) })
+    : t("popupStatusIdleLastOtherTab", {
+        mode: formatMode(exportSession.mode),
+        tabId: exportSession.tabId
+      });
+}
+
+function createStartArea(pending: boolean): HTMLElement {
+  return createStartPanel({
+    t,
+    profilePicker: createProfilePickerSection({
+      preview: state.profilePreview,
+      choice: state.profileChoice,
+      disabled: pending,
+      t,
+      formatMode
+    }),
+    engine: resolveEngine(),
+    visualCapture: state.fullModeVisualCapture,
+    pinnedVisual: state.profilePreview?.selection?.visual,
+    pending
+  });
 }
 
 function bindActions(
@@ -325,91 +307,133 @@ function bindActions(
   activeSession?: SessionListItem,
   exportSession?: SessionListItem
 ): void {
-  container.querySelector("[data-action='start-lite']")?.addEventListener("click", async () => {
-    if (activeSession && activeSession.tabId === state.tabId) {
-      return;
-    }
-
-    const resolvedTabId = await getActiveTabId();
-    const tabId = typeof resolvedTabId === "number" ? resolvedTabId : state.tabId;
-
-    if (typeof tabId !== "number") {
-      return;
-    }
-
-    state.tabId = tabId;
-    const startAction = await openLiteReloadDialog();
-
-    if (startAction === null) {
-      return;
-    }
-
-    await startRecordingFromPopup(container, tabId, "lite", {
-      reloadPage: startAction === "reload"
+  const on = (action: string, handler: () => void | Promise<void>): void => {
+    container.querySelector(`[data-action='${action}']`)?.addEventListener("click", () => {
+      void handler();
     });
-  });
+  };
 
-  container.querySelector("[data-action='start-full']")?.addEventListener("click", async () => {
-    if (activeSession && activeSession.tabId === state.tabId) {
-      return;
+  on("start", () => startFromPopup(container));
+  on("stop", () => {
+    if (activeSession) {
+      postUiMessage({ kind: "ui.stop", tabId: activeSession.tabId });
     }
-
-    const resolvedTabId = await getActiveTabId();
-    const tabId = typeof resolvedTabId === "number" ? resolvedTabId : state.tabId;
-
-    if (typeof tabId !== "number") {
-      return;
-    }
-
-    state.tabId = tabId;
-    await startRecordingFromPopup(container, tabId, "full", {
-      visualCapture: state.fullModeVisualCapture
-    });
   });
+  on("marker", () => (activeSession ? addMarker(container, activeSession) : undefined));
+  on("export", () => (exportSession ? exportWithDialog(container, exportSession) : undefined));
+  on("open-sessions", () => openExtensionPage("sessions.html"));
+  on("open-options", () => openExtensionPage("options.html"));
 
   container
     .querySelector<HTMLSelectElement>("[data-profile-select]")
     ?.addEventListener("change", (event) => {
       const select = event.currentTarget as HTMLSelectElement;
       state.profileChoice = select.value || PROFILE_CHOICE_AUTO;
+      state.engineOverride = undefined;
       saveProfileChoice(state.profileChoice);
       requestProfilePreview();
     });
 
-  container.querySelector("[data-action='stop']")?.addEventListener("click", () => {
-    if (!activeSession) {
-      return;
-    }
-
-    postUiMessage({
-      kind: "ui.stop",
-      tabId: activeSession.tabId
+  container.querySelectorAll<HTMLInputElement>("input[name='capture-mode']").forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.checked && (input.value === "lite" || input.value === "full")) {
+        state.engineOverride = input.value;
+        render(container);
+      }
     });
   });
 
-  container.querySelector("[data-action='export']")?.addEventListener("click", async () => {
-    if (!exportSession) {
-      return;
+  container
+    .querySelectorAll<HTMLInputElement>("input[name='full-visual-capture']")
+    .forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.checked && isFullModeVisualCapture(input.value)) {
+          state.fullModeVisualCapture = input.value;
+          savePopupFullVisualCapture(state.fullModeVisualCapture);
+        }
+      });
+    });
+}
+
+async function startFromPopup(container: HTMLElement): Promise<void> {
+  const resolvedTabId = await getActiveTabId();
+  const tabId = typeof resolvedTabId === "number" ? resolvedTabId : state.tabId;
+
+  if (typeof tabId !== "number" || selectSessions().recordingHere) {
+    return;
+  }
+
+  state.tabId = tabId;
+
+  if (resolveEngine() === "full") {
+    await startRecordingFromPopup(container, tabId, "full", {
+      visualCapture: state.fullModeVisualCapture
+    });
+    return;
+  }
+
+  const startAction = await openChoiceDialog<"reload" | "direct">({
+    title: t("popupLiteReloadTitle"),
+    body: t("popupLiteReloadBody"),
+    cancelLabel: t("popupCancel"),
+    cancelAction: "start-lite-cancel",
+    choices: [
+      {
+        value: "direct",
+        label: t("popupLiteStartWithoutReload"),
+        action: "start-lite-direct",
+        variant: "surface"
+      },
+      {
+        value: "reload",
+        label: t("popupLiteReloadStart"),
+        action: "start-lite-reload",
+        variant: "brand",
+        primary: true
+      }
+    ]
+  });
+
+  if (startAction !== null) {
+    await startRecordingFromPopup(container, tabId, "lite", {
+      reloadPage: startAction === "reload"
+    });
+  }
+}
+
+async function exportWithDialog(container: HTMLElement, session: SessionListItem): Promise<void> {
+  const passphrase = await openPassphraseDialog({
+    title: t("popupExportPassphraseTitle"),
+    body: t("popupExportPassphraseBody"),
+    label: t("popupPassphraseLabel"),
+    submitLabel: t("popupExport"),
+    cancelLabel: t("popupCancel")
+  });
+
+  if (passphrase !== null) {
+    await exportSessionFromPopup(container, session.sid, passphrase, buildExportPolicy(session));
+  }
+}
+
+/** Same path as the keyboard shortcut: the tab's content script emits the marker. */
+async function addMarker(container: HTMLElement, session: SessionListItem): Promise<void> {
+  try {
+    if (typeof chromeApi?.tabs?.sendMessage !== "function") {
+      throw new Error(t("unknownError"));
     }
 
-    const passphrase = await openPassphraseDialog();
+    await chromeApi.tabs.sendMessage(session.tabId, MARKER_COMMAND);
+    setStatus(t("popupMarkerAdded"), false);
+  } catch (error) {
+    setStatus(t("popupMarkerFailed", { error: errorMessage(error) }), true);
+  }
 
-    if (passphrase === null) {
-      return;
-    }
+  render(container);
+}
 
-    const policy = readExportPolicyFromForm(container, exportSession);
-
-    await exportSessionFromPopup(container, exportSession.sid, passphrase, policy);
-  });
-
-  container.querySelector("[data-action='open-sessions']")?.addEventListener("click", () => {
-    void openExtensionPage("sessions.html");
-  });
-
-  container.querySelector("[data-action='open-options']")?.addEventListener("click", () => {
-    void openExtensionPage("options.html");
-  });
+function setStatus(text: string, isError: boolean): void {
+  state.statusText = text;
+  state.statusIsError = isError;
 }
 
 async function openExtensionPage(path: string): Promise<void> {
@@ -421,224 +445,6 @@ async function openExtensionPage(path: string): Promise<void> {
 
   await chromeApi.tabs.create({ url, active: true });
   window.close();
-}
-
-function bindExportPolicyForm(container: HTMLElement): void {
-  const persistDraft = (): void => {
-    state.exportPolicyForm = readPopupExportPolicyFormFromContainer(container);
-    savePopupExportPolicyForm(state.exportPolicyForm);
-  };
-  const persistAlertDraft = (): void => {
-    persistDraft();
-
-    if (!state.exportPolicyForm.alertSensitiveFindings) {
-      state.exportPrivacyWarning = undefined;
-      state.lastPrivacyAlertKey = undefined;
-      render(container);
-    }
-  };
-
-  container
-    .querySelector<HTMLInputElement>("#export-alert-sensitive-findings")
-    ?.addEventListener("change", persistAlertDraft);
-  container
-    .querySelector<HTMLInputElement>("#export-max-size-mb")
-    ?.addEventListener("input", persistDraft);
-  container
-    .querySelector<HTMLInputElement>("#export-recent-minutes")
-    ?.addEventListener("input", persistDraft);
-  container
-    .querySelectorAll<HTMLInputElement>("input[name='full-visual-capture']")
-    .forEach((input) => {
-      input.addEventListener("change", (event) => {
-        const target = event.currentTarget as HTMLInputElement;
-
-        if (target.checked && isFullModeVisualCapture(target.value)) {
-          state.fullModeVisualCapture = target.value;
-          savePopupFullVisualCapture(state.fullModeVisualCapture);
-        }
-      });
-    });
-}
-
-function openLiteReloadDialog(): Promise<"reload" | "direct" | null> {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.className = "wb-confirm-overlay";
-    const form = document.createElement("form");
-    form.className = "wb-confirm-card";
-    form.setAttribute("aria-labelledby", "wb-lite-reload-title");
-
-    const title = document.createElement("h2");
-    title.id = "wb-lite-reload-title";
-    title.className = "wb-confirm-title";
-    title.textContent = t("popupLiteReloadTitle");
-
-    const body = document.createElement("p");
-    body.className = "wb-confirm-body";
-    body.textContent = t("popupLiteReloadBody");
-
-    const actions = document.createElement("div");
-    actions.className = "wb-confirm-actions";
-
-    const cancelButton = document.createElement("button");
-    cancelButton.type = "button";
-    cancelButton.className = "wb-btn wb-btn--muted";
-    cancelButton.dataset.action = "start-lite-cancel";
-    cancelButton.textContent = t("popupCancel");
-
-    const directButton = document.createElement("button");
-    directButton.type = "button";
-    directButton.className = "wb-btn wb-btn--surface";
-    directButton.dataset.action = "start-lite-direct";
-    directButton.textContent = t("popupLiteStartWithoutReload");
-
-    const reloadButton = document.createElement("button");
-    reloadButton.type = "submit";
-    reloadButton.className = "wb-btn wb-btn--brand";
-    reloadButton.dataset.action = "start-lite-reload";
-    reloadButton.textContent = t("popupLiteReloadStart");
-
-    actions.append(cancelButton, directButton, reloadButton);
-    form.append(title, body, actions);
-    overlay.append(form);
-
-    let finished = false;
-
-    const finish = (value: "reload" | "direct" | null): void => {
-      if (finished) {
-        return;
-      }
-
-      finished = true;
-      overlay.remove();
-      document.removeEventListener("keydown", onKeydown);
-      resolve(value);
-    };
-
-    const onKeydown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        finish(null);
-      }
-    };
-
-    cancelButton.addEventListener("click", () => finish(null));
-    directButton.addEventListener("click", () => finish("direct"));
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      finish("reload");
-    });
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) {
-        finish(null);
-      }
-    });
-
-    document.addEventListener("keydown", onKeydown);
-    document.body.append(overlay);
-    reloadButton.focus();
-  });
-}
-
-function openPassphraseDialog(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.className = "wb-confirm-overlay";
-    const form = document.createElement("form");
-    form.className = "wb-confirm-card wb-prompt-card";
-    form.setAttribute("aria-labelledby", "wb-passphrase-title");
-
-    const title = document.createElement("h2");
-    title.id = "wb-passphrase-title";
-    title.className = "wb-confirm-title";
-    title.textContent = t("popupExportPassphraseTitle");
-
-    const body = document.createElement("p");
-    body.className = "wb-confirm-body";
-    body.textContent = t("popupExportPassphraseBody");
-
-    const label = document.createElement("label");
-    label.className = "wb-field-label";
-    label.htmlFor = "wb-passphrase-input";
-    label.textContent = t("popupPassphraseLabel");
-
-    const input = document.createElement("input");
-    input.id = "wb-passphrase-input";
-    input.type = "password";
-    input.className = "wb-input wb-prompt-field";
-    input.autocomplete = "off";
-
-    const actions = document.createElement("div");
-    actions.className = "wb-confirm-actions";
-
-    const cancelButton = document.createElement("button");
-    cancelButton.type = "button";
-    cancelButton.className = "wb-btn wb-btn--muted";
-    cancelButton.setAttribute("data-passphrase-cancel", "");
-    cancelButton.textContent = t("popupCancel");
-
-    const submitButton = document.createElement("button");
-    submitButton.type = "button";
-    submitButton.className = "wb-btn wb-btn--accent";
-    submitButton.dataset.passphraseSubmit = "";
-    submitButton.textContent = t("popupExport");
-
-    actions.append(cancelButton, submitButton);
-    form.append(title, body, label, input, actions);
-    overlay.append(form);
-
-    let finished = false;
-
-    const finish = (value: string | null): void => {
-      if (finished) {
-        return;
-      }
-
-      finished = true;
-      overlay.remove();
-      document.removeEventListener("keydown", onKeydown);
-      resolve(value);
-    };
-
-    const submitPassphrase = (): void => {
-      const passphrase = input.value;
-
-      finish(passphrase.trim().length > 0 ? passphrase : "");
-    };
-
-    const onKeydown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        finish(null);
-      }
-    };
-
-    cancelButton?.addEventListener("click", () => finish(null));
-    input.addEventListener("input", () => {
-      input.setCustomValidity("");
-    });
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        submitPassphrase();
-      }
-    });
-    submitButton.addEventListener("click", submitPassphrase);
-    form?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      submitPassphrase();
-    });
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) {
-        finish(null);
-      }
-    });
-
-    document.addEventListener("keydown", onKeydown);
-    document.body.append(overlay);
-    input?.focus();
-  });
 }
 
 async function startRecordingFromPopup(
@@ -661,21 +467,14 @@ async function startRecordingFromPopup(
     });
   } catch (error) {
     clearPendingStart();
-    state.exportStatusIsError = true;
-    state.exportStatus = t("popupStartFailed", {
-      error: error instanceof Error ? error.message : String(error)
-    });
+    setStatus(t("popupStartFailed", { error: errorMessage(error) }), true);
     render(container);
   }
 }
 
 function setPendingStart(container: HTMLElement, tabId: number, mode: CaptureMode): void {
   clearPendingStart();
-  state.pendingStart = {
-    tabId,
-    mode,
-    requestedAt: Date.now()
-  };
+  state.pendingStart = { tabId, mode, requestedAt: Date.now() };
   pendingStartTimeout = setTimeout(() => {
     if (!state.pendingStart) {
       return;
@@ -712,16 +511,13 @@ function getFreshPendingStart(now: number): typeof state.pendingStart {
 function clearPendingStartIfActivated(sessions: SessionListItem[]): void {
   const pendingStart = state.pendingStart;
 
-  if (!pendingStart) {
-    return;
-  }
-
-  const activated = sessions.some(
-    (session) =>
-      session.active && session.tabId === pendingStart.tabId && session.mode === pendingStart.mode
-  );
-
-  if (activated) {
+  if (
+    pendingStart &&
+    sessions.some(
+      (session) =>
+        session.active && session.tabId === pendingStart.tabId && session.mode === pendingStart.mode
+    )
+  ) {
     clearPendingStart();
   }
 }
@@ -745,8 +541,7 @@ async function exportSessionFromPopup(
   state.pendingExportSid = sid;
   state.exportPrivacyWarning = undefined;
   state.lastPrivacyAlertKey = undefined;
-  state.exportStatusIsError = false;
-  state.exportStatus = t("popupExporting");
+  setStatus(t("popupExporting"), false);
   render(container);
 
   try {
@@ -754,7 +549,7 @@ async function exportSessionFromPopup(
       sendUiMessage({
         kind: "ui.export",
         sid,
-        ...(hasDialogPassphrase(passphrase) ? { passphrase } : {}),
+        ...(passphrase.length > 0 ? { passphrase } : {}),
         saveAs: false,
         policy,
         ...(options.acknowledgePrivacyFindings ? { acknowledgePrivacyFindings: true } : {})
@@ -763,13 +558,8 @@ async function exportSessionFromPopup(
     state.pendingExportSid = undefined;
 
     if (isSuccessfulExportResponse(response)) {
-      state.exportStatusIsError = false;
-      state.exportStatus = t("popupExported", {
-        name: response.fileName ?? sid
-      });
+      setStatus(t("popupExported", { name: response.fileName ?? sid }), false);
       applyExportPrivacyWarning(response.privacyWarning);
-      render(container);
-      return;
     }
 
     render(container);
@@ -788,16 +578,16 @@ async function exportSessionFromPopup(
       return;
     }
 
-    state.exportStatusIsError = true;
-    state.exportStatus = t("popupExportFailed", {
-      error: error instanceof Error ? error.message : String(error)
-    });
+    setStatus(t("popupExportFailed", { error: errorMessage(error) }), true);
     render(container);
   }
 }
 
-function hasDialogPassphrase(passphrase: string): boolean {
-  return passphrase.length > 0;
+function buildExportPolicy(session: SessionListItem): ExportPolicy {
+  return toExportPolicy(
+    loadExportPolicyPrefs(),
+    session.mode === "full" ? state.fullModeVisualCapture : "none"
+  );
 }
 
 function isSuccessfulExportResponse(value: unknown): value is {
@@ -809,7 +599,7 @@ function isSuccessfulExportResponse(value: unknown): value is {
 }
 
 function applyExportPrivacyWarning(warning: ExportPrivacyWarning | undefined): void {
-  if (!warning || !state.exportPolicyForm.alertSensitiveFindings) {
+  if (!warning || !loadExportPolicyPrefs().alertSensitiveFindings) {
     state.exportPrivacyWarning = undefined;
     return;
   }
@@ -833,83 +623,47 @@ function formatExportPrivacyWarning(warning: ExportPrivacyWarning): string {
 }
 
 function applyMessage(message: ExtensionOutboundMessage): void {
-  if (message.kind === "sw.session-list") {
-    state.sessions = message.sessions;
-    clearPendingStartIfActivated(message.sessions);
-    return;
+  switch (message.kind) {
+    case "sw.session-list":
+      state.sessions = message.sessions;
+      clearPendingStartIfActivated(message.sessions);
+      return;
+    case "sw.recording-status":
+      if (message.active && state.pendingStart && message.mode === state.pendingStart.mode) {
+        clearPendingStart();
+      }
+      return;
+    case "sw.export-status":
+      if (state.pendingExportSid === message.sid) {
+        state.pendingExportSid = undefined;
+      }
+
+      state.exportPrivacyWarning = undefined;
+      setStatus(
+        message.ok
+          ? t("popupExported", { name: message.fileName ?? message.sid })
+          : t("popupExportFailed", { error: message.error ?? t("unknownError") }),
+        !message.ok
+      );
+
+      if (message.ok) {
+        applyExportPrivacyWarning(message.privacyWarning);
+      }
+      return;
+    case "sw.profile-preview":
+      state.profilePreview = message;
+      return;
+    case "sw.freeze":
+      state.lastFreeze = { sid: message.sid, reason: message.reason, at: Date.now() };
+      return;
+    default:
+      return;
   }
-
-  if (message.kind === "sw.recording-status") {
-    state.recording = {
-      active: message.active,
-      sid: message.sid,
-      mode: message.mode
-    };
-
-    if (message.active && state.pendingStart && message.mode === state.pendingStart.mode) {
-      clearPendingStart();
-    }
-
-    return;
-  }
-
-  if (message.kind === "sw.export-status") {
-    if (state.pendingExportSid === message.sid) {
-      state.pendingExportSid = undefined;
-    }
-
-    state.exportStatusIsError = !message.ok;
-    state.exportPrivacyWarning = undefined;
-    state.exportStatus = message.ok
-      ? t("popupExported", {
-          name: message.fileName ?? message.sid
-        })
-      : t("popupExportFailed", {
-          error: message.error ?? t("unknownError")
-        });
-
-    if (message.ok) {
-      applyExportPrivacyWarning(message.privacyWarning);
-    }
-
-    return;
-  }
-
-  if (message.kind === "sw.profile-preview") {
-    state.profilePreview = message;
-    return;
-  }
-
-  if (message.kind === "sw.freeze") {
-    state.lastFreeze = {
-      sid: message.sid,
-      reason: message.reason,
-      at: Date.now()
-    };
-  }
-}
-
-function createPrivacyWarningSection(warning: ExportPrivacyWarning): HTMLElement {
-  const section = document.createElement("section");
-  section.className = "wb-popup__privacy-warning";
-  section.setAttribute("role", "alert");
-
-  const title = document.createElement("strong");
-  title.textContent = t("popupExportPrivacyWarningTitle");
-
-  const body = document.createElement("p");
-  body.textContent = formatExportPrivacyWarning(warning);
-
-  section.append(title, body);
-  return section;
 }
 
 async function getActiveTabId(): Promise<number | null> {
   const focusedTabs =
-    (await chromeApi?.tabs?.query?.({
-      active: true,
-      lastFocusedWindow: true
-    })) ?? [];
+    (await chromeApi?.tabs?.query?.({ active: true, lastFocusedWindow: true })) ?? [];
   const focusedActiveRecordable = focusedTabs.find(
     (tab) => typeof tab.id === "number" && isRecordableTabUrl(tab.url)
   );
@@ -931,7 +685,7 @@ async function getActiveTabId(): Promise<number | null> {
     .filter((tab) => typeof tab.id === "number" && isRecordableTabUrl(tab.url))
     .sort((left, right) => (right.lastAccessed ?? 0) - (left.lastAccessed ?? 0));
 
-  if (recordableByRecency.length > 0 && typeof recordableByRecency[0]?.id === "number") {
+  if (typeof recordableByRecency[0]?.id === "number") {
     return recordableByRecency[0].id;
   }
 
@@ -942,99 +696,18 @@ async function getActiveTabId(): Promise<number | null> {
 }
 
 function isRecordableTabUrl(url: string | undefined): boolean {
-  if (typeof url !== "string" || url.length === 0) {
-    return false;
-  }
-
-  if (url.startsWith("chrome-extension://")) {
-    return false;
-  }
-
-  if (url.startsWith("chrome://")) {
-    return false;
-  }
-
-  if (url === "about:blank") {
-    return false;
-  }
-
-  return true;
-}
-
-function readExportPolicyFromForm(
-  container: HTMLElement,
-  exportSession?: SessionListItem
-): ExportPolicy {
-  state.exportPolicyForm = readPopupExportPolicyFormFromContainer(container);
-  savePopupExportPolicyForm(state.exportPolicyForm);
-
-  const visualCapture = exportSession?.mode === "full" ? state.fullModeVisualCapture : "none";
-
-  return toExportPolicy(state.exportPolicyForm, visualCapture);
-}
-
-function toPopupExportPolicyForm(policy: ExportPolicy): PopupExportPolicyForm {
-  return {
-    alertSensitiveFindings: true,
-    maxArchiveMb: String(Math.max(1, Math.round(policy.maxArchiveBytes / (1024 * 1024)))),
-    recentMinutes: String(Math.max(1, Math.round(policy.recentWindowMs / (60 * 1000))))
-  };
-}
-
-function loadPopupExportPolicyForm(): PopupExportPolicyForm {
-  if (typeof localStorage === "undefined") {
-    return toPopupExportPolicyForm(DEFAULT_EXPORT_POLICY);
-  }
-
-  try {
-    const raw = localStorage.getItem(POPUP_EXPORT_POLICY_STORAGE_KEY);
-
-    if (!raw) {
-      return toPopupExportPolicyForm(DEFAULT_EXPORT_POLICY);
-    }
-
-    const parsed = JSON.parse(raw) as Partial<PopupExportPolicyForm>;
-
-    return {
-      alertSensitiveFindings:
-        typeof parsed.alertSensitiveFindings === "boolean" ? parsed.alertSensitiveFindings : true,
-      maxArchiveMb: normalizeStoredBoundedIntText(
-        parsed.maxArchiveMb,
-        Math.round(DEFAULT_EXPORT_POLICY.maxArchiveBytes / (1024 * 1024)),
-        1,
-        4096
-      ),
-      recentMinutes: normalizeStoredBoundedIntText(
-        parsed.recentMinutes,
-        Math.round(DEFAULT_EXPORT_POLICY.recentWindowMs / (60 * 1000)),
-        1,
-        43_200
-      )
-    };
-  } catch {
-    return toPopupExportPolicyForm(DEFAULT_EXPORT_POLICY);
-  }
-}
-
-function savePopupExportPolicyForm(policy: PopupExportPolicyForm): void {
-  if (typeof localStorage === "undefined") {
-    return;
-  }
-
-  try {
-    localStorage.setItem(POPUP_EXPORT_POLICY_STORAGE_KEY, JSON.stringify(policy));
-  } catch {
-    // ignore storage write failures
-  }
+  return (
+    typeof url === "string" &&
+    url.length > 0 &&
+    !url.startsWith("chrome-extension://") &&
+    !url.startsWith("chrome://") &&
+    url !== "about:blank"
+  );
 }
 
 function loadPopupFullVisualCapture(): FullModeVisualCapture {
-  if (typeof localStorage === "undefined") {
-    return "screenshots";
-  }
-
   try {
-    const raw = localStorage.getItem(POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY);
+    const raw = globalThis.localStorage?.getItem(POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY);
     return raw && isFullModeVisualCapture(raw) ? raw : "screenshots";
   } catch {
     return "screenshots";
@@ -1042,327 +715,26 @@ function loadPopupFullVisualCapture(): FullModeVisualCapture {
 }
 
 function savePopupFullVisualCapture(value: FullModeVisualCapture): void {
-  if (typeof localStorage === "undefined") {
-    return;
-  }
-
   try {
-    localStorage.setItem(POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY, value);
+    globalThis.localStorage?.setItem(POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY, value);
   } catch {
     // ignore storage write failures
   }
-}
-
-function writeExportPolicyFormToContainer(
-  container: HTMLElement,
-  form: PopupExportPolicyForm
-): void {
-  const alertSensitiveFindings = container.querySelector<HTMLInputElement>(
-    "#export-alert-sensitive-findings"
-  );
-  const maxArchiveMb = container.querySelector<HTMLInputElement>("#export-max-size-mb");
-  const recentMinutes = container.querySelector<HTMLInputElement>("#export-recent-minutes");
-
-  if (alertSensitiveFindings) {
-    alertSensitiveFindings.checked = form.alertSensitiveFindings;
-  }
-
-  if (maxArchiveMb) {
-    maxArchiveMb.value = form.maxArchiveMb;
-  }
-
-  if (recentMinutes) {
-    recentMinutes.value = form.recentMinutes;
-  }
-}
-
-function readPopupExportPolicyFormFromContainer(container: HTMLElement): PopupExportPolicyForm {
-  return {
-    alertSensitiveFindings:
-      container.querySelector<HTMLInputElement>("#export-alert-sensitive-findings")?.checked ??
-      state.exportPolicyForm.alertSensitiveFindings,
-    maxArchiveMb:
-      container.querySelector<HTMLInputElement>("#export-max-size-mb")?.value ??
-      state.exportPolicyForm.maxArchiveMb,
-    recentMinutes:
-      container.querySelector<HTMLInputElement>("#export-recent-minutes")?.value ??
-      state.exportPolicyForm.recentMinutes
-  };
-}
-
-function toExportPolicy(
-  form: PopupExportPolicyForm,
-  visualCapture: FullModeVisualCapture
-): ExportPolicy {
-  const defaultPolicyForm = toPopupExportPolicyForm(DEFAULT_EXPORT_POLICY);
-  const maxArchiveMb = normalizeBoundedInt(
-    Number(form.maxArchiveMb),
-    Number(defaultPolicyForm.maxArchiveMb),
-    1,
-    4096
-  );
-  const recentMinutes = normalizeBoundedInt(
-    Number(form.recentMinutes),
-    Number(defaultPolicyForm.recentMinutes),
-    1,
-    43_200
-  );
-  const visualExport = resolveVisualExportPolicy(visualCapture);
-
-  return {
-    includeScreenshots: visualExport.includeScreenshots,
-    includeScreenRecordings: visualExport.includeScreenRecordings,
-    maxArchiveBytes: maxArchiveMb * 1024 * 1024,
-    recentWindowMs: recentMinutes * 60 * 1000
-  };
-}
-
-function resolveVisualExportPolicy(
-  visualCapture: FullModeVisualCapture
-): Pick<ExportPolicy, "includeScreenshots" | "includeScreenRecordings"> {
-  return {
-    includeScreenshots: visualCapture === "screenshots" || visualCapture === "both",
-    includeScreenRecordings: visualCapture === "recording" || visualCapture === "both"
-  };
-}
-
-function normalizeStoredBoundedIntText(
-  value: unknown,
-  fallback: number,
-  min: number,
-  max: number
-): string {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-
-    if (trimmed.length === 0) {
-      return "";
-    }
-
-    const numeric = Number(trimmed);
-
-    if (Number.isFinite(numeric) && numeric > 0) {
-      return String(Math.max(min, Math.min(max, Math.round(numeric))));
-    }
-  }
-
-  return String(normalizeBoundedInt(value, fallback, min, max));
-}
-
-function normalizeBoundedInt(value: unknown, fallback: number, min: number, max: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return fallback;
-  }
-
-  return Math.max(min, Math.min(max, Math.round(value)));
-}
-
-function describeRingBufferUsage(
-  session: SessionListItem,
-  now: number
-): {
-  usedMinutes: number;
-  capacityMinutes: number;
-  windowLabel: string;
-} {
-  const capacityMinutes = Math.max(
-    1,
-    Number.isFinite(session.ringBufferMinutes) ? Number(session.ringBufferMinutes) : 10
-  );
-  const endedAt = typeof session.stoppedAt === "number" ? session.stoppedAt : now;
-  const elapsedMinutes = Math.max(0, (endedAt - session.startedAt) / 60_000);
-  const usedMinutes = Math.min(capacityMinutes, elapsedMinutes);
-  const windowLabel = `${usedMinutes.toFixed(1)}m / ${capacityMinutes.toFixed(1)}m`;
-
-  return {
-    usedMinutes,
-    capacityMinutes,
-    windowLabel
-  };
-}
-
-function renderError(container: HTMLElement, error: unknown): void {
-  const section = document.createElement("section");
-  section.className = "card";
-  section.append(createBrandLockup({ tight: true }));
-
-  const message = document.createElement("p");
-  message.textContent = String(error);
-  section.append(message);
-
-  container.replaceChildren(section);
-}
-
-function createBrandLockup({ tight = false }: { tight?: boolean } = {}): HTMLElement {
-  const lockup = document.createElement("div");
-  lockup.className = tight ? "wb-brand-lockup wb-brand-lockup--tight" : "wb-brand-lockup";
-
-  const icon = document.createElement("img");
-  icon.className = "wb-brand-lockup__icon";
-  icon.src = "./icon/32.png";
-  icon.alt = "";
-  icon.width = 32;
-  icon.height = 32;
-
-  const copy = document.createElement("div");
-  copy.className = "wb-brand-lockup__copy";
-
-  const title = document.createElement("h1");
-  title.className = "wb-popup__title";
-  title.textContent = "WebBlackbox";
-
-  const version = document.createElement("p");
-  version.className = "wb-popup__version";
-  version.textContent = `v${extensionVersion}`;
-
-  copy.append(title, version);
-  lockup.append(icon, copy);
-  return lockup;
-}
-
-function createMetaLine(label: string, value: string): HTMLElement {
-  const line = document.createElement("p");
-  line.className = "wb-popup__meta-line";
-
-  const labelNode = document.createElement("span");
-  labelNode.textContent = label;
-
-  const valueNode = document.createElement("strong");
-  valueNode.textContent = value;
-
-  line.append(labelNode, valueNode);
-  return line;
-}
-
-function createRingUsageSection(ringUsage: {
-  usedMinutes: number;
-  capacityMinutes: number;
-  windowLabel: string;
-}): HTMLElement {
-  const section = document.createElement("section");
-  section.className = "wb-popup__buffer";
-
-  const label = document.createElement("p");
-  label.className = "wb-popup__buffer-label";
-
-  const labelText = document.createElement("span");
-  labelText.textContent = t("popupRingBuffer");
-
-  const labelValue = document.createElement("strong");
-  labelValue.textContent = ringUsage.windowLabel;
-
-  label.append(labelText, labelValue);
-
-  const meter = document.createElement("progress");
-  meter.className = "wb-popup__buffer-meter";
-  meter.max = Math.round(ringUsage.capacityMinutes * 100);
-  meter.value = Math.round(ringUsage.usedMinutes * 100);
-  meter.setAttribute("aria-valuetext", ringUsage.windowLabel);
-
-  section.append(label, meter);
-  return section;
-}
-
-function createFullModeRecordingSection(disabled: boolean): HTMLElement {
-  const section = document.createElement("section");
-  section.className = "wb-popup__policy";
-
-  const title = document.createElement("h2");
-  title.className = "wb-popup__policy-title";
-  title.textContent = t("popupFullVisualCaptureTitle");
-  section.append(title);
-
-  const options: Array<{ value: FullModeVisualCapture; label: string }> = [
-    { value: "screenshots", label: t("popupFullVisualScreenshots") },
-    { value: "recording", label: t("popupFullVisualRecording") },
-    { value: "both", label: t("popupFullVisualBoth") },
-    { value: "none", label: t("popupFullVisualNone") }
-  ];
-
-  for (const option of options) {
-    const label = document.createElement("label");
-    label.className = "wb-toggle";
-
-    const input = document.createElement("input");
-    input.type = "radio";
-    input.name = "full-visual-capture";
-    input.value = option.value;
-    input.checked = state.fullModeVisualCapture === option.value;
-    input.disabled = disabled;
-
-    const text = document.createElement("span");
-    text.textContent = option.label;
-    label.append(input, text);
-    section.append(label);
-  }
-
-  return section;
 }
 
 function isFullModeVisualCapture(value: string): value is FullModeVisualCapture {
   return value === "screenshots" || value === "recording" || value === "both" || value === "none";
 }
 
-function createActionButton(
-  label: string,
-  className: string,
-  action: string,
-  disabled = false
-): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = className;
-  button.dataset.action = action;
-  button.disabled = disabled;
-  button.textContent = label;
-  return button;
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
-function createArchivePolicySection(): HTMLElement {
-  const section = document.createElement("section");
-  section.className = "wb-popup__policy";
-
-  const title = document.createElement("p");
-  title.className = "wb-popup__policy-title";
-  title.textContent = t("popupArchivePolicyTitle");
-
-  const sensitiveToggleLabel = document.createElement("label");
-  sensitiveToggleLabel.className = "wb-toggle";
-
-  const alertSensitiveFindings = document.createElement("input");
-  alertSensitiveFindings.id = "export-alert-sensitive-findings";
-  alertSensitiveFindings.type = "checkbox";
-
-  const sensitiveToggleText = document.createElement("span");
-  sensitiveToggleText.textContent = t("popupAlertSensitiveFindings");
-  sensitiveToggleLabel.append(alertSensitiveFindings, sensitiveToggleText);
-
-  const sizeLabel = document.createElement("label");
-  sizeLabel.className = "wb-field-label";
-  sizeLabel.htmlFor = "export-max-size-mb";
-  sizeLabel.textContent = t("popupMaxArchiveSizeMb");
-
-  const sizeInput = document.createElement("input");
-  sizeInput.id = "export-max-size-mb";
-  sizeInput.type = "number";
-  sizeInput.min = "1";
-  sizeInput.max = "4096";
-  sizeInput.step = "1";
-  sizeInput.className = "wb-input";
-
-  const recentLabel = document.createElement("label");
-  recentLabel.className = "wb-field-label";
-  recentLabel.htmlFor = "export-recent-minutes";
-  recentLabel.textContent = t("popupRecentWindowMinutes");
-
-  const recentInput = document.createElement("input");
-  recentInput.id = "export-recent-minutes";
-  recentInput.type = "number";
-  recentInput.min = "1";
-  recentInput.max = "43200";
-  recentInput.step = "1";
-  recentInput.className = "wb-input";
-
-  section.append(title, sensitiveToggleLabel, sizeLabel, sizeInput, recentLabel, recentInput);
-  return section;
+function renderError(container: HTMLElement, error: unknown): void {
+  container.replaceChildren(
+    el("section", { className: "card wb-popup" }, [
+      el("h1", { className: "wb-popup__title", text: "WebBlackbox" }),
+      el("p", { className: "wb-popup__status wb-popup__status--error", text: String(error) })
+    ])
+  );
 }

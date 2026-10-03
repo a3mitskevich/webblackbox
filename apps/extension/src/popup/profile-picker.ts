@@ -44,16 +44,17 @@ export function toStartProfileId(choice: string): string | undefined {
 /** Profile select plus a one-line explanation of what Start will record with. */
 export function createProfilePickerSection(options: ProfilePickerOptions): HTMLElement {
   const { preview, t } = options;
-  const section = document.createElement("section");
-  section.className = "wb-popup__policy wb-popup__profile";
+  const section = document.createElement("div");
+  section.className = "wb-popup__profile";
 
   const label = document.createElement("label");
-  label.className = "wb-popup__policy-title";
+  label.className = "wb-field-label";
   label.htmlFor = "wb-profile-select";
   label.textContent = t("popupProfileTitle");
 
   const select = document.createElement("select");
   select.id = "wb-profile-select";
+  select.className = "wb-input wb-select";
   select.dataset.profileSelect = "";
   select.disabled = options.disabled;
   select.append(createOption(PROFILE_CHOICE_AUTO, t("popupProfileAuto")));
@@ -67,7 +68,7 @@ export function createProfilePickerSection(options: ProfilePickerOptions): HTMLE
   select.value = knownChoice ? options.choice : PROFILE_CHOICE_AUTO;
 
   const hint = document.createElement("p");
-  hint.className = "wb-popup__hint";
+  hint.className = "wb-popup__hint wb-popup__profile-hint";
   hint.dataset.profileHint = "";
   hint.textContent = describeProfileSelection(options);
 

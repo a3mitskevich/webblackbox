@@ -31,6 +31,8 @@ const STATIC_PUBLIC_FILES = [
   "popup.html",
   "sessions.html",
   "styles.css",
+  "options.css",
+  "sessions.css",
   "icon"
 ];
 const REQUIRED_BUILD_FILES = [
@@ -50,6 +52,8 @@ const REQUIRED_BUILD_FILES = [
   "sessions.html",
   "sessions.js",
   "styles.css",
+  "options.css",
+  "sessions.css",
   "sw.js",
   "icon/16.png",
   "icon/32.png",

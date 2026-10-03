@@ -184,6 +184,24 @@ describe("buildProfilePreview", () => {
       downgradedFrom: "QA"
     });
   });
+
+  it("tells the popup which visual capture the selected profile pins", async () => {
+    const { api } = fakeChrome({
+      local: {
+        [PROFILES_STORAGE_KEY]: {
+          schemaVersion: 2,
+          defaultProfileId: DEFAULT_PROFILE_ID,
+          profiles: [{ ...createDefaultProfile(), visual: "both" }],
+          rules: [],
+          extendedCaptureHosts: []
+        }
+      }
+    });
+    const state = await loadProfilesState(api, KEYS);
+    const selection = selectRecordingProfile({ state, page: { url: "https://example.org/" } });
+
+    expect(buildProfilePreview(state, selection).selection?.visual).toBe("both");
+  });
 });
 
 describe("mergeCapturedVisuals", () => {
