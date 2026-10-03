@@ -1,6 +1,7 @@
 import type {
   CapturePolicy,
   ExportPolicy,
+  PointerCaptureOptions,
   HashesManifest,
   RecorderConfig,
   SessionMetadata
@@ -27,6 +28,8 @@ export type LiteCaptureState = {
   mode?: SessionMetadata["mode"] | "freeze";
   sampling?: Partial<LiteCaptureSampling>;
   capturePolicy?: CapturePolicy;
+  /** Optional pointer streams (hover / drag / wheel); absent = all off. */
+  pointer?: Partial<PointerCaptureOptions>;
 };
 
 /**

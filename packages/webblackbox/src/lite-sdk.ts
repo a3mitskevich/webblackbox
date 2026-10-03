@@ -190,7 +190,8 @@ export class WebBlackboxLiteSdk {
       tabId: this.tabId,
       mode: "lite",
       sampling: this.config.sampling,
-      capturePolicy: this.config.capturePolicy
+      capturePolicy: this.config.capturePolicy,
+      pointer: this.config.pointer
     });
   }
 
@@ -211,7 +212,8 @@ export class WebBlackboxLiteSdk {
         tabId: this.tabId,
         mode: "lite",
         sampling: this.config.sampling,
-        capturePolicy: this.config.capturePolicy
+        capturePolicy: this.config.capturePolicy,
+        pointer: this.config.pointer
       });
     }
 
