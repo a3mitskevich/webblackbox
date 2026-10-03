@@ -97,7 +97,7 @@ describe("readCapturableInputValue", () => {
     const input = field('<input data-field type="password" />');
 
     notePasswordField(input);
-    input.type = "text";
+    input.setAttribute("type", "text");
 
     expect(
       readCapturableInputValue(input, policy("allow", { unmaskSelectors: ["input"] }))
