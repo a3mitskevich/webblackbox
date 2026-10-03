@@ -197,6 +197,17 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.capturePolicy?.redaction.blockedSelectors).toContain("input[type='password']");
   });
 
+  it("hands the profile's pointer streams to the recorder config", () => {
+    const fullCapture = buildProfileRecorderConfig({
+      mode: "lite",
+      profile: preset(BUILT_IN_PROFILE_IDS.fullCapture)
+    });
+    const defaults = buildProfileRecorderConfig({ mode: "full", profile: createDefaultProfile() });
+
+    expect(fullCapture.pointer).toEqual({ hover: true, drag: true, wheel: true });
+    expect(defaults.pointer).toEqual({ hover: false, drag: false, wheel: false });
+  });
+
   it("keeps the lite transport boundary: no page-side bodies even for QA", () => {
     const config = buildProfileRecorderConfig({
       mode: "lite",
@@ -350,6 +361,9 @@ describe("selectRecordingProfile", () => {
 
     expect(selection.profile.id).toBe(BUILT_IN_PROFILE_IDS.full);
     expect(selection.extended).toBe(false);
+    expect(
+      buildProfileRecorderConfig({ mode: "full", profile: selection.profile }).pointer
+    ).toEqual({ hover: false, drag: false, wheel: false });
     expect(selection.downgradedFrom).toEqual({
       id: BUILT_IN_PROFILE_IDS.fullCapture,
       name: "Full capture",

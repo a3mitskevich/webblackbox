@@ -3,6 +3,7 @@ import type {
   CapturePolicy,
   ExportPolicy,
   FreezeReason,
+  PointerCaptureOptions,
   PrivacyScannerFindingKind,
   SamplingProfile
 } from "@webblackbox/protocol";
@@ -120,6 +121,7 @@ export type RecordingStatusMessage = {
     | "bodyCaptureMaxBytes"
   >;
   capturePolicy?: CapturePolicy;
+  pointer?: PointerCaptureOptions;
 };
 
 export type FreezeNoticeMessage = {

@@ -7,6 +7,7 @@ import {
   createSessionId,
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_EXPORT_POLICY,
+  DEFAULT_POINTER_CAPTURE_OPTIONS,
   DEFAULT_RECORDER_CONFIG,
   redactBodyBytes,
   redactBodyText,
@@ -16,6 +17,7 @@ import {
   type ExportPolicy,
   type FreezeReason,
   type HashesManifest,
+  type PointerCaptureOptions,
   type PrivacyScannerFinding,
   type PrivacyScannerFindingKind,
   type PrivacyScannerResult,
@@ -610,7 +612,8 @@ function syncContentPortRecordingState(port: PortLike): void {
       sid: runtime.sid,
       mode: runtime.mode,
       sampling,
-      capturePolicy: runtime.config.capturePolicy
+      capturePolicy: runtime.config.capturePolicy,
+      pointer: toStatusPointer(runtime)
     });
   } catch (error) {
     logPortSendFailure("sw.recording-status", error, {
@@ -828,7 +831,8 @@ async function handleInboundMessage(
       sid: runtime.sid,
       mode: runtime.mode,
       sampling,
-      capturePolicy: runtime.config.capturePolicy
+      capturePolicy: runtime.config.capturePolicy,
+      pointer: toStatusPointer(runtime)
     };
   }
 
@@ -1084,14 +1088,17 @@ async function startSession(
   const sampling = toStatusSampling(runtime);
 
   await setRecordingBadge();
-  await notifyTabStatus(tabId, true, sid, mode, sampling, recorderConfig.capturePolicy);
+  const pointer = toStatusPointer(runtime);
+
+  await notifyTabStatus(tabId, true, sid, mode, sampling, recorderConfig.capturePolicy, pointer);
   broadcast({
     kind: "sw.recording-status",
     active: true,
     sid,
     mode,
     sampling,
-    capturePolicy: recorderConfig.capturePolicy
+    capturePolicy: recorderConfig.capturePolicy,
+    pointer
   });
   pushSessionList();
   await persistRuntimeState();
@@ -1126,7 +1133,8 @@ async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<
     runtime.sid,
     runtime.mode,
     toStatusSampling(runtime),
-    runtime.config.capturePolicy
+    runtime.config.capturePolicy,
+    toStatusPointer(runtime)
   );
   // Title, meta tags and selectors are only reliable once the page has loaded.
   scheduleProfileReevaluation(runtime, "page-loaded");
@@ -1554,7 +1562,8 @@ async function applySessionProfileSelection(
     runtime.sid,
     runtime.mode,
     toStatusSampling(runtime),
-    config.capturePolicy
+    config.capturePolicy,
+    toStatusPointer(runtime)
   );
   pushSessionList();
 }
@@ -4097,6 +4106,10 @@ function normalizeExportBoundedInt(
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
+function toStatusPointer(runtime: SessionRuntime): PointerCaptureOptions {
+  return { ...DEFAULT_POINTER_CAPTURE_OPTIONS, ...runtime.config.pointer };
+}
+
 function toStatusSampling(runtime: SessionRuntime): RecordingSampling {
   const sampling = runtime.config.sampling;
 
@@ -5226,7 +5239,8 @@ async function notifyTabStatus(
   sid?: string,
   mode?: CaptureMode,
   sampling?: RecordingSampling,
-  capturePolicy?: CapturePolicy
+  capturePolicy?: CapturePolicy,
+  pointer?: PointerCaptureOptions
 ): Promise<void> {
   if (!chromeApi?.tabs?.sendMessage) {
     return;
@@ -5239,7 +5253,8 @@ async function notifyTabStatus(
       sid,
       mode,
       sampling,
-      capturePolicy
+      capturePolicy,
+      pointer
     })
     .catch(() => undefined);
 }
