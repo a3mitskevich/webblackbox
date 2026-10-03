@@ -467,7 +467,7 @@ export function isValidHeaderName(name: string): boolean {
   return /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name);
 }
 
-/** `type/subtype`, `*` allowed in the subtype (e.g. `text/*`). */
+/** `type/subtype`; `*` may stand in the subtype (`text/*`, `application/*+json`). */
 export function isValidMimeType(value: string): boolean {
-  return /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(\*|[a-z0-9][a-z0-9!#$&^_.+*-]*)$/i.test(value);
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9*][a-z0-9!#$&^_.+*-]*$/i.test(value);
 }
