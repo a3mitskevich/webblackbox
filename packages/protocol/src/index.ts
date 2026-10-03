@@ -5,6 +5,7 @@ export * from "./defaults.js";
 export * from "./ids.js";
 export * from "./messages.js";
 export * from "./network.js";
+export * from "./pointer.js";
 export * from "./privacy.js";
 export * from "./schemas.js";
 export * from "./types.js";

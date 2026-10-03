@@ -7,6 +7,7 @@ import type {
   STORAGE_SNAPSHOT_MODES,
   WEBBLACKBOX_EVENT_TYPES
 } from "./constants.js";
+import type { PointerCaptureOptions } from "./pointer.js";
 
 export type EventLevel = (typeof EVENT_LEVELS)[number];
 
@@ -176,6 +177,8 @@ export type RecorderConfig = {
   redaction: RedactionProfile;
   capturePolicy?: CapturePolicy;
   sitePolicies: SiteCapturePolicy[];
+  /** Optional pointer streams; absent = all off. */
+  pointer?: PointerCaptureOptions;
 };
 
 export type SessionMetadata = {
