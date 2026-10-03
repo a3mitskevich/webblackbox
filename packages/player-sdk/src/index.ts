@@ -14,7 +14,17 @@ import type {
 } from "@webblackbox/protocol";
 import { extractRequestId, inferBlobMime } from "@webblackbox/protocol";
 
+import { buildPlaywrightActionLines, isPlaywrightReplayableEvent } from "./playwright-actions.js";
+import {
+  buildPointerTimeline,
+  detectPointerSignals,
+  type PointerSignals,
+  type PointerTimelineEntry
+} from "./pointer-insights.js";
+
 /** Player lifecycle status. */
+export * from "./playwright-actions.js";
+export * from "./pointer-insights.js";
 export * from "./recording-profile.js";
 
 export type PlayerStatus = "idle" | "loaded";
@@ -417,6 +427,9 @@ type NodeZlibLike = {
 const ACTION_TRIGGER_TYPES = new Set<WebBlackboxEventType>([
   "user.click",
   "user.dblclick",
+  "user.contextmenu",
+  "user.auxclick",
+  "user.drag.end",
   "user.keydown",
   "user.input",
   "user.submit",
@@ -1533,6 +1546,16 @@ export class WebBlackboxPlayer {
   }
 
   /** Generates a Markdown bug report for the selected range. */
+  /** Pointer actions for the pointer lane: clicks, right/middle clicks, holds, drags, wheel, hover. */
+  public getPointerTimeline(range?: PlayerRange): PointerTimelineEntry[] {
+    return buildPointerTimeline(this.query({ range }));
+  }
+
+  /** Rage clicks and dead clicks in the range (see `detectRageClicks` / `detectDeadClicks`). */
+  public getPointerSignals(range?: PlayerRange): PointerSignals {
+    return detectPointerSignals(this.query({ range }));
+  }
+
   public generateBugReport(options: BugReportOptions = {}): string {
     const maxItems = Math.max(5, options.maxItems ?? 20);
     const scoped = this.query({ range: options.range });
@@ -1551,6 +1574,7 @@ export class WebBlackboxPlayer {
 
     const heading = options.title ?? "WebBlackbox Bug Report";
     const derived = this.buildDerived(options.range);
+    const pointerSignals = detectPointerSignals(scoped);
 
     return [
       `# ${heading}`,
@@ -1605,7 +1629,10 @@ export class WebBlackboxPlayer {
               (entry) =>
                 `- ${entry.actId} confidence=${entry.confidence} chain=${entry.causeChain.join(" -> ")}`
             )
-            .join("\n")
+            .join("\n"),
+      "",
+      "## Pointer Signals",
+      ...formatPointerSignals(pointerSignals, maxItems)
     ].join("\n");
   }
 
@@ -1663,10 +1690,7 @@ export class WebBlackboxPlayer {
     const maxActions = Math.max(1, options.maxActions ?? 40);
     const includeHarReplay = options.includeHarReplay ?? true;
     const actions = this.query({ range: options.range })
-      .filter(
-        (event) =>
-          event.type.startsWith("user.") || event.type === "nav.commit" || event.type === "nav.hash"
-      )
+      .filter(isPlaywrightReplayableEvent)
       .slice(0, maxActions);
 
     const lines = [
@@ -1681,9 +1705,7 @@ export class WebBlackboxPlayer {
       `  await page.goto(${JSON.stringify(options.startUrl ?? this.archive.manifest.site.origin)});`
     ];
 
-    for (const action of actions) {
-      lines.push(...toPlaywrightLines(action));
-    }
+    lines.push(...buildPlaywrightActionLines(actions));
 
     lines.push("  await context.close();", "});");
 
@@ -1698,10 +1720,7 @@ export class WebBlackboxPlayer {
     const maxActions = Math.max(1, options.maxActions ?? 40);
     const maxMocks = Math.max(1, options.maxMocks ?? 25);
     const actions = this.query({ range: options.range })
-      .filter(
-        (event) =>
-          event.type.startsWith("user.") || event.type === "nav.commit" || event.type === "nav.hash"
-      )
+      .filter(isPlaywrightReplayableEvent)
       .slice(0, maxActions);
 
     const mockEntries = this.getNetworkWaterfall(options.range)
@@ -1740,9 +1759,7 @@ export class WebBlackboxPlayer {
       `  await page.goto(${JSON.stringify(options.startUrl ?? this.archive.manifest.site.origin)});`
     );
 
-    for (const action of actions) {
-      lines.push(...toPlaywrightLines(action));
-    }
+    lines.push(...buildPlaywrightActionLines(actions));
 
     lines.push("  await context.close();", "});");
 
@@ -2326,6 +2343,27 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
+function formatPointerSignals(signals: PointerSignals, maxItems: number): string[] {
+  const rage = signals.rageClicks
+    .slice(0, maxItems)
+    .map(
+      (finding) =>
+        `- Rage click: ${finding.count} clicks @ ${finding.startMono.toFixed(2)}ms at (${finding.x}, ${finding.y})${finding.target ? ` on ${finding.target}` : ""} [${finding.eventIds.join(", ")}]`
+    );
+  const dead = signals.deadClicks
+    .slice(0, maxItems)
+    .map(
+      (finding) =>
+        `- Dead click: ${finding.eventId} @ ${finding.mono.toFixed(2)}ms${finding.target ? ` on ${finding.target}` : ""} (no DOM change, request or navigation within 1s)`
+    );
+  const coverage = signals.deadClickCoverage
+    ? []
+    : ["- Dead clicks: not judged (the session has no DOM reaction data)"];
+  const lines = [...rage, ...dead, ...coverage];
+
+  return lines.length > 0 ? lines : ["- None"];
+}
+
 function compactEventText(event: WebBlackboxEvent): string {
   const payload = asRecord(event.data);
   const message =
@@ -2341,84 +2379,6 @@ function compactEventText(event: WebBlackboxEvent): string {
 
   const text = JSON.stringify(event.data);
   return text.length > 140 ? `${text.slice(0, 140)}...` : text;
-}
-
-function toPlaywrightLines(event: WebBlackboxEvent): string[] {
-  if (event.type === "nav.commit") {
-    const payload = asRecord(event.data);
-    const url = asString(payload?.url);
-    return url ? [`  await page.goto(${JSON.stringify(url)});`] : [];
-  }
-
-  if (event.type === "nav.hash") {
-    const payload = asRecord(event.data);
-    const url = asString(payload?.url);
-    return url ? [`  await page.goto(${JSON.stringify(url)});`] : [];
-  }
-
-  if (event.type === "user.click" || event.type === "user.dblclick") {
-    const selector = readSelector(event);
-
-    if (!selector) {
-      return [`  // ${event.type} skipped (no selector)`];
-    }
-
-    const method = event.type === "user.dblclick" ? "dblclick" : "click";
-    return [`  await page.${method}(${JSON.stringify(selector)});`];
-  }
-
-  if (event.type === "user.input") {
-    const selector = readSelector(event);
-    const payload = asRecord(event.data);
-    const value = asString(payload?.value);
-
-    if (!selector) {
-      return [`  // input skipped (no selector)`];
-    }
-
-    if (!value || value === "[MASKED]") {
-      return [`  // input on ${selector} was masked in capture`];
-    }
-
-    return [`  await page.fill(${JSON.stringify(selector)}, ${JSON.stringify(value)});`];
-  }
-
-  if (event.type === "user.scroll") {
-    const payload = asRecord(event.data);
-    const x = asNumber(payload?.scrollX) ?? 0;
-    const y = asNumber(payload?.scrollY) ?? 0;
-
-    return [`  await page.evaluate(([x, y]) => window.scrollTo(x, y), [${x}, ${y}] as const);`];
-  }
-
-  if (event.type === "user.keydown") {
-    const payload = asRecord(event.data);
-    const key = asString(payload?.key);
-
-    if (!key) {
-      return [];
-    }
-
-    return [`  await page.keyboard.press(${JSON.stringify(key)});`];
-  }
-
-  if (event.type === "user.marker") {
-    return ["  // Marker captured during session"];
-  }
-
-  return [];
-}
-
-function readSelector(event: WebBlackboxEvent): string | null {
-  const payload = asRecord(event.data);
-  const target = asRecord(payload?.target);
-  const selector = asString(target?.selector);
-
-  if (!selector || selector === "unknown") {
-    return null;
-  }
-
-  return selector;
 }
 
 function toHarEntry(entry: NetworkWaterfallEntry): Record<string, unknown> {
