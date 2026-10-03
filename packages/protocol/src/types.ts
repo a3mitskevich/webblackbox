@@ -92,6 +92,11 @@ export type RedactionProfile = {
   redactBodyPatterns: string[];
   blockedSelectors: string[];
   hashSensitiveValues: boolean;
+  /**
+   * Selectors explicitly allowed to stay readable even when they also match `blockedSelectors`.
+   * Password inputs are never unmasked.
+   */
+  unmaskSelectors?: string[];
 };
 
 export type CaptureContext = "real-user" | "synthetic" | "local-debug";

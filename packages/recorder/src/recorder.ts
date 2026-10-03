@@ -40,15 +40,15 @@ export class WebBlackboxRecorder {
 
   private readonly actionSpanTracker: ActionSpanTracker;
 
-  private readonly freezePolicy: FreezePolicy;
+  private freezePolicy: FreezePolicy;
 
-  private readonly pluginContext: RecorderPluginContext;
+  private pluginContext: RecorderPluginContext;
 
   // Per-session HMAC key for hashed sensitive values; memory-only, never exported.
   private readonly redactionHashKey = createRedactionHashKey();
 
   public constructor(
-    private readonly config: RecorderConfig,
+    private config: RecorderConfig,
     private readonly hooks: RecorderHooks = {},
     private readonly normalizer: EventNormalizer = new DefaultEventNormalizer(),
     private readonly plugins: RecorderPlugin[] = []
@@ -152,6 +152,23 @@ export class WebBlackboxRecorder {
       event: pluginEvent,
       freezeReason: freezeReason ?? undefined
     };
+  }
+
+  /**
+   * Swaps the active config mid-session (e.g. a recording profile switch on navigation). Buffered
+   * events, action spans and the per-session hash key are kept; freeze state restarts. The ring
+   * buffer and action-span windows stay as configured at construction.
+   */
+  public reconfigure(config: RecorderConfig): void {
+    this.config = config;
+    this.freezePolicy = new FreezePolicy(config);
+    this.pluginContext = {
+      config
+    };
+  }
+
+  public getConfig(): RecorderConfig {
+    return this.config;
   }
 
   public snapshotRingBuffer(): WebBlackboxEvent[] {

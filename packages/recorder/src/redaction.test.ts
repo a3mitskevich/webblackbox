@@ -208,3 +208,34 @@ describe("redactPayload keyed hashing", () => {
     expect(JSON.stringify(config)).not.toContain("hashKey");
   });
 });
+
+describe("redactPayload unmask selectors", () => {
+  const profile: RedactionProfile = {
+    ...PLAIN_PROFILE,
+    blockedSelectors: [".secret", "input[type='password']"],
+    unmaskSelectors: [".secret.public", "input[type='password']"]
+  };
+
+  it("keeps values readable for unmasked selectors", () => {
+    expect(redactPayload({ selector: "div.secret.public", text: "visible" }, profile)).toEqual({
+      selector: "[REDACTED_SELECTOR]",
+      text: "visible"
+    });
+  });
+
+  it("still masks blocked selectors that are not unmasked", () => {
+    expect(redactPayload({ selector: "div.secret", text: "hidden" }, profile)).toEqual({
+      selector: "[REDACTED_SELECTOR]",
+      text: "[REDACTED]"
+    });
+  });
+
+  it("never unmasks password fields", () => {
+    expect(
+      redactPayload({ selector: "form input[type='password']", value: "hunter2" }, profile)
+    ).toEqual({
+      selector: "[REDACTED_SELECTOR]",
+      value: "[REDACTED]"
+    });
+  });
+});

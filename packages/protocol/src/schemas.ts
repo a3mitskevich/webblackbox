@@ -96,7 +96,8 @@ export const redactionProfileSchema = z
     redactCookieNames: stringArray,
     redactBodyPatterns: stringArray,
     blockedSelectors: stringArray,
-    hashSensitiveValues: z.boolean()
+    hashSensitiveValues: z.boolean(),
+    unmaskSelectors: stringArray.optional()
   })
   .strict();
 

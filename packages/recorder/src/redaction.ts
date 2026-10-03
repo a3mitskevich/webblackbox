@@ -30,6 +30,8 @@ const URL_VALUED_HEADERS = new Set([
 // Unlisted headers whose name suggests a credential (e.g. X-Access-Token, X-Session-Id).
 const SENSITIVE_HEADER_NAME_PATTERN =
   /token|secret|session|auth|key|passw(?:or)?d|credential|signature/;
+// Unmask lists must never expose password fields, whatever the profile says.
+const PASSWORD_SELECTOR_PATTERN = /passw(?:or)?d/i;
 // Auth challenges carry no secret and explain 401/407 responses, so keep them readable.
 // `:authority` is the HTTP/2 host pseudo-header; it only matches the name pattern via "auth".
 const READABLE_AUTH_HEADERS = new Set(["www-authenticate", "proxy-authenticate", ":authority"]);
@@ -363,7 +365,22 @@ function shouldMaskBySelector(source: Record<string, unknown>, profile: Redactio
     return false;
   }
 
-  return profile.blockedSelectors.some((blocked) => selector.includes(blocked));
+  if (!profile.blockedSelectors.some((blocked) => selector.includes(blocked))) {
+    return false;
+  }
+
+  return !isUnmaskedSelector(selector, profile);
+}
+
+/** True when `selector` matches a profile unmask entry; password fields are never unmasked. */
+export function isUnmaskedSelector(selector: string, profile: RedactionProfile): boolean {
+  const unmaskSelectors = profile.unmaskSelectors ?? [];
+
+  if (unmaskSelectors.length === 0 || PASSWORD_SELECTOR_PATTERN.test(selector)) {
+    return false;
+  }
+
+  return unmaskSelectors.some((entry) => entry.length > 0 && selector.includes(entry));
 }
 
 function maskString(value: string, context: RedactionContext): string {
