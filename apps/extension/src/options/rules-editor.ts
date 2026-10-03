@@ -22,7 +22,9 @@ const CONDITION_LABELS: Record<RuleConditionKind, ExtensionMessageKey> = {
   host: "optionsTestConditionHost",
   path: "optionsTestConditionPath",
   query: "optionsTestConditionQuery",
-  title: "optionsTestConditionTitle"
+  title: "optionsTestConditionTitle",
+  "incognito-only": "optionsTestConditionIncognitoOnly",
+  "incognito-never": "optionsTestConditionIncognitoNever"
 };
 
 export type RulesViewOptions = {
@@ -31,7 +33,7 @@ export type RulesViewOptions = {
   catalog: readonly RecordingProfile[];
   openRuleIds: ReadonlySet<string>;
   extendedCaptureHosts: readonly string[];
-  test: { url: string; title: string; result?: RuleTestResult };
+  test: { url: string; title: string; incognito: boolean; result?: RuleTestResult };
   t: Translate;
 };
 
@@ -271,6 +273,12 @@ export function createRuleTester(options: RulesViewOptions): HTMLElement {
       label: t("optionsTestPageTitle"),
       hint: t("optionsTestPageTitleHint"),
       value: options.test.title
+    }),
+    toggleField({
+      id: "rule-test-incognito",
+      name: "testIncognito",
+      label: t("optionsTestIncognito"),
+      checked: options.test.incognito
     }),
     el(
       "output",

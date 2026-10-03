@@ -16,7 +16,14 @@ import {
   syncDefaultProfileWithLegacyOptions
 } from "../shared/profiles/storage.js";
 import { el } from "../shared/ui/dom.js";
-import { fieldGroup, selectField } from "./fields.js";
+import {
+  fieldGroup,
+  installTooltipDismiss,
+  PENDING_ERROR_EVENT,
+  pendingErrorKey,
+  selectField,
+  type PendingErrorDetail
+} from "./fields.js";
 import {
   createDefaultGeneralDraft,
   isArchiveChanged,
@@ -137,6 +144,19 @@ function bindPage(page: PageState): void {
 
   shell.content.addEventListener("input", onFieldEvent);
   shell.content.addEventListener("change", onFieldEvent);
+  // Invalid text left in a chip input blocks Save instead of being dropped by it.
+  shell.content.addEventListener(PENDING_ERROR_EVENT, (event) => {
+    const { key, error } = (event as CustomEvent<PendingErrorDetail>).detail;
+
+    if (error) {
+      page.errors.set(key, error);
+    } else {
+      page.errors.delete(key);
+    }
+
+    refreshSaveBar(page);
+  });
+  installTooltipDismiss(shell.root);
   shell.content.addEventListener("click", (event) => {
     const reset = (event.target as Element | null)?.closest<HTMLElement>(
       "[data-action='section-reset']"
@@ -163,9 +183,26 @@ function bindPage(page: PageState): void {
 }
 
 function clearSectionErrors(page: PageState, section: GeneralSectionId): void {
-  page.generalHosts[section]
-    .querySelectorAll<HTMLInputElement>("input[name]")
-    .forEach((input) => page.errors.delete(input.name));
+  page.generalHosts[section].querySelectorAll<HTMLInputElement>("input[name]").forEach((input) => {
+    page.errors.delete(input.name);
+    page.errors.delete(pendingErrorKey(input.name));
+    page.errors.delete(pendingErrorKey(input.id));
+  });
+}
+
+/** Pending-text errors of chip lists that a re-render removed (closed form, deleted rule). */
+function dropDetachedPendingErrors(page: PageState): void {
+  const names = new Set(
+    Array.from(page.shell.content.querySelectorAll<HTMLElement>("input, textarea"), (input) =>
+      pendingErrorKey(input.id || input.getAttribute("name") || "")
+    )
+  );
+
+  for (const key of [...page.errors.keys()]) {
+    if (key.startsWith(pendingErrorKey("")) && !names.has(key)) {
+      page.errors.delete(key);
+    }
+  }
 }
 
 function renderGeneral(page: PageState, only?: GeneralSectionId): void {
@@ -184,6 +221,7 @@ function isDirty(page: PageState): boolean {
 
 function refreshSaveBar(page: PageState): void {
   const { shell } = page;
+  dropDetachedPendingErrors(page);
   const dirty = isDirty(page);
   const errorCount = page.errors.size;
 
@@ -192,16 +230,18 @@ function refreshSaveBar(page: PageState): void {
     "wb-savebar__state--error",
     Boolean(page.status?.error) || errorCount > 0
   );
+  // A failed save stays visible until the next attempt; "Saved at" gives way to new edits.
   shell.saveState.textContent =
     errorCount > 0
       ? t("optionsSaveBlocked", { count: errorCount })
-      : page.status
+      : page.status?.error
         ? page.status.text
         : dirty
           ? t("optionsUnsavedChanges")
-          : t("optionsAllSaved");
+          : (page.status?.text ?? t("optionsAllSaved"));
   shell.saveButton.disabled = page.saving || !dirty || errorCount > 0;
-  shell.cancelButton.disabled = page.saving || !dirty;
+  // Discard also clears invalid typed values that never reached the draft.
+  shell.cancelButton.disabled = page.saving || (!dirty && errorCount === 0);
 }
 
 /**
@@ -223,18 +263,18 @@ async function saveAll(page: PageState): Promise<void> {
   refreshSaveBar(page);
 
   try {
-    if (archiveChanged) {
-      if (!saveExportPolicyPrefs(page.draft.archive)) {
-        throw new Error(t("optionsArchiveSaveFailed"));
-      }
+    // Nothing is written when the profiles draft cannot be saved, so a failed Save never leaves
+    // the general options ahead of the Default profile they are folded into.
+    const validation = profilesChanged ? editor.validate() : { ok: true as const };
 
-      page.baseline = { ...page.baseline, archive: page.draft.archive };
+    if (!validation.ok) {
+      throw new Error(validation.error);
     }
 
     if (generalChanged) {
       const payload = toStoredOptionsPayload(page.draft);
       await chromeApi?.storage?.local.set({ [STORAGE_KEY]: payload });
-      page.baseline = { ...page.draft };
+      page.baseline = { ...page.draft, archive: page.baseline.archive };
 
       if (profilesChanged) {
         // The editor's draft must not write the old Default values back on its save.
@@ -252,6 +292,10 @@ async function saveAll(page: PageState): Promise<void> {
       }
     } else if (generalChanged) {
       await editor.reload();
+    }
+
+    if (archiveChanged && !saveExportPolicyPrefs(page.draft.archive)) {
+      throw new Error(t("optionsArchiveSaveFailed"));
     }
 
     const reloaded = await loadGeneralDraft();

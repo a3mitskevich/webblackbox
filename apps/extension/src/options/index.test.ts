@@ -57,7 +57,25 @@ function typeNumber(id: string, value: string): HTMLInputElement {
   return input;
 }
 
+function typeText(selector: string, value: string): HTMLInputElement {
+  const input = query<HTMLInputElement>(selector);
+  input.value = value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  return input;
+}
+
+const STORE_WITH_RULE = {
+  schemaVersion: 2,
+  defaultProfileId: "default",
+  profiles: [],
+  rules: [
+    { id: "stage", name: "Stage", profileId: "default", priority: 10, enabled: true, match: {} }
+  ],
+  extendedCaptureHosts: []
+};
+
 const saveButton = () => query<HTMLButtonElement>("[data-action='settings-save']");
+const cancelButton = () => query<HTMLButtonElement>("[data-action='settings-cancel']");
 const saveState = () => query<HTMLElement>("[data-save-state]").textContent;
 
 describe("options page", () => {
@@ -195,6 +213,87 @@ describe("options page", () => {
 
     expect(typeNumber("screenshotIdleMs", "100").getAttribute("aria-invalid")).toBe("true");
     expect(typeNumber("screenshotIdleMs", "0").hasAttribute("aria-invalid")).toBe(false);
+  });
+
+  it("lets Discard clear an invalid value that never reached the draft", async () => {
+    installChromeStub();
+    await importOptionsModule();
+
+    const input = typeNumber("mousemoveHz", "abc");
+
+    expect(saveButton().disabled).toBe(true);
+    expect(cancelButton().disabled).toBe(false);
+
+    cancelButton().click();
+
+    expect(query<HTMLInputElement>("#mousemoveHz").value).not.toBe("abc");
+    expect(query<HTMLInputElement>("#mousemoveHz").hasAttribute("aria-invalid")).toBe(false);
+    expect(input.isConnected).toBe(false);
+    expect(saveState()).toBe("All changes saved");
+  });
+
+  it("shows unsaved changes again after a save when a site rule is edited", async () => {
+    installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
+    await importOptionsModule();
+
+    typeNumber("scrollHz", "30");
+    saveButton().click();
+    await flush();
+
+    expect(saveState()).toMatch(/^Saved at /);
+
+    typeText("[data-rule-id='stage'] [name='ruleName']", "Stage QA");
+
+    expect(saveState()).toBe("Unsaved changes");
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  it("blocks Save while a chip input holds a rejected entry", async () => {
+    installChromeStub();
+    await importOptionsModule();
+
+    const chip = typeText("#blockedSelectors-input", "div[");
+    chip.dispatchEvent(new Event("blur"));
+
+    expect(chip.getAttribute("aria-invalid")).toBe("true");
+    expect(saveState()).toBe("Fix 1 field(s) before saving.");
+
+    typeText("#blockedSelectors-input", "");
+
+    expect(saveState()).toBe("All changes saved");
+  });
+
+  it("validates a rule's title pattern and selector inline", async () => {
+    installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
+    await importOptionsModule();
+
+    const regex = typeText("[data-rule-id='stage'] [name='ruleTitleRegex']", "(a)\\1");
+    const selector = typeText("[data-rule-id='stage'] [name='ruleSelector']", "div[");
+
+    expect(regex.getAttribute("aria-invalid")).toBe("true");
+    expect(selector.getAttribute("aria-invalid")).toBe("true");
+    expect(saveButton().disabled).toBe(true);
+
+    typeText("[data-rule-id='stage'] [name='ruleTitleRegex']", "Checkout");
+    typeText("[data-rule-id='stage'] [name='ruleSelector']", "#app");
+
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  it("writes nothing when the profiles draft cannot be saved", async () => {
+    const storage = installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
+    await importOptionsModule();
+
+    typeNumber("ringBufferMinutes", "15");
+    typeNumber("archiveMaxSizeMb", "256");
+    typeText("[data-rule-id='stage'] [name='ruleName']", "x".repeat(81));
+    saveButton().click();
+    await flush();
+
+    expect(saveState()).toMatch(/Save failed/);
+    expect(storage.set).not.toHaveBeenCalled();
+    expect(localStorage.getItem(ARCHIVE_KEY)).toBeNull();
+    expect(saveButton().disabled).toBe(false);
   });
 
   it("resets one section to defaults and discards edits with Cancel", async () => {

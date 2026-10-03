@@ -191,16 +191,28 @@ export function sortRulesForDisplay(rules: readonly ProfileRule[]): ProfileRule[
     .map((entry) => entry.rule);
 }
 
+/** Rules in the order of `ids` (the rows on screen); rules not listed follow in display order. */
+function orderRulesByIds(rules: readonly ProfileRule[], ids: readonly string[]): ProfileRule[] {
+  const position = new Map(ids.map((id, index) => [id, index]));
+  const listed = rules
+    .filter((rule) => position.has(rule.id))
+    .sort((left, right) => (position.get(left.id) ?? 0) - (position.get(right.id) ?? 0));
+
+  return [...listed, ...sortRulesForDisplay(rules.filter((rule) => !position.has(rule.id)))];
+}
+
 /**
  * Moves the rule at `from` to `to` in display order and renumbers priorities top to bottom, so
- * the order on screen is the order the rules win in.
+ * the order on screen is the order the rules win in. `shownIds` is the order the rows are shown
+ * in; it wins over the priorities, which may hold an edit the list has not been re-sorted for.
  */
 export function reorderRules(
   rules: readonly ProfileRule[],
   from: number,
-  to: number
+  to: number,
+  shownIds?: readonly string[]
 ): ProfileRule[] {
-  const ordered = sortRulesForDisplay(rules);
+  const ordered = shownIds ? orderRulesByIds(rules, shownIds) : sortRulesForDisplay(rules);
 
   if (from < 0 || from >= ordered.length || to < 0 || to >= ordered.length || from === to) {
     return ordered;

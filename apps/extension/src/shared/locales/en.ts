@@ -99,6 +99,9 @@ export const EN_MESSAGES = {
   optionsProfileDuplicate: "Duplicate",
   optionsProfileEdit: "Edit",
   optionsProfileDelete: "Delete",
+  optionsProfileDeleteTitle: "Delete profile “{name}”?",
+  optionsProfileDeleteRules:
+    "{count} site rule(s) use this profile and will be deleted with it. Discard brings them back until you save.",
   optionsProfileMakeDefault: "Make default",
   optionsProfileName: "Name",
   optionsProfileBase: "Recommended start",
@@ -255,6 +258,8 @@ export const EN_MESSAGES = {
   optionsErrorRange: "Use {min}–{max}.",
   optionsErrorRangeOrZero: "Use 0 (off) or {min}–{max}.",
   optionsErrorSelector: "Not a valid CSS selector.",
+  optionsErrorTitleRegex:
+    "Not a usable title pattern (check the syntax; backreferences and lookarounds are not allowed).",
   optionsErrorHeader: "Not a valid header name.",
   optionsErrorMime: "Use type/subtype, e.g. text/* or application/json.",
   optionsErrorTooLong: "At most {max} characters.",
@@ -356,6 +361,9 @@ export const EN_MESSAGES = {
   optionsTestConditionPath: "path",
   optionsTestConditionQuery: "query",
   optionsTestConditionTitle: "title",
+  optionsTestConditionIncognitoOnly: "incognito windows only",
+  optionsTestConditionIncognitoNever: "regular windows only",
+  optionsTestIncognito: "Test as an incognito window",
   optionsSandboxKind: "Sample type",
   optionsSandboxInput: "Sample",
   optionsSandboxOutput: "What gets recorded",

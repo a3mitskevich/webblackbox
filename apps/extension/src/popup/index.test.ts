@@ -96,6 +96,10 @@ describe("popup states", () => {
 
     expect(getButton("start").disabled).toBe(false);
     expect(query(".wb-popup__live").textContent).toContain("Recording on tab 42");
+    // The other tab's recording is one row so Start and the last session still fit.
+    expect(has(".wb-popup__live .wb-stats")).toBe(false);
+    expect(has("[data-action='marker']")).toBe(false);
+    expect(getButton("stop").disabled).toBe(false);
   });
 
   it("refreshes active session state when reopening after the initial connect push was missed", async () => {

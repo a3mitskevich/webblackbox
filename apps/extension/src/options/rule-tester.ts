@@ -13,7 +13,14 @@ import type { ProfilesState } from "../shared/profiles/storage.js";
  * (selector present, meta tag) cannot be checked from a URL and are reported as such.
  */
 
-export type RuleConditionKind = "any" | "host" | "path" | "query" | "title";
+export type RuleConditionKind =
+  | "any"
+  | "host"
+  | "path"
+  | "query"
+  | "title"
+  | "incognito-only"
+  | "incognito-never";
 
 export type RuleTestResult =
   | { kind: "invalid-url" }
@@ -38,6 +45,10 @@ export type RuleTestInput = {
   catalog: RecordingProfile[];
   url: string;
   title?: string;
+  /** Test as an incognito window (rules can require or exclude one). */
+  incognito?: boolean;
+  /** Managed policy hosts where extended profiles may run, as the service worker applies it. */
+  enterpriseSiteAllowlist?: readonly string[];
 };
 
 export function ruleLabel(rule: ProfileRule): string {
@@ -58,7 +69,12 @@ export function testRulesForUrl(input: RuleTestInput): RuleTestResult {
   ];
   const selection = selectRecordingProfile({
     state: { ...input.state, store: input.draft, legacy: false, catalog: input.catalog, rules },
-    page: { url: url.href, ...(input.title ? { title: input.title } : {}) }
+    page: {
+      url: url.href,
+      incognito: input.incognito === true,
+      ...(input.title ? { title: input.title } : {})
+    },
+    enterpriseSiteAllowlist: input.enterpriseSiteAllowlist ?? []
   });
   const rule = selection.rule ? rules.find((entry) => entry.id === selection.rule?.id) : undefined;
 
@@ -99,6 +115,14 @@ function describeMatchedConditions(
     })),
     ...(match.titleRegex !== undefined && title !== undefined
       ? [{ kind: "title" as const, value: match.titleRegex }]
+      : []),
+    ...(typeof match.incognito === "boolean"
+      ? [
+          {
+            kind: match.incognito ? ("incognito-only" as const) : ("incognito-never" as const),
+            value: ""
+          }
+        ]
       : [])
   ];
 

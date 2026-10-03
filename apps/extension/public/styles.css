@@ -618,6 +618,16 @@ input[type="radio"] {
   box-shadow: inset 3px 0 0 var(--wb-rec);
 }
 
+.wb-popup__live-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-popup__live-row .wb-panel__head {
+  flex: 1;
+}
+
 .wb-panel__head {
   display: flex;
   align-items: baseline;

@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChromeApi } from "../shared/chrome-api.js";
 import { translateExtensionMessage, type ExtensionMessageKey } from "../shared/i18n.js";
 import { PROFILES_STORAGE_KEY, type ProfileRule } from "../shared/profiles/model.js";
-import { BUILT_IN_PROFILE_IDS } from "../shared/profiles/presets.js";
+import {
+  BUILT_IN_PROFILE_IDS,
+  duplicateProfile,
+  findBuiltInProfile
+} from "../shared/profiles/presets.js";
 import { reorderRules, sortRulesForDisplay } from "./profile-form-model.js";
 import { mountProfilesEditor } from "./profiles-editor.js";
 
@@ -21,12 +25,12 @@ const rule = (id: string, priority: number, hosts: string[] = []): ProfileRule =
   match: hosts.length > 0 ? { hosts } : {}
 });
 
-function storageWith(rules: ProfileRule[]) {
+function storageWith(rules: ProfileRule[], profiles: unknown[] = []) {
   const data: Record<string, unknown> = {
     [PROFILES_STORAGE_KEY]: {
       schemaVersion: 2,
       defaultProfileId: "default",
-      profiles: [],
+      profiles,
       rules,
       extendedCaptureHosts: []
     }
@@ -46,8 +50,8 @@ function storageWith(rules: ProfileRule[]) {
   return { data, chromeApi };
 }
 
-async function mount(rules: ProfileRule[]) {
-  const storage = storageWith(rules);
+async function mount(rules: ProfileRule[], profiles: unknown[] = []) {
+  const storage = storageWith(rules, profiles);
   const container = document.createElement("div");
   const onChange = vi.fn();
   document.body.append(container);
@@ -130,6 +134,24 @@ describe("rules editor", () => {
     expect(handle.isDirty()).toBe(false);
   });
 
+  it("moves the rule the user clicked even after an unsorted priority edit", async () => {
+    const { container, handle, storage } = await mount([
+      rule("a", 20),
+      rule("b", 10),
+      rule("c", 5)
+    ]);
+
+    typeInto(container, "[data-rule-id='c'] [name='rulePriority']", "30");
+    container.querySelector<HTMLElement>("[data-rule-id='a'] [data-action='rule-down']")?.click();
+
+    expect(ruleIds(container)).toEqual(["b", "a", "c"]);
+
+    await handle.save();
+    const saved = storage.data[PROFILES_STORAGE_KEY] as { rules: ProfileRule[] };
+
+    expect(saved.rules.map((entry) => entry.id)).toEqual(["b", "a", "c"]);
+  });
+
   it("collapses rules and toggles their body", async () => {
     const { container } = await mount([rule("a", 0, ["*.stage.test"])]);
     const toggle = container.querySelector<HTMLElement>("[data-action='rule-toggle']");
@@ -159,6 +181,95 @@ describe("rules editor", () => {
     typeInto(container, "[name='testUrl']", "not a url");
 
     expect(result()).toBe("Enter a full http(s) URL.");
+  });
+
+  it("tests a URL as an incognito window and names incognito conditions", async () => {
+    const incognitoRule: ProfileRule = {
+      ...rule("private", 10),
+      profileId: BUILT_IN_PROFILE_IDS.full,
+      match: { incognito: true }
+    };
+    const { container } = await mount([incognitoRule]);
+    const result = () => container.querySelector("[data-rule-test-result]")?.textContent ?? "";
+
+    typeInto(container, "[name='testUrl']", "https://example.org/");
+
+    expect(result()).toContain("No rule matches");
+
+    const toggle = container.querySelector<HTMLInputElement>("[name='testIncognito']");
+
+    if (!toggle) {
+      throw new Error("missing incognito toggle");
+    }
+
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(result()).toContain("PRIVATE");
+    expect(result()).toContain("incognito windows only");
+  });
+
+  it("asks before deleting a profile that site rules use", async () => {
+    const qa = findBuiltInProfile(BUILT_IN_PROFILE_IDS.qa);
+
+    if (!qa) {
+      throw new Error("missing QA preset");
+    }
+
+    const mine = duplicateProfile(qa, { id: "mine", name: "Mine" });
+    const { container, handle } = await mount([{ ...rule("a", 10), profileId: "mine" }], [mine]);
+    const deleteButton = () =>
+      container.querySelector<HTMLElement>(
+        "[data-profile-id='mine'] [data-action='profile-delete']"
+      );
+
+    deleteButton()?.click();
+    await Promise.resolve();
+
+    expect(document.querySelector(".wb-confirm-body")?.textContent).toContain("1 site rule(s)");
+
+    document.querySelector<HTMLElement>("[data-confirm-cancel]")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(ruleIds(container)).toEqual(["a"]);
+    expect(handle.isDirty()).toBe(false);
+
+    deleteButton()?.click();
+    await Promise.resolve();
+    document.querySelector<HTMLElement>("[data-confirm-accept]")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(ruleIds(container)).toEqual([]);
+    expect(container.querySelector("[data-profile-id='mine']")).toBeNull();
+  });
+
+  it("keeps typed sandbox input when another editor action re-renders", async () => {
+    const { container } = await mount([rule("a", 10)]);
+    const sandbox = () => container.querySelector<HTMLTextAreaElement>("[name='sandboxInput']");
+    const typed = sandbox();
+
+    if (typed) {
+      typed.value = '{"password":"hunter2"}';
+    }
+
+    container.querySelector<HTMLElement>("[data-action='rule-add']")?.click();
+
+    expect(sandbox()).not.toBe(typed);
+    expect(sandbox()?.value).toBe('{"password":"hunter2"}');
+  });
+
+  it("keeps focus on the moved rule's button", async () => {
+    const { container } = await mount([rule("a", 30), rule("b", 20), rule("c", 10)]);
+    const down = (id: string) =>
+      container.querySelector<HTMLButtonElement>(
+        `[data-rule-id='${id}'] [data-action='rule-down']`
+      );
+
+    down("a")?.focus();
+    down("a")?.click();
+
+    expect(ruleIds(container)).toEqual(["b", "a", "c"]);
+    expect(document.activeElement).toBe(down("a"));
   });
 
   it("uses unsaved rule edits when testing a URL", async () => {

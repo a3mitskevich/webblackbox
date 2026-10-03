@@ -17,6 +17,63 @@ export type FieldText = {
   helpLabel?: string;
 };
 
+/** Bubbled by a field whose typed-but-uncommitted text is invalid (`error`) or fine (`null`). */
+export const PENDING_ERROR_EVENT = "wb-pending-error";
+
+export type PendingErrorDetail = { key: string; error: string | null };
+
+/** Key of a chip list's pending-text error in the page's error map. */
+export function pendingErrorKey(name: string): string {
+  return `pending:${name}`;
+}
+
+/**
+ * Shows `error` on a field and tells the page, so an invalid value blocks Save. Keyed by the
+ * control's id (or name), so the page can drop the error once the control is gone.
+ */
+export function reportFieldProblem(control: HTMLElement, error: string | null): void {
+  setFieldError(control, error);
+  control.dispatchEvent(
+    new CustomEvent<PendingErrorDetail>(PENDING_ERROR_EVENT, {
+      bubbles: true,
+      detail: {
+        key: pendingErrorKey(control.id || control.getAttribute("name") || ""),
+        error
+      }
+    })
+  );
+}
+
+/**
+ * Escape hides the "?" bubble that is open by hover or focus (WCAG 1.4.13), until the pointer or
+ * focus leaves it.
+ */
+export function installTooltipDismiss(root: HTMLElement): void {
+  const doc = root.ownerDocument;
+  const reopen = (event: Event): void => {
+    const help = (event.target as Element | null)?.closest?.(".wb-help");
+    const next = (event as FocusEvent | PointerEvent).relatedTarget as Node | null;
+
+    if (help && !(next && help.contains(next))) {
+      help.classList.remove("wb-help--dismissed");
+    }
+  };
+
+  doc.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    root.querySelectorAll(".wb-help").forEach((help) => {
+      if (help.matches(":hover") || help.contains(doc.activeElement)) {
+        help.classList.add("wb-help--dismissed");
+      }
+    });
+  });
+  root.addEventListener("pointerout", reopen);
+  root.addEventListener("focusout", reopen);
+}
+
 export function helpTip(label: string, text: string): HTMLElement {
   const bubbleId = uniqueId("wb-help");
 
@@ -286,6 +343,7 @@ export function chipListField(options: ChipListOptions): HTMLElement {
   });
   const hidden = el("input", { attrs: { type: "hidden", name: options.name } });
   const box = el("div", { className: "wb-chips" }, [list, input]);
+  const reportPending = (error: string | null): void => reportFieldProblem(input, error);
 
   const renderChips = (): void => {
     list.replaceChildren(
@@ -341,14 +399,14 @@ export function chipListField(options: ChipListOptions): HTMLElement {
       const problem = problemFor(candidate, next);
 
       if (problem) {
-        setFieldError(input, problem);
+        reportPending(problem);
         return false;
       }
 
       next = [...next, candidate];
     }
 
-    setFieldError(input, null);
+    reportPending(null);
 
     if (next !== values) {
       values = next;
@@ -390,7 +448,7 @@ export function chipListField(options: ChipListOptions): HTMLElement {
   input.addEventListener("input", (event) => {
     // Typing is not a list change; only chip edits bubble to the page.
     event.stopPropagation();
-    setFieldError(input, null);
+    reportPending(null);
   });
   list.addEventListener("click", (event) => {
     const remove = (event.target as Element | null)?.closest<HTMLElement>("[data-chip-index]");

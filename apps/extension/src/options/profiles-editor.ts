@@ -1,6 +1,9 @@
 import type { ChromeApi } from "../shared/chrome-api.js";
 import type { ExtensionMessageKey } from "../shared/i18n.js";
-import { readManagedEnterprisePolicy } from "../shared/options-storage.js";
+import {
+  normalizeEnterprisePolicy,
+  readManagedEnterprisePolicy
+} from "../shared/options-storage.js";
 import { CAPTURE_CATEGORY_KEYS } from "../shared/profiles/categories.js";
 import {
   isReadOnlyProfileId,
@@ -22,9 +25,16 @@ import {
   previewProfilesImport,
   type ProfilesDiff
 } from "../shared/profiles/transfer.js";
-import { previewRedaction, type RedactionSandboxKind } from "../shared/redaction-sandbox.js";
+import { openConfirmDialog } from "../shared/ui/dialogs.js";
+import { preserveFocus } from "../shared/ui/focus.js";
 import { el, readCheckbox, readField } from "./dom.js";
-import { setFieldError } from "./fields.js";
+import {
+  validateRangeInput,
+  validateRuleTextFields,
+  validateRuleTextInput
+} from "./editor-validation.js";
+import { bindRuleDragging, shownRuleIds } from "./rules-drag.js";
+import { readSandboxInputs, runRedactionSandbox, type SandboxState } from "./sandbox-model.js";
 import { createProfileForm } from "./profile-form.js";
 import {
   applyProfileFormValues,
@@ -35,12 +45,7 @@ import {
   ruleFromFormValues,
   sortRulesForDisplay
 } from "./profile-form-model.js";
-import {
-  createProfileCard,
-  createSandboxPanel,
-  createTransferPanel,
-  SANDBOX_KINDS
-} from "./profiles-view.js";
+import { createProfileCard, createSandboxPanel, createTransferPanel } from "./profiles-view.js";
 import { testRulesForUrl } from "./rule-tester.js";
 import { createRuleTester, createRulesList, describeTestResult } from "./rules-editor.js";
 
@@ -73,6 +78,8 @@ export type ProfilesEditorHandle = {
   isDirty(): boolean;
   /** A v2 profiles store exists in storage (otherwise Default mirrors the general options). */
   hasStoredStore(): boolean;
+  /** Checks that the draft can be saved, without writing anything. */
+  validate(): ProfilesSaveResult;
   save(): Promise<ProfilesSaveResult>;
   /** Reloads from storage, dropping the draft. */
   reload(): Promise<void>;
@@ -88,9 +95,11 @@ type EditorState = {
   editingSnapshot?: RecordingProfile;
   importPreview?: { next: RecordingProfilesStore; diff: ProfilesDiff };
   status?: { text: string; error: boolean };
-  sandbox: { profileId: string; kind: RedactionSandboxKind; text: string; output?: string };
+  sandbox: SandboxState;
   openRuleIds: Set<string>;
-  test: { url: string; title: string };
+  test: { url: string; title: string; incognito: boolean };
+  /** Managed-policy hosts where extended profiles may run (Test URL applies them too). */
+  enterpriseSiteAllowlist: readonly string[];
   /** Stable JSON of the draft as last loaded/saved, after one DOM round trip. */
   baseline: string;
 };
@@ -116,6 +125,7 @@ export async function mountProfilesEditor(
 ): Promise<ProfilesEditorHandle> {
   const slots = providedSlots ?? createDefaultSlots(root);
   const profilesState = await loadState(deps);
+  const enterpriseSiteAllowlist = await loadEnterpriseSiteAllowlist(deps);
   const editor: Editor = {
     root,
     slots,
@@ -125,7 +135,8 @@ export async function mountProfilesEditor(
       draft: structuredClone(profilesState.store),
       sandbox: { profileId: profilesState.store.defaultProfileId, kind: "body", text: "" },
       openRuleIds: new Set(),
-      test: { url: "", title: "" },
+      test: { url: "", title: "", incognito: false },
+      enterpriseSiteAllowlist,
       baseline: ""
     }
   };
@@ -149,6 +160,21 @@ export async function mountProfilesEditor(
     },
     isDirty: () => isDirty(editor),
     hasStoredStore: () => !editor.state.profilesState.legacy,
+    validate: () => {
+      syncDraftFromDom(editor);
+
+      try {
+        serializeProfilesStore(editor.state.draft);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          error: deps.t("optionsProfilesError", {
+            error: error instanceof Error ? error.message : String(error)
+          })
+        };
+      }
+    },
     save: async () => {
       syncDraftFromDom(editor);
       await saveDraft(editor);
@@ -170,6 +196,7 @@ export async function mountProfilesEditor(
     },
     reload: async () => {
       editor.state.profilesState = await loadState(deps);
+      editor.state.enterpriseSiteAllowlist = await loadEnterpriseSiteAllowlist(deps);
       discardDraft(editor);
     },
     cancel: () => discardDraft(editor)
@@ -180,6 +207,15 @@ function createDefaultSlots(root: HTMLElement): ProfilesEditorSlots {
   const slots = { profiles: el("div"), rules: el("div"), sandbox: el("div"), transfer: el("div") };
   root.append(slots.profiles, slots.rules, slots.sandbox, slots.transfer);
   return slots;
+}
+
+async function loadEnterpriseSiteAllowlist(deps: ProfilesEditorDeps): Promise<string[]> {
+  const managedPolicy = await readManagedEnterprisePolicy(
+    deps.chromeApi?.storage?.managed,
+    deps.enterprisePolicyKey
+  );
+
+  return normalizeEnterprisePolicy(managedPolicy).siteAllowlist;
 }
 
 async function loadState(deps: ProfilesEditorDeps): Promise<ProfilesState> {
@@ -325,6 +361,7 @@ function render(editor: Editor): void {
     ?.addEventListener("change", (event) => {
       void importFile(editor, event.currentTarget as HTMLInputElement);
     });
+  validateRuleTextFields(slots.rules, t);
 }
 
 function runTester(editor: Editor, catalog = buildCatalog(editor.state)) {
@@ -336,6 +373,8 @@ function runTester(editor: Editor, catalog = buildCatalog(editor.state)) {
         draft: state.draft,
         catalog,
         url: state.test.url,
+        incognito: state.test.incognito,
+        enterpriseSiteAllowlist: state.enterpriseSiteAllowlist,
         ...(state.test.title.trim() ? { title: state.test.title } : {})
       })
     : undefined;
@@ -343,7 +382,11 @@ function runTester(editor: Editor, catalog = buildCatalog(editor.state)) {
 
 function refreshTester(editor: Editor): void {
   const { state, root, deps } = editor;
-  state.test = { url: readField(root, "testUrl"), title: readField(root, "testTitle") };
+  state.test = {
+    url: readField(root, "testUrl"),
+    title: readField(root, "testTitle"),
+    incognito: root.querySelector<HTMLInputElement>("input[name='testIncognito']")?.checked === true
+  };
   syncRulesFromDom(editor);
   root
     .querySelector<HTMLElement>("[data-rule-test-result]")
@@ -373,10 +416,15 @@ function handleAction(editor: Editor, target: HTMLElement, action: string, updat
         state.draft = { ...state.draft, defaultProfileId: profileId };
       });
     case "profile-delete":
-      return update(() => {
-        state.draft = deleteProfileFromStore(state.draft, profileId);
-        closeProfileForm(state);
+      void confirmProfileDelete(editor, profileId).then((confirmed) => {
+        if (confirmed) {
+          update(() => {
+            state.draft = deleteProfileFromStore(state.draft, profileId);
+            closeProfileForm(state);
+          });
+        }
       });
+      return;
     case "profile-apply":
       return update(() => closeProfileForm(state));
     case "profile-cancel":
@@ -399,7 +447,10 @@ function handleAction(editor: Editor, target: HTMLElement, action: string, updat
     case "rule-down":
       return update(() => {
         const to = ruleIndex + (action === "rule-up" ? -1 : 1);
-        state.draft = { ...state.draft, rules: reorderRules(state.draft.rules, ruleIndex, to) };
+        state.draft = {
+          ...state.draft,
+          rules: reorderRules(state.draft.rules, ruleIndex, to, shownRuleIds(editor.root))
+        };
       });
     case "rule-toggle":
       return toggleRule(state, target);
@@ -415,7 +466,9 @@ function handleAction(editor: Editor, target: HTMLElement, action: string, updat
         }
       });
     case "sandbox-run":
-      return update(() => runSandbox(editor));
+      return update(() => {
+        state.sandbox = runRedactionSandbox(state.sandbox, buildCatalog(state), editor.deps.t);
+      });
   }
 }
 
@@ -424,13 +477,14 @@ function bindEditor(editor: Editor): void {
   // Every action first keeps what is typed in the page (rules, hosts, the open profile form).
   const update: Update = (mutate, options = {}) => {
     syncRulesFromDom(editor);
+    editor.state.sandbox = readSandboxInputs(root, editor.state.sandbox);
 
     if (!options.discardFormEdits) {
       syncOpenProfileForm(editor);
     }
 
     mutate();
-    render(editor);
+    preserveFocus(root, () => render(editor), { scopeAttributes: FOCUS_SCOPES });
     deps.onChange?.();
   };
 
@@ -449,7 +503,7 @@ function bindEditor(editor: Editor): void {
       return;
     }
 
-    if (target.name === "testUrl" || target.name === "testTitle") {
+    if (TESTER_FIELDS.has(target.name)) {
       refreshTester(editor);
       return;
     }
@@ -458,10 +512,17 @@ function bindEditor(editor: Editor): void {
       validateRangeInput(target, deps.t);
     }
 
+    validateRuleTextInput(target, deps.t);
+
     deps.onChange?.();
   });
   root.addEventListener("change", (event) => {
     const target = event.target as HTMLInputElement | null;
+
+    if (target && TESTER_FIELDS.has(target.name)) {
+      refreshTester(editor);
+      return;
+    }
 
     if (
       target?.name !== "profilesImport" &&
@@ -470,8 +531,42 @@ function bindEditor(editor: Editor): void {
       deps.onChange?.();
     }
   });
-  bindRuleDragging(editor, update);
+  bindRuleDragging(root, (from, to, shownIds) =>
+    update(() => {
+      editor.state.draft = {
+        ...editor.state.draft,
+        rules: reorderRules(editor.state.draft.rules, from, to, shownIds)
+      };
+    })
+  );
 }
+
+/** Rows that tell apart equal buttons ("Move up" of each rule) when focus is restored. */
+const FOCUS_SCOPES = ["data-rule-id", "data-profile-id"];
+
+/** Deleting a profile also deletes the rules that use it; those sit in another section. */
+async function confirmProfileDelete(editor: Editor, profileId: string): Promise<boolean> {
+  syncRulesFromDom(editor);
+  const { state, deps } = editor;
+  const ruleCount = state.draft.rules.filter((rule) => rule.profileId === profileId).length;
+
+  if (ruleCount === 0) {
+    return true;
+  }
+
+  const name = state.draft.profiles.find((profile) => profile.id === profileId)?.name ?? profileId;
+
+  return openConfirmDialog({
+    title: deps.t("optionsProfileDeleteTitle", { name }),
+    body: deps.t("optionsProfileDeleteRules", { count: ruleCount }),
+    acceptLabel: deps.t("optionsProfileDelete"),
+    cancelLabel: deps.t("optionsProfileCancel"),
+    acceptVariant: "danger"
+  });
+}
+
+/** Inputs of the Test URL panel: they re-run the test and are not part of the draft. */
+const TESTER_FIELDS = new Set(["testUrl", "testTitle", "testIncognito"]);
 
 function toggleRule(state: EditorState, toggle: HTMLElement): void {
   const row = toggle.closest<HTMLElement>("[data-rule-id]");
@@ -491,66 +586,6 @@ function toggleRule(state: EditorState, toggle: HTMLElement): void {
   } else {
     state.openRuleIds.delete(ruleId);
   }
-}
-
-/** Drag a rule by its grip onto another row; same reorder as the up/down buttons. */
-function bindRuleDragging(editor: Editor, update: Update): void {
-  let fromIndex = -1;
-  const rowOf = (event: Event): HTMLElement | null =>
-    (event.target as Element | null)?.closest<HTMLElement>("[data-rule-index]") ?? null;
-
-  editor.root.addEventListener("dragstart", (event) => {
-    const handle = (event.target as Element | null)?.closest("[data-drag-handle]");
-    const row = rowOf(event);
-
-    if (!handle || !row) {
-      return;
-    }
-
-    fromIndex = Number(row.dataset.ruleIndex);
-    event.dataTransfer?.setData("text/plain", row.dataset.ruleId ?? "");
-    row.classList.add("wb-rule--dragging");
-  });
-  editor.root.addEventListener("dragover", (event) => {
-    if (fromIndex >= 0 && rowOf(event)) {
-      event.preventDefault();
-    }
-  });
-  editor.root.addEventListener("drop", (event) => {
-    const row = rowOf(event);
-
-    if (fromIndex < 0 || !row) {
-      return;
-    }
-
-    event.preventDefault();
-    const from = fromIndex;
-    const to = Number(row.dataset.ruleIndex);
-    fromIndex = -1;
-    update(() => {
-      editor.state.draft = {
-        ...editor.state.draft,
-        rules: reorderRules(editor.state.draft.rules, from, to)
-      };
-    });
-  });
-  editor.root.addEventListener("dragend", () => {
-    fromIndex = -1;
-    editor.root
-      .querySelectorAll(".wb-rule--dragging")
-      .forEach((row) => row.classList.remove("wb-rule--dragging"));
-  });
-}
-
-/** Optional numbers: empty means "inherit"; anything else must be a whole number in range. */
-function validateRangeInput(input: HTMLInputElement, t: Translate): void {
-  const raw = input.value.trim();
-  const value = Number(raw);
-  const min = Number(input.min);
-  const max = Number(input.max);
-  const invalid = raw !== "" && (!Number.isInteger(value) || value < min || value > max);
-
-  setFieldError(input, invalid ? t("optionsErrorRange", { min, max }) : null);
 }
 
 async function importFile(editor: Editor, input: HTMLInputElement): Promise<void> {
@@ -735,31 +770,4 @@ function downloadExport(store: RecordingProfilesStore): void {
 
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
-function runSandbox(editor: Editor): void {
-  const { state, root, deps } = editor;
-  const profileId = readField(root, "sandboxProfile");
-  const kind =
-    SANDBOX_KINDS.find((entry) => entry.value === readField(root, "sandboxKind"))?.value ?? "body";
-  const text = readField(root, "sandboxInput");
-  const profile = buildCatalog(state).find((entry) => entry.id === profileId);
-
-  state.sandbox = { profileId, kind, text };
-
-  if (!profile) {
-    return;
-  }
-
-  const result = previewRedaction(
-    { kind, text },
-    { ...profile.redaction, unmaskSelectors: profile.unmaskSelectors }
-  );
-
-  state.sandbox.output =
-    result.error === "invalid-json"
-      ? deps.t("optionsSandboxInvalidJson")
-      : result.changed
-        ? result.output
-        : deps.t("optionsSandboxUnchanged");
 }

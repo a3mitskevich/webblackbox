@@ -28,6 +28,14 @@
       "width": 360,
       "height": 600
     },
+    "popup-other-tab": {
+      "width": 360,
+      "height": 600
+    },
+    "popup-other-tab-error": {
+      "width": 360,
+      "height": 600
+    },
     "popup-lite-reload": {
       "width": 360,
       "height": 600

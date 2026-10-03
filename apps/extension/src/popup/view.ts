@@ -221,6 +221,11 @@ export function createRecordingPanel(options: {
 }): HTMLElement {
   const { session, format, now } = options;
   const { t } = format;
+
+  if (!options.onCurrentTab) {
+    return createOtherTabRecordingRow(session, now, format);
+  }
+
   const ring = describeRingBufferUsage(session, now, t);
   const meter = el("progress", {
     className: "wb-popup__buffer-meter",
@@ -230,12 +235,7 @@ export function createRecordingPanel(options: {
   meter.value = Math.round(ring.usedMinutes * 100);
 
   return el("section", { className: "wb-panel wb-panel--live wb-popup__live" }, [
-    panelHead(
-      options.onCurrentTab
-        ? t("popupRecordingTitle")
-        : t("popupRecordingOnTab", { tabId: session.tabId }),
-      sessionMeta(session, now, format)
-    ),
+    panelHead(t("popupRecordingTitle"), sessionMeta(session, now, format)),
     createStats(session, format, { compact: false }),
     el("div", { className: "wb-popup__buffer" }, [
       el("p", { className: "wb-popup__buffer-label" }, [
@@ -249,6 +249,34 @@ export function createRecordingPanel(options: {
       actionButton(t("popupStop"), "stop", "danger", { iconName: "stop" })
     ])
   ]);
+}
+
+/**
+ * A recording on another tab: one row with Stop. Its counters and Marker belong to that tab, and
+ * this tab still needs room for Start and its last session within the 600px popup.
+ */
+function createOtherTabRecordingRow(
+  session: SessionListItem,
+  now: number,
+  format: PopupFormatters
+): HTMLElement {
+  const { t } = format;
+  const stop = actionButton(t("popupStop"), "stop", "danger", { iconName: "stop" });
+  stop.classList.add("wb-btn--small");
+
+  return el(
+    "section",
+    { className: "wb-panel wb-panel--live wb-popup__live wb-popup__live--other" },
+    [
+      el("div", { className: "wb-popup__live-row" }, [
+        panelHead(
+          t("popupRecordingOnTab", { tabId: session.tabId }),
+          `${format.formatMode(session.mode)} · ${format.formatDuration(session.startedAt, now)}`
+        ),
+        stop
+      ])
+    ]
+  );
 }
 
 const VISUAL_SEGMENTS: Array<{ value: FullModeVisualCapture; key: ExtensionMessageKey }> = [

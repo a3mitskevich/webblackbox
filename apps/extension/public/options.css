@@ -320,6 +320,11 @@
   transform: translate(-50%, 0);
 }
 
+.wb-help.wb-help--dismissed .wb-help__bubble {
+  opacity: 0;
+  visibility: hidden;
+}
+
 /* ---------- Chip lists ---------- */
 
 .wb-chips {
