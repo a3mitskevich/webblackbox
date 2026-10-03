@@ -18,6 +18,7 @@ export type PopupFormatters = {
   formatRelativeTime: (timestamp: number, now: number) => string;
   formatDuration: (startedAt: number, endedAt: number) => string;
   formatByteSize: (bytes: number) => string;
+  formatNumber: (value: number, fractionDigits?: number) => string;
 };
 
 export type BadgeKind = "idle" | "rec" | "alert";
@@ -147,7 +148,7 @@ export type RingUsage = { usedMinutes: number; capacityMinutes: number; windowLa
 export function describeRingBufferUsage(
   session: SessionListItem,
   now: number,
-  t: Translate
+  format: Pick<PopupFormatters, "t" | "formatNumber">
 ): RingUsage {
   const capacityMinutes = Math.max(
     1,
@@ -162,9 +163,9 @@ export function describeRingBufferUsage(
   return {
     usedMinutes,
     capacityMinutes,
-    windowLabel: t("popupRingBufferWindow", {
-      used: usedMinutes.toFixed(1),
-      capacity: capacityMinutes.toFixed(1)
+    windowLabel: format.t("popupRingBufferWindow", {
+      used: format.formatNumber(usedMinutes, 1),
+      capacity: format.formatNumber(capacityMinutes, 1)
     })
   };
 }
@@ -177,9 +178,17 @@ function createStats(
   const { t } = format;
   const errorCount = session.errorCount ?? 0;
   const stats: Array<{ label: string; value: string; warn: boolean }> = [
-    { label: t("popupStatEvents"), value: String(session.eventCount ?? 0), warn: false },
-    { label: t("popupStatErrors"), value: String(errorCount), warn: errorCount > 0 },
-    { label: t("popupStatAlerts"), value: String(session.budgetAlertCount ?? 0), warn: false },
+    {
+      label: t("popupStatEvents"),
+      value: format.formatNumber(session.eventCount ?? 0),
+      warn: false
+    },
+    { label: t("popupStatErrors"), value: format.formatNumber(errorCount), warn: errorCount > 0 },
+    {
+      label: t("popupStatAlerts"),
+      value: format.formatNumber(session.budgetAlertCount ?? 0),
+      warn: false
+    },
     { label: t("popupStatSize"), value: format.formatByteSize(session.sizeBytes ?? 0), warn: false }
   ];
 
@@ -226,7 +235,7 @@ export function createRecordingPanel(options: {
     return createOtherTabRecordingRow(session, now, format);
   }
 
-  const ring = describeRingBufferUsage(session, now, t);
+  const ring = describeRingBufferUsage(session, now, format);
   const meter = el("progress", {
     className: "wb-popup__buffer-meter",
     attrs: { "aria-label": t("popupRingBuffer"), "aria-valuetext": ring.windowLabel }

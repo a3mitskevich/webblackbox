@@ -20,7 +20,7 @@ import { toArrayBuffer } from "./lib/binary.js";
 import { formatCompareSummary } from "./lib/compare-summary.js";
 import { escapeHtml, getElement } from "./lib/dom.js";
 import { copyText, downloadTextFile } from "./lib/export.js";
-import { formatDelta, formatMono, formatTimelineEventLabel } from "./lib/format.js";
+import { formatTimelineEventLabel } from "./lib/format.js";
 import { openDialog } from "./lib/dialog.js";
 import {
   applyPlayerDocumentLocale,
@@ -32,7 +32,7 @@ import {
 import { describeRequestName, resolveNetworkInitiator } from "./lib/network-labels.js";
 import { clamp, readPointerRatio } from "./lib/math.js";
 import { sha256HexFromText } from "./lib/hash.js";
-import { formatByteSize, formatNetworkSize, sumNetworkTransferBytes } from "./lib/network-size.js";
+import { formatNetworkSize, sumNetworkTransferBytes } from "./lib/network-size.js";
 import {
   applyNetworkViewFilters,
   describeNetworkStatus,
@@ -1645,12 +1645,12 @@ function showQuickTriagePanel(model: ArchiveModel, archiveName: string): void {
 
   const triage = computeTriageStats(model.events, model.waterfall, TRIAGE_SLOW_REQUEST_MS);
   const origin = player.archive.manifest.site.origin;
-  refs.preflightMeta.textContent = `${archiveName} • ${formatMono(model.durationMono)} • ${origin}`;
-  refs.preflightErrors.textContent = String(model.totals.errors);
-  refs.preflightFailedRequests.textContent = String(triage.failedRequests);
-  refs.preflightSlowRequests.textContent = String(triage.slowRequests);
-  refs.preflightShots.textContent = String(model.screenshots.length);
-  refs.preflightActions.textContent = String(model.totals.actionSpans);
+  refs.preflightMeta.textContent = `${archiveName} • ${i18n.formatSeconds(model.durationMono)} • ${origin}`;
+  refs.preflightErrors.textContent = i18n.formatNumber(model.totals.errors);
+  refs.preflightFailedRequests.textContent = i18n.formatNumber(triage.failedRequests);
+  refs.preflightSlowRequests.textContent = i18n.formatNumber(triage.slowRequests);
+  refs.preflightShots.textContent = i18n.formatNumber(model.screenshots.length);
+  refs.preflightActions.textContent = i18n.formatNumber(model.totals.actionSpans);
   refs.preflightJumpError.disabled = !triage.firstError;
   refs.preflightJumpSlowest.disabled = !triage.slowestRequest;
   refs.preflightPanel.hidden = false;
@@ -1890,9 +1890,9 @@ async function shareLoadedArchive(): Promise<void> {
         const percent = targetTotal > 0 ? Math.min(100, (loadedBytes / targetTotal) * 100) : 0;
         setFeedback(
           i18n.formatShareUploadProgress(
-            percent.toFixed(1),
-            formatByteSize(loadedBytes),
-            formatByteSize(targetTotal)
+            i18n.formatNumber(percent, { fractionDigits: 1 }),
+            i18n.formatByteSize(loadedBytes),
+            i18n.formatByteSize(targetTotal)
           )
         );
       },
@@ -2078,7 +2078,7 @@ function renderSharePrivacyPreflight(): void {
   refs.sharePrivacySamples.innerHTML = samples
     .map((sample) => {
       const label = i18n.t("sharePrivacyPreviewSample", {
-        reason: formatSensitivePreviewReason(sample.reason),
+        reason: i18n.formatSensitiveReason(sample.reason),
         snippet: sample.snippet
       });
 
@@ -2171,20 +2171,6 @@ function encodeShareSummaryHeader(summary: PublicShareSummary): string {
 
 function roundRatio(value: number): number {
   return Math.round(value * 10_000) / 10_000;
-}
-
-function formatSensitivePreviewReason(reason: string): string {
-  if (locale === "zh-CN") {
-    const labels: Record<string, string> = {
-      "redacted-marker": "脱敏标记",
-      "hashed-value": "哈希值",
-      "sensitive-pattern": "敏感模式"
-    };
-
-    return labels[reason] ?? reason;
-  }
-
-  return reason.replaceAll("-", " ");
 }
 
 async function promptShareReferenceInput(): Promise<{ reference: string; apiKey: string } | null> {
@@ -2363,8 +2349,8 @@ function renderPlaybackChrome(): void {
     refs.playbackMarkers.innerHTML = "";
     refs.playbackPlayhead.style.left = "0%";
     hideProgressHover();
-    refs.playbackCurrent.textContent = "0.00s";
-    refs.playbackTotal.textContent = "0.00s";
+    refs.playbackCurrent.textContent = i18n.formatSeconds(0);
+    refs.playbackTotal.textContent = i18n.formatSeconds(0);
     renderPlaybackReadout();
     return;
   }
@@ -2378,8 +2364,8 @@ function renderPlaybackChrome(): void {
   const ratio =
     model.durationMono > 0 ? (state.playheadMono - model.minMono) / model.durationMono : 0;
   refs.playbackPlayhead.style.left = `${(Math.min(1, Math.max(0, ratio)) * 100).toFixed(3)}%`;
-  refs.playbackCurrent.textContent = formatMono(state.playheadMono - model.minMono);
-  refs.playbackTotal.textContent = formatMono(model.durationMono);
+  refs.playbackCurrent.textContent = i18n.formatSeconds(state.playheadMono - model.minMono);
+  refs.playbackTotal.textContent = i18n.formatSeconds(model.durationMono);
   renderPlaybackReadout();
 }
 
@@ -2524,7 +2510,7 @@ function renderPlaybackReadout(): void {
   const model = state.model;
 
   if (!model || !state.player) {
-    refs.playbackWindowLabel.textContent = "0.00s / 0.00s";
+    refs.playbackWindowLabel.textContent = `${i18n.formatSeconds(0)} / ${i18n.formatSeconds(0)}`;
     refs.playbackWindowEvents.textContent = i18n.formatStatusCounts(0, 0, 0);
     refs.playbackWindowPanel.textContent = i18n.formatStatusPanel("details");
     return;
@@ -2554,7 +2540,7 @@ function renderPlaybackReadout(): void {
     .filter((item): item is string => Boolean(item))
     .join(" | ");
 
-  refs.playbackWindowLabel.textContent = `${formatMono(state.playheadMono - model.minMono)} / ${formatMono(
+  refs.playbackWindowLabel.textContent = `${i18n.formatSeconds(state.playheadMono - model.minMono)} / ${i18n.formatSeconds(
     model.durationMono
   )}`;
   refs.playbackWindowEvents.textContent = i18n.formatStatusCounts(
@@ -2582,7 +2568,7 @@ function renderProgressMarkers(model: ArchiveModel): void {
   for (const marker of model.progressMarkers) {
     const ratio = (marker.mono - model.minMono) / model.durationMono;
     const left = (Math.min(1, Math.max(0, ratio)) * 100).toFixed(3);
-    const tip = `${i18n.formatMarkerKind(marker.kind)} @ ${formatMono(marker.mono - model.minMono)}`;
+    const tip = `${i18n.formatMarkerKind(marker.kind)} @ ${i18n.formatSeconds(marker.mono - model.minMono)}`;
     const button = document.createElement("button");
 
     button.type = "button";
@@ -2632,7 +2618,7 @@ async function showProgressHover(
   positionProgressHover(clampedRatio);
 
   refs.progressHover.hidden = false;
-  refs.progressHoverTime.textContent = formatMono(clampedMono - model.minMono);
+  refs.progressHoverTime.textContent = i18n.formatSeconds(clampedMono - model.minMono);
   const summary = buildProgressHoverSummary(model, clampedMono, markerKind);
   refs.progressHoverText.textContent = summary.text;
   renderProgressHoverTags(summary.tags);
@@ -2721,7 +2707,7 @@ async function renderProgressHoverResponse(
     return;
   }
 
-  refs.progressHoverResponseMeta.textContent = `${entry.method.toUpperCase()} ${shortUrl(entry.url)} · ${preview.mime} · ${preview.sizeBytes}B`;
+  refs.progressHoverResponseMeta.textContent = `${entry.method.toUpperCase()} ${shortUrl(entry.url)} · ${preview.mime} · ${i18n.formatByteSize(preview.sizeBytes)}`;
 
   const visibleText = state.maskResponsePreview ? redactPreviewText(preview.text) : preview.text;
 
@@ -3028,7 +3014,7 @@ function jumpToFirstError(): void {
   setPlayhead(firstError.mono, { forcePanels: true });
   setFeedback(
     i18n.t("jumpedFirstError", {
-      time: formatMono(firstError.mono - model.minMono)
+      time: i18n.formatSeconds(firstError.mono - model.minMono)
     })
   );
 }
@@ -3055,7 +3041,7 @@ function jumpToSlowestRequest(): void {
   setPlayhead(slowest.startMono, { forcePanels: true });
   setFeedback(
     i18n.t("jumpedSlowestRequest", {
-      durationMs: slowest.durationMs.toFixed(0)
+      durationMs: i18n.formatNumber(slowest.durationMs)
     })
   );
 }
@@ -3119,7 +3105,7 @@ function renderSummary(): void {
   const compareDelta = state.compareSummary
     ? `<div class="pill">${escapeHtml(
         i18n.t("summaryCompareEventDelta", {
-          delta: formatDelta(state.compareSummary.eventDelta)
+          delta: i18n.formatNumber(state.compareSummary.eventDelta, { signed: true })
         })
       )}</div>`
     : "";
@@ -3159,7 +3145,7 @@ function renderSummary(): void {
     ${profileSummary ? `<div class="pill">${escapeHtml(profileSummary)}</div>` : ""}
     <div class="pill">${escapeHtml(
       i18n.t("summaryPlayhead", {
-        time: formatMono(state.playheadMono - model.minMono)
+        time: i18n.formatSeconds(state.playheadMono - model.minMono)
       })
     )}</div>
     <div class="pill">${escapeHtml(i18n.t("summaryVisibleEvents", { count: visibleEventCount }))}</div>
@@ -3214,14 +3200,19 @@ function renderCompareRegressions(
           ${regressionRows
             .map((entry) => {
               const endpointLabel = `${entry.method} ${entry.endpoint}`;
-              const failRateDelta = `${formatDelta(
-                Number((entry.failureRateDelta * 100).toFixed(2))
-              )}%`;
-              const p95Delta = `${formatDelta(Number(entry.p95DurationDeltaMs.toFixed(1)))}ms`;
+              const failRateDelta = i18n.formatNumber(entry.failureRateDelta, {
+                percent: true,
+                signed: true,
+                fractionDigits: 2
+              });
+              const p95Delta = i18n.formatMilliseconds(entry.p95DurationDeltaMs, {
+                signed: true,
+                fractionDigits: 1
+              });
 
               return `<tr>
                 <td title="${escapeHtml(endpointLabel)}">${escapeHtml(endpointLabel)}</td>
-                <td class="mono">${formatDelta(entry.countDelta)}</td>
+                <td class="mono">${escapeHtml(i18n.formatNumber(entry.countDelta, { signed: true }))}</td>
                 <td class="mono">${escapeHtml(failRateDelta)}</td>
                 <td class="mono">${escapeHtml(p95Delta)}</td>
               </tr>`;
@@ -3278,12 +3269,12 @@ function renderCompareTimelineRows(leftModel: ArchiveModel, rightModel: ArchiveM
     rows.push(`
       <div class="compare-timeline-col">
         <span class="compare-timeline-label">A</span>
-        <span class="mono">${left ? formatMono(left.mono - leftModel.minMono) : "—"}</span>
+        <span class="mono">${left ? i18n.formatSeconds(left.mono - leftModel.minMono) : "—"}</span>
         <span title="${left ? escapeHtml(left.id) : ""}">${left ? escapeHtml(left.type) : "—"}</span>
       </div>
       <div class="compare-timeline-col">
         <span class="compare-timeline-label">B</span>
-        <span class="mono">${right ? formatMono(right.mono - rightModel.minMono) : "—"}</span>
+        <span class="mono">${right ? i18n.formatSeconds(right.mono - rightModel.minMono) : "—"}</span>
         <span title="${right ? escapeHtml(right.id) : ""}">${right ? escapeHtml(right.type) : "—"}</span>
       </div>
     `);
@@ -3558,18 +3549,18 @@ function renderTimelineRow(event: WebBlackboxEvent): string {
           <span class="${scopeTagClass}">${scopeLabel}</span>
           ${sourceTag}
         </span>
-        <span class="mono">${formatMono(relativeMono)}</span>
+        <span class="mono">${i18n.formatSeconds(relativeMono)}</span>
       </button></li>`;
 }
 
 function renderActionCard(action: ActionTimelineEntry, model: ArchiveModel): string {
   const selectedClass = state.selectedActionId === action.actId ? "selected" : "";
-  const triggerType = action.triggerType ?? "unknown";
+  const triggerType = action.triggerType ?? i18n.messages.actionTriggerUnknown;
   const relativeStart = Math.max(0, action.startMono - model.minMono);
   const relativeEnd = Math.max(relativeStart, action.endMono - model.minMono);
   const screenshotMeta = action.screenshot
     ? i18n.t("actionMetricShot", {
-        time: formatMono(Math.max(0, action.screenshot.mono - model.minMono))
+        time: i18n.formatSeconds(Math.max(0, action.screenshot.mono - model.minMono))
       })
     : i18n.messages.actionMetricNoShot;
   const requestPreview = action.requests
@@ -3597,7 +3588,7 @@ function renderActionCard(action: ActionTimelineEntry, model: ArchiveModel): str
   return `<li class="action-card-row"><button class="${cardClass}" data-action-id="${escapeHtml(action.actId)}">
       <div class="action-card-head">
         <span class="action-card-trigger">${escapeHtml(triggerType)}</span>
-        <span class="action-card-time mono">${formatMono(relativeStart)} - ${formatMono(relativeEnd)}</span>
+        <span class="action-card-time mono">${i18n.formatSeconds(relativeStart)} - ${i18n.formatSeconds(relativeEnd)}</span>
       </div>
       <div class="action-card-metrics mono">
         ${i18n
@@ -3847,8 +3838,8 @@ function renderWaterfall(): void {
       const method = entry.method.toUpperCase();
       const type = resolveNetworkTypeLabel(entry.mimeType, locale);
       const initiator = resolveNetworkInitiator(entry, locale);
-      const size = formatNetworkSize(entry);
-      const elapsed = `${entry.durationMs.toFixed(1)} ms`;
+      const size = formatNetworkSize(entry, locale);
+      const elapsed = i18n.formatMilliseconds(entry.durationMs, { fractionDigits: 1 });
       const scope = resolveRequestScope(model, entry.reqId);
       const scopeClass =
         scope === "iframe" ? "scope-tag scope-tag-iframe" : "scope-tag scope-tag-main";
@@ -3944,8 +3935,8 @@ function renderNetworkSummary(
   refs.networkSummary.textContent = i18n.formatNetworkSummary(
     filteredEntries.length,
     visibleEntries.length,
-    formatByteSize(filteredBytes),
-    formatByteSize(totalBytes),
+    i18n.formatByteSize(filteredBytes),
+    i18n.formatByteSize(totalBytes),
     renderedEntries.length
   );
 }
@@ -4019,7 +4010,7 @@ function renderRealtimeSignals(): void {
       const scopeClass =
         scope === "iframe" ? "scope-tag scope-tag-iframe" : "scope-tag scope-tag-main";
 
-      return `<li class="signal"><span class="signal-type">${escapeHtml(entry.eventType)}</span><span class="${scopeClass}">${scopeLabel}</span><span class="signal-text">${escapeHtml(direction)}${escapeHtml(entry.streamId ?? "-")} @ ${entry.mono.toFixed(2)}ms ${escapeHtml(preview)}</span></li>`;
+      return `<li class="signal"><span class="signal-type">${escapeHtml(entry.eventType)}</span><span class="${scopeClass}">${scopeLabel}</span><span class="signal-text">${escapeHtml(direction)}${escapeHtml(entry.streamId ?? "-")} @ ${i18n.formatMilliseconds(entry.mono, { fractionDigits: 2 })} ${escapeHtml(preview)}</span></li>`;
     })
     .join("");
 }
@@ -4044,7 +4035,7 @@ function renderStorageSignals(): void {
     .map((entry) => {
       const operation = entry.operation ? `${entry.operation} ` : "";
       const hash = entry.hash ? ` hash=${entry.hash}` : "";
-      const summary = `${entry.kind} ${operation}@ ${entry.mono.toFixed(2)}ms${hash}`;
+      const summary = `${entry.kind} ${operation}@ ${i18n.formatMilliseconds(entry.mono, { fractionDigits: 2 })}${hash}`;
       const scope = resolveScopeByEventId(model, entry.eventId);
       const scopeLabel = i18n.formatScopeTag(scope);
       const scopeClass =
@@ -4074,7 +4065,7 @@ function renderPerfSignals(): void {
     .map((entry) => {
       const size = typeof entry.size === "number" ? ` size=${entry.size}` : "";
       const hash = entry.hash ? ` hash=${entry.hash}` : "";
-      const summary = `${entry.kind} @ ${entry.mono.toFixed(2)}ms${size}${hash}`;
+      const summary = `${entry.kind} @ ${i18n.formatMilliseconds(entry.mono, { fractionDigits: 2 })}${size}${hash}`;
       const scope = resolveScopeByEventId(model, entry.eventId);
       const scopeLabel = i18n.formatScopeTag(scope);
       const scopeClass =
@@ -4098,7 +4089,7 @@ function renderFilmstripList(): void {
   refs.filmstripList.innerHTML = rendered
     .map((shot) => {
       const selected = currentShot && currentShot.eventId === shot.eventId ? "active" : "";
-      return `<li><button data-shot-event="${escapeHtml(shot.eventId)}" class="shot-btn ${selected}">${formatMono(shot.mono - model.minMono)}</button></li>`;
+      return `<li><button data-shot-event="${escapeHtml(shot.eventId)}" class="shot-btn ${selected}">${i18n.formatSeconds(shot.mono - model.minMono)}</button></li>`;
     })
     .join("");
 }
@@ -4499,12 +4490,12 @@ function describeScreenRecordingMeta(recording: ScreenRecordingRecord): string {
       : "-";
 
   return i18n.t("screenRecordingMeta", {
-    current: formatMono(currentMs),
-    duration: formatMono(
+    current: i18n.formatSeconds(currentMs),
+    duration: i18n.formatSeconds(
       recording.durationMs || Math.max(0, recording.endMono - recording.startMono)
     ),
     chunks: String(recording.chunkCount || recording.chunks.length),
-    size: typeof recording.size === "number" ? String(recording.size) : "-",
+    size: typeof recording.size === "number" ? i18n.formatByteSize(recording.size) : "-",
     dimensions
   });
 }
@@ -5533,7 +5524,7 @@ async function replaySelectedRequest(): Promise<void> {
         : i18n.t("feedbackReplayStatusDelta", {
             status: replayStatus,
             captured: capturedStatus,
-            delta: formatDelta(statusDelta ?? 0)
+            delta: i18n.formatNumber(statusDelta ?? 0, { signed: true })
           });
     setFeedback(i18n.t("feedbackReplaySucceeded", { reqId, statusLabel }));
   } catch (error) {

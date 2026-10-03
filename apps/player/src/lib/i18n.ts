@@ -34,6 +34,14 @@ type CompareSignal = "regressed" | "stable" | "new" | "missing";
 type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action";
 type SortDirection = "asc" | "desc";
 type SelectionKind = "action" | "event" | "request";
+type SensitiveReason = "redacted-marker" | "hashed-value" | "sensitive-pattern";
+
+/** Decimals are fixed (min = max); `signed` shows "+" on positives, `percent` takes a ratio. */
+export type NumberStyle = { fractionDigits?: number; signed?: boolean; percent?: boolean };
+
+const MS_PER_SECOND = 1000;
+const BYTES_PER_KB = 1024;
+const BYTES_PER_MB = BYTES_PER_KB * 1024;
 
 type PlayerMessages = {
   pageTitlePlayer: string;
@@ -46,6 +54,12 @@ type PlayerMessages = {
   localeNames: Record<PlayerLocale, string>;
   modeLite: string;
   modeFull: string;
+  unitSeconds: string;
+  unitSecondsLabel: string;
+  unitMilliseconds: string;
+  unitBytes: string;
+  unitKilobytes: string;
+  unitMegabytes: string;
   statusWindow: string;
   statusCounts: string;
   statusPanelOnly: string;
@@ -215,6 +229,17 @@ type PlayerMessages = {
   compareColumnSessionB: string;
   compareColumnSignal: string;
   compareEndpointSummary: string;
+  compareSummaryTitle: string;
+  compareSummaryLeft: string;
+  compareSummaryRight: string;
+  compareSummaryTotals: string;
+  compareSummaryEvents: string;
+  compareSummaryErrors: string;
+  compareSummaryRequests: string;
+  compareSummaryDuration: string;
+  compareSummaryTopTypes: string;
+  compareSummaryTypeDelta: string;
+  compareSummaryEndpoint: string;
   timelineEmpty: string;
   actionsEmpty: string;
   eventDetailsEmpty: string;
@@ -308,10 +333,13 @@ type PlayerMessages = {
   networkInitiatorActionNumber: string;
   networkStatusPending: string;
   networkStatusPendingPlain: string;
+  networkSizeFailed: string;
+  actionTriggerUnknown: string;
   markerKinds: Record<MarkerKind, string>;
   networkTypes: Record<NetworkType, string>;
   privacyHiddenByProfile: string;
   privacySubjects: Record<PrivacyViolationSubject, string>;
+  sensitiveReasons: Record<SensitiveReason, string>;
   summaryProfile: string;
   summaryProfileRule: string;
   summaryProfileDowngraded: string;
@@ -328,6 +356,28 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
   ru: RU_MESSAGES,
   "zh-CN": ZH_CN_MESSAGES
 };
+
+const numberFormats = new Map<string, Intl.NumberFormat>();
+
+function getNumberFormat(locale: PlayerLocale, style: NumberStyle): Intl.NumberFormat {
+  const fractionDigits = style.fractionDigits ?? 0;
+  const cacheKey = [locale, fractionDigits, style.signed === true, style.percent === true].join(
+    "|"
+  );
+  let format = numberFormats.get(cacheKey);
+
+  if (!format) {
+    format = new Intl.NumberFormat(locale, {
+      style: style.percent ? "percent" : "decimal",
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+      signDisplay: style.signed ? "exceptZero" : "auto"
+    });
+    numberFormats.set(cacheKey, format);
+  }
+
+  return format;
+}
 
 function interpolate(template: string, values: Record<string, string | number> = {}): string {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => {
@@ -397,6 +447,36 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     return typeof value === "string" ? interpolate(value, values) : "";
   };
 
+  const formatNumber = (value: number, style: NumberStyle = {}): string =>
+    getNumberFormat(locale, style).format(Number.isFinite(value) ? value : 0);
+  /** Playback clock style: seconds with two decimals ("1.25s", "1,25 с"). */
+  const formatSeconds = (ms: number, style: NumberStyle = {}): string =>
+    t("unitSeconds", {
+      value: formatNumber(ms / MS_PER_SECOND, { fractionDigits: 2, ...style })
+    });
+  const formatMilliseconds = (ms: number, style: NumberStyle = {}): string =>
+    t("unitMilliseconds", { value: formatNumber(ms, style) });
+  const formatByteSize = (bytes: number): string => {
+    if (!Number.isFinite(bytes) || bytes < BYTES_PER_KB) {
+      return t("unitBytes", {
+        value: formatNumber(Number.isFinite(bytes) ? Math.round(bytes) : 0)
+      });
+    }
+
+    if (bytes < BYTES_PER_MB) {
+      return t("unitKilobytes", {
+        value: formatNumber(bytes / BYTES_PER_KB, { fractionDigits: 1 })
+      });
+    }
+
+    return t("unitMegabytes", { value: formatNumber(bytes / BYTES_PER_MB, { fractionDigits: 2 }) });
+  };
+  /** Known privacy-scanner reasons are translated; anything else is shown as words. */
+  const formatSensitiveReason = (reason: string): string =>
+    Object.hasOwn(messages.sensitiveReasons, reason)
+      ? messages.sensitiveReasons[reason as SensitiveReason]
+      : reason.replaceAll("-", " ");
+
   const formatMode = (mode: string): string => {
     if (mode === "lite") {
       return messages.modeLite;
@@ -428,7 +508,11 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     t(selectionKeys[kind], { id });
 
   const formatStatusCounts = (events: number, errors: number, requests: number): string =>
-    t("statusCounts", { events, errors, requests });
+    t("statusCounts", {
+      events: formatNumber(events),
+      errors: formatNumber(errors),
+      requests: formatNumber(requests)
+    });
   const formatStatusPanel = (panel: PanelKey, selection?: string): string =>
     selection
       ? t("statusPanelSelection", { panel: formatPanelLabel(panel), selection })
@@ -494,7 +578,7 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     errorCount: number;
     screenshotMeta: string;
   }): string[] => [
-    t("actionMetricDuration", { value: options.durationMs.toFixed(1) }),
+    t("actionMetricDuration", { value: formatNumber(options.durationMs, { fractionDigits: 1 }) }),
     t("actionMetricEvents", { count: options.eventCount }),
     t("actionMetricRequests", { count: options.requestCount }),
     t("actionMetricErrors", { count: options.errorCount }),
@@ -502,9 +586,9 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
   ];
   const formatCompareEndpointSummary = (count: number, failRate: number, p95Ms: number): string =>
     t("compareEndpointSummary", {
-      count,
-      failRate: failRate.toFixed(0),
-      p95Ms: p95Ms.toFixed(0)
+      count: formatNumber(count),
+      failRate: formatNumber(failRate),
+      p95Ms: formatNumber(p95Ms)
     });
   const formatPassphrasePrompt = (fileName: string): string =>
     t("encryptedArchivePrompt", { fileName });
@@ -514,7 +598,7 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     totalBytes: string
   ): string => t("feedbackShareUploadProgress", { percent, loadedBytes, totalBytes });
   const formatBinaryResponsePreview = (mime: string, bytes: number): string =>
-    t("responsePreviewBinary", { mime, bytes });
+    t("responsePreviewBinary", { mime, bytes: formatByteSize(bytes) });
   const formatNetworkInitiatorActionNumber = (index: string): string =>
     t("networkInitiatorActionNumber", { index });
 
@@ -541,7 +625,12 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     formatPassphrasePrompt,
     formatShareUploadProgress,
     formatBinaryResponsePreview,
-    formatNetworkInitiatorActionNumber
+    formatNetworkInitiatorActionNumber,
+    formatNumber,
+    formatSeconds,
+    formatMilliseconds,
+    formatByteSize,
+    formatSensitiveReason
   };
 }
 

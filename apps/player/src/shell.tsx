@@ -97,7 +97,7 @@ export function PlayerShell({ locale = "en" }: PlayerShellProps = {}): React.JSX
               step="1"
               defaultValue="10"
             />
-            <span>s</span>
+            <span>{messages.unitSecondsLabel}</span>
           </label>
           <label className="mask-wrap" htmlFor="mask-response-preview">
             <Checkbox id="mask-response-preview" defaultChecked />

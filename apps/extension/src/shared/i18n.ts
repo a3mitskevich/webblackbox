@@ -12,6 +12,21 @@ export type ExtensionLocalePreference = "auto" | ExtensionLocale;
 
 export const EXTENSION_LOCALES: readonly ExtensionLocale[] = ["en", "ru", "zh-CN"];
 
+/** Units shown next to number inputs; each has a translated label. */
+export type ExtensionUnit = "B" | "MB" | "Hz" | "ms" | "min" | "%";
+
+export const EXTENSION_UNIT_LABEL_KEYS: Record<ExtensionUnit, ExtensionMessageKey> = {
+  B: "unitLabelBytes",
+  MB: "unitLabelMegabytes",
+  Hz: "unitLabelHertz",
+  ms: "unitLabelMilliseconds",
+  min: "unitLabelMinutes",
+  "%": "unitLabelPercent"
+};
+
+const BYTES_PER_KB = 1024;
+const BYTES_PER_MB = BYTES_PER_KB * 1024;
+
 /** `chrome.storage.local` key holding the {@link ExtensionLocalePreference}. */
 export const EXTENSION_LOCALE_STORAGE_KEY = "webblackbox.uiLocale";
 
@@ -51,7 +66,9 @@ export function createExtensionI18n(
       formatExtensionRelativeTime(locale, timestamp, now),
     formatDuration: (startedAt: number, endedAt: number) =>
       formatExtensionDuration(locale, startedAt, endedAt),
-    formatByteSize: (bytes: number) => formatExtensionByteSize(bytes)
+    formatByteSize: (bytes: number) => formatExtensionByteSize(locale, bytes),
+    formatNumber: (value: number, fractionDigits?: number) =>
+      formatExtensionNumber(locale, value, fractionDigits)
   };
 }
 
@@ -210,21 +227,48 @@ export function formatExtensionDuration(
   });
 }
 
-export function formatExtensionByteSize(bytes: number): string {
+const numberFormats = new Map<string, Intl.NumberFormat>();
+
+/** Locale digits and separators with a fixed number of decimals (`1,5` in Russian). */
+export function formatExtensionNumber(
+  locale: ExtensionLocale,
+  value: number,
+  fractionDigits = 0
+): string {
+  const cacheKey = `${locale}:${fractionDigits}`;
+  let format = numberFormats.get(cacheKey);
+
+  if (!format) {
+    format = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits
+    });
+    numberFormats.set(cacheKey, format);
+  }
+
+  return format.format(value);
+}
+
+export function formatExtensionByteSize(locale: ExtensionLocale, bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 B";
+    return translateExtensionMessage(locale, "unitBytes", {
+      value: formatExtensionNumber(locale, 0)
+    });
   }
 
-  if (bytes < 1024) {
-    return `${Math.round(bytes)} B`;
+  if (bytes < BYTES_PER_KB) {
+    return translateExtensionMessage(locale, "unitBytes", {
+      value: formatExtensionNumber(locale, Math.round(bytes))
+    });
   }
 
-  const kb = bytes / 1024;
-
-  if (kb < 1024) {
-    return `${kb.toFixed(1)} KB`;
+  if (bytes < BYTES_PER_MB) {
+    return translateExtensionMessage(locale, "unitKilobytes", {
+      value: formatExtensionNumber(locale, bytes / BYTES_PER_KB, 1)
+    });
   }
 
-  const mb = kb / 1024;
-  return `${mb.toFixed(2)} MB`;
+  return translateExtensionMessage(locale, "unitMegabytes", {
+    value: formatExtensionNumber(locale, bytes / BYTES_PER_MB, 2)
+  });
 }

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   EXTENSION_LOCALE_STORAGE_KEY,
+  createExtensionI18n,
+  formatExtensionByteSize,
   loadExtensionLocale,
   loadExtensionLocalePreference,
   normalizeExtensionLocale,
@@ -113,5 +115,25 @@ describe("locale preference", () => {
 
     expect(chrome.set).toHaveBeenCalledWith({ [EXTENSION_LOCALE_STORAGE_KEY]: "zh-CN" });
     await expect(loadExtensionLocalePreference()).resolves.toBe("zh-CN");
+  });
+});
+
+describe("locale formatting", () => {
+  it.each([
+    ["en", [0, 512, 1536, 5 * 1024 * 1024], ["0 B", "512 B", "1.5 KB", "5.00 MB"]],
+    ["ru", [0, 512, 1536, 5 * 1024 * 1024], ["0 Б", "512 Б", "1,5 КБ", "5,00 МБ"]],
+    ["zh-CN", [0, 512, 1536, 5 * 1024 * 1024], ["0 B", "512 B", "1.5 KB", "5.00 MB"]]
+  ] as const)("formats byte sizes in %s", (locale, sizes, expected) => {
+    expect(sizes.map((bytes) => formatExtensionByteSize(locale, bytes))).toEqual(expected);
+  });
+
+  it("groups digits and uses the locale decimal separator", () => {
+    const ru = createExtensionI18n({ locale: "ru" });
+    const en = createExtensionI18n({ locale: "en" });
+
+    expect(ru.formatNumber(1843)).toBe(new Intl.NumberFormat("ru").format(1843));
+    expect(ru.formatNumber(2.25, 1)).toMatch(/^2,[23]$/);
+    expect(en.formatNumber(1843)).toBe("1,843");
+    expect(en.formatNumber(2, 1)).toBe("2.0");
   });
 });

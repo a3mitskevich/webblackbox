@@ -47,7 +47,8 @@ const format: PopupFormatters = {
   formatMode,
   formatRelativeTime: i18n.formatRelativeTime,
   formatDuration: i18n.formatDuration,
-  formatByteSize: i18n.formatByteSize
+  formatByteSize: i18n.formatByteSize,
+  formatNumber: i18n.formatNumber
 };
 
 const root = document.getElementById("popup-root");

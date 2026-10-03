@@ -1,30 +1,24 @@
 import type { NetworkWaterfallEntry } from "@webblackbox/player-sdk";
 
-export function formatByteSize(bytes: number): string {
-  if (bytes < 1024) {
-    return `${Math.round(bytes)} B`;
-  }
-
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
+import { createPlayerI18n, type PlayerLocale } from "./i18n.js";
 
 export function resolveNetworkSizeBytes(entry: NetworkWaterfallEntry): number {
   const size = entry.encodedDataLength ?? entry.responseBodySize;
   return typeof size === "number" && Number.isFinite(size) && size >= 0 ? size : -1;
 }
 
-export function formatNetworkSize(entry: NetworkWaterfallEntry): string {
+export function formatNetworkSize(
+  entry: NetworkWaterfallEntry,
+  locale: PlayerLocale = "en"
+): string {
   const size = resolveNetworkSizeBytes(entry);
+  const i18n = createPlayerI18n(locale);
 
   if (!Number.isFinite(size) || size < 0) {
-    return entry.failed ? "(failed)" : "-";
+    return entry.failed ? i18n.messages.networkSizeFailed : "-";
   }
 
-  return formatByteSize(size);
+  return i18n.formatByteSize(size);
 }
 
 export function sumNetworkTransferBytes(entries: NetworkWaterfallEntry[]): number {

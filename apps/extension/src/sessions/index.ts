@@ -47,6 +47,7 @@ const format: SessionFormatters = {
   formatRelativeTime: i18n.formatRelativeTime,
   formatDuration: i18n.formatDuration,
   formatByteSize: i18n.formatByteSize,
+  formatNumber: i18n.formatNumber,
   formatAbsoluteTime: (timestamp) => new Date(timestamp).toLocaleString(locale)
 };
 const root = document.getElementById("sessions-root");
