@@ -92,6 +92,9 @@ jobs:
           - surface: full-memory
             command: pnpm --filter @webblackbox/extension e2e:memory:full:ci
             needsChrome: true
+          - surface: ui
+            command: WB_UI_SHOTS_OUT=/tmp/wb-ui-shots pnpm --filter @webblackbox/extension e2e:ui
+            needsChrome: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -126,3 +129,10 @@ jobs:
           WB_E2E_HEADLESS: "1"
           WB_E2E_USE_POPUP_UI: "0"
         run: ${{ matrix.command }}
+
+      - name: Upload UI screenshots
+        if: ${{ failure() && matrix.surface == 'ui' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: /tmp/wb-ui-shots

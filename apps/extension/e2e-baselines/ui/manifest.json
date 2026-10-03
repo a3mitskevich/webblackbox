@@ -1,0 +1,72 @@
+{
+  "fingerprint": {
+    "chrome": "Chrome/153",
+    "fontProbe": [
+      293.85,
+      318.33,
+      391.8
+    ]
+  },
+  "shots": {
+    "popup-idle": {
+      "width": 360,
+      "height": 600
+    },
+    "popup-ready-rule": {
+      "width": 360,
+      "height": 600
+    },
+    "popup-recording": {
+      "width": 360,
+      "height": 600
+    },
+    "popup-passphrase": {
+      "width": 360,
+      "height": 600
+    },
+    "popup-exporting": {
+      "width": 360,
+      "height": 600
+    },
+    "popup-lite-reload": {
+      "width": 360,
+      "height": 600
+    },
+    "options-420": {
+      "width": 420,
+      "height": 900
+    },
+    "options-1440": {
+      "width": 1440,
+      "height": 900
+    },
+    "options-1440-profiles": {
+      "width": 1440,
+      "height": 900
+    },
+    "options-1440-rules": {
+      "width": 1440,
+      "height": 900
+    },
+    "options-1440-sensitivity": {
+      "width": 1440,
+      "height": 900
+    },
+    "options-1440-sampling": {
+      "width": 1440,
+      "height": 900
+    },
+    "options-1440-export": {
+      "width": 1440,
+      "height": 900
+    },
+    "sessions-420": {
+      "width": 420,
+      "height": 900
+    },
+    "sessions-1440": {
+      "width": 1440,
+      "height": 900
+    }
+  }
+}
