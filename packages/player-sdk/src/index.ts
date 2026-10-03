@@ -15,6 +15,8 @@ import type {
 import { extractRequestId, inferBlobMime } from "@webblackbox/protocol";
 
 /** Player lifecycle status. */
+export * from "./recording-profile.js";
+
 export type PlayerStatus = "idle" | "loaded";
 
 /** Supported input payloads when opening an archive. */

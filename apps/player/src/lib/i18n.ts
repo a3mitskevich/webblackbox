@@ -1,3 +1,5 @@
+import type { PrivacyViolationSubject } from "@webblackbox/player-sdk";
+
 import { readStoredText, writeStoredText } from "./storage.js";
 
 export type PlayerLocale = "en" | "zh-CN";
@@ -298,6 +300,11 @@ type PlayerMessages = {
   networkStatusPendingPlain: string;
   markerKinds: Record<MarkerKind, string>;
   networkTypes: Record<NetworkType, string>;
+  privacyHiddenByProfile: string;
+  privacySubjects: Record<PrivacyViolationSubject, string>;
+  summaryProfile: string;
+  summaryProfileRule: string;
+  summaryProfileDowngraded: string;
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;
@@ -594,6 +601,25 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       recording: "recording",
       action: "action"
     },
+    privacyHiddenByProfile: "Hidden by profile: {what}",
+    privacySubjects: {
+      "console-text": "console text",
+      console: "console output",
+      "network-body": "network body",
+      "input-value": "input value",
+      input: "input",
+      "raw-dom": "raw DOM snapshot",
+      dom: "DOM",
+      screenshot: "screenshot",
+      "tab-recording": "tab recording",
+      storage: "storage",
+      "storage-details": "storage details",
+      profile: "profiling data",
+      unknown: "data"
+    },
+    summaryProfile: "profile {name}",
+    summaryProfileRule: "profile {name} (rule {rule})",
+    summaryProfileDowngraded: "profile {name} ({requested} not allowed on this site)",
     networkTypes: {
       document: "Document",
       fetch: "Fetch/XHR",
@@ -907,6 +933,25 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       recording: "录屏",
       action: "动作"
     },
+    privacyHiddenByProfile: "已被配置隐藏：{what}",
+    privacySubjects: {
+      "console-text": "控制台文本",
+      console: "控制台输出",
+      "network-body": "网络响应体",
+      "input-value": "输入值",
+      input: "输入",
+      "raw-dom": "原始 DOM 快照",
+      dom: "DOM",
+      screenshot: "截图",
+      "tab-recording": "标签页录制",
+      storage: "存储",
+      "storage-details": "存储详情",
+      profile: "性能分析数据",
+      unknown: "数据"
+    },
+    summaryProfile: "配置 {name}",
+    summaryProfileRule: "配置 {name}（规则 {rule}）",
+    summaryProfileDowngraded: "配置 {name}（{requested} 在此站点不可用）",
     networkTypes: {
       document: "文档",
       fetch: "Fetch/XHR",
@@ -1022,6 +1067,8 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     scope === "iframe" ? messages.scopeTagIframe : messages.scopeTagMain;
   const formatMarkerKind = (kind: MarkerKind): string => messages.markerKinds[kind];
   const formatNetworkType = (type: NetworkType): string => messages.networkTypes[type];
+  const formatHiddenByProfile = (subject: PrivacyViolationSubject): string =>
+    t("privacyHiddenByProfile", { what: messages.privacySubjects[subject] });
   const formatCompareSignal = (signal: CompareSignal): string => messages.compareSignals[signal];
   const formatSortDirection = (direction: SortDirection): string =>
     messages.sortDirections[direction];
@@ -1137,6 +1184,7 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     formatScopeTag,
     formatMarkerKind,
     formatNetworkType,
+    formatHiddenByProfile,
     formatCompareSignal,
     formatSortDirection,
     formatSelection,
