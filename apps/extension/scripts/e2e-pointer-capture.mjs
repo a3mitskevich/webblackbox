@@ -76,7 +76,8 @@ const chromeCandidates = [
   "chromium"
 ].filter(Boolean);
 
-const state = { chrome: null, logStream: null, server: null, clients: [] };
+const state = { chrome: null, logStream: null, server: null, clients: [], dialogs: [] };
+const DIALOG_MESSAGE_MAX_CHARS = 200;
 
 const watchdog = setTimeout(() => {
   void fail(
@@ -169,6 +170,7 @@ async function main() {
   );
   step("popup opened");
   await popup.send("Runtime.enable");
+  await acceptDialogs(popup, "popup");
   await sleep(1_000);
   await popup.evaluate(`
     chrome.storage.local.set({
@@ -201,15 +203,16 @@ async function main() {
     );
   }
 
+  for (const dialog of state.dialogs) {
+    console.log(`Accepted ${dialog.type} dialog on the ${dialog.page}: ${dialog.message}`);
+  }
+
   console.log(`Chrome log: ${chromeLogPath}`);
   console.log("Pointer capture E2E passed.");
   await cleanup();
 }
 
-/**
- * The Full capture preset with a 256 KiB body cap. With the preset's 1 MiB cap a full-mode export
- * never answers (also on the base branch, independent of pointer capture); tracked separately.
- */
+/** The Full capture preset (1 MiB body cap) with every pointer stream on. */
 function createPointerProfile(redaction) {
   return {
     id: POINTER_PROFILE_ID,
@@ -233,7 +236,7 @@ function createPointerProfile(redaction) {
     unmaskSelectors: [],
     network: {
       bodyMimeAllowlist: ["text/*", "application/json"],
-      bodyMaxBytes: 256 * 1024,
+      bodyMaxBytes: 1024 * 1024,
       includeUrls: [],
       excludeUrls: []
     },
@@ -249,6 +252,7 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
   const target = await openTarget(demoUrl);
   const page = await connect(target.webSocketDebuggerUrl);
   await page.send("Runtime.enable");
+  await acceptDialogs(page, "page");
   await page.send("Emulation.setDeviceMetricsOverride", {
     width: VIEWPORT.width,
     height: VIEWPORT.height,
@@ -509,6 +513,22 @@ async function mouse(page, type, x, y, extra = {}) {
   });
 }
 
+/**
+ * A JavaScript dialog blocks its page and every pending `Runtime.evaluate` there: the popup alerts
+ * when an export has privacy findings. Dialogs are accepted at once and listed in the report.
+ */
+async function acceptDialogs(client, label) {
+  client.on("Page.javascriptDialogOpening", (params) => {
+    state.dialogs.push({
+      page: label,
+      type: params.type,
+      message: String(params.message ?? "").slice(0, DIALOG_MESSAGE_MAX_CHARS)
+    });
+    client.send("Page.handleJavaScriptDialog", { accept: true }).catch(() => undefined);
+  });
+  await client.send("Page.enable");
+}
+
 async function elementCenter(page, selector) {
   const point = await page.evaluate(`
     (() => {
@@ -542,6 +562,7 @@ async function replayPlaywrightScript(script) {
   const target = await openTarget("about:blank");
   const page = await connect(target.webSocketDebuggerUrl);
   await page.send("Runtime.enable");
+  await acceptDialogs(page, "page");
   await page.send("Emulation.setDeviceMetricsOverride", {
     width: VIEWPORT.width,
     height: VIEWPORT.height,
