@@ -1116,7 +1116,8 @@ export class LiteCaptureAgent {
 
     const snapshot = serializeRawDom(document, {
       blockedSelectors: redaction.blockedSelectors,
-      keepInputValues: categories.inputs === "allow"
+      keepInputValues: categories.inputs === "allow",
+      sensitiveNamePatterns: redaction.redactBodyPatterns
     });
 
     if (!snapshot) {

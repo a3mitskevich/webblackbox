@@ -49,7 +49,10 @@ import {
   resolveModeBaseConfig,
   shouldInjectPageHooksForMode
 } from "../shared/mode-profile.js";
-import { isPageEventKeptInFullMode } from "webblackbox/capture-scope";
+import {
+  capturesPageStorageInFullMode,
+  isPageEventKeptInFullMode
+} from "webblackbox/capture-scope";
 import { materializeLiteRawEvent } from "webblackbox/lite-materializer";
 import {
   AUTO_PROFILE_ID,
@@ -3249,6 +3252,12 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
   }
 
   const policy = runtime.config.capturePolicy;
+
+  // The page agent records storage itself (inline, through the redactor); these CDP snapshots
+  // would duplicate it with key and cookie names in blobs the redactor never sees.
+  if (policy && capturesPageStorageInFullMode(policy.categories)) {
+    return;
+  }
 
   const cookies =
     policy?.categories.cookies === "names-only"

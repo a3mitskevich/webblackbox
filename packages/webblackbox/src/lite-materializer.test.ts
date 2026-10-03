@@ -316,6 +316,32 @@ describe("lite-materializer", () => {
     expect(JSON.stringify(idbResult)).not.toContain("customer-secret-db");
   });
 
+  it("passes default counts-only snapshots through unchanged, field order included", async () => {
+    const context = { config: cloneConfig(), putBlob: vi.fn(async () => "unused") };
+    const agentPayloads = {
+      localStorageSnapshot: {
+        reason: "start",
+        count: 2,
+        truncated: false,
+        mode: "counts-only",
+        redacted: true
+      },
+      indexedDbSnapshot: {
+        reason: "start",
+        count: 1,
+        mode: "counts-only",
+        redacted: true,
+        truncated: false
+      },
+      cookieSnapshot: { reason: "start", count: 3, mode: "counts-only", redacted: true }
+    };
+
+    for (const [rawType, payload] of Object.entries(agentPayloads)) {
+      const result = await materializeLiteRawEvent(createRawEvent(rawType, payload), context);
+      expect(JSON.stringify(result?.payload), rawType).toBe(JSON.stringify(payload));
+    }
+  });
+
   it("keeps storage snapshot details the capture policy allows", async () => {
     const config = cloneConfig();
     const putBlob = vi.fn(async () => "unused");

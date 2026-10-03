@@ -22,6 +22,7 @@ const DEFAULT_BODY_MIME_ALLOWLIST = [
 const DEFAULT_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
 const DEFAULT_DOM_SNAPSHOT_MAX_BYTES = 1_500 * 1024;
+const COUNTS_ONLY_SNAPSHOT_KEYS = new Set(["reason", "count", "truncated", "mode", "redacted"]);
 const STORAGE_SNAPSHOT_RAW_TYPES = new Set([
   "localStorageSnapshot",
   "indexedDbSnapshot",
@@ -222,7 +223,7 @@ async function materializeLiteStorageSnapshot(
       return storageSnapshot(rawEvent, { ...base, count, mode: level, redacted: true, lengths });
     }
 
-    return storageSnapshot(rawEvent, { ...base, count, mode: "counts-only", redacted: true });
+    return countsOnlySnapshot(rawEvent, payload, count);
   }
 
   const names = asStringArray(
@@ -236,7 +237,7 @@ async function materializeLiteStorageSnapshot(
       : categories.cookies === "names-only";
 
   if (!showsNames) {
-    return storageSnapshot(rawEvent, { ...base, count, mode: "counts-only", redacted: true });
+    return countsOnlySnapshot(rawEvent, payload, count);
   }
 
   return storageSnapshot(rawEvent, {
@@ -245,6 +246,25 @@ async function materializeLiteStorageSnapshot(
     mode: "names-only",
     redacted: true,
     ...(rawEvent.rawType === "indexedDbSnapshot" ? { databaseNames: names } : { names })
+  });
+}
+
+/** Counts only, in the agent's own field order so default output stays byte-identical. */
+function countsOnlySnapshot(
+  rawEvent: RawRecorderEvent,
+  payload: Record<string, unknown>,
+  count: number
+): RawRecorderEvent {
+  const kept = Object.fromEntries(
+    Object.entries(payload).filter(([key]) => COUNTS_ONLY_SNAPSHOT_KEYS.has(key))
+  );
+
+  return storageSnapshot(rawEvent, {
+    ...kept,
+    count,
+    ...("truncated" in kept ? { truncated: kept.truncated === true } : {}),
+    mode: "counts-only",
+    redacted: true
   });
 }
 

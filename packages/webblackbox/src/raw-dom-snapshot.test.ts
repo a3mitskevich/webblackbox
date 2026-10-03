@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { notePasswordField } from "./input-value-policy.js";
 import { RAW_DOM_SNAPSHOT_MAX_CHARS, serializeRawDom } from "./raw-dom-snapshot.js";
 
 const OPTIONS = { blockedSelectors: [".secret", "[data-sensitive]"], keepInputValues: false };
@@ -53,6 +54,58 @@ describe("serializeRawDom", () => {
       expect(html).not.toContain("revealed");
       expect(html).not.toContain("tok-1");
     }
+  });
+
+  it("never keeps the value of a password the page revealed, even with inputs allowed", () => {
+    document.body.innerHTML = '<input id="pw1" type="password" value="REVEALEDPW">';
+    const field = document.getElementById("pw1") as HTMLInputElement;
+
+    notePasswordField(field);
+    field.setAttribute("type", "text");
+
+    expect(serializeRawDom(document, { ...OPTIONS, keepInputValues: true })?.html).not.toContain(
+      "REVEALEDPW"
+    );
+  });
+
+  it("removes secrets carried by attributes, comments, templates and inline documents", () => {
+    document.head.innerHTML = `
+      <meta name="csrf-token" content="CSRF-SECRET">
+      <meta name="viewport" content="width=device-width">`;
+    document.body.innerHTML = `
+      <a href="https://app.test/reset?token=RESET-SECRET#frag">reset</a>
+      <form action="/login?code=OAUTH-SECRET"><button name="otp" value="OTP-SECRET">go</button></form>
+      <img src="/img.png?sig=IMG-SECRET" srcset="/a.png?k=SRCSET-SECRET 2x">
+      <div data-api-key="DATA-SECRET" data-color="blue" onclick="leak('HANDLER-SECRET')">box</div>
+      <!-- COMMENT-SECRET -->
+      <iframe srcdoc="&lt;p class='secret'&gt;SRCDOC-SECRET&lt;/p&gt;"></iframe>
+      <noscript>NOSCRIPT-SECRET</noscript>
+      <template><div class="secret">TEMPLATE-SECRET</div><input type="hidden" value="TPL-HIDDEN"></template>`;
+
+    const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+
+    for (const secret of [
+      "CSRF-SECRET",
+      "RESET-SECRET",
+      "OAUTH-SECRET",
+      "OTP-SECRET",
+      "IMG-SECRET",
+      "SRCSET-SECRET",
+      "DATA-SECRET",
+      "HANDLER-SECRET",
+      "COMMENT-SECRET",
+      "SRCDOC-SECRET",
+      "NOSCRIPT-SECRET",
+      "TEMPLATE-SECRET",
+      "TPL-HIDDEN"
+    ]) {
+      expect(html, secret).not.toContain(secret);
+    }
+
+    expect(html).toContain('content="width=device-width"');
+    expect(html).toContain('data-color="blue"');
+    expect(html).toContain("https://app.test/reset");
+    document.head.innerHTML = "";
   });
 
   it("fails closed on an invalid blocked selector and caps the size", () => {

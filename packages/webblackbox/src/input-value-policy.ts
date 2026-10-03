@@ -148,11 +148,6 @@ export function readCapturableInputValue(
 ): string | undefined {
   const level = policy.categories.inputs;
 
-  // A reveal in the same task as this read has not reached the observer callback yet.
-  for (const watcher of revealWatchers) {
-    rememberRevealedFields(watcher.takeRecords());
-  }
-
   notePasswordField(field);
 
   if ((level !== "allow" && level !== "masked") || isNeverCapturedField(field)) {
@@ -172,6 +167,11 @@ export function readCapturableInputValue(
 
 /** Password, one-time-code and payment card fields: their values are never recorded anywhere. */
 export function isNeverCapturedField(field: EditableField): boolean {
+  // A reveal in the same task as this check has not reached the observer callback yet.
+  for (const watcher of revealWatchers) {
+    rememberRevealedFields(watcher.takeRecords());
+  }
+
   const isPasswordNow =
     field instanceof HTMLInputElement && field.type.toLowerCase() === "password";
 
