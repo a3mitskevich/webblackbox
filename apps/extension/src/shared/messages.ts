@@ -210,4 +210,5 @@ export type ExtensionOutboundMessage =
   | FreezeNoticeMessage
   | SessionListMessage
   | ExportStatusMessage
-  | PipelineStatusMessage;
+  | PipelineStatusMessage
+  | ProfilePreviewResponse;

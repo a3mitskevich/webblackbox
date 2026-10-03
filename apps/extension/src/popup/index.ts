@@ -13,8 +13,16 @@ import {
   type ExtensionInboundMessage,
   type ExtensionOutboundMessage,
   type FullModeVisualCapture,
+  type ProfilePreviewResponse,
   type SessionListItem
 } from "../shared/messages.js";
+import {
+  createProfilePickerSection,
+  loadProfileChoice,
+  PROFILE_CHOICE_AUTO,
+  saveProfileChoice,
+  toStartProfileId
+} from "./profile-picker.js";
 
 const chromeApi = getChromeApi();
 const port = chromeApi?.runtime?.connect({ name: PORT_NAMES.popup });
@@ -47,6 +55,8 @@ const state: {
   sessions: SessionListItem[];
   recording: { active: boolean; sid?: string; mode?: string };
   fullModeVisualCapture: FullModeVisualCapture;
+  profileChoice: string;
+  profilePreview?: ProfilePreviewResponse;
   pendingStart?: { tabId: number; mode: CaptureMode; requestedAt: number };
   pendingExportSid?: string;
   exportPrivacyWarning?: ExportPrivacyWarning;
@@ -60,6 +70,8 @@ const state: {
   sessions: [],
   recording: { active: false },
   fullModeVisualCapture: "screenshots",
+  profileChoice: PROFILE_CHOICE_AUTO,
+  profilePreview: undefined,
   pendingStart: undefined,
   pendingExportSid: undefined,
   exportPrivacyWarning: undefined,
@@ -82,14 +94,34 @@ async function bootstrap(container: HTMLElement): Promise<void> {
   state.tabId = await getActiveTabId();
   state.exportPolicyForm = loadPopupExportPolicyForm();
   state.fullModeVisualCapture = loadPopupFullVisualCapture();
+  state.profileChoice = loadProfileChoice();
 
   port?.onMessage.addListener((message) => {
     applyMessage(message as ExtensionOutboundMessage);
     render(container);
   });
   postUiMessage({ kind: "ui.request-session-list" });
+  requestProfilePreview();
 
   render(container);
+}
+
+/** The service worker answers on the popup port with `sw.profile-preview`. */
+function requestProfilePreview(): void {
+  postUiMessage({
+    kind: "ui.resolve-profile",
+    ...(typeof state.tabId === "number" ? { tabId: state.tabId } : {}),
+    profileId: state.profileChoice
+  });
+}
+
+/** A runtime response with `ok: false`, kept whole so callers can read extra flags. */
+class UiMessageRejectedError extends Error {
+  public constructor(
+    public readonly response: { ok: false; error: string; privacyBlocked?: boolean }
+  ) {
+    super(response.error);
+  }
 }
 
 function postUiMessage(message: ExtensionInboundMessage): void {
@@ -105,7 +137,7 @@ async function sendUiMessage(message: ExtensionInboundMessage): Promise<unknown>
     const response = await chromeApi.runtime.sendMessage(message);
 
     if (isRejectedRuntimeResponse(response)) {
-      throw new Error(response.error);
+      throw new UiMessageRejectedError(response);
     }
 
     return response;
@@ -230,6 +262,16 @@ function render(container: HTMLElement): void {
     section.append(createRingUsageSection(ringUsage));
   }
 
+  section.append(
+    createProfilePickerSection({
+      preview: state.profilePreview,
+      choice: state.profileChoice,
+      disabled: startDisabled,
+      t,
+      formatMode
+    })
+  );
+
   const actions = document.createElement("div");
   actions.className = "wb-popup__actions";
   actions.append(
@@ -324,6 +366,15 @@ function bindActions(
       visualCapture: state.fullModeVisualCapture
     });
   });
+
+  container
+    .querySelector<HTMLSelectElement>("[data-profile-select]")
+    ?.addEventListener("change", (event) => {
+      const select = event.currentTarget as HTMLSelectElement;
+      state.profileChoice = select.value || PROFILE_CHOICE_AUTO;
+      saveProfileChoice(state.profileChoice);
+      requestProfilePreview();
+    });
 
   container.querySelector("[data-action='stop']")?.addEventListener("click", () => {
     if (!activeSession) {
@@ -597,12 +648,14 @@ async function startRecordingFromPopup(
   options: { reloadPage?: boolean; visualCapture?: FullModeVisualCapture } = {}
 ): Promise<void> {
   setPendingStart(container, tabId, mode);
+  const profileId = toStartProfileId(state.profileChoice);
 
   try {
     await sendUiMessage({
       kind: "ui.start",
       tabId,
       mode,
+      ...(profileId ? { profileId } : {}),
       ...(options.reloadPage ? { reloadPage: true } : {}),
       ...(mode === "full" && options.visualCapture ? { visualCapture: options.visualCapture } : {})
     });
@@ -686,7 +739,8 @@ async function exportSessionFromPopup(
   container: HTMLElement,
   sid: string,
   passphrase: string,
-  policy: ExportPolicy
+  policy: ExportPolicy,
+  options: { acknowledgePrivacyFindings?: boolean } = {}
 ): Promise<void> {
   state.pendingExportSid = sid;
   state.exportPrivacyWarning = undefined;
@@ -702,7 +756,8 @@ async function exportSessionFromPopup(
         sid,
         ...(hasDialogPassphrase(passphrase) ? { passphrase } : {}),
         saveAs: false,
-        policy
+        policy,
+        ...(options.acknowledgePrivacyFindings ? { acknowledgePrivacyFindings: true } : {})
       })
     );
     state.pendingExportSid = undefined;
@@ -720,6 +775,19 @@ async function exportSessionFromPopup(
     render(container);
   } catch (error) {
     state.pendingExportSid = undefined;
+
+    if (
+      error instanceof UiMessageRejectedError &&
+      error.response.privacyBlocked === true &&
+      !options.acknowledgePrivacyFindings &&
+      window.confirm(t("popupPrivacyBlockedConfirm", { error: error.message }))
+    ) {
+      await exportSessionFromPopup(container, sid, passphrase, policy, {
+        acknowledgePrivacyFindings: true
+      });
+      return;
+    }
+
     state.exportStatusIsError = true;
     state.exportStatus = t("popupExportFailed", {
       error: error instanceof Error ? error.message : String(error)
@@ -804,6 +872,11 @@ function applyMessage(message: ExtensionOutboundMessage): void {
       applyExportPrivacyWarning(message.privacyWarning);
     }
 
+    return;
+  }
+
+  if (message.kind === "sw.profile-preview") {
+    state.profilePreview = message;
     return;
   }
 

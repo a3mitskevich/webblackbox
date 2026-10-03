@@ -1096,3 +1096,172 @@ describe("popup export policy form", () => {
     expect(document.querySelector("[style]")).toBeNull();
   });
 });
+
+describe("popup recording profiles", () => {
+  const PREVIEW = {
+    kind: "sw.profile-preview",
+    catalog: [
+      { id: "default", name: "Default", base: "lite", extended: false, readOnly: false },
+      { id: "builtin:qa", name: "QA", base: "full", extended: true, readOnly: true }
+    ],
+    selection: {
+      id: "builtin:qa",
+      name: "QA",
+      base: "full",
+      source: "rule",
+      ruleName: "Stage",
+      extended: true
+    }
+  };
+
+  beforeEach(() => {
+    document.body.innerHTML = `<main id="popup-root"></main>`;
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function getProfileSelect(): HTMLSelectElement {
+    const select = document.querySelector<HTMLSelectElement>("[data-profile-select]");
+
+    if (!select) {
+      throw new Error("missing profile select");
+    }
+
+    return select;
+  }
+
+  it("asks the service worker for the rule-selected profile and explains it", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+
+    expect(port.postMessage).toHaveBeenCalledWith({
+      kind: "ui.resolve-profile",
+      tabId: 17,
+      profileId: "auto"
+    });
+
+    port.emit(PREVIEW);
+    await flushPopup();
+
+    expect([...getProfileSelect().options].map((option) => option.textContent)).toEqual([
+      "Auto (site rules)",
+      "Default",
+      "QA · extended"
+    ]);
+    expect(document.querySelector("[data-profile-hint]")?.textContent).toBe(
+      "Records with QA (rule: Stage). Recommended start: Full."
+    );
+  });
+
+  it("starts with an explicitly chosen profile and remembers the choice", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    port.emit(PREVIEW);
+    await flushPopup();
+
+    const select = getProfileSelect();
+    select.value = "builtin:qa";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await flushPopup();
+
+    expect(port.postMessage).toHaveBeenCalledWith({
+      kind: "ui.resolve-profile",
+      tabId: 17,
+      profileId: "builtin:qa"
+    });
+    expect(localStorage.getItem("webblackbox.popup.profile-choice")).toBe("builtin:qa");
+
+    getStartFullButton().click();
+    await flushPopup();
+
+    expect(port.postMessage).toHaveBeenCalledWith({
+      kind: "ui.start",
+      tabId: 17,
+      mode: "full",
+      profileId: "builtin:qa",
+      visualCapture: "screenshots"
+    });
+  });
+
+  it("re-sends the export after the user acknowledges blocking privacy findings", async () => {
+    const port = new FakePort();
+    const sendMessage = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: "Privacy scanner blocked export: jwt in event:E-1",
+        privacyBlocked: true
+      })
+      .mockResolvedValueOnce({ ok: true, fileName: "sid-qa.webblackbox" });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    installChromeStub(port, { sendMessage });
+
+    await importPopupModule();
+    port.emit({
+      kind: "sw.session-list",
+      sessions: [{ sid: "sid-qa", tabId: 17, mode: "full", startedAt: Date.now(), active: false }]
+    });
+    await flushPopup();
+
+    getExportButton().click();
+    await flushPopup();
+
+    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
+
+    if (!passphraseInput) {
+      throw new Error("missing passphrase input");
+    }
+
+    passphraseInput.value = "qa-secret";
+    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
+    getPassphraseSubmitButton().click();
+    await flushPopup();
+    await flushPopup();
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("jwt in event:E-1"));
+    expect(sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: "ui.export",
+        sid: "sid-qa",
+        passphrase: "qa-secret",
+        acknowledgePrivacyFindings: true
+      })
+    );
+    expect(getStatusLine().textContent).toBe("Exported: sid-qa.webblackbox");
+  });
+
+  it("keeps the failure when the user declines the privacy confirmation", async () => {
+    const port = new FakePort();
+    const sendMessage = vi.fn().mockResolvedValue({
+      ok: false,
+      error: "Privacy scanner blocked export: jwt in event:E-1",
+      privacyBlocked: true
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    installChromeStub(port, { sendMessage });
+
+    await importPopupModule();
+    port.emit({
+      kind: "sw.session-list",
+      sessions: [{ sid: "sid-qa", tabId: 17, mode: "full", startedAt: Date.now(), active: false }]
+    });
+    await flushPopup();
+
+    getExportButton().click();
+    await flushPopup();
+    getPassphraseSubmitButton().click();
+    await flushPopup();
+
+    expect(
+      sendMessage.mock.calls.filter(([message]) => message?.kind === "ui.export")
+    ).toHaveLength(1);
+    expect(getStatusLine().textContent).toContain("Privacy scanner blocked export");
+  });
+});

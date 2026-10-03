@@ -723,7 +723,14 @@ async function handleInboundMessage(
   }
 
   if (message.kind === "ui.resolve-profile") {
-    return resolveProfilePreview(message.tabId, message.profileId);
+    const preview = await resolveProfilePreview(message.tabId, message.profileId);
+
+    if (port) {
+      sendPortMessage(port, preview);
+      return;
+    }
+
+    return preview;
   }
 
   if (message.kind === "ui.delete") {
