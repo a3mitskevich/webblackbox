@@ -11,6 +11,7 @@ import {
 
 import { ActionSpanTracker } from "./action-span.js";
 import { FreezePolicy } from "./freeze.js";
+import { sanitizeKeydownPayload } from "./keydown-privacy.js";
 import { DefaultEventNormalizer } from "./normalizer.js";
 import type { RecorderPlugin, RecorderPluginContext } from "./plugins.js";
 import { redactPayload } from "./redaction.js";
@@ -60,7 +61,11 @@ export class WebBlackboxRecorder {
       return {};
     }
 
-    const redactedPayload = redactPayload(normalized.payload, this.config.redaction);
+    const redactedPayload = redactEventPayload(
+      normalized.eventType,
+      normalized.payload,
+      this.config
+    );
     const privacy = classifyPrivacy(
       normalized.eventType,
       redactedPayload,
@@ -181,6 +186,18 @@ export class WebBlackboxRecorder {
 
     return nextEvent;
   }
+}
+
+function redactEventPayload(
+  eventType: WebBlackboxEventType,
+  payload: unknown,
+  config: RecorderConfig
+): unknown {
+  const redacted = redactPayload(payload, config.redaction);
+
+  return eventType === "user.keydown"
+    ? sanitizeKeydownPayload(redacted, config.capturePolicy)
+    : redacted;
 }
 
 function normalizeTabId(value: number): number {
@@ -537,6 +554,7 @@ function hasRedactionSignal(payload: unknown): boolean {
   return (
     row.redacted === true ||
     row.valueRedacted === true ||
+    row.keyRedacted === true ||
     row.selectorRedacted === true ||
     (target !== null &&
       typeof target === "object" &&
