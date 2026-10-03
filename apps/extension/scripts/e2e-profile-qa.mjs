@@ -221,7 +221,8 @@ async function main() {
     (event) =>
       event.type === "meta.config" &&
       event.data?.profile?.id === "default" &&
-      event.data?.profileChange?.reason === "navigation"
+      // Re-evaluations collapse: the navigation or the later page-load request may land it.
+      ["navigation", "page-loaded"].includes(event.data?.profileChange?.reason)
   );
   const leakedDefaultConsole = events.some(
     (event) =>
