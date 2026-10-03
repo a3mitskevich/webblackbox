@@ -1,12 +1,34 @@
 #!/usr/bin/env node
 
-import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { constants, createWriteStream } from "node:fs";
-import { access, mkdir, readFile, rm } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { mkdir, rm } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { CdpClient, closeClient } from "./lib/cdp-client.mjs";
+import {
+  ensureExtensionBuildReady,
+  resolveChromeBinary,
+  startChrome,
+  waitForChromeReady
+} from "./lib/chrome-launcher.mjs";
+import {
+  closeTarget,
+  connectToDiscoveredTarget,
+  isLikelyExtensionId,
+  listTargets,
+  openTarget,
+  resolvePreferredExtensionId,
+  waitForExtensionTarget
+} from "./lib/devtools-targets.mjs";
+import { assert, sleep, waitFor } from "./lib/e2e-utils.mjs";
+import {
+  deleteSessionFromPopup,
+  readRuntimeSessions,
+  waitForIndicatorGone,
+  waitForIndicatorText,
+  waitForPopupRuntimeReady
+} from "./lib/extension-ui.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(root, "..");
@@ -28,21 +50,6 @@ const settleSamples = Number(process.env.WB_E2E_MEMORY_SETTLE_SAMPLES ?? "2");
 const stressTimeoutMs = Number(process.env.WB_E2E_MEMORY_TIMEOUT_MS ?? "120000");
 const offscreenFinalGrowthLimitMb = Number(process.env.WB_E2E_OFFSCREEN_FINAL_GROWTH_MB ?? "20");
 const swFinalGrowthLimitMb = Number(process.env.WB_E2E_SW_FINAL_GROWTH_MB ?? "12");
-
-const chromeCandidates = [
-  process.env.WB_E2E_CHROME_BIN,
-  "/Users/unadlib/Library/Caches/ms-playwright/chromium-1212/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-  "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/usr/bin/google-chrome",
-  "/usr/bin/google-chrome-stable",
-  "/usr/bin/chromium-browser",
-  "/usr/bin/chromium",
-  "google-chrome",
-  "google-chrome-stable",
-  "chromium-browser",
-  "chromium"
-].filter(Boolean);
 
 const state = {
   chromeProcess: null,
@@ -67,7 +74,7 @@ main().catch(async (error) => {
 
 async function main() {
   await ensureExtensionBuildReady(extensionDir);
-  const chromeBinary = await resolveChromeBinary(chromeCandidates);
+  const chromeBinary = await resolveChromeBinary();
   const extensionId = await resolvePreferredExtensionId(extensionDir);
 
   assert(isLikelyExtensionId(extensionId), "Failed to resolve extension id from manifest key.", {
@@ -87,7 +94,8 @@ async function main() {
     profileDir,
     remotePort,
     headless,
-    logPath: chromeLogPath
+    logPath: chromeLogPath,
+    extraArgs: ["--disable-popup-blocking"]
   });
 
   state.chromeProcess = proc;
@@ -352,98 +360,6 @@ async function main() {
   await cleanup();
 }
 
-async function ensureExtensionBuildReady(dir) {
-  await access(dir, constants.R_OK);
-  await access(resolve(dir, "manifest.json"), constants.R_OK);
-  await access(resolve(dir, "sw.js"), constants.R_OK);
-}
-
-async function resolveChromeBinary(candidates) {
-  for (const candidate of candidates) {
-    const resolved = await resolveChromeCandidate(candidate);
-
-    if (resolved) {
-      return resolved;
-    }
-  }
-
-  throw new Error(
-    "Chrome binary not found. Set WB_E2E_CHROME_BIN or install Chrome for Testing/Google Chrome."
-  );
-}
-
-async function resolveChromeCandidate(candidate) {
-  if (typeof candidate !== "string" || candidate.trim().length === 0) {
-    return null;
-  }
-
-  const trimmed = candidate.trim();
-
-  if (isAbsolute(trimmed) || trimmed.startsWith(".")) {
-    try {
-      await access(trimmed, constants.X_OK);
-      return trimmed;
-    } catch {
-      return null;
-    }
-  }
-
-  const which = spawnSync("which", [trimmed], {
-    encoding: "utf8"
-  });
-  const resolved = which.status === 0 ? which.stdout.trim() : "";
-
-  if (!resolved) {
-    return null;
-  }
-
-  try {
-    await access(resolved, constants.X_OK);
-    return resolved;
-  } catch {
-    return null;
-  }
-}
-
-function startChrome(binary, options) {
-  const args = [
-    `--remote-debugging-port=${options.remotePort}`,
-    `--user-data-dir=${options.profileDir}`,
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-background-networking",
-    "--disable-sync",
-    "--disable-component-update",
-    "--disable-default-apps",
-    "--disable-popup-blocking",
-    `--disable-extensions-except=${options.extensionDir}`,
-    `--load-extension=${options.extensionDir}`,
-    "--enable-logging=stderr",
-    "--v=1",
-    "about:blank"
-  ];
-
-  if (options.headless) {
-    args.unshift("--headless=new");
-  }
-
-  if (process.platform === "linux") {
-    args.unshift("--disable-dev-shm-usage");
-    args.unshift("--disable-setuid-sandbox");
-    args.unshift("--no-sandbox");
-  }
-
-  const proc = spawn(binary, args, {
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-
-  const logStream = createWriteStream(options.logPath, { flags: "a" });
-  proc.stdout?.pipe(logStream);
-  proc.stderr?.pipe(logStream);
-
-  return { proc, logStream };
-}
-
 async function startStressServer() {
   const server = createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -553,41 +469,6 @@ function buildStressPageHtml() {
 </html>`;
 }
 
-async function waitForChromeReady(urlBase, timeoutMs) {
-  return waitFor(
-    async () => {
-      const version = await fetchJson(`${urlBase}/json/version`, 4_000);
-      return version?.Browser ? version : null;
-    },
-    timeoutMs,
-    250,
-    "Chrome DevTools endpoint not ready"
-  );
-}
-
-async function waitForExtensionTarget(urlBase, browserClient, matcher, timeoutMs, timeoutMessage) {
-  let lastSummary = "none";
-
-  try {
-    return await waitFor(
-      async () => {
-        const targets = await listTargets(urlBase, browserClient);
-        lastSummary = summarizeTargetsForDebug(targets);
-        return targets.find(matcher) ?? null;
-      },
-      timeoutMs,
-      250,
-      timeoutMessage
-    );
-  } catch (error) {
-    throw new Error(
-      `${timeoutMessage}. Targets: ${lastSummary}. ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-  }
-}
-
 async function waitForTargetGone(urlBase, browserClient, matcher, timeoutMs, timeoutMessage) {
   return waitFor(
     async () => {
@@ -597,168 +478,6 @@ async function waitForTargetGone(urlBase, browserClient, matcher, timeoutMs, tim
     timeoutMs,
     250,
     timeoutMessage
-  );
-}
-
-async function listTargets(urlBase, browserClient) {
-  const merged = new Map();
-  const httpTargets = await fetchJson(`${urlBase}/json/list`, 4_000).catch(() => []);
-
-  if (Array.isArray(httpTargets)) {
-    for (const target of httpTargets) {
-      const normalized = normalizeTargetDescriptor(target);
-      merged.set(normalized.key, normalized);
-    }
-  }
-
-  if (browserClient) {
-    const browserTargets = await browserClient
-      .send("Target.getTargets")
-      .then((result) => (Array.isArray(result?.targetInfos) ? result.targetInfos : []))
-      .catch(() => []);
-
-    for (const target of browserTargets) {
-      const normalized = normalizeTargetDescriptor(target);
-      const existing = merged.get(normalized.key);
-      merged.set(normalized.key, {
-        ...normalized,
-        webSocketDebuggerUrl: existing?.webSocketDebuggerUrl ?? normalized.webSocketDebuggerUrl
-      });
-    }
-  }
-
-  return [...merged.values()];
-}
-
-function normalizeTargetDescriptor(target) {
-  const targetId =
-    typeof target?.targetId === "string"
-      ? target.targetId
-      : typeof target?.id === "string"
-        ? target.id
-        : "";
-  const url = typeof target?.url === "string" ? target.url : "";
-  const type = typeof target?.type === "string" ? target.type : "unknown";
-  const webSocketDebuggerUrl =
-    typeof target?.webSocketDebuggerUrl === "string" ? target.webSocketDebuggerUrl : undefined;
-
-  return {
-    key: targetId || `${type}:${url}`,
-    targetId,
-    id: typeof target?.id === "string" ? target.id : targetId,
-    type,
-    url,
-    title: typeof target?.title === "string" ? target.title : "",
-    webSocketDebuggerUrl
-  };
-}
-
-function summarizeTargetsForDebug(targets) {
-  if (!Array.isArray(targets) || targets.length === 0) {
-    return "[]";
-  }
-
-  return targets
-    .slice(0, 12)
-    .map((target) => {
-      const url = target.url.length > 120 ? `${target.url.slice(0, 117)}...` : target.url;
-      return `${target.type}:${url}`;
-    })
-    .join(", ");
-}
-
-async function resolvePreferredExtensionId(extensionDir) {
-  const manifestPath = resolve(extensionDir, "manifest.json");
-  const manifestRaw = await readFile(manifestPath, "utf8");
-  const manifest = JSON.parse(manifestRaw);
-  const key = typeof manifest?.key === "string" ? manifest.key.trim() : "";
-
-  if (key.length === 0) {
-    return null;
-  }
-
-  return computeExtensionIdFromManifestKey(key);
-}
-
-function computeExtensionIdFromManifestKey(keyBase64) {
-  const digest = createHash("sha256").update(Buffer.from(keyBase64, "base64")).digest();
-  const alphabet = "abcdefghijklmnop";
-  let id = "";
-
-  for (let index = 0; index < 16; index += 1) {
-    const value = digest[index];
-    id += alphabet[(value >> 4) & 0x0f];
-    id += alphabet[value & 0x0f];
-  }
-
-  return id;
-}
-
-function isLikelyExtensionId(value) {
-  return typeof value === "string" && /^[a-p]{32}$/.test(value);
-}
-
-async function openTarget(urlBase, url) {
-  const target = await fetchJson(`${urlBase}/json/new?${encodeURIComponent(url)}`, 6_000, {
-    method: "PUT"
-  });
-
-  if (!target?.id || !target?.webSocketDebuggerUrl) {
-    throw new Error(`Failed to open target: ${url}`);
-  }
-
-  return target;
-}
-
-async function closeTarget(urlBase, targetId) {
-  try {
-    await fetchJson(`${urlBase}/json/close/${targetId}`, 4_000);
-  } catch {
-    void 0;
-  }
-}
-
-async function connectToDiscoveredTarget(target, browserClient) {
-  if (target.webSocketDebuggerUrl) {
-    const client = new CdpClient(target.webSocketDebuggerUrl);
-    await client.connect();
-    return client;
-  }
-
-  if (!browserClient || !target.targetId) {
-    throw new Error(`Target is not directly debuggable: ${target.url || target.type}`);
-  }
-
-  return browserClient.attachToTarget(target.targetId);
-}
-
-async function waitForPopupRuntimeReady(popupClient, timeoutMs) {
-  return waitFor(
-    async () => {
-      const snapshot = await popupClient.evaluate(`
-        (() => ({
-          runtimeId:
-            typeof chrome === 'object' &&
-            chrome !== null &&
-            typeof chrome.runtime === 'object' &&
-            chrome.runtime !== null &&
-            typeof chrome.runtime.id === 'string'
-              ? chrome.runtime.id
-              : null,
-          canSendMessage:
-            typeof chrome === 'object' &&
-            chrome !== null &&
-            typeof chrome.runtime === 'object' &&
-            chrome.runtime !== null &&
-            typeof chrome.runtime.sendMessage === 'function'
-        }))()
-      `);
-
-      return snapshot?.runtimeId && snapshot?.canSendMessage ? snapshot : null;
-    },
-    timeoutMs,
-    250,
-    "Popup runtime is not ready"
   );
 }
 
@@ -836,59 +555,6 @@ async function stopActiveSessionFromPopup(popupClient, expectedSid) {
   `;
 
   return popupClient.evaluate(expression);
-}
-
-async function deleteSessionFromPopup(popupClient, sid) {
-  const expression = `
-    (async () => {
-      await chrome.runtime.sendMessage({ kind: 'ui.delete', sid: ${JSON.stringify(sid)} });
-      return { ok: true, sid: ${JSON.stringify(sid)} };
-    })()
-  `;
-
-  return popupClient.evaluate(expression);
-}
-
-async function readRuntimeSessions(popupClient) {
-  const expression = `
-    (async () => {
-      const store = await chrome.storage.local.get('webblackbox.runtime.sessions');
-      const rows = store['webblackbox.runtime.sessions'];
-      return Array.isArray(rows) ? rows : [];
-    })()
-  `;
-
-  return popupClient.evaluate(expression);
-}
-
-async function waitForIndicatorText(pageClient, fragment, timeoutMs) {
-  return waitFor(
-    async () => {
-      const text = await pageClient.evaluate(
-        `(() => document.querySelector('[data-webblackbox-indicator="true"]')?.textContent ?? null)()`
-      );
-
-      return typeof text === "string" && text.includes(fragment) ? text : null;
-    },
-    timeoutMs,
-    250,
-    `Indicator not found: ${fragment}`
-  );
-}
-
-async function waitForIndicatorGone(pageClient, timeoutMs) {
-  return waitFor(
-    async () => {
-      const text = await pageClient.evaluate(
-        `(() => document.querySelector('[data-webblackbox-indicator="true"]')?.textContent ?? null)()`
-      );
-
-      return text ? null : true;
-    },
-    timeoutMs,
-    250,
-    "Indicator not cleared"
-  );
 }
 
 async function startStressScenario(pageClient, options) {
@@ -1168,67 +834,6 @@ function toMb(bytes) {
   return Number((bytes / (1024 * 1024)).toFixed(2));
 }
 
-function assert(condition, message, details) {
-  if (condition) {
-    return;
-  }
-
-  const suffix = details === undefined ? "" : ` | details=${JSON.stringify(details)}`;
-  throw new Error(`${message}${suffix}`);
-}
-
-async function waitFor(fn, timeoutMs, intervalMs, timeoutMessage) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError = null;
-
-  while (Date.now() < deadline) {
-    try {
-      const result = await fn();
-
-      if (result !== null && result !== undefined) {
-        return result;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-
-    await sleep(intervalMs);
-  }
-
-  if (lastError instanceof Error) {
-    throw new Error(`${timeoutMessage}: ${lastError.message}`);
-  }
-
-  throw new Error(timeoutMessage);
-}
-
-async function fetchJson(url, timeoutMs, init) {
-  const response = await fetch(url, {
-    ...init,
-    signal: AbortSignal.timeout(timeoutMs)
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} for ${url}`);
-  }
-
-  return response.json();
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-async function closeClient(client) {
-  if (!client || typeof client.close !== "function") {
-    return;
-  }
-
-  await Promise.resolve(client.close()).catch(() => undefined);
-}
-
 async function cleanup() {
   await closeClient(state.offscreenClient);
   state.offscreenClient = null;
@@ -1272,182 +877,5 @@ async function cleanup() {
       state.server.close(() => resolve());
     });
     state.server = null;
-  }
-}
-
-class CdpClient {
-  constructor(wsUrl) {
-    this.wsUrl = wsUrl;
-    this.socket = null;
-    this.sequence = 0;
-    this.pending = new Map();
-    this.eventHandlers = new Map();
-    this.sessionEventHandlers = new Map();
-  }
-
-  async connect() {
-    await new Promise((resolve, reject) => {
-      const socket = new WebSocket(this.wsUrl);
-      this.socket = socket;
-
-      socket.addEventListener("open", () => {
-        resolve();
-      });
-
-      socket.addEventListener("error", () => {
-        reject(new Error(`Failed to open WebSocket: ${this.wsUrl}`));
-      });
-
-      socket.addEventListener("close", () => {
-        for (const pending of this.pending.values()) {
-          pending.reject(new Error("CDP socket closed"));
-        }
-
-        this.pending.clear();
-      });
-
-      socket.addEventListener("message", (event) => {
-        const payload = JSON.parse(String(event.data));
-
-        if (typeof payload.id === "number") {
-          const pending = this.pending.get(payload.id);
-
-          if (!pending) {
-            return;
-          }
-
-          this.pending.delete(payload.id);
-
-          if (payload.error) {
-            pending.reject(new Error(payload.error.message ?? JSON.stringify(payload.error)));
-            return;
-          }
-
-          pending.resolve(payload.result);
-          return;
-        }
-
-        if (typeof payload.method !== "string") {
-          return;
-        }
-
-        const handlers = this.eventHandlers.get(payload.method) ?? [];
-
-        for (const handler of handlers) {
-          handler(payload.params ?? {});
-        }
-
-        if (typeof payload.sessionId === "string") {
-          const sessionHandlers =
-            this.sessionEventHandlers.get(`${payload.sessionId}:${payload.method}`) ?? [];
-
-          for (const handler of sessionHandlers) {
-            handler(payload.params ?? {});
-          }
-        }
-      });
-    });
-  }
-
-  on(method, handler, sessionId) {
-    const key = sessionId ? `${sessionId}:${method}` : method;
-    const source = sessionId ? this.sessionEventHandlers : this.eventHandlers;
-    const handlers = source.get(key) ?? [];
-    handlers.push(handler);
-    source.set(key, handlers);
-  }
-
-  send(method, params = {}, sessionId) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error("CDP socket is not open"));
-    }
-
-    const id = ++this.sequence;
-    const payload = {
-      id,
-      method,
-      params,
-      ...(sessionId ? { sessionId } : {})
-    };
-
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.socket.send(JSON.stringify(payload));
-    });
-  }
-
-  async evaluate(expression, sessionId) {
-    const result = await this.send(
-      "Runtime.evaluate",
-      {
-        expression,
-        awaitPromise: true,
-        returnByValue: true
-      },
-      sessionId
-    );
-
-    if (result?.exceptionDetails) {
-      const message = result.exceptionDetails.text ?? "Runtime.evaluate failed";
-      throw new Error(message);
-    }
-
-    return result?.result?.value;
-  }
-
-  async attachToTarget(targetId) {
-    const attached = await this.send("Target.attachToTarget", {
-      targetId,
-      flatten: true
-    });
-    const sessionId = typeof attached?.sessionId === "string" ? attached.sessionId : null;
-
-    if (!sessionId) {
-      throw new Error(`Failed to attach to target: ${targetId}`);
-    }
-
-    return new CdpSessionClient(this, sessionId);
-  }
-
-  async detachFromTarget(sessionId) {
-    await this.send("Target.detachFromTarget", { sessionId }).catch(() => undefined);
-    this.removeSessionHandlers(sessionId);
-  }
-
-  removeSessionHandlers(sessionId) {
-    for (const key of this.sessionEventHandlers.keys()) {
-      if (key.startsWith(`${sessionId}:`)) {
-        this.sessionEventHandlers.delete(key);
-      }
-    }
-  }
-
-  close() {
-    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      this.socket.close();
-    }
-  }
-}
-
-class CdpSessionClient {
-  constructor(rootClient, sessionId) {
-    this.rootClient = rootClient;
-    this.sessionId = sessionId;
-  }
-
-  on(method, handler) {
-    this.rootClient.on(method, handler, this.sessionId);
-  }
-
-  send(method, params = {}) {
-    return this.rootClient.send(method, params, this.sessionId);
-  }
-
-  evaluate(expression) {
-    return this.rootClient.evaluate(expression, this.sessionId);
-  }
-
-  close() {
-    return this.rootClient.detachFromTarget(this.sessionId);
   }
 }

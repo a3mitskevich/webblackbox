@@ -4,6 +4,8 @@ import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { readPositiveInteger } from "./lib/e2e-utils.mjs";
+
 const root = dirname(fileURLToPath(import.meta.url));
 const fullchainScript = resolve(root, "e2e-fullchain-demo.mjs");
 
@@ -136,11 +138,6 @@ function runScenario(scenario, index) {
       );
     });
   });
-}
-
-function readPositiveInteger(value, fallback) {
-  const numeric = Number(value ?? fallback);
-  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : fallback;
 }
 
 function signalScenarioChild(child, signal) {
