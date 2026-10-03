@@ -594,6 +594,15 @@ async function main() {
     await waitForPlayerEventType(playerClient, eventType, 20_000);
   }
 
+  const playerSymbolicationResult = verifySourceMaps
+    ? await verifyPlayerSymbolication(playerClient, `${demoUrl}vendor/`, 20_000)
+    : { ok: true, skipped: "source-map-verification-disabled" };
+  assert(
+    playerSymbolicationResult.ok,
+    "Player did not show the original source of the minified error",
+    playerSymbolicationResult
+  );
+
   const markerResult =
     captureMode === "full" && captureScreenshotsInFullMode && !recordScreenInFullMode
       ? await verifyPlayerScreenshotMarker(playerClient, 20_000)
@@ -680,6 +689,7 @@ async function main() {
   console.log("Screen recording archive evidence:", JSON.stringify(screenRecordingArchiveResult));
   console.log("Source maps:", JSON.stringify(sourceMapResult));
   console.log("Player:", JSON.stringify(playerResult));
+  console.log("Player symbolication:", JSON.stringify(playerSymbolicationResult));
   console.log("Screenshot marker:", JSON.stringify(markerResult));
   console.log("Screenshot suppression:", JSON.stringify(screenshotSuppressionResult));
   console.log("Hover response:", JSON.stringify(hoverResponseResult));
@@ -3864,6 +3874,49 @@ async function waitForPlayerEventType(playerClient, eventType, timeoutMs) {
     250,
     `Timeline did not include event type: ${eventType}`
   );
+}
+
+/**
+ * Points the Player's symbol server at the demo's map folder and waits for the console row of
+ * the minified error to show its original location.
+ */
+async function verifyPlayerSymbolication(playerClient, symbolServerUrl, timeoutMs) {
+  const applied = await playerClient.evaluate(`
+    (() => {
+      const root = document.querySelector('#event-stack');
+      const input = root?.querySelector('[data-stack-input="server"]');
+      const apply = root?.querySelector('[data-stack-action="server"]');
+
+      if (!input || !apply) {
+        return false;
+      }
+
+      input.value = ${JSON.stringify(symbolServerUrl)};
+      apply.click();
+      return true;
+    })()
+  `);
+
+  if (!applied) {
+    return { ok: false, reason: "symbol-server-controls-missing" };
+  }
+
+  const origin = await waitFor(
+    async () => {
+      const text = await playerClient.evaluate(`
+        (() => Array.from(document.querySelectorAll('#console-list .signal-origin'))
+          .map((node) => node.textContent ?? '')
+          .find((value) => value.includes('vendor-src/checkout.js')) ?? null)()
+      `);
+
+      return typeof text === "string" ? text : null;
+    },
+    timeoutMs,
+    250,
+    "Console row did not show the original source location"
+  ).catch(() => null);
+
+  return { ok: typeof origin === "string" && origin.includes("checkout.js:9:"), origin };
 }
 
 async function verifyPlayerEventTypeAbsent(playerClient, eventType) {
