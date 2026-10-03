@@ -176,6 +176,7 @@
   "sessionsConfirmDeleteTitle": "Confirm Delete",
   "sessionsTitle": "Sessions",
   "popupTabLabel": "Tab {tabId}",
+  "popupTabTitle": "Tab {tabId}",
   "popupStatEvents": "Events",
   "popupStatErrors": "Errors",
   "popupStatAlerts": "Alerts",

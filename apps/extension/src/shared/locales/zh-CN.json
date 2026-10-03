@@ -176,6 +176,7 @@
   "sessionsConfirmDeleteTitle": "确认删除",
   "sessionsTitle": "会话",
   "popupTabLabel": "标签页 {tabId}",
+  "popupTabTitle": "标签页 {tabId}",
   "popupStatEvents": "事件",
   "popupStatErrors": "错误",
   "popupStatAlerts": "告警",

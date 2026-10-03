@@ -57,7 +57,8 @@ export function createPopupHeader(options: {
     }),
     el("span", {
       className: "wb-popup__tab",
-      text: t("popupTabLabel", { tabId: options.tabId ?? "—" })
+      text: t("popupTabLabel", { tabId: options.tabId ?? "—" }),
+      attrs: { title: t("popupTabTitle", { tabId: options.tabId ?? "—" }) }
     }),
     el("span", { className: "wb-popup__spacer" }),
     iconButton(t("popupSessions"), "open-sessions", "sessions"),
