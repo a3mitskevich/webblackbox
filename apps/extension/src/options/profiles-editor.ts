@@ -105,6 +105,12 @@ export async function mountProfilesEditor(
       }
 
       editor.draft = syncDefaultProfileWithLegacyOptions(editor.draft, payload);
+      // The general save is already stored; Cancel must not roll it back.
+      const snapshot = editor.editingSnapshot;
+      editor.editingSnapshot = snapshot
+        ? syncDefaultProfileWithLegacyOptions({ ...editor.draft, profiles: [snapshot] }, payload)
+            .profiles[0]
+        : undefined;
       rerender();
     }
   };
@@ -565,7 +571,7 @@ function bindEditor(
         syncDraftFromDom(card, editor);
         void saveDraft(editor, deps).then(() => {
           // What was just saved is the new baseline for Cancel.
-          if (editor.editingId) {
+          if (editor.editingId && !editor.status?.error) {
             openProfileForm(editor, editor.editingId);
           }
 

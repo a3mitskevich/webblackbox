@@ -252,6 +252,24 @@ describe("profiles editor", () => {
     );
   });
 
+  it("keeps a general settings save when the open Default form is cancelled", async () => {
+    const storage = createStorage();
+    const { container, handle } = await mountWithHandle(storage);
+
+    click(rowOf(container, "default"), "[data-action='profile-edit']");
+    handle.applyGeneralOptions({
+      optionsVersion: 1,
+      redaction: { blockedSelectors: [".from-general-form"] }
+    });
+    click(container, "[data-action='profile-cancel']");
+    click(container, "[data-action='profiles-save']");
+    await flush();
+
+    expect(savedStore(storage).profiles[0]?.redaction.blockedSelectors).toEqual([
+      ".from-general-form"
+    ]);
+  });
+
   it("keeps a rule whose profile no longer exists selectable", async () => {
     const storage = createStorage({
       [PROFILES_STORAGE_KEY]: {
