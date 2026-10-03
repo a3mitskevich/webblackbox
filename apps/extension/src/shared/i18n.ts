@@ -2,15 +2,17 @@ import type { CaptureMode, FreezeReason } from "@webblackbox/protocol";
 
 import { getChromeApi } from "./chrome-api.js";
 import EN_MESSAGES from "./locales/en.json" with { type: "json" };
+import RU_MESSAGES from "./locales/ru.json" with { type: "json" };
 import ZH_CN_MESSAGES from "./locales/zh-CN.json" with { type: "json" };
 
-export type ExtensionLocale = "en" | "zh-CN";
+export type ExtensionLocale = "en" | "ru" | "zh-CN";
 
 /** English is the reference dictionary; `locales.test.ts` keeps every other locale's keys equal. */
 export type ExtensionMessageKey = keyof typeof EN_MESSAGES;
 
 const EXTENSION_MESSAGES: Record<ExtensionLocale, Record<ExtensionMessageKey, string>> = {
   en: EN_MESSAGES,
+  ru: RU_MESSAGES,
   "zh-CN": ZH_CN_MESSAGES
 };
 
@@ -57,7 +59,15 @@ export function normalizeExtensionLocale(candidate?: string | null): ExtensionLo
     return "en";
   }
 
-  return candidate.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+  const language = candidate.trim().toLowerCase();
+
+  if (language.startsWith("zh")) {
+    return "zh-CN";
+  }
+
+  return language === "ru" || language.startsWith("ru-") || language.startsWith("ru_")
+    ? "ru"
+    : "en";
 }
 
 export function translateExtensionMessage(

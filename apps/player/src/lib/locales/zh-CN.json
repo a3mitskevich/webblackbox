@@ -8,12 +8,18 @@
   "toolbarLanguage": "语言",
   "localeNames": {
     "en": "English",
+    "ru": "Русский",
     "zh-CN": "中文"
   },
+  "modeLite": "轻量",
+  "modeFull": "完整",
   "statusWindow": "窗口",
   "statusCounts": "{events} 个事件 | {errors} 个错误 | {requests} 个请求",
   "statusPanelOnly": "{panel} 面板",
   "statusPanelSelection": "{panel} 面板 | {selection}",
+  "selectionAction": "动作 {id}",
+  "selectionEvent": "事件 {id}",
+  "selectionRequest": "请求 {id}",
   "quickTriage": "快速分诊",
   "maskResponsePreview": "遮罩响应预览",
   "dismiss": "关闭",

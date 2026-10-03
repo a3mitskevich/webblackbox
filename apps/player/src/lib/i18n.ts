@@ -1,10 +1,13 @@
 import type { PrivacyViolationSubject } from "@webblackbox/player-sdk";
 
 import EN_MESSAGES from "./locales/en.json" with { type: "json" };
+import RU_MESSAGES from "./locales/ru.json" with { type: "json" };
 import ZH_CN_MESSAGES from "./locales/zh-CN.json" with { type: "json" };
 import { readStoredText, writeStoredText } from "./storage.js";
 
-export type PlayerLocale = "en" | "zh-CN";
+export type PlayerLocale = "en" | "ru" | "zh-CN";
+
+export const PLAYER_LOCALES: readonly PlayerLocale[] = ["en", "ru", "zh-CN"];
 
 type PanelKey =
   | "timeline"
@@ -41,10 +44,15 @@ type PlayerMessages = {
   toolbarGitHubRepo: string;
   toolbarLanguage: string;
   localeNames: Record<PlayerLocale, string>;
+  modeLite: string;
+  modeFull: string;
   statusWindow: string;
   statusCounts: string;
   statusPanelOnly: string;
   statusPanelSelection: string;
+  selectionAction: string;
+  selectionEvent: string;
+  selectionRequest: string;
   quickTriage: string;
   maskResponsePreview: string;
   dismiss: string;
@@ -317,6 +325,7 @@ export const PLAYER_LOCALE_STORAGE_KEY = "webblackbox.player.locale";
 /** English is the reference dictionary; `locales.test.ts` keeps every other locale's keys equal. */
 const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
   en: EN_MESSAGES,
+  ru: RU_MESSAGES,
   "zh-CN": ZH_CN_MESSAGES
 };
 
@@ -341,6 +350,10 @@ export function resolvePlayerLocale(raw: string | null | undefined): PlayerLocal
     normalized.startsWith("zh-")
   ) {
     return "zh-CN";
+  }
+
+  if (normalized === "ru" || normalized.startsWith("ru-")) {
+    return "ru";
   }
 
   return "en";
@@ -386,11 +399,11 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
 
   const formatMode = (mode: string): string => {
     if (mode === "lite") {
-      return locale === "zh-CN" ? "轻量" : "Lite";
+      return messages.modeLite;
     }
 
     if (mode === "full") {
-      return locale === "zh-CN" ? "完整" : "Full";
+      return messages.modeFull;
     }
 
     return mode.toUpperCase();
@@ -406,17 +419,13 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
   const formatCompareSignal = (signal: CompareSignal): string => messages.compareSignals[signal];
   const formatSortDirection = (direction: SortDirection): string =>
     messages.sortDirections[direction];
-  const formatSelection = (kind: SelectionKind, id: string): string => {
-    if (kind === "action") {
-      return locale === "zh-CN" ? `动作 ${id}` : `action ${id}`;
-    }
-
-    if (kind === "event") {
-      return locale === "zh-CN" ? `事件 ${id}` : `event ${id}`;
-    }
-
-    return locale === "zh-CN" ? `请求 ${id}` : `request ${id}`;
-  };
+  const selectionKeys = {
+    action: "selectionAction",
+    event: "selectionEvent",
+    request: "selectionRequest"
+  } as const satisfies Record<SelectionKind, keyof PlayerMessages>;
+  const formatSelection = (kind: SelectionKind, id: string): string =>
+    t(selectionKeys[kind], { id });
 
   const formatStatusCounts = (events: number, errors: number, requests: number): string =>
     t("statusCounts", { events, errors, requests });

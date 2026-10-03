@@ -26,6 +26,7 @@ import {
   applyPlayerDocumentLocale,
   createPlayerI18n,
   detectPlayerLocale,
+  resolvePlayerLocale,
   storePlayerLocale
 } from "./lib/i18n.js";
 import { describeRequestName, resolveNetworkInitiator } from "./lib/network-labels.js";
@@ -627,7 +628,7 @@ function bindGlobalActions(): void {
   bindArchiveDropTarget();
 
   refs.playerLocale.addEventListener("change", () => {
-    const nextLocale = refs.playerLocale.value === "zh-CN" ? "zh-CN" : "en";
+    const nextLocale = resolvePlayerLocale(refs.playerLocale.value);
 
     if (nextLocale === locale) {
       return;

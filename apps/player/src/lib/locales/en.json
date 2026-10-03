@@ -8,12 +8,18 @@
   "toolbarLanguage": "Language",
   "localeNames": {
     "en": "English",
+    "ru": "Русский",
     "zh-CN": "中文"
   },
+  "modeLite": "Lite",
+  "modeFull": "Full",
   "statusWindow": "Window",
   "statusCounts": "{events} events | {errors} errors | {requests} requests",
   "statusPanelOnly": "{panel} panel",
   "statusPanelSelection": "{panel} panel | {selection}",
+  "selectionAction": "action {id}",
+  "selectionEvent": "event {id}",
+  "selectionRequest": "request {id}",
   "quickTriage": "Quick Triage",
   "maskResponsePreview": "Mask response preview",
   "dismiss": "Dismiss",

@@ -41,8 +41,8 @@ describe("extension UI locales", () => {
   const locales = readUiLocales();
   const reference = locales.get("en") ?? {};
 
-  it("ships English and Chinese dictionaries", () => {
-    expect([...locales.keys()].sort()).toEqual(["en", "zh-CN"]);
+  it("ships English, Russian and Chinese dictionaries", () => {
+    expect([...locales.keys()].sort()).toEqual(["en", "ru", "zh-CN"]);
   });
 
   it.each([...locales.keys()])("%s has exactly the English key set", (locale) => {
@@ -72,7 +72,7 @@ describe("extension manifest locales", () => {
   const reference = locales.get("en") ?? {};
 
   it("ships manifest strings for every UI locale", () => {
-    expect([...locales.keys()].sort()).toEqual(["en", "zh_CN"]);
+    expect([...locales.keys()].sort()).toEqual(["en", "ru", "zh_CN"]);
   });
 
   it.each([...locales.keys()])("%s has exactly the English keys, each with a message", (locale) => {

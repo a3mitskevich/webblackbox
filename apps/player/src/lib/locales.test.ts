@@ -34,8 +34,8 @@ const locales = new Map(
 const reference = locales.get("en") ?? new Map<string, unknown>();
 
 describe("player locales", () => {
-  it("ships English and Chinese dictionaries", () => {
-    expect([...locales.keys()].sort()).toEqual(["en", "zh-CN"]);
+  it("ships English, Russian and Chinese dictionaries", () => {
+    expect([...locales.keys()].sort()).toEqual(["en", "ru", "zh-CN"]);
   });
 
   it.each([...locales.keys()])("%s has exactly the English key set", (locale) => {
