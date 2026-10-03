@@ -86,6 +86,7 @@ import {
 } from "./lib/screenshot-data.js";
 import { describeScreenshotMeta } from "./lib/screenshot-description.js";
 import { buildActionSearchText, buildEventSearchText } from "./lib/search-text.js";
+import { createStackViewController } from "./lib/stack-view.js";
 import { uploadArchiveWithProgress } from "./lib/share-upload.js";
 import {
   buildConsoleSignalSearchText,
@@ -564,6 +565,7 @@ const refs = {
   timelineList: getElement<HTMLUListElement>("timeline-list"),
   actionsList: getElement<HTMLUListElement>("actions-list"),
   eventDetails: getElement<HTMLElement>("event-details"),
+  eventStack: getElement<HTMLElement>("event-stack"),
   waterfallBody: getElement<HTMLTableSectionElement>("waterfall-body"),
   requestDetails: getElement<HTMLElement>("request-details"),
   copyCurl: getElement<HTMLButtonElement>("copy-curl"),
@@ -606,6 +608,24 @@ const refs = {
   playwrightCopy: getElement<HTMLButtonElement>("playwright-copy"),
   playwrightDownload: getElement<HTMLButtonElement>("playwright-download")
 };
+
+let stackConsoleRefreshQueued = false;
+const stackView = createStackViewController({
+  root: refs.eventStack,
+  messages: i18n.messages.stackView,
+  // Console rows show the first original frame once it is resolved; batch the re-renders.
+  onResolved: () => {
+    if (stackConsoleRefreshQueued) {
+      return;
+    }
+
+    stackConsoleRefreshQueued = true;
+    setTimeout(() => {
+      stackConsoleRefreshQueued = false;
+      renderConsoleSignals();
+    }, 50);
+  }
+});
 
 refs.quickTriageDismissSeconds.value = String(Math.round(state.quickTriageAutoDismissMs / 1_000));
 
@@ -1568,6 +1588,7 @@ async function loadPrimaryArchiveBytes(bytes: Uint8Array, sourceName: string): P
 
     state.player = player;
     state.model = model;
+    stackView.setArchive(player);
     state.loadedArchiveBytes = Uint8Array.from(bytes);
     state.loadedArchiveName = sourceName;
     state.selectedEventId = model.events[model.events.length - 1]?.id ?? null;
@@ -3654,6 +3675,8 @@ function formatReplayConfidence(confidence: ReplayDiagnosticEntry["confidence"])
 function renderEventDetails(): void {
   const model = state.model;
 
+  stackView.render(null);
+
   if (!model) {
     refs.eventDetails.textContent = i18n.messages.eventDetailsEmpty;
     return;
@@ -3678,6 +3701,7 @@ function renderEventDetails(): void {
     return;
   }
 
+  stackView.render(selected);
   refs.eventDetails.textContent = JSON.stringify(
     {
       scope: resolveEventScope(model, selected),
@@ -5305,7 +5329,13 @@ function renderSignalEvents(
         ? `<span class="scope-session mono" title="${escapeHtml(event.cdp ?? event.frame ?? "")}">${escapeHtml(sourceLabel)}</span>`
         : "";
 
-      return `<li class="signal"><span class="signal-type">${escapeHtml(event.type)}</span><span class="${scopeClass}">${scopeLabel}</span>${sourceTag}<span class="signal-text">${escapeHtml(text)}</span></li>`;
+      stackView.prefetch(event);
+      const origin = stackView.describeTopFrame(event);
+      const originTag = origin
+        ? `<span class="signal-origin mono" title="${escapeHtml(origin)}">→ ${escapeHtml(origin)}</span>`
+        : "";
+
+      return `<li class="signal"><span class="signal-type">${escapeHtml(event.type)}</span><span class="${scopeClass}">${scopeLabel}</span>${sourceTag}<span class="signal-text">${escapeHtml(text)}</span>${originTag}</li>`;
     })
     .join("");
 }
