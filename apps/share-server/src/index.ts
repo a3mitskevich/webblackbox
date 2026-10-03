@@ -7,6 +7,7 @@ import { DEFAULT_ARCHIVE_LOAD_LIMITS, resolveArchiveLoadLimits } from "@webblack
 
 import type { ShareSummary } from "./archive-analysis.js";
 import { runArchiveAnalysis } from "./archive-analysis-runner.js";
+import { createConcurrencyLimiter } from "./concurrency.js";
 import { asRecord, redactText } from "./text.js";
 
 type ShareRecord = {
@@ -107,6 +108,10 @@ const ARCHIVE_ANALYSIS_TIMEOUT_MS = parsePositiveInteger(
 const ARCHIVE_ANALYSIS_MAX_HEAP_MB = parsePositiveInteger(
   process.env.WEBBLACKBOX_SHARE_ANALYSIS_MAX_HEAP_MB,
   1024
+);
+// Worker heap and archive limits are per analysis; cap parallel workers so they don't multiply.
+const archiveAnalysisSlots = createConcurrencyLimiter(
+  parsePositiveInteger(process.env.WEBBLACKBOX_SHARE_ANALYSIS_CONCURRENCY, 2)
 );
 const SHARE_READ_SESSION_COOKIE = "webblackbox_share_read";
 const SHARE_READ_SESSION_TTL_MS = 10 * 60 * 1000;
@@ -289,11 +294,13 @@ async function handleUpload(
     throw error;
   }
 
-  const analysis = await runArchiveAnalysis(bytes, {
-    limits: ARCHIVE_ANALYSIS_LIMITS,
-    timeoutMs: ARCHIVE_ANALYSIS_TIMEOUT_MS,
-    maxHeapMb: ARCHIVE_ANALYSIS_MAX_HEAP_MB
-  });
+  const analysis = await archiveAnalysisSlots.run(() =>
+    runArchiveAnalysis(bytes, {
+      limits: ARCHIVE_ANALYSIS_LIMITS,
+      timeoutMs: ARCHIVE_ANALYSIS_TIMEOUT_MS,
+      maxHeapMb: ARCHIVE_ANALYSIS_MAX_HEAP_MB
+    })
+  );
 
   if (analysis.rejectReason) {
     await writeShareAuditEvent(request, {
