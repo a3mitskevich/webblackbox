@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isSafeRegexSource, matchesGlob } from "./safe-pattern.js";
+import { isSafeRegexSource, matchesGlob, MAX_MATCHED_TITLE_LENGTH } from "./safe-pattern.js";
 
 const SLOW_MATCH_MS = 250;
 
@@ -38,7 +38,10 @@ describe("isSafeRegexSource", () => {
       "(orders|invoices) - acme",
       "[a-z]+ \\(beta\\)",
       "(?:qa|uat)\\b",
-      "(?<env>dev) build"
+      "(?<env>dev) build",
+      ".*foo.*bar.*",
+      "(foo|bar) - (one|two|three)",
+      "\\d{1,4} items"
     ]) {
       expect(isSafeRegexSource(source), source).toBe(true);
     }
@@ -55,6 +58,10 @@ describe("isSafeRegexSource", () => {
       "(?<x>a)\\k<x>",
       ".*a.*b.*c",
       "(?:a.*){1}a*b",
+      "((a|aa))+$",
+      "(?:(?:a|a))*$",
+      "a{0,256}a{0,256}a{0,256}a{0,256}b",
+      `${"a?".repeat(24)}${"a".repeat(24)}`,
       "(unclosed"
     ]) {
       expect(isSafeRegexSource(source), source).toBe(false);
@@ -62,9 +69,9 @@ describe("isSafeRegexSource", () => {
   });
 
   it("keeps the slowest accepted patterns fast on a maximum-length title", () => {
-    const title = "a".repeat(256);
+    const title = "a".repeat(MAX_MATCHED_TITLE_LENGTH);
 
-    for (const source of [".*a.*b", "a+a+b", "[a-z]*a*b"]) {
+    for (const source of [".*a.*b", "a+a+b", "[a-z]*a*b", "a*a*a?a?b", ".*a.*a.*", "(a|b)a*a*c"]) {
       expect(isSafeRegexSource(source), source).toBe(true);
       expect(
         elapsedMs(() => new RegExp(source, "i").test(title)),

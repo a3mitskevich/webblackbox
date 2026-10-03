@@ -12,7 +12,7 @@ import {
 import { z } from "zod";
 
 import { CAPTURE_CATEGORY_LEVELS, type CaptureCategories } from "./categories.js";
-import { isSafeRegexSource, MAX_TITLE_REGEX_UNBOUNDED_QUANTIFIERS } from "./safe-pattern.js";
+import { isSafeRegexSource } from "./safe-pattern.js";
 
 /** `chrome.storage.local` key of the v2 profiles store. */
 export const PROFILES_STORAGE_KEY = "webblackbox.profiles";
@@ -221,8 +221,8 @@ export const profileRuleSchema = z
           .refine(isCompilableRegex, "titleRegex must be a valid regular expression")
           .refine(
             isSafeRegexSource,
-            `titleRegex is too complex: no nested or alternated quantified groups, no ` +
-              `backreferences, at most ${MAX_TITLE_REGEX_UNBOUNDED_QUANTIFIERS} of * + {n,}`
+            "titleRegex is too complex: no quantified groups containing quantifiers or |, no " +
+              "backreferences, and at most two of * + {n,} (a trailing .* is free)"
           )
           .optional(),
         selectorPresent: patternSchema.optional(),

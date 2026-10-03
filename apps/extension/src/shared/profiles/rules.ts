@@ -1,5 +1,5 @@
 import type { ProfileRule, ProfileRuleMatch } from "./model.js";
-import { isSafeRegexSource, matchesGlob } from "./safe-pattern.js";
+import { isSafeRegexSource, matchesGlob, MAX_MATCHED_TITLE_LENGTH } from "./safe-pattern.js";
 
 /** What the rule engine knows about the page; DOM-derived signals are optional. */
 export type ProfilePageContext = {
@@ -19,8 +19,6 @@ export type ProfilePageSignalRequest = {
   needsTitle: boolean;
 };
 
-// Short enough that the slowest regex `isSafeRegexSource` accepts stays in the milliseconds.
-const MAX_TITLE_LENGTH = 256;
 const DEFAULT_PORTS: Record<string, string> = {
   "http:": "80",
   "https:": "443",
@@ -232,7 +230,7 @@ function matchesTitle(title: string | undefined, regex: string): boolean {
   }
 
   try {
-    return new RegExp(regex, "i").test(title.slice(0, MAX_TITLE_LENGTH));
+    return new RegExp(regex, "i").test(title.slice(0, MAX_MATCHED_TITLE_LENGTH));
   } catch {
     return false;
   }

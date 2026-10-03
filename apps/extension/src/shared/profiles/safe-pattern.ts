@@ -3,11 +3,18 @@
  * service worker on every navigation, so they must never backtrack catastrophically.
  */
 
-/** Most unbounded quantifiers (`*`, `+`, `{n,}`) a title regex may use. */
-export const MAX_TITLE_REGEX_UNBOUNDED_QUANTIFIERS = 2;
+/** Longest page title a title regex is tested against. */
+export const MAX_MATCHED_TITLE_LENGTH = 256;
+
+/**
+ * Upper bound on the backtracking paths of an accepted title regex: the product of what every
+ * quantifier and alternation can try. Two unbounded quantifiers (e.g. `.*a.*b`) fit with a
+ * small margin; a third does not.
+ */
+export const MAX_TITLE_REGEX_BACKTRACKING = 300_000;
 
 type GlobToken = { kind: "literal"; char: string } | { kind: "star"; crossesSegments: boolean };
-type RegexGroup = { quantified: boolean; alternated: boolean };
+type RegexGroup = { quantified: boolean; alternated: boolean; branches: number };
 
 /**
  * Glob match in O(pattern × text): `*` matches within one `/` segment, `**` across segments,
@@ -39,14 +46,20 @@ export function matchesGlob(text: string, pattern: string): boolean {
 }
 
 /**
- * Rejects regular expressions whose matching time can explode: quantified groups that contain
- * a quantifier or an alternation (`(a+)+`, `(a|aa)*`), backreferences, and more than
- * {@link MAX_TITLE_REGEX_UNBOUNDED_QUANTIFIERS} unbounded quantifiers.
+ * Rejects regular expressions whose matching time can explode on a page title:
+ * - a quantified group that contains a quantifier or an alternation, at any depth
+ *   (`(a+)+`, `((a|aa))*`): exponential backtracking;
+ * - backreferences;
+ * - sequences of quantifiers and alternations whose combined backtracking (each unbounded
+ *   quantifier counts as a title's length) exceeds {@link MAX_TITLE_REGEX_BACKTRACKING}:
+ *   polynomial blow-ups such as `.*a.*b.*c` or `a{0,256}a{0,256}a{0,256}b`.
+ * A trailing `.*` or `.+` never backtracks and is free, so `.*foo.*bar.*` is accepted.
  */
 export function isSafeRegexSource(source: string): boolean {
   const groups: RegexGroup[] = [];
+  let topLevelBranches = 1;
   let lastAtomGroup: RegexGroup | null = null;
-  let unbounded = 0;
+  let backtracking = 1;
   let index = 0;
 
   while (index < source.length) {
@@ -62,7 +75,7 @@ export function isSafeRegexSource(source: string): boolean {
     } else if (char === "[") {
       index = skipCharacterClass(source, index);
     } else if (char === "(") {
-      groups.push({ quantified: false, alternated: false });
+      groups.push({ quantified: false, alternated: false, branches: 1 });
       index += source[index + 1] === "?" ? groupPrefixLength(source, index) : 1;
     } else if (char === ")") {
       const group = groups.pop();
@@ -75,8 +88,10 @@ export function isSafeRegexSource(source: string): boolean {
 
       if (parent) {
         parent.quantified ||= group.quantified;
+        parent.alternated ||= group.alternated;
       }
 
+      backtracking *= group.branches;
       atomGroup = group;
       index += 1;
     } else if (char === "|") {
@@ -84,6 +99,9 @@ export function isSafeRegexSource(source: string): boolean {
 
       if (current) {
         current.alternated = true;
+        current.branches += 1;
+      } else {
+        topLevelBranches += 1;
       }
 
       index += 1;
@@ -100,16 +118,18 @@ export function isSafeRegexSource(source: string): boolean {
         current.quantified = true;
       }
 
-      unbounded += quantifier.isUnbounded ? 1 : 0;
-
-      if (unbounded > MAX_TITLE_REGEX_UNBOUNDED_QUANTIFIERS) {
-        return false;
-      }
-
       // A trailing `?` makes the quantifier lazy; it is not a second quantifier.
-      index += quantifier.length + (source[index + quantifier.length] === "?" ? 1 : 0);
+      const end = index + quantifier.length + (source[index + quantifier.length] === "?" ? 1 : 0);
+      const isTrailing = end === source.length && groups.length === 0;
+
+      backtracking *= isTrailing && quantifier.isUnbounded ? 1 : quantifier.choices;
+      index = end;
     } else {
       index += 1;
+    }
+
+    if (backtracking * topLevelBranches > MAX_TITLE_REGEX_BACKTRACKING) {
+      return false;
     }
 
     lastAtomGroup = atomGroup;
@@ -170,16 +190,29 @@ function isQuantifierStart(source: string, index: number): boolean {
   );
 }
 
-function readQuantifier(source: string, index: number): { length: number; isUnbounded: boolean } {
+/** Length of the quantifier token and how many repetition counts it can try on a title. */
+function readQuantifier(
+  source: string,
+  index: number
+): { length: number; isUnbounded: boolean; choices: number } {
   const char = source[index];
+  const unboundedChoices = MAX_MATCHED_TITLE_LENGTH + 1;
 
   if (char !== "{") {
-    return { length: 1, isUnbounded: char !== "?" };
+    return char === "?"
+      ? { length: 1, isUnbounded: false, choices: 2 }
+      : { length: 1, isUnbounded: true, choices: unboundedChoices };
   }
 
-  const match = /^\{\d+(,(\d*))?\}/.exec(source.slice(index));
+  const match = /^\{(\d+)(,(\d*))?\}/.exec(source.slice(index));
+  const min = Number(match?.[1] ?? 0);
+  const isUnbounded = match?.[2] !== undefined && match[3] === "";
+  const max = match?.[2] === undefined ? min : isUnbounded ? Infinity : Number(match[3]);
+  const span = Math.min(max, MAX_MATCHED_TITLE_LENGTH) - Math.min(min, MAX_MATCHED_TITLE_LENGTH);
+
   return {
     length: match?.[0].length ?? 1,
-    isUnbounded: match?.[1] !== undefined && match[2] === ""
+    isUnbounded,
+    choices: Math.max(1, span + 1)
   };
 }
