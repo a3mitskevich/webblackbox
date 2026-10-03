@@ -1913,14 +1913,37 @@ export class LiteCaptureAgent {
     const payload = navigationTarget
       ? this.resolveTargetPayload(navigationTarget, "navigation")
       : this.resolveTargetPayload(target, "action");
-    const rect = readTargetRect(element);
+    this.scheduleTargetRectEnrichment(payload, element);
+    return payload;
+  }
 
-    // Fresh object: the lite selector enrichment fills `selector` on this same instance later.
-    if (rect) {
-      payload.rect = rect;
+  /**
+   * Fills `rect` right after the event handlers ran instead of on the hot path, where reading it
+   * could force a synchronous layout. Fresh payload object, like the lite selector enrichment.
+   */
+  private scheduleTargetRectEnrichment(
+    payload: Record<string, unknown>,
+    element: EventTarget | null
+  ): void {
+    if (!(element instanceof Element)) {
+      return;
     }
 
-    return payload;
+    const timerId = window.setTimeout(() => {
+      this.pendingTargetEnrichmentTimers.delete(timerId);
+
+      if (!this.recordingActive || this.disposed) {
+        return;
+      }
+
+      const rect = readTargetRect(element);
+
+      if (rect) {
+        payload.rect = rect;
+      }
+    }, TARGET_ENRICH_DELAY_MS);
+
+    this.pendingTargetEnrichmentTimers.add(timerId);
   }
 
   private resolveTargetPayload(

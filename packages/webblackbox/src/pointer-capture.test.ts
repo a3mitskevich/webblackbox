@@ -125,12 +125,14 @@ describe("pointer capture", () => {
     agent.dispose();
   });
 
-  it("adds page coordinates, viewport geometry and the target rect to clicks", () => {
+  it("adds page coordinates, viewport geometry and the target rect to clicks", async () => {
     const { agent, ofType } = createAgent();
 
     element("#save").dispatchEvent(
       new MouseEvent("click", { bubbles: true, clientX: 20, clientY: 30 })
     );
+    // The rect is read right after the handlers ran, off the click hot path.
+    await vi.advanceTimersByTimeAsync(0);
 
     const [click] = ofType("click");
     expect(click?.payload).toMatchObject({
