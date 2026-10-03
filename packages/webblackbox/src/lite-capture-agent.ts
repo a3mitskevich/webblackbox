@@ -8,6 +8,7 @@ import { snapdom } from "@zumer/snapdom";
 
 import type { LiteCaptureAgentOptions, LiteCaptureSampling, LiteCaptureState } from "./types.js";
 import { INJECTED_MESSAGE_SOURCE, type InjectedCaptureWindowMessage } from "./injected-hooks.js";
+import { readCapturableInputValue } from "./input-value-policy.js";
 
 const PRE_RECORDING_BUFFER_MAX = 400;
 const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
@@ -480,10 +481,12 @@ export class LiteCaptureAgent {
 
         this.recordEditableInteraction(target);
 
+        const value = readCapturableInputValue(target, this.capturePolicy);
+
         this.queueEvent("input", {
           inputType: target.type,
           length: target.value.length,
-          valueRedacted: true,
+          ...(value === undefined ? { valueRedacted: true } : { value }),
           target: this.resolveTargetPayload(target, "input")
         });
       },

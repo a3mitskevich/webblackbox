@@ -1187,6 +1187,38 @@ describe("LiteCaptureAgent", () => {
     agent.dispose();
   });
 
+  it("records raw input values when the profile allows them, never for passwords", () => {
+    const { agent, emitBatch } = createAgent({
+      capturePolicy: {
+        ...DEFAULT_CAPTURE_POLICY,
+        categories: { ...DEFAULT_CAPTURE_POLICY.categories, inputs: "allow" }
+      }
+    });
+    document.body.innerHTML =
+      '<input id="city" name="city" /><input id="pw" type="password" name="pw" />';
+    const city = document.getElementById("city") as HTMLInputElement;
+    const password = document.getElementById("pw") as HTMLInputElement;
+
+    city.value = "Minsk";
+    city.dispatchEvent(new Event("input", { bubbles: true }));
+    password.value = "hunter2";
+    password.dispatchEvent(new Event("input", { bubbles: true }));
+    agent.flush();
+
+    const inputEvents = emitBatch.mock.calls
+      .flatMap((call) => {
+        const [batch] = call as [Array<{ rawType?: string; payload?: Record<string, unknown> }>];
+        return batch;
+      })
+      .filter((entry) => entry.rawType === "input");
+
+    expect(inputEvents.map((entry) => entry.payload?.value)).toEqual(["Minsk", undefined]);
+    expect(inputEvents[1]?.payload).toMatchObject({ valueRedacted: true, length: 7 });
+    expect(JSON.stringify(inputEvents)).not.toContain("hunter2");
+
+    agent.dispose();
+  });
+
   it("tokenizes target ids, classes, test ids, and text-derived metadata", async () => {
     document.body.innerHTML = `
       <button
