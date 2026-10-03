@@ -349,10 +349,12 @@ export class PointerCaptureController {
     const distance = press
       ? Math.hypot(event.clientX - press.startX, event.clientY - press.startY)
       : undefined;
+    // Only a primary-button hold is a long press; a held right button is a context menu.
     const longPress =
       press !== undefined &&
       holdMs !== undefined &&
       !cancelled &&
+      press.button === 0 &&
       !press.dragStarted &&
       holdMs >= POINTER_LONG_PRESS_MS &&
       press.maxDistance < POINTER_DRAG_THRESHOLD_PX;
@@ -677,6 +679,10 @@ function readSelectionState(policy: CapturePolicy): SelectionState | null {
   const active = document.activeElement;
 
   if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+    if (isPrivateField(active, policy)) {
+      return null;
+    }
+
     const length = readFieldSelectionLength(active);
     return length > 0
       ? { length, editable: true, element: active, anchorKey: `field:${active.tagName}` }
@@ -706,7 +712,8 @@ function readSelectionState(policy: CapturePolicy): SelectionState | null {
     allowsSelectionText(policy) &&
     [toElement(selection.anchorNode), toElement(selection.focusNode)].every(
       (node) => node !== null && !isCoveredByBlockedSelector(node, policy.redaction)
-    );
+    ) &&
+    !rangeTouchesBlockedElement(range, policy.redaction.blockedSelectors);
 
   return {
     length: raw.length,
@@ -715,6 +722,37 @@ function readSelectionState(policy: CapturePolicy): SelectionState | null {
     element,
     anchorKey: `${selection.anchorOffset}:${selection.focusOffset}`
   };
+}
+
+/** Password fields and fields under a blocked selector do not even report a selection length. */
+function isPrivateField(
+  field: HTMLInputElement | HTMLTextAreaElement,
+  policy: CapturePolicy
+): boolean {
+  return (
+    (field instanceof HTMLInputElement && field.type.toLowerCase() === "password") ||
+    isCoveredByBlockedSelector(field, policy.redaction)
+  );
+}
+
+/**
+ * True when the selected range covers any part of a blocked element, so selected text never
+ * spans blocked content between clean endpoints. Invalid selectors fail closed.
+ */
+function rangeTouchesBlockedElement(range: Range, blockedSelectors: readonly string[]): boolean {
+  for (const selector of blockedSelectors) {
+    try {
+      for (const element of Array.from(document.querySelectorAll(selector))) {
+        if (range.intersectsNode(element)) {
+          return true;
+        }
+      }
+    } catch {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function readFieldSelectionLength(field: HTMLInputElement | HTMLTextAreaElement): number {

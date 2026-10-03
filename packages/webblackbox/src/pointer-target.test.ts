@@ -83,6 +83,27 @@ describe("readable pointer targets", () => {
     ).toMatchObject({ text: "Open" });
   });
 
+  it("keeps blocked, editable and script descendants out of a wrapper's label", () => {
+    mount(`
+      <a id="card" href="/card">
+        Card <span data-sensitive>4111 1111 1111 1111</span>
+        <script>window.secret = 1</script><span contenteditable="true">draft</span> ending
+      </a>
+    `);
+
+    const readable = buildReadableTarget(element("#card"), READABLE_POLICY);
+    expect(readable?.text).toBe("Card ending");
+    expect(JSON.stringify(readable)).not.toMatch(/4111|secret|draft/);
+  });
+
+  it("reads only the start of a large subtree for the label", () => {
+    mount(`<div id="big">${"<p>word word word</p>".repeat(5_000)}</div>`);
+
+    const text = buildReadableTarget(element("#big"), READABLE_POLICY)?.text ?? "";
+    expect(text).toHaveLength(40);
+    expect(text.startsWith("word word word")).toBe(true);
+  });
+
   it("returns nothing when the profile keeps actions as metadata", () => {
     mount(`<button id="go">Go</button>`);
 

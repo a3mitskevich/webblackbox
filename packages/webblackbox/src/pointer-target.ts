@@ -3,12 +3,26 @@ import {
   type CapturePolicy,
   type PointerTargetRect,
   type PointerViewportGeometry,
-  type ReadablePointerTarget
+  type ReadablePointerTarget,
+  type RedactionProfile
 } from "@webblackbox/protocol";
 
 import { isCoveredByBlockedSelector } from "./input-value-policy.js";
 
 const READABLE_ATTRIBUTE_MAX_CHARS = 80;
+/** Raw text read for a label before whitespace is collapsed and it is clipped. */
+const LABEL_SCAN_MAX_CHARS = READABLE_TARGET_TEXT_MAX_CHARS * 4;
+const LABEL_SCAN_MAX_NODES = 400;
+const LABEL_HIDDEN_TAGS = new Set([
+  "SCRIPT",
+  "STYLE",
+  "NOSCRIPT",
+  "TEMPLATE",
+  "TEXTAREA",
+  "SELECT",
+  "INPUT"
+]);
+const EDITABLE_SELECTOR = "[contenteditable='true'], [contenteditable='plaintext-only']";
 const SELECTOR_ATTRIBUTE_MAX_CHARS = 100;
 const SELECTOR_PATH_MAX_DEPTH = 5;
 const STABLE_ID_PATTERN = /^[A-Za-z][\w-]{0,63}$/;
@@ -103,7 +117,7 @@ export function buildReadableTarget(
   const readable: ReadablePointerTarget = {
     role: clip(element.getAttribute("role") ?? resolveImplicitRole(element)),
     ariaLabel: clip(normalizeWhitespace(element.getAttribute("aria-label"))),
-    text: readVisibleLabel(element),
+    text: readVisibleLabel(element, policy.redaction),
     testId: clip(readDataTestId(element)),
     name: clip(element.getAttribute("name") ?? undefined),
     css: buildReadableSelector(element)
@@ -221,7 +235,7 @@ export function round(value: number): number {
   return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
 }
 
-function readVisibleLabel(element: Element): string | undefined {
+function readVisibleLabel(element: Element, redaction: RedactionProfile): string | undefined {
   if (element instanceof HTMLInputElement) {
     // Only button-like inputs show their value as a label; other values are user data.
     return BUTTON_LIKE_INPUT_TYPES.has(element.type.toLowerCase())
@@ -229,16 +243,65 @@ function readVisibleLabel(element: Element): string | undefined {
       : undefined;
   }
 
-  if (
-    element instanceof HTMLTextAreaElement ||
-    element instanceof HTMLSelectElement ||
-    (element instanceof HTMLElement && element.isContentEditable) ||
-    element.closest("[contenteditable='true'], [contenteditable='plaintext-only']") !== null
-  ) {
+  if (isHiddenFromLabel(element, redaction) || element.closest(EDITABLE_SELECTOR) !== null) {
     return undefined;
   }
 
-  return clipText(element.textContent);
+  return clipText(readLabelText(element, redaction));
+}
+
+/**
+ * Text under `element` up to a little past the label limit. Unlike `textContent` it never reads
+ * the whole subtree, and it skips descendants that are blocked, editable, fields or scripts, so a
+ * click on a wrapper cannot pull a blocked child's text into the label.
+ */
+function readLabelText(element: Element, redaction: RedactionProfile): string {
+  let text = "";
+  let visited = 0;
+  let node: Node | null = element.firstChild;
+
+  while (node && visited < LABEL_SCAN_MAX_NODES && text.length <= LABEL_SCAN_MAX_CHARS) {
+    visited += 1;
+    let descend = false;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.nodeValue ?? "";
+    } else if (node instanceof Element) {
+      descend = !isHiddenFromLabel(node, redaction);
+    }
+
+    node = nextLabelNode(node, element, descend);
+  }
+
+  return text;
+}
+
+/** Next node in document order inside `root`, entering `node` only when `descend` is set. */
+function nextLabelNode(node: Node, root: Node, descend: boolean): Node | null {
+  if (descend && node.firstChild) {
+    return node.firstChild;
+  }
+
+  let current: Node | null = node;
+
+  while (current && current !== root) {
+    if (current.nextSibling) {
+      return current.nextSibling;
+    }
+
+    current = current.parentNode;
+  }
+
+  return null;
+}
+
+function isHiddenFromLabel(element: Element, redaction: RedactionProfile): boolean {
+  return (
+    LABEL_HIDDEN_TAGS.has(element.tagName) ||
+    (element instanceof HTMLElement && element.isContentEditable) ||
+    element.matches(EDITABLE_SELECTOR) ||
+    isCoveredByBlockedSelector(element, redaction)
+  );
 }
 
 function resolveImplicitRole(element: Element): string | undefined {

@@ -109,6 +109,19 @@ describe("pointer capture", () => {
     agent.dispose();
   });
 
+  it("does not report a held right button as a long press", async () => {
+    const { agent, ofType } = createAgent();
+    const save = element("#save");
+
+    pointer("pointerdown", save, { clientX: 10, clientY: 12, button: 2 });
+    await vi.advanceTimersByTimeAsync(700);
+    pointer("pointerup", save, { clientX: 10, clientY: 12, button: 2 });
+
+    expect(ofType("pointerup")[0]?.payload.holdMs).toBeGreaterThanOrEqual(700);
+    expect(ofType("pointerup")[0]?.payload).not.toHaveProperty("longPress");
+    agent.dispose();
+  });
+
   it("records right and middle clicks without duplicating the right-button auxclick", () => {
     const { agent, ofType } = createAgent();
     const save = element("#save");
@@ -308,6 +321,39 @@ describe("pointer capture", () => {
       text: "Quarterly revenue grew by twelve percent"
     });
     readable.agent.dispose();
+  });
+
+  it("drops selected text that spans a blocked element between clean endpoints", async () => {
+    const { agent, ofType } = createAgent({ pointer: ALL_POINTER, capturePolicy: READABLE_POLICY });
+    const range = document.createRange();
+    range.setStartBefore(element("#para"));
+    range.setEndAfter(element("#zone"));
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await vi.advanceTimersByTimeAsync(400);
+
+    const [selection] = ofType("selection");
+    expect(selection?.payload.length).toBeGreaterThan(0);
+    expect(selection?.payload).not.toHaveProperty("text");
+    agent.dispose();
+  });
+
+  it("reports no selection inside a password field", async () => {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<input id="pw" type="password" value="hunter2hunter2" />`
+    );
+    const { agent, ofType } = createAgent({ pointer: ALL_POINTER, capturePolicy: READABLE_POLICY });
+    const field = element<HTMLInputElement>("#pw");
+
+    field.focus();
+    field.setSelectionRange(0, 7);
+    document.dispatchEvent(new Event("selectionchange"));
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(ofType("selection")).toHaveLength(0);
+    agent.dispose();
   });
 
   it("never captures text selected inside a field", async () => {
