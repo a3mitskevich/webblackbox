@@ -64,6 +64,7 @@ const COMMAND_TIMEOUT_MS = Number(process.env.WB_E2E_COMMAND_TIMEOUT_MS ?? "3000
 const EXPORT_TIMEOUT_MS = Number(process.env.WB_E2E_EXPORT_TIMEOUT_MS ?? "120000");
 const RUN_TIMEOUT_MS = Number(process.env.WB_E2E_POINTER_TIMEOUT_MS ?? "600000");
 const CHROME_LOG_TAIL_LINES = 40;
+const CHROME_EXIT_GRACE_MS = 5_000;
 
 const chromeCandidates = [
   process.env.WB_E2E_CHROME_BIN,
@@ -825,12 +826,25 @@ function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
+/** SIGTERM, then SIGKILL after a grace period, so the DevTools port is free when this returns. */
+async function stopChrome(chrome) {
+  if (!chrome || chrome.exitCode !== null || chrome.signalCode !== null) {
+    return;
+  }
+
+  const exited = new Promise((resolveExit) => chrome.once("exit", resolveExit));
+  chrome.kill("SIGTERM");
+  const timer = setTimeout(() => chrome.kill("SIGKILL"), CHROME_EXIT_GRACE_MS);
+  await exited;
+  clearTimeout(timer);
+}
+
 async function cleanup() {
   for (const client of state.clients.splice(0)) {
     client.close();
   }
 
-  state.chrome?.kill("SIGTERM");
+  await stopChrome(state.chrome);
   state.chrome = null;
   state.server?.close();
   state.server = null;
@@ -906,7 +920,13 @@ class CdpClient {
         callback(value);
       };
       this.pending.set(id, { resolve: settle(resolveSend), reject: settle(reject) });
-      this.socket.send(JSON.stringify({ id, method, params }));
+
+      try {
+        this.socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        this.pending.delete(id);
+        settle(reject)(error);
+      }
     });
   }
 
