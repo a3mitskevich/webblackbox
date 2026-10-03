@@ -259,6 +259,29 @@ describe("popup export", () => {
     );
   });
 
+  it("opens one passphrase dialog and sends one export on a double click", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await openWithSession(port, stoppedSession("sid-double"));
+    getButton("export").click();
+    getButton("export").click();
+    await flushPopup();
+
+    expect(document.querySelectorAll(".wb-confirm-overlay")).toHaveLength(1);
+
+    getButton("export").click();
+    await flushPopup();
+    document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
+    await flushPopup();
+
+    const exports = port.postMessage.mock.calls.filter(
+      ([message]) => (message as { kind?: string }).kind === "ui.export"
+    );
+    expect(exports).toHaveLength(1);
+    expect(document.querySelectorAll(".wb-confirm-overlay")).toHaveLength(0);
+  });
+
   it("exports no visual artifacts when none is selected", async () => {
     const port = new FakePort();
     installChromeStub(port);

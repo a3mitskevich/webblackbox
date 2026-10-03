@@ -128,6 +128,56 @@ describe("popup states", () => {
     expect(port.postMessage).toHaveBeenCalledWith({ kind: "ui.stop", tabId: 17 });
   });
 
+  it("reports a lost service worker connection instead of a silent Stop", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    await emitSessions(port, [activeSession("sid-stop", "full", 17)]);
+    port.disconnect();
+    await flushPopup();
+    port.postMessage.mockClear();
+    getButton("stop").click();
+    await flushPopup();
+
+    expect(port.postMessage).not.toHaveBeenCalled();
+    expect(getStatusLine().textContent).toContain("Lost the connection");
+    expect(getStatusLine().classList.contains("wb-popup__status--error")).toBe(true);
+  });
+
+  it("keeps keyboard focus on the engine switch across the re-render it causes", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    radio("capture-mode", "full").focus();
+    await chooseFullEngine();
+
+    expect(document.activeElement).toBe(radio("capture-mode", "full"));
+    expect(radio("capture-mode", "full").checked).toBe(true);
+
+    await emitSessions(port, [stoppedSession("sid-last")]);
+
+    expect(document.activeElement).toBe(radio("capture-mode", "full"));
+  });
+
+  it("announces status changes through one persistent live region", async () => {
+    const port = new FakePort();
+    installChromeStub(port, { tabsSendMessage: vi.fn(async () => undefined) });
+
+    await importPopupModule();
+    const live = query<HTMLElement>("[data-popup-live]");
+    await emitSessions(port, [activeSession("sid-marker", "full", 17)]);
+    getButton("marker").click();
+    await flushPopup();
+
+    expect(query<HTMLElement>("[data-popup-live]")).toBe(live);
+    expect(live.getAttribute("aria-live")).toBe("polite");
+    expect(live.textContent).toBe(getStatusLine().textContent);
+    expect(live.textContent).not.toBe("");
+    expect(document.querySelectorAll("[role='status']")).toHaveLength(1);
+  });
+
   it("adds a marker through the tab's content script", async () => {
     const port = new FakePort();
     const stub = installChromeStub(port);

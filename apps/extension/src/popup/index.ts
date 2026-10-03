@@ -14,6 +14,7 @@ import {
 } from "../shared/messages.js";
 import { openChoiceDialog, openPassphraseDialog } from "../shared/ui/dialogs.js";
 import { el } from "../shared/ui/dom.js";
+import { preserveFocus } from "../shared/ui/focus.js";
 import {
   createProfilePickerSection,
   loadProfileChoice,
@@ -75,6 +76,16 @@ const state: {
 };
 
 let pendingStartTimeout: ReturnType<typeof setTimeout> | null = null;
+/** A dialog flow (Start, Export) is in progress; a second click must not open another one. */
+let dialogFlowActive = false;
+/**
+ * Lives outside the re-rendered card: a live region inserted already filled is not announced,
+ * so status changes are written into this one persistent node.
+ */
+const liveRegion = el("p", {
+  className: "wb-sr-only",
+  attrs: { role: "status", "aria-live": "polite", "data-popup-live": "" }
+});
 
 if (root) {
   bootstrap(root).catch((error) => {
@@ -87,8 +98,14 @@ async function bootstrap(container: HTMLElement): Promise<void> {
   state.fullModeVisualCapture = loadPopupFullVisualCapture();
   state.profileChoice = loadProfileChoice();
 
+  container.after(liveRegion);
   port?.onMessage.addListener((message) => {
     applyMessage(message as ExtensionOutboundMessage);
+    render(container);
+  });
+  port?.onDisconnect?.addListener(() => {
+    portDisconnected = true;
+    setStatus(t("popupDisconnected"), true);
     render(container);
   });
   postUiMessage({ kind: "ui.request-session-list" });
@@ -115,11 +132,20 @@ class UiMessageRejectedError extends Error {
   }
 }
 
-function postUiMessage(message: ExtensionInboundMessage): void {
+let portDisconnected = false;
+
+/** Posts on the popup port; false when the service worker cannot be reached. */
+function postUiMessage(message: ExtensionInboundMessage): boolean {
+  if (!port || portDisconnected) {
+    return false;
+  }
+
   try {
-    port?.postMessage(message);
+    port.postMessage(message);
+    return true;
   } catch {
-    void 0;
+    portDisconnected = true;
+    return false;
   }
 }
 
@@ -235,8 +261,7 @@ function render(container: HTMLElement): void {
       className: state.statusIsError
         ? "wb-popup__status wb-popup__status--error"
         : "wb-popup__status",
-      text: state.statusText ?? "",
-      attrs: { role: "status", "aria-live": "polite" }
+      text: state.statusText ?? ""
     })
   );
 
@@ -256,8 +281,15 @@ function render(container: HTMLElement): void {
     })
   );
 
-  container.replaceChildren(section);
+  preserveFocus(container, () => container.replaceChildren(section));
   bindActions(container, activeSession, exportSession);
+  announce(state.statusText ?? "");
+}
+
+function announce(text: string): void {
+  if (liveRegion.textContent !== text) {
+    liveRegion.textContent = text;
+  }
 }
 
 function describeStatus(
@@ -308,19 +340,31 @@ function bindActions(
   exportSession?: SessionListItem
 ): void {
   const on = (action: string, handler: () => void | Promise<void>): void => {
+    const fail = (error: unknown): void => {
+      setStatus(t("popupActionFailed", { error: errorMessage(error) }), true);
+      render(container);
+    };
+
     container.querySelector(`[data-action='${action}']`)?.addEventListener("click", () => {
-      void handler();
+      try {
+        void Promise.resolve(handler()).catch(fail);
+      } catch (error) {
+        fail(error);
+      }
     });
   };
 
-  on("start", () => startFromPopup(container));
+  on("start", () => runDialogFlow(() => startFromPopup(container)));
   on("stop", () => {
-    if (activeSession) {
-      postUiMessage({ kind: "ui.stop", tabId: activeSession.tabId });
+    if (activeSession && !postUiMessage({ kind: "ui.stop", tabId: activeSession.tabId })) {
+      setStatus(t("popupDisconnected"), true);
+      render(container);
     }
   });
   on("marker", () => (activeSession ? addMarker(container, activeSession) : undefined));
-  on("export", () => (exportSession ? exportWithDialog(container, exportSession) : undefined));
+  on("export", () =>
+    exportSession ? runDialogFlow(() => exportWithDialog(container, exportSession)) : undefined
+  );
   on("open-sessions", () => openExtensionPage("sessions.html"));
   on("open-options", () => openExtensionPage("options.html"));
 
@@ -353,6 +397,21 @@ function bindActions(
         }
       });
     });
+}
+
+/** Runs one dialog flow at a time; clicks while one is open (or awaiting the tab) are ignored. */
+async function runDialogFlow(flow: () => Promise<void>): Promise<void> {
+  if (dialogFlowActive) {
+    return;
+  }
+
+  dialogFlowActive = true;
+
+  try {
+    await flow();
+  } finally {
+    dialogFlowActive = false;
+  }
 }
 
 async function startFromPopup(container: HTMLElement): Promise<void> {
@@ -453,6 +512,8 @@ async function startRecordingFromPopup(
   mode: CaptureMode,
   options: { reloadPage?: boolean; visualCapture?: FullModeVisualCapture } = {}
 ): Promise<void> {
+  state.statusText = undefined;
+  state.statusIsError = undefined;
   setPendingStart(container, tabId, mode);
   const profileId = toStartProfileId(state.profileChoice);
 

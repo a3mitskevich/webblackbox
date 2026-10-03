@@ -9,6 +9,7 @@ import {
 } from "../shared/messages.js";
 import { openConfirmDialog, openPassphraseDialog } from "../shared/ui/dialogs.js";
 import { el } from "../shared/ui/dom.js";
+import { preserveFocus } from "../shared/ui/focus.js";
 import { icon } from "../shared/ui/icons.js";
 import {
   EMPTY_FILTERS,
@@ -140,8 +141,66 @@ function createPage(): Page {
   };
 }
 
+function visibleSessions(): SessionListItem[] {
+  return filterSessions(state.sessions, state.filters);
+}
+
+/** Bulk actions only ever act on rows the user can see. */
+function selectedVisibleSessions(): SessionListItem[] {
+  return visibleSessions().filter((session) => state.selected.has(session.sid));
+}
+
+type AnnotationDraft = { sid: string; tags: string; note: string };
+
+function findAnnotationForm(list: HTMLElement, sid: string): HTMLFormElement | undefined {
+  return Array.from(list.querySelectorAll<HTMLFormElement>("form[data-annotate]")).find(
+    (form) => form.dataset.annotate === sid
+  );
+}
+
+/** Typed tags/note of the open detail panel, so a list push does not wipe them. */
+function readAnnotationDraft(list: HTMLElement, sid: string): AnnotationDraft | undefined {
+  const form = findAnnotationForm(list, sid);
+
+  if (!form) {
+    return undefined;
+  }
+
+  return {
+    sid,
+    tags: form.querySelector<HTMLInputElement>("[data-annotate-tags]")?.value ?? "",
+    note: form.querySelector<HTMLTextAreaElement>("[data-annotate-note]")?.value ?? ""
+  };
+}
+
+function restoreAnnotationDraft(list: HTMLElement, draft: AnnotationDraft | undefined): void {
+  const form = draft ? findAnnotationForm(list, draft.sid) : undefined;
+
+  if (!draft || !form) {
+    return;
+  }
+
+  const tags = form.querySelector<HTMLInputElement>("[data-annotate-tags]");
+  const note = form.querySelector<HTMLTextAreaElement>("[data-annotate-note]");
+
+  if (tags) {
+    tags.value = draft.tags;
+  }
+
+  if (note) {
+    note.value = draft.note;
+  }
+}
+
 function renderList(page: Page): void {
-  const visible = filterSessions(state.sessions, state.filters);
+  const draft = state.expandedSid ? readAnnotationDraft(page.list, state.expandedSid) : undefined;
+
+  preserveFocus(page.root, () => renderListContent(page));
+  restoreAnnotationDraft(page.list, draft);
+}
+
+function renderListContent(page: Page): void {
+  const visible = visibleSessions();
 
   page.count.textContent = t("sessionsCountSummary", {
     total: state.sessions.length,
@@ -153,7 +212,7 @@ function renderList(page: Page): void {
     state.filters.profile,
     t
   );
-  page.bulk.replaceChildren(createBulkBar(t, state.selected.size));
+  page.bulk.replaceChildren(createBulkBar(t, selectedVisibleSessions().length));
 
   if (visible.length === 0) {
     page.list.replaceChildren(
@@ -178,8 +237,10 @@ function renderList(page: Page): void {
 
 function onSelectionChange(page: Page, target: HTMLInputElement): boolean {
   if (target.dataset.selectAll !== undefined) {
-    const visible = filterSessions(state.sessions, state.filters).map((session) => session.sid);
-    state.selected = target.checked ? new Set([...state.selected, ...visible]) : new Set();
+    const visible = visibleSessions().map((session) => session.sid);
+    state.selected = target.checked
+      ? new Set([...state.selected, ...visible])
+      : new Set([...state.selected].filter((sid) => !visible.includes(sid)));
     renderList(page);
     return true;
   }
@@ -270,6 +331,9 @@ function onFilterChange(page: Page, target: EventTarget | null): void {
       return;
   }
 
+  // Rows a filter hides are deselected, so a bulk action never reaches rows out of sight.
+  const visible = new Set(visibleSessions().map((session) => session.sid));
+  state.selected = new Set([...state.selected].filter((sid) => visible.has(sid)));
   renderList(page);
 }
 
@@ -311,7 +375,10 @@ async function handleButton(page: Page, button: HTMLButtonElement): Promise<void
   }
 
   if (data.delete) {
-    if (await confirmDelete(t("sessionsDeletePrompt", { sid: data.delete }))) {
+    const live = state.sessions.some((session) => session.sid === data.delete && session.active);
+    const prompt = live ? "sessionsDeleteLivePrompt" : "sessionsDeletePrompt";
+
+    if (await confirmDelete(t(prompt, { sid: data.delete }))) {
       postUiMessage({ kind: "ui.delete", sid: data.delete });
     }
 
@@ -326,7 +393,7 @@ async function handleButton(page: Page, button: HTMLButtonElement): Promise<void
 }
 
 async function exportSelected(): Promise<void> {
-  const sids = [...state.selected];
+  const sids = selectedVisibleSessions().map((session) => session.sid);
 
   if (sids.length === 0) {
     return;
@@ -342,17 +409,20 @@ async function exportSelected(): Promise<void> {
 }
 
 async function deleteSelected(page: Page): Promise<void> {
-  const sids = [...state.selected];
+  const targets = selectedVisibleSessions();
+  const live = targets.filter((session) => session.active).length;
+  const prompt =
+    live > 0
+      ? t("sessionsBulkDeleteLivePrompt", { count: targets.length, live })
+      : t("sessionsBulkDeletePrompt", { count: targets.length });
 
-  if (
-    sids.length === 0 ||
-    !(await confirmDelete(t("sessionsBulkDeletePrompt", { count: sids.length })))
-  ) {
+  if (targets.length === 0 || !(await confirmDelete(prompt))) {
     return;
   }
 
-  sids.forEach((sid) => postUiMessage({ kind: "ui.delete", sid }));
-  state.selected = new Set();
+  const deleted = new Set(targets.map((session) => session.sid));
+  deleted.forEach((sid) => postUiMessage({ kind: "ui.delete", sid }));
+  state.selected = new Set([...state.selected].filter((sid) => !deleted.has(sid)));
   renderList(page);
 }
 

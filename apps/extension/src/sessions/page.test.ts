@@ -210,6 +210,65 @@ describe("sessions page", () => {
     expect(port.postMessage).not.toHaveBeenCalledWith({ kind: "ui.delete", sid: "sid-live" });
   });
 
+  it("never applies a bulk action to rows a filter hides", async () => {
+    const { port } = setup();
+    await load(port);
+
+    setControl("[data-select-all]", true);
+    setControl("input[name='sessionSearch']", "admin");
+
+    expect(rows()).toEqual(["sid-old"]);
+    expect(document.querySelector("[data-bulk-bar]")?.textContent).toContain("1 selected");
+
+    setControl("input[name='sessionSearch']", "");
+
+    expect(document.querySelector("[data-bulk-bar]")?.textContent).toContain("1 selected");
+
+    click("[data-bulk='delete']");
+    await flush();
+    click("[data-confirm-accept]");
+    await flush();
+
+    expect(port.postMessage).toHaveBeenCalledWith({ kind: "ui.delete", sid: "sid-old" });
+    expect(port.postMessage).not.toHaveBeenCalledWith({ kind: "ui.delete", sid: "sid-live" });
+  });
+
+  it("says that a bulk delete stops sessions that are still recording", async () => {
+    const { port } = setup();
+    await load(port);
+
+    setControl("[data-select-all]", true);
+    click("[data-bulk='delete']");
+    await flush();
+
+    expect(document.querySelector(".wb-confirm-body")?.textContent).toContain(
+      "1 of them are still recording"
+    );
+  });
+
+  it("keeps focus and typed notes when the session list is pushed again", async () => {
+    const { port } = setup();
+    await load(port);
+
+    click("[data-notes='sid-old']");
+    const note = () =>
+      document.querySelector<HTMLTextAreaElement>(
+        "[data-detail-for='sid-old'] [data-annotate-note]"
+      );
+    const typed = note();
+    typed?.focus();
+
+    if (typed) {
+      typed.value = "typed but not saved";
+    }
+
+    port.emit({ kind: "sw.session-list", sessions: SESSIONS });
+    await flush();
+
+    expect(note()?.value).toBe("typed but not saved");
+    expect(document.activeElement).toBe(note());
+  });
+
   it("opens the Player once the export of that session finished", async () => {
     const { port, create } = setup();
     await load(port);

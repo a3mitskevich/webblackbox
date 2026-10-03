@@ -108,6 +108,19 @@ const ACTIVE_SESSION = {
   budgetAlertCount: 0,
   sizeBytes: 731_000
 };
+/** Recording elsewhere while this tab has a stopped session: the tallest popup layout. */
+const ACTIVE_OTHER_TAB_SESSION = {
+  ...ACTIVE_SESSION,
+  sid: "wb-1790004321-0badf00d",
+  tabId: 23,
+  url: "https://admin.stage.example.com/orders?env=qa",
+  title: "Orders · Admin"
+};
+const START_REJECTED = {
+  ok: false,
+  error:
+    "Cannot attach the debugger to this tab: another DevTools client is already attached. Close DevTools and retry."
+};
 const SESSIONS_PAGE_FIXTURE = [
   ACTIVE_SESSION,
   { ...STOPPED_SESSION, tags: ["checkout", "bug-1234"], note: "Coupon field rejects valid code" },
@@ -162,6 +175,18 @@ const POPUP_STATES = [
     sessions: [STOPPED_SESSION],
     preview: PREVIEW_RULE,
     steps: [{ click: ["[data-action='export']"] }, { click: ["[data-passphrase-submit]"] }]
+  },
+  {
+    name: "popup-other-tab",
+    sessions: [ACTIVE_OTHER_TAB_SESSION, STOPPED_SESSION],
+    preview: PREVIEW_RULE
+  },
+  {
+    name: "popup-other-tab-error",
+    sessions: [ACTIVE_OTHER_TAB_SESSION, STOPPED_SESSION],
+    preview: PREVIEW_RULE,
+    sendMessageResponse: START_REJECTED,
+    steps: [{ click: START_SELECTORS }]
   },
   {
     name: "popup-lite-reload",
@@ -265,6 +290,7 @@ async function capturePopupState(browser, extensionId, state, outDir) {
   const page = await openPage(browser, POPUP_WIDTH, POPUP_HEIGHT, {
     sessions: state.sessions,
     preview: state.preview,
+    sendMessageResponse: state.sendMessageResponse,
     port: "webblackbox:popup"
   });
 
@@ -306,7 +332,7 @@ async function capturePage(browser, extensionId, shot, outDir) {
       shot.requires &&
       !(await page.evaluate(`Boolean(document.querySelector(${JSON.stringify(shot.requires)}))`))
     ) {
-      console.log(`${shot.name.padEnd(26)} skipped (no ${shot.requires})`);
+      failures.push(`${shot.name}: ${shot.requires} not found (section navigation broken?)`);
       return null;
     }
 
@@ -560,7 +586,9 @@ function buildStubSource(fixture) {
     setTimeout(() => emit({ kind: "sw.session-list", sessions: fixture.sessions }), 0);
     return port;
   });
-  define(chromeApi.runtime, "sendMessage", () => new Promise(() => {}));
+  define(chromeApi.runtime, "sendMessage", () =>
+    fixture.sendMessageResponse ? Promise.resolve(fixture.sendMessageResponse) : new Promise(() => {})
+  );
 
   if (chromeApi.tabs) {
     define(chromeApi.tabs, "query", async () => [

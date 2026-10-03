@@ -25,10 +25,23 @@ export class FakePort {
     }
   };
 
+  private readonly disconnectHandlers = new Set<() => void>();
+
   readonly onDisconnect = {
-    addListener: (): void => undefined,
-    removeListener: (): void => undefined
+    addListener: (handler: () => void): void => {
+      this.disconnectHandlers.add(handler);
+    },
+    removeListener: (handler: () => void): void => {
+      this.disconnectHandlers.delete(handler);
+    }
   };
+
+  /** Simulates the service worker going away. */
+  disconnect(): void {
+    for (const handler of this.disconnectHandlers) {
+      handler();
+    }
+  }
 
   emit(message: unknown): void {
     for (const handler of this.messageHandlers) {

@@ -52,8 +52,7 @@ export function createPopupHeader(options: {
     }),
     el("span", {
       className: `wb-badge wb-badge--${options.badge}`,
-      text: badgeText,
-      attrs: { role: "status" }
+      text: badgeText
     }),
     el("span", {
       className: "wb-popup__tab",
@@ -145,7 +144,11 @@ export function createStateLine(text: string, incident: string | null): HTMLElem
 
 export type RingUsage = { usedMinutes: number; capacityMinutes: number; windowLabel: string };
 
-export function describeRingBufferUsage(session: SessionListItem, now: number): RingUsage {
+export function describeRingBufferUsage(
+  session: SessionListItem,
+  now: number,
+  t: Translate
+): RingUsage {
   const capacityMinutes = Math.max(
     1,
     Number.isFinite(session.ringBufferMinutes)
@@ -159,7 +162,10 @@ export function describeRingBufferUsage(session: SessionListItem, now: number): 
   return {
     usedMinutes,
     capacityMinutes,
-    windowLabel: `${usedMinutes.toFixed(1)}m / ${capacityMinutes.toFixed(1)}m`
+    windowLabel: t("popupRingBufferWindow", {
+      used: usedMinutes.toFixed(1),
+      capacity: capacityMinutes.toFixed(1)
+    })
   };
 }
 
@@ -215,7 +221,7 @@ export function createRecordingPanel(options: {
 }): HTMLElement {
   const { session, format, now } = options;
   const { t } = format;
-  const ring = describeRingBufferUsage(session, now);
+  const ring = describeRingBufferUsage(session, now, t);
   const meter = el("progress", {
     className: "wb-popup__buffer-meter",
     attrs: { "aria-label": t("popupRingBuffer"), "aria-valuetext": ring.windowLabel }

@@ -188,6 +188,9 @@ export const EN_MESSAGES = {
   popupMarker: "Marker",
   popupMarkerAdded: "Marker added.",
   popupMarkerFailed: "Marker failed: {error}",
+  popupActionFailed: "Action failed: {error}",
+  popupDisconnected: "Lost the connection to the extension. Close and reopen the popup.",
+  popupRingBufferWindow: "{used} / {capacity} min",
   popupEngineLabel: "Engine",
   popupVisualLabel: "Visual",
   popupVisualVideo: "Video",
@@ -374,6 +377,10 @@ export const EN_MESSAGES = {
   sessionsBulkExport: "Export selected",
   sessionsBulkDelete: "Delete selected",
   sessionsBulkDeletePrompt: "Delete {count} session(s)? This removes their local archive data.",
+  sessionsBulkDeleteLivePrompt:
+    "Delete {count} session(s)? {live} of them are still recording and will be stopped first. This removes their local archive data.",
+  sessionsDeleteLivePrompt:
+    "Session {sid} is still recording. Stop it and delete its local archive data?",
   sessionsSelectAll: "Select all shown sessions",
   sessionsSelectRow: "Select {site}",
   sessionsColumnSite: "Site",
@@ -385,6 +392,8 @@ export const EN_MESSAGES = {
   sessionsColumnDate: "Started",
   sessionsColumnActions: "Actions",
   sessionsActionOpenPlayer: "Export and open in Player",
+  sessionsOpenPlayerHint:
+    "Exports the archive to your downloads, then opens the Player. Drop the downloaded .webblackbox file into it; nothing is uploaded.",
   sessionsActionNotes: "Tags and notes",
   sessionsNoMatches: "No sessions match the filters."
 } as const;

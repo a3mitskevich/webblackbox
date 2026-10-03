@@ -139,13 +139,18 @@ function iconAction(
   label: string,
   dataset: Record<string, string>,
   iconName: IconName,
-  danger = false
+  options: { danger?: boolean; hint?: string } = {}
 ): HTMLButtonElement {
   return el(
     "button",
     {
-      className: danger ? "wb-icon-btn wb-icon-btn--danger" : "wb-icon-btn",
-      attrs: { type: "button", "aria-label": label, title: label },
+      className: options.danger ? "wb-icon-btn wb-icon-btn--danger" : "wb-icon-btn",
+      attrs: {
+        type: "button",
+        "aria-label": label,
+        title: options.hint ?? label,
+        ...(options.hint ? { "aria-description": options.hint } : {})
+      },
       dataset
     },
     [icon(iconName)]
@@ -166,9 +171,11 @@ export function createSessionsTable(options: TableOptions): HTMLElement {
     attrs: { type: "checkbox", "aria-label": t("sessionsSelectAll") },
     dataset: { selectAll: "" }
   });
-  selectAll.checked =
-    options.sessions.length > 0 &&
-    options.sessions.every((session) => options.selected.has(session.sid));
+  const selectedCount = options.sessions.filter((session) =>
+    options.selected.has(session.sid)
+  ).length;
+  selectAll.checked = options.sessions.length > 0 && selectedCount === options.sessions.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < options.sessions.length;
   const columns: ExtensionMessageKey[] = [
     "sessionsColumnSite",
     "sessionsColumnProfile",
@@ -280,13 +287,15 @@ function createRow(session: SessionListItem, options: TableOptions): HTMLElement
       ]),
       el("td", { className: "wb-table__actions" }, [
         el("div", { className: "wb-row-actions" }, [
-          iconAction(t("sessionsActionOpenPlayer"), { player: session.sid }, "external"),
+          iconAction(t("sessionsActionOpenPlayer"), { player: session.sid }, "external", {
+            hint: t("sessionsOpenPlayerHint")
+          }),
           iconAction(t("sessionsActionExport"), { export: session.sid }, "download"),
           ...(session.active
             ? [iconAction(t("sessionsActionStop"), { stop: String(session.tabId) }, "stop")]
             : []),
           notes,
-          iconAction(t("sessionsActionDelete"), { delete: session.sid }, "trash", true)
+          iconAction(t("sessionsActionDelete"), { delete: session.sid }, "trash", { danger: true })
         ])
       ])
     ]

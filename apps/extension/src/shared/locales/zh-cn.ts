@@ -182,6 +182,9 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   popupMarker: "标记",
   popupMarkerAdded: "已添加标记。",
   popupMarkerFailed: "添加标记失败：{error}",
+  popupActionFailed: "操作失败：{error}",
+  popupDisconnected: "与扩展的连接已断开。请关闭后重新打开弹窗。",
+  popupRingBufferWindow: "{used} / {capacity} 分钟",
   popupEngineLabel: "引擎",
   popupVisualLabel: "画面",
   popupVisualVideo: "视频",
@@ -364,6 +367,9 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   sessionsBulkExport: "导出所选",
   sessionsBulkDelete: "删除所选",
   sessionsBulkDeletePrompt: "删除 {count} 个会话？这会移除本地归档数据。",
+  sessionsBulkDeleteLivePrompt:
+    "删除 {count} 个会话？其中 {live} 个仍在录制，将先停止录制。这会移除本地归档数据。",
+  sessionsDeleteLivePrompt: "会话 {sid} 仍在录制。要停止录制并删除其本地归档数据吗？",
   sessionsSelectAll: "选择所有显示的会话",
   sessionsSelectRow: "选择 {site}",
   sessionsColumnSite: "站点",
@@ -375,6 +381,8 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   sessionsColumnDate: "开始时间",
   sessionsColumnActions: "操作",
   sessionsActionOpenPlayer: "导出并在播放器中打开",
+  sessionsOpenPlayerHint:
+    "先将归档导出到下载目录，然后打开播放器。把下载的 .webblackbox 文件拖入播放器即可；不会上传任何内容。",
   sessionsActionNotes: "标签与备注",
   sessionsNoMatches: "没有符合筛选条件的会话。"
 };
