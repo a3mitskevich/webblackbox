@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
+  CHROME_LAUNCH_PROFILES,
   ensureExtensionBuildReady,
   resolveChromeBinary,
   startChrome,
@@ -59,7 +60,8 @@ async function main() {
     profileDir,
     remotePort,
     headless,
-    logPath: chromeLogPath
+    logPath: chromeLogPath,
+    ...CHROME_LAUNCH_PROFILES.extensionCheck
   });
 
   state.chromeProcess = proc;

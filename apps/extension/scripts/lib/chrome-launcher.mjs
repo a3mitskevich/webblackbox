@@ -21,6 +21,31 @@ export const DEFAULT_CHROME_CANDIDATES = [
   "chromium"
 ].filter(Boolean);
 
+const DEVTOOLS_AUTOMATION_PROFILE = Object.freeze({
+  extraArgs: Object.freeze([
+    "--remote-debugging-address=127.0.0.1",
+    "--disable-popup-blocking",
+    "--safebrowsing-disable-download-protection",
+    "--window-size=1400,1000"
+  ]),
+  disableLinuxSandbox: true,
+  warnOnExit: true
+});
+
+/**
+ * Chrome switches per e2e script, identical to each script's former inline launcher.
+ * Pass one as `startChrome` options or as `launchChromeWithRetry`'s `chrome` option.
+ */
+export const CHROME_LAUNCH_PROFILES = Object.freeze({
+  extensionCheck: Object.freeze({ warnOnExit: true }),
+  fullMemory: Object.freeze({
+    extraArgs: Object.freeze(["--disable-popup-blocking"]),
+    disableLinuxSandbox: true
+  }),
+  fullchain: DEVTOOLS_AUTOMATION_PROFILE,
+  litePerf: DEVTOOLS_AUTOMATION_PROFILE
+});
+
 const TERMINATE_GRACE_MS = 5_000;
 const KILL_GRACE_MS = 2_000;
 const DEVTOOLS_POLL_INTERVAL_MS = 250;
@@ -93,8 +118,10 @@ async function isExecutable(path) {
  * @param {boolean} options.headless
  * @param {string[]} [options.extraArgs] script-specific switches
  * @param {boolean} [options.disableLinuxSandbox] add --no-sandbox & co. on Linux (CI containers)
+ * @param {string} [options.platform] defaults to `process.platform`
  */
 export function buildChromeArgs(options) {
+  const platform = options.platform ?? process.platform;
   const args = [
     `--remote-debugging-port=${options.remotePort}`,
     `--user-data-dir=${options.profileDir}`,
@@ -113,7 +140,7 @@ export function buildChromeArgs(options) {
   ];
 
   const prefix = [
-    ...(options.disableLinuxSandbox && process.platform === "linux"
+    ...(options.disableLinuxSandbox && platform === "linux"
       ? ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
       : []),
     ...(options.headless ? ["--headless=new"] : [])

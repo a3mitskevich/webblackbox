@@ -9,6 +9,7 @@ import JSZip from "jszip";
 
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
+  CHROME_LAUNCH_PROFILES,
   launchChromeWithRetry,
   resolveChromeBinary,
   terminateChromeProcess
@@ -127,22 +128,13 @@ async function main() {
   const chrome = await launchChromeWithRetry(chromeBinary, {
     extensionDir: extensionDirForRun,
     // The previous inline launcher accepted allowlistedExtensionId but never put it on the
-    // command line; it stays off here to keep the run identical. Pass it via chrome.extraArgs
+    // command line; it stays off here to keep the run identical. Add it to the chrome extraArgs
     // (--allowlisted-extension-id=<id>) if screen recording e2e ever needs it.
     profileDir,
     remotePort,
     headless,
     logPath: chromeLogPath,
-    chrome: {
-      extraArgs: [
-        "--remote-debugging-address=127.0.0.1",
-        "--disable-popup-blocking",
-        "--safebrowsing-disable-download-protection",
-        "--window-size=1400,1000"
-      ],
-      disableLinuxSandbox: true,
-      warnOnExit: true
-    },
+    chrome: CHROME_LAUNCH_PROFILES.fullchain,
     attempts: Math.max(1, Math.floor(chromeLaunchAttempts)),
     readyTimeoutMs: Math.max(10_000, Math.floor(chromeReadyTimeoutMs))
   });

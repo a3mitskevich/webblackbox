@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { CdpClient, closeClient, DEFAULT_CDP_COMMAND_TIMEOUT_MS } from "./lib/cdp-client.mjs";
 import {
+  CHROME_LAUNCH_PROFILES,
   ensureExtensionBuildReady,
   launchChromeWithRetry,
   resolveChromeBinary
@@ -133,16 +134,7 @@ async function main() {
     remotePort,
     headless,
     logPath: chromeLogPath,
-    chrome: {
-      extraArgs: [
-        "--remote-debugging-address=127.0.0.1",
-        "--disable-popup-blocking",
-        "--safebrowsing-disable-download-protection",
-        "--window-size=1400,1000"
-      ],
-      disableLinuxSandbox: true,
-      warnOnExit: true
-    },
+    chrome: CHROME_LAUNCH_PROFILES.litePerf,
     attempts: Math.max(1, Math.floor(chromeLaunchAttempts)),
     readyTimeoutMs: Math.max(10_000, Math.floor(chromeReadyTimeoutMs))
   });

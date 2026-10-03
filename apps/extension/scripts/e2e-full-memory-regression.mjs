@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { CdpClient, closeClient } from "./lib/cdp-client.mjs";
 import {
+  CHROME_LAUNCH_PROFILES,
   ensureExtensionBuildReady,
   resolveChromeBinary,
   startChrome,
@@ -95,7 +96,7 @@ async function main() {
     remotePort,
     headless,
     logPath: chromeLogPath,
-    extraArgs: ["--disable-popup-blocking"]
+    ...CHROME_LAUNCH_PROFILES.fullMemory
   });
 
   state.chromeProcess = proc;

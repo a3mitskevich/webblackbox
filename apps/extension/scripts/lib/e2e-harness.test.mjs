@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CdpClient } from "./cdp-client.mjs";
-import { buildChromeArgs } from "./chrome-launcher.mjs";
+import { buildChromeArgs, CHROME_LAUNCH_PROFILES } from "./chrome-launcher.mjs";
 import {
   computeExtensionIdFromManifestKey,
   normalizeTargetDescriptor,
@@ -233,6 +233,86 @@ describe("buildChromeArgs", () => {
     } else {
       expect(args).not.toContain("--no-sandbox");
     }
+  });
+
+  // Argv each script's former inline launcher produced on Linux (headless, main @ ba2fbb0).
+  const linuxSandboxPrefix = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage"
+  ];
+  const commonHead = [
+    "--remote-debugging-port=9222",
+    "--user-data-dir=/tmp/profile",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-networking",
+    "--disable-sync",
+    "--disable-component-update",
+    "--disable-default-apps"
+  ];
+  const commonTail = [
+    "--disable-extensions-except=/tmp/ext",
+    "--load-extension=/tmp/ext",
+    "--enable-logging=stderr",
+    "--v=1",
+    "about:blank"
+  ];
+  const devtoolsAutomationSwitches = [
+    "--remote-debugging-address=127.0.0.1",
+    "--disable-popup-blocking",
+    "--safebrowsing-disable-download-protection",
+    "--window-size=1400,1000"
+  ];
+
+  it.each([
+    ["extensionCheck", ["--headless=new", ...commonHead, ...commonTail]],
+    [
+      "fullMemory",
+      [
+        ...linuxSandboxPrefix,
+        "--headless=new",
+        ...commonHead,
+        "--disable-popup-blocking",
+        ...commonTail
+      ]
+    ],
+    [
+      "fullchain",
+      [
+        ...linuxSandboxPrefix,
+        "--headless=new",
+        ...commonHead,
+        ...devtoolsAutomationSwitches,
+        ...commonTail
+      ]
+    ],
+    [
+      "litePerf",
+      [
+        ...linuxSandboxPrefix,
+        "--headless=new",
+        ...commonHead,
+        ...devtoolsAutomationSwitches,
+        ...commonTail
+      ]
+    ]
+  ])("keeps the %s launch profile's Linux switch set", (profileName, expected) => {
+    const args = buildChromeArgs({
+      ...base,
+      ...CHROME_LAUNCH_PROFILES[profileName],
+      platform: "linux"
+    });
+
+    expect([...args].sort()).toEqual([...expected].sort());
+    expect(args.at(-1)).toBe("about:blank");
+  });
+
+  it("warns on unexpected Chrome exits where the former launchers did", () => {
+    expect(CHROME_LAUNCH_PROFILES.extensionCheck.warnOnExit).toBe(true);
+    expect(CHROME_LAUNCH_PROFILES.fullchain.warnOnExit).toBe(true);
+    expect(CHROME_LAUNCH_PROFILES.litePerf.warnOnExit).toBe(true);
+    expect(CHROME_LAUNCH_PROFILES.fullMemory.warnOnExit).toBeUndefined();
   });
 });
 
