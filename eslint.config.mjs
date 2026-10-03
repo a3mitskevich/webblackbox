@@ -11,6 +11,7 @@ export default tseslint.config(
       "**/.turbo/**",
       "**/node_modules/**",
       "docs/api/**",
+      "apps/extension/e2e-demo/vendor/**",
       ".changeset/*.md"
     ]
   },

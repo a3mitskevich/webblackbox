@@ -4,3 +4,4 @@ coverage
 .turbo
 pnpm-lock.yaml
 docs/api/
+apps/extension/e2e-demo/vendor/
