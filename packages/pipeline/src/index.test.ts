@@ -4,6 +4,12 @@ import JSZip from "jszip";
 import {
   ARCHIVE_KDF_DEFAULT_ITERATIONS,
   DEFAULT_CAPTURE_POLICY,
+  exportManifestSchema,
+  hashesManifestSchema,
+  invertedIndexSchema,
+  privacyManifestSchema,
+  requestIndexSchema,
+  timeIndexSchema,
   type SessionMetadata,
   type WebBlackboxEvent
 } from "@webblackbox/protocol";
@@ -871,6 +877,70 @@ describe("pipeline", () => {
         path.startsWith("events/")
       )
     ).toBe(true);
+  });
+
+  it("exports archives that satisfy the protocol archive schemas readers validate", async () => {
+    const pipeline = new FlightRecorderPipeline({
+      session: { ...SESSION, startedAt: 1_700_000_000_000.25 },
+      storage: new MemoryPipelineStorage(),
+      maxChunkBytes: 256
+    });
+    const wallClockBase = 1_700_000_000_000.125;
+
+    await pipeline.start();
+    await pipeline.ingest(createEvent("E-schema-1", "user.click", wallClockBase));
+    await pipeline.ingest(
+      createEvent("E-schema-2", "network.request", wallClockBase + 12.375, {
+        reqId: "R-schema",
+        url: "https://example.com/api"
+      })
+    );
+    await pipeline.ingest(createEvent("E-schema-3", "error.exception", wallClockBase + 40.5));
+
+    for (const passphrase of [undefined, "secret-passphrase"]) {
+      const exported = await pipeline.exportBundle({ ...FULL_EXPORT_OPTIONS, passphrase });
+      const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase });
+
+      expect(parsed.manifest.stats.durationMs).not.toBe(
+        Math.round(parsed.manifest.stats.durationMs)
+      );
+      expect(exportManifestSchema.safeParse(parsed.manifest).error).toBeUndefined();
+      expect(hashesManifestSchema.safeParse(parsed.integrity).error).toBeUndefined();
+      expect(timeIndexSchema.safeParse(parsed.timeIndex).error).toBeUndefined();
+      expect(requestIndexSchema.safeParse(parsed.requestIndex).error).toBeUndefined();
+      expect(invertedIndexSchema.safeParse(parsed.invertedIndex).error).toBeUndefined();
+      expect(privacyManifestSchema.safeParse(parsed.privacyManifest).error).toBeUndefined();
+    }
+  });
+
+  it("writes only schema-known redaction profile keys to the manifest", async () => {
+    const redactionProfile = {
+      redactHeaders: ["authorization"],
+      redactCookieNames: [],
+      redactBodyPatterns: [],
+      blockedSelectors: [],
+      hashSensitiveValues: true,
+      legacyStoredOption: "kept in extension storage"
+    };
+    const pipeline = new FlightRecorderPipeline({
+      session: SESSION,
+      storage: new MemoryPipelineStorage(),
+      redactionProfile
+    });
+
+    await pipeline.start();
+    await pipeline.ingest(createEvent("E-profile-1", "user.click", 100));
+
+    const parsed = await readWebBlackboxArchive((await pipeline.exportBundle()).bytes);
+
+    expect(parsed.manifest.redactionProfile).toEqual({
+      redactHeaders: ["authorization"],
+      redactCookieNames: [],
+      redactBodyPatterns: [],
+      blockedSelectors: [],
+      hashSensitiveValues: true
+    });
+    expect(exportManifestSchema.safeParse(parsed.manifest).error).toBeUndefined();
   });
 
   it("rejects encrypted archives whose manifest KDF iteration count is out of range", async () => {

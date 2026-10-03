@@ -718,13 +718,7 @@ export class FlightRecorderPipeline {
         title: this.options.session.title
       },
       chunkCodec,
-      redactionProfile: this.options.redactionProfile ?? {
-        redactHeaders: [],
-        redactCookieNames: [],
-        redactBodyPatterns: [],
-        blockedSelectors: [],
-        hashSensitiveValues: true
-      },
+      redactionProfile: toManifestRedactionProfile(this.options.redactionProfile),
       stats: {
         eventCount: chunks.reduce((count, chunk) => count + chunk.meta.eventCount, 0),
         chunkCount: chunks.length,
@@ -733,6 +727,20 @@ export class FlightRecorderPipeline {
       }
     };
   }
+}
+
+/**
+ * Copies only the schema-known redaction fields into the manifest. Profiles merged from stored
+ * options can carry extra keys, which the strict manifest schema would reject on load.
+ */
+function toManifestRedactionProfile(profile: RedactionProfile | undefined): RedactionProfile {
+  return {
+    redactHeaders: [...(profile?.redactHeaders ?? [])],
+    redactCookieNames: [...(profile?.redactCookieNames ?? [])],
+    redactBodyPatterns: [...(profile?.redactBodyPatterns ?? [])],
+    blockedSelectors: [...(profile?.blockedSelectors ?? [])],
+    hashSensitiveValues: profile?.hashSensitiveValues ?? true
+  };
 }
 
 function resolveExportPolicy(
