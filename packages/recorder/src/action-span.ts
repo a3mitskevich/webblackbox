@@ -8,6 +8,9 @@ import {
 const ACTION_START_EVENTS = new Set([
   "user.click",
   "user.dblclick",
+  "user.contextmenu",
+  "user.auxclick",
+  "user.drag.end",
   "user.submit",
   "user.marker",
   "nav.commit"
