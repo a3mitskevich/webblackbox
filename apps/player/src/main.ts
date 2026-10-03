@@ -4948,7 +4948,9 @@ function buildArchiveModel(player: WebBlackboxPlayer): ArchiveModel {
   const pointerActions = toOverlayActions(pointerTimeline);
   const pointerLane = buildPointerLaneMarks(
     pointerTimeline,
-    detectPointerSignals(events),
+    detectPointerSignals(events, {
+      captureMonoOf: (event) => timeNormalization.rawMonoByEventId.get(event.id) ?? event.mono
+    }),
     i18n.formatPointerKind
   );
 
