@@ -64,8 +64,11 @@ export function captureInvalidRangeInputs(
     root.querySelectorAll<HTMLInputElement>("input[type='number'][aria-invalid='true']"),
     (input) => ({ id: input.id, owner: ownerOf(input), value: input.value })
   ).filter(
+    // General settings fields have no owner: the page validates and tracks those itself.
     (entry) =>
-      entry.id !== "" && (options.includeProfileForm || !entry.owner.startsWith("profile:"))
+      entry.id !== "" &&
+      (entry.owner.startsWith("rule:") ||
+        (options.includeProfileForm && entry.owner.startsWith("profile:")))
   );
 }
 

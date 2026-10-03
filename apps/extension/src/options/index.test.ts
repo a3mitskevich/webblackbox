@@ -301,6 +301,22 @@ describe("options page", () => {
     expect(saveButton().disabled).toBe(false);
   });
 
+  it("leaves general field errors alone when a profile or rule action re-renders", async () => {
+    installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
+    await importOptionsModule();
+
+    const scroll = typeNumber("scrollHz", "9999");
+    const message = scroll.closest(".wb-field")?.textContent;
+    query<HTMLElement>("[data-action='rule-add']").click();
+
+    expect(scroll.closest(".wb-field")?.textContent).toBe(message);
+    expect(saveState()).toBe("Fix 1 field(s) before saving.");
+
+    typeNumber("scrollHz", "30");
+
+    expect(saveButton().disabled).toBe(false);
+  });
+
   it("keeps a typed profile number only in its own open form", async () => {
     installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
     await importOptionsModule();
