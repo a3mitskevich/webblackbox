@@ -31,6 +31,8 @@ export type UiStartSessionMessage = {
    * recording-only full sessions.
    */
   recordScreen?: boolean;
+  /** Recording profile id, or `"auto"` / absent to let site rules pick one. */
+  profileId?: string;
 };
 
 export type UiStopSessionMessage = {
@@ -44,6 +46,8 @@ export type UiExportSessionMessage = {
   passphrase?: string;
   saveAs?: boolean;
   policy?: Partial<ExportPolicy>;
+  /** User confirmed exporting although the blocking privacy scanner found secrets. */
+  acknowledgePrivacyFindings?: boolean;
 };
 
 export type UiDeleteSessionMessage = {
@@ -60,6 +64,13 @@ export type UiAnnotateSessionMessage = {
 
 export type UiRequestSessionListMessage = {
   kind: "ui.request-session-list";
+};
+
+/** Popup asks which profile would record the tab and what profiles exist. */
+export type UiResolveProfileMessage = {
+  kind: "ui.resolve-profile";
+  tabId?: number;
+  profileId?: string;
 };
 
 export type ContentEventBatchMessage = {
@@ -88,6 +99,7 @@ export type ExtensionInboundMessage =
   | UiDeleteSessionMessage
   | UiAnnotateSessionMessage
   | UiRequestSessionListMessage
+  | UiResolveProfileMessage
   | ContentEventBatchMessage
   | ContentMarkerMessage
   | ContentReadyMessage
@@ -132,6 +144,8 @@ export type SessionListItem = {
   sizeBytes?: number;
   tags?: string[];
   note?: string;
+  /** Name of the recording profile in effect (latest one if it changed mid-session). */
+  profileName?: string;
 };
 
 export type SessionListMessage = {
@@ -146,6 +160,32 @@ export type ExportStatusMessage = {
   fileName?: string;
   error?: string;
   privacyWarning?: ExportPrivacyWarning;
+  /** Export stopped by the blocking privacy scanner; re-send with acknowledgePrivacyFindings. */
+  privacyBlocked?: boolean;
+};
+
+/** One selectable profile as the popup shows it. */
+export type ProfileCatalogEntry = {
+  id: string;
+  name: string;
+  base: CaptureMode;
+  extended: boolean;
+  readOnly: boolean;
+};
+
+export type ProfilePreviewResponse = {
+  kind: "sw.profile-preview";
+  catalog: ProfileCatalogEntry[];
+  /** Profile that Start would use for the tab with the requested choice. */
+  selection: {
+    id: string;
+    name: string;
+    base: CaptureMode;
+    source: "explicit" | "rule" | "default";
+    ruleName?: string;
+    extended: boolean;
+    downgradedFrom?: string;
+  } | null;
 };
 
 export type ExportPrivacyWarning = {

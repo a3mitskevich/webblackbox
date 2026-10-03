@@ -50,6 +50,16 @@ import {
   shouldInjectPageHooksForMode
 } from "../shared/mode-profile.js";
 import {
+  AUTO_PROFILE_ID,
+  buildProfileRecorderConfig,
+  isSameProfileSelection,
+  resolveProfileExportRequirements,
+  selectRecordingProfile,
+  toArchivedProfileInfo,
+  type ProfileSelection
+} from "../shared/profiles/resolve.js";
+import type { ProfilesState } from "../shared/profiles/storage.js";
+import {
   applyEnterprisePolicyToRecorderConfig,
   ENTERPRISE_POLICY_STORAGE_KEY,
   isEnterpriseOriginAllowed,
@@ -58,6 +68,7 @@ import {
 } from "../shared/options-storage.js";
 import { resolveModeRecorderConfig } from "../shared/recorder-config.js";
 import {
+  applyBodyUrlFilters,
   isLikelyTextualResourceType as isLikelyTextualResourceTypeUtil,
   isMimeAllowed as isMimeAllowedUtil,
   normalizeBodyCaptureMaxBytes as normalizeBodyCaptureMaxBytesUtil,
@@ -80,6 +91,7 @@ import {
 } from "./lite-network-baseline.js";
 import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
 import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
+import { buildProfilePreview, loadProfilesState, readTabPageContext } from "./profile-runtime.js";
 import {
   buildRequestMetaKey,
   deleteRequestMeta,
@@ -94,10 +106,22 @@ import {
   type LocalStorageSnapshotMode
 } from "./storage-snapshot.js";
 
+/** Recording profile bookkeeping for one session. */
+type SessionProfileState = {
+  /** What Start asked for: a profile id or `auto` (site rules decide on every navigation). */
+  request: string;
+  visualCapture?: FullModeVisualCapture;
+  selection: ProfileSelection;
+  /** Every profile the session recorded under; export rules use the strictest. */
+  history: ProfileSelection[];
+  reevaluation: Promise<void>;
+};
+
 type SessionRuntime = {
   sid: string;
   tabId: number;
   mode: CaptureMode;
+  profile: SessionProfileState;
   url: string;
   scopeOrigin: string | null;
   title?: string;
@@ -225,6 +249,7 @@ type SessionPipelineClient = {
     maxArchiveBytes?: number;
     recentWindowMs?: number;
     allowPlaintextLocalExport?: boolean;
+    strictPrivacyScanner?: boolean;
   }) => Promise<PipelineExportDownloadResult>;
   close: (options?: { purge?: boolean }) => Promise<void>;
 };
@@ -256,6 +281,7 @@ type OffscreenPipelineRequest = {
   maxArchiveBytes?: number;
   recentWindowMs?: number;
   allowPlaintextLocalExport?: boolean;
+  strictPrivacyScanner?: boolean;
   purge?: boolean;
   recordingId?: string;
   streamId?: string;
@@ -433,6 +459,10 @@ const LITE_STORAGE_SNAPSHOT_MAX_BYTES = 600 * 1024;
 const CPU_PROFILE_SAMPLE_MS = 350;
 const HEAP_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024;
 const OPTIONS_STORAGE_KEY = "webblackbox.options";
+const PROFILE_ENCRYPTION_REQUIRED_MESSAGE =
+  "This recording profile requires an encrypted export: enter a passphrase.";
+// Matches the error thrown by assertPrivacyScannerPassed in @webblackbox/pipeline.
+const PRIVACY_SCANNER_BLOCKED_PREFIX = "Privacy scanner blocked export";
 const ACTIVE_SESSION_STORAGE_KEY = "webblackbox.runtime.sessions";
 const SESSION_ANNOTATIONS_STORAGE_KEY = "webblackbox.runtime.sessionAnnotations";
 const EXPORT_AUDIT_STORAGE_KEY = "webblackbox.audit.exports";
@@ -657,7 +687,8 @@ async function handleInboundMessage(
     }
 
     await startSession(tabId, message.mode, {
-      visualCapture: resolveFullModeVisualCapture(message)
+      visualCapture: resolveFullModeVisualCapture(message),
+      profileId: typeof message.profileId === "string" ? message.profileId : undefined
     });
     if (message.mode === "lite" && message.reloadPage) {
       try {
@@ -686,8 +717,13 @@ async function handleInboundMessage(
       message.sid,
       message.passphrase,
       message.saveAs,
-      resolveExportPolicy(message.policy)
+      resolveExportPolicy(message.policy),
+      { acknowledgePrivacyFindings: message.acknowledgePrivacyFindings === true }
     );
+  }
+
+  if (message.kind === "ui.resolve-profile") {
+    return resolveProfilePreview(message.tabId, message.profileId);
   }
 
   if (message.kind === "ui.delete") {
@@ -839,7 +875,7 @@ async function deleteSessionBySid(sid: string): Promise<void> {
 async function startSession(
   tabId: number,
   mode: CaptureMode,
-  options: { visualCapture?: FullModeVisualCapture } = {}
+  options: { visualCapture?: FullModeVisualCapture; profileId?: string } = {}
 ): Promise<void> {
   const existing = sessionsByTab.get(tabId);
 
@@ -859,9 +895,15 @@ async function startSession(
     throw new Error("Recording is blocked by enterprise site policy.");
   }
 
-  const loadedRecorderConfig = applyFullModeVisualCapture(
-    await loadRecorderConfig(mode),
+  const profileRequest = options.profileId ?? AUTO_PROFILE_ID;
+  const profileSelection = await resolveTabProfileSelection(
+    tabId,
+    profileRequest,
+    enterprisePolicy
+  );
+  const loadedRecorderConfig = await buildSessionRecorderConfig(
     mode,
+    profileSelection,
     options.visualCapture
   );
   const recorderConfig = applyEnterprisePolicyToRecorderConfig(
@@ -892,6 +934,13 @@ async function startSession(
     sid,
     tabId,
     mode,
+    profile: {
+      request: profileRequest,
+      visualCapture: options.visualCapture,
+      selection: profileSelection,
+      history: [profileSelection],
+      reevaluation: Promise.resolve()
+    },
     url: metadata.url,
     scopeOrigin: resolveUrlOrigin(metadata.url),
     title: metadata.title,
@@ -985,7 +1034,10 @@ async function startSession(
     tabId,
     t: Date.now(),
     mono: monotonicTime(),
-    payload: recorderConfig
+    payload: {
+      ...recorderConfig,
+      profile: toArchivedProfileInfo(profileSelection)
+    }
   });
 
   if (shouldInjectHooksForMode(mode)) {
@@ -1053,6 +1105,8 @@ async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<
     toStatusSampling(runtime),
     runtime.config.capturePolicy
   );
+  // Title, meta tags and selectors are only reliable once the page has loaded.
+  scheduleProfileReevaluation(runtime, "page-loaded");
 }
 
 async function stopSession(tabId: number): Promise<void> {
@@ -1106,10 +1160,11 @@ async function exportSession(
   sid: string,
   passphrase: string | undefined,
   saveAs = true,
-  policy: ExportPolicy = DEFAULT_EXPORT_POLICY
+  policy: ExportPolicy = DEFAULT_EXPORT_POLICY,
+  options: { acknowledgePrivacyFindings?: boolean } = {}
 ): Promise<
   | { ok: true; fileName: string; privacyWarning?: ExportPrivacyWarning }
-  | { ok: false; error: string }
+  | { ok: false; error: string; privacyBlocked?: boolean }
 > {
   const runtime = sessionsBySid.get(sid);
 
@@ -1129,14 +1184,20 @@ async function exportSession(
   }
 
   const effectivePolicy = resolveSessionExportPolicy(runtime, policy);
+  const requirements = resolveProfileExportRequirements(runtime.profile.history);
 
   try {
+    const encrypted = hasExportPassphrase(passphrase);
+
+    if (requirements.requireEncryption && !encrypted) {
+      throw new Error(PROFILE_ENCRYPTION_REQUIRED_MESSAGE);
+    }
+
     if (!runtime.stoppedAt) {
       await stopSession(runtime.tabId);
     }
 
     await flushBufferedPipelineEvents(runtime);
-    const encrypted = hasExportPassphrase(passphrase);
 
     const exported = await enqueueWithResult(runtime, async () => {
       return runtime.pipeline.exportAndDownload({
@@ -1145,7 +1206,9 @@ async function exportSession(
         includeScreenRecordings: effectivePolicy.includeScreenRecordings,
         maxArchiveBytes: effectivePolicy.maxArchiveBytes,
         recentWindowMs: effectivePolicy.recentWindowMs,
-        allowPlaintextLocalExport: !encrypted
+        allowPlaintextLocalExport: !encrypted && !requirements.requireEncryption,
+        strictPrivacyScanner:
+          requirements.blockOnPrivacyFindings && options.acknowledgePrivacyFindings !== true
       });
     });
 
@@ -1197,18 +1260,172 @@ async function exportSession(
       recentWindowMs: effectivePolicy.recentWindowMs,
       error: redactOperationalMessage(message)
     });
+    const privacyBlocked = message.includes(PRIVACY_SCANNER_BLOCKED_PREFIX);
     console.warn("[WebBlackbox] export failed", error);
     broadcast({
       kind: "sw.export-status",
       sid,
       ok: false,
-      error: message
+      error: message,
+      ...(privacyBlocked ? { privacyBlocked } : {})
     });
     return {
       ok: false,
-      error: message
+      error: message,
+      ...(privacyBlocked ? { privacyBlocked } : {})
     };
   }
+}
+
+/** Resolves the profile for a tab from the current store, rules and page signals. */
+async function resolveTabProfileSelection(
+  tabId: number,
+  request: string,
+  enterprisePolicy: EnterpriseRecorderPolicy
+): Promise<ProfileSelection> {
+  const state = await loadSessionProfilesState();
+  const page = (await readTabPageContext(chromeApi, tabId, state.rules)) ?? {
+    url: `tab:${tabId}`
+  };
+
+  return selectRecordingProfile({
+    state,
+    page,
+    requestedProfileId: request,
+    enterpriseSiteAllowlist: enterprisePolicy.siteAllowlist
+  });
+}
+
+/**
+ * Recorder config for a profile on a transport. The v1-derived Default (no v2 store yet) keeps
+ * the exact pre-profile code path so its output is byte-for-byte what it used to be.
+ */
+async function buildSessionRecorderConfig(
+  mode: CaptureMode,
+  selection: ProfileSelection,
+  visualCapture: FullModeVisualCapture | undefined
+): Promise<typeof DEFAULT_RECORDER_CONFIG> {
+  if (selection.legacy) {
+    return applyFullModeVisualCapture(await loadRecorderConfig(mode), mode, visualCapture);
+  }
+
+  return buildProfileRecorderConfig({ mode, profile: selection.profile, visualCapture });
+}
+
+function loadSessionProfilesState(): Promise<ProfilesState> {
+  return loadProfilesState(chromeApi, {
+    legacyOptionsKey: OPTIONS_STORAGE_KEY,
+    enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
+  });
+}
+
+async function resolveProfilePreview(
+  requestedTabId: number | undefined,
+  requestedProfileId: string | undefined
+): Promise<ReturnType<typeof buildProfilePreview>> {
+  const state = await loadSessionProfilesState();
+  const tabId = await resolveUiActionTabId(requestedTabId);
+
+  if (typeof tabId !== "number") {
+    return buildProfilePreview(state, null);
+  }
+
+  const enterprisePolicy = await loadEnterprisePolicy();
+  const page = await readTabPageContext(chromeApi, tabId, state.rules);
+  const selection = page
+    ? selectRecordingProfile({
+        state,
+        page,
+        requestedProfileId: requestedProfileId ?? AUTO_PROFILE_ID,
+        enterpriseSiteAllowlist: enterprisePolicy.siteAllowlist
+      })
+    : null;
+
+  return buildProfilePreview(state, selection);
+}
+
+/** Serializes profile re-evaluations per session; navigation bursts collapse into a chain. */
+function scheduleProfileReevaluation(
+  runtime: SessionRuntime,
+  reason: "navigation" | "page-loaded"
+): void {
+  runtime.profile.reevaluation = runtime.profile.reevaluation
+    .then(() => reevaluateSessionProfile(runtime, reason))
+    .catch((error) => {
+      console.warn("[WebBlackbox] recording profile re-evaluation failed", error);
+    });
+}
+
+/**
+ * Re-runs the rules after navigation. When the effective profile changes, the recorder, body
+ * rules and page agents switch to it and a `meta.config` event records the switch. The transport
+ * (lite/full) and tab recording stay as started.
+ */
+async function reevaluateSessionProfile(
+  runtime: SessionRuntime,
+  reason: "navigation" | "page-loaded"
+): Promise<void> {
+  if (runtime.stopping || runtime.stoppedAt) {
+    return;
+  }
+
+  const enterprisePolicy = await loadEnterprisePolicy();
+  const next = await resolveTabProfileSelection(
+    runtime.tabId,
+    runtime.profile.request,
+    enterprisePolicy
+  );
+  const previous = runtime.profile.selection;
+
+  if (isSameProfileSelection(previous, next) || runtime.stopping || runtime.stoppedAt) {
+    return;
+  }
+
+  const config = applyEnterprisePolicyToRecorderConfig(
+    withSessionCapturePolicy(
+      await buildSessionRecorderConfig(runtime.mode, next, runtime.profile.visualCapture),
+      {
+        tabId: runtime.tabId,
+        origin: runtime.scopeOrigin ?? "",
+        startedAt: runtime.startedAt
+      }
+    ),
+    enterprisePolicy
+  );
+
+  runtime.config = config;
+  runtime.recorder.reconfigure({ ...config, mode: runtime.mode });
+  runtime.profile = {
+    ...runtime.profile,
+    selection: next,
+    history: [...runtime.profile.history, next]
+  };
+
+  ingestRawEvent({
+    source: "system",
+    rawType: "config",
+    sid: runtime.sid,
+    tabId: runtime.tabId,
+    t: Date.now(),
+    mono: monotonicTime(),
+    payload: {
+      ...config,
+      profile: toArchivedProfileInfo(next),
+      profileChange: {
+        reason,
+        previous: toArchivedProfileInfo(previous)
+      }
+    }
+  });
+  await notifyTabStatus(
+    runtime.tabId,
+    true,
+    runtime.sid,
+    runtime.mode,
+    toStatusSampling(runtime),
+    config.capturePolicy
+  );
+  pushSessionList();
 }
 
 function resolveSessionExportPolicy(runtime: SessionRuntime, policy: ExportPolicy): ExportPolicy {
@@ -1957,7 +2174,8 @@ function createOffscreenPipelineClient(sid: string): SessionPipelineClient {
         includeScreenRecordings: options.includeScreenRecordings,
         maxArchiveBytes: options.maxArchiveBytes,
         recentWindowMs: options.recentWindowMs,
-        allowPlaintextLocalExport: options.allowPlaintextLocalExport
+        allowPlaintextLocalExport: options.allowPlaintextLocalExport,
+        strictPrivacyScanner: options.strictPrivacyScanner
       });
 
       return normalizePipelineExportDownloadResult(exported);
@@ -3437,10 +3655,14 @@ function resolveLiteBodyCaptureRule(
   url: string,
   mimeType: string | undefined
 ): LiteBodyCaptureRule {
-  return resolveLiteBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-    defaultMimeAllowlist: LITE_DEFAULT_BODY_MIME_ALLOWLIST,
-    fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
-  });
+  return applyBodyUrlFilters(
+    resolveLiteBodyCaptureRuleUtil(runtime.config, url, mimeType, {
+      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(runtime),
+      fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
+    }),
+    url,
+    runtime.profile.selection.profile.network
+  );
 }
 
 function resolveFullBodyCaptureRule(
@@ -3448,10 +3670,19 @@ function resolveFullBodyCaptureRule(
   url: string,
   mimeType: string | undefined
 ): LiteBodyCaptureRule {
-  return resolveFullBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-    defaultMimeAllowlist: LITE_DEFAULT_BODY_MIME_ALLOWLIST,
-    fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
-  });
+  return applyBodyUrlFilters(
+    resolveFullBodyCaptureRuleUtil(runtime.config, url, mimeType, {
+      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(runtime),
+      fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
+    }),
+    url,
+    runtime.profile.selection.profile.network
+  );
+}
+
+function resolveProfileBodyMimeAllowlist(runtime: SessionRuntime): string[] {
+  const profileAllowlist = runtime.profile.selection.profile.network.bodyMimeAllowlist;
+  return profileAllowlist.length > 0 ? profileAllowlist : LITE_DEFAULT_BODY_MIME_ALLOWLIST;
 }
 
 function isMimeAllowed(allowlist: string[], mimeType: string | undefined): boolean {
@@ -4326,7 +4557,8 @@ function toSessionListItem(runtime: SessionRuntime): SessionListItem {
     budgetAlertCount: runtime.budgetAlertCount,
     sizeBytes: runtime.capturedSizeBytes,
     tags: [...runtime.tags],
-    note: runtime.note
+    note: runtime.note,
+    profileName: runtime.profile.selection.profile.name
   };
 }
 
@@ -4479,6 +4711,8 @@ async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void>
     runtime.url = nextUrl;
     pushSessionList();
   }
+
+  scheduleProfileReevaluation(runtime, "navigation");
 }
 
 function shouldStopOnOriginChange(runtime: SessionRuntime, nextOrigin: string | null): boolean {

@@ -190,7 +190,9 @@ export type ChromeApi = {
       target: { tabId: number; allFrames?: boolean };
       world?: "MAIN" | "ISOLATED";
       files?: string[];
-    }): Promise<void>;
+      func?: (...args: never[]) => unknown;
+      args?: unknown[];
+    }): Promise<Array<{ result?: unknown }> | void>;
   };
   storage?: {
     local: {
@@ -218,6 +220,7 @@ export type ChromeApi = {
       active?: boolean;
       url?: string;
       title?: string;
+      incognito?: boolean;
       lastAccessed?: number;
     }>;
     query(queryInfo: {

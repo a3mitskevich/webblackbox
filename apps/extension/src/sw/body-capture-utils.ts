@@ -128,6 +128,38 @@ export function isInlineRequestBodyAllowed(
   return resolveRule(context.url, normalizeMimeType(context.mimeType)).enabled;
 }
 
+/** Profile URL filters for body capture (`network.includeUrls` / `network.excludeUrls`). */
+export type BodyUrlFilters = {
+  includeUrls: readonly string[];
+  excludeUrls: readonly string[];
+};
+
+/**
+ * Narrows a body capture rule with profile URL globs (`*` = any characters, matched against the
+ * full URL): excluded URLs never keep bodies; with an include list, only listed URLs do.
+ */
+export function applyBodyUrlFilters(
+  rule: BodyCaptureRule,
+  url: string,
+  filters: BodyUrlFilters | undefined
+): BodyCaptureRule {
+  if (!rule.enabled || !filters) {
+    return rule;
+  }
+
+  const matches = (pattern: string): boolean => wildcardMatch(url, pattern.trim());
+
+  if (filters.excludeUrls.some(matches)) {
+    return { ...rule, enabled: false };
+  }
+
+  if (filters.includeUrls.length > 0 && !filters.includeUrls.some(matches)) {
+    return { ...rule, enabled: false };
+  }
+
+  return rule;
+}
+
 export function normalizeBodyCaptureMaxBytes(
   candidate: unknown,
   fallbackMaxBytes: number = DEFAULT_FALLBACK_MAX_BYTES

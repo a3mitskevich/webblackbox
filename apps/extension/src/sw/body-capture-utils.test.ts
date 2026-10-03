@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_REDACTION_PROFILE } from "@webblackbox/protocol";
 
 import {
+  applyBodyUrlFilters,
   isInlineRequestBodyAllowed,
   resolveFullBodyCaptureRule,
   resolveLiteBodyCaptureRule,
@@ -210,5 +211,41 @@ describe("body-capture utils", () => {
     expect(transformed.redacted).toBe(false);
     expect(transformed.truncated).toBe(false);
     expect(new TextDecoder().decode(transformed.sampledBytes)).toBe("password=hunter2");
+  });
+});
+
+describe("applyBodyUrlFilters", () => {
+  const enabled = { enabled: true, maxBytes: 4096, mimeAllowlist: ["application/json"] };
+
+  it("keeps the rule without filters or with empty lists", () => {
+    expect(applyBodyUrlFilters(enabled, "https://a.test/x", undefined)).toBe(enabled);
+    expect(
+      applyBodyUrlFilters(enabled, "https://a.test/x", { includeUrls: [], excludeUrls: [] })
+    ).toBe(enabled);
+  });
+
+  it("disables bodies for excluded URLs and URLs outside the include list", () => {
+    const filters = {
+      includeUrls: ["https://api.stage.test/*"],
+      excludeUrls: ["*/auth/*"]
+    };
+
+    expect(applyBodyUrlFilters(enabled, "https://api.stage.test/orders", filters).enabled).toBe(
+      true
+    );
+    expect(applyBodyUrlFilters(enabled, "https://api.stage.test/auth/token", filters).enabled).toBe(
+      false
+    );
+    expect(applyBodyUrlFilters(enabled, "https://cdn.stage.test/a.json", filters).enabled).toBe(
+      false
+    );
+  });
+
+  it("never re-enables a disabled rule", () => {
+    const disabled = { ...enabled, enabled: false };
+
+    expect(
+      applyBodyUrlFilters(disabled, "https://a.test/", { includeUrls: ["*"], excludeUrls: [] })
+    ).toBe(disabled);
   });
 });

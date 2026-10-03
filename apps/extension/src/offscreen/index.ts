@@ -38,6 +38,7 @@ type OffscreenPipelineRequest = {
   maxArchiveBytes?: number;
   recentWindowMs?: number;
   allowPlaintextLocalExport?: boolean;
+  strictPrivacyScanner?: boolean;
   purge?: boolean;
   recordingId?: string;
   streamId?: string;
@@ -277,7 +278,8 @@ async function processPipelineRequest(message: OffscreenPipelineRequest): Promis
       includeScreenRecordings: message.includeScreenRecordings,
       maxArchiveBytes: message.maxArchiveBytes,
       recentWindowMs: message.recentWindowMs,
-      allowPlaintextLocalExport: message.allowPlaintextLocalExport
+      allowPlaintextLocalExport: message.allowPlaintextLocalExport,
+      strictPrivacyScanner: message.strictPrivacyScanner === true
     });
     return downloadExportedBundle(
       exported.fileName,
