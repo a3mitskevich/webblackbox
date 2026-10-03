@@ -197,7 +197,8 @@ export const EN_MESSAGES = {
   optionsFullProfileHeavyCapture:
     "screenshots stay browser-side, page-side fetch/xhr hooks remain disabled, body capture stays capped",
   sessionsCountSummary: "{total} total · {active} active",
-  sessionsSubtitle: "Recent recordings with source context and quick actions.",
+  sessionsSubtitle:
+    "Recordings kept on this computer. Export one to share it or open it in the Player.",
   sessionsEmpty: "No sessions captured yet.",
   sessionsStatusLive: "LIVE",
   sessionsStatusStopped: "Stopped",
@@ -405,7 +406,34 @@ export const EN_MESSAGES = {
   optionsProfilesExportHint: "Download profiles and rules as JSON.",
   optionsProfilesImportHint: "You see a diff before anything changes.",
   optionsProfilesImportChoose: "Choose file…",
-  optionsProfilesImportPreview: "Import preview"
+  optionsProfilesImportPreview: "Import preview",
+  sessionsSearchLabel: "Search sessions",
+  sessionsSearchPlaceholder: "Search site, tag, note or id",
+  sessionsFiltersLabel: "Filter sessions",
+  sessionsFilterStatus: "Status",
+  sessionsFilterAll: "All",
+  sessionsFilterLive: "Recording",
+  sessionsFilterStopped: "Stopped",
+  sessionsFilterProfile: "Profile",
+  sessionsFilterAnyProfile: "Any profile",
+  sessionsFilterErrors: "With errors",
+  sessionsSelectedCount: "{count} selected",
+  sessionsBulkExport: "Export selected",
+  sessionsBulkDelete: "Delete selected",
+  sessionsBulkDeletePrompt: "Delete {count} session(s)? This removes their local archive data.",
+  sessionsSelectAll: "Select all shown sessions",
+  sessionsSelectRow: "Select {site}",
+  sessionsColumnSite: "Site",
+  sessionsColumnProfile: "Profile",
+  sessionsColumnDuration: "Duration",
+  sessionsColumnEvents: "Events",
+  sessionsColumnErrors: "Errors",
+  sessionsColumnSize: "Size",
+  sessionsColumnDate: "Started",
+  sessionsColumnActions: "Actions",
+  sessionsActionOpenPlayer: "Export and open in Player",
+  sessionsActionNotes: "Tags and notes",
+  sessionsNoMatches: "No sessions match the filters."
 } as const;
 
 export type ExtensionMessageKey = keyof typeof EN_MESSAGES;
