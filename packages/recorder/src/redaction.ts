@@ -31,7 +31,8 @@ const URL_VALUED_HEADERS = new Set([
 const SENSITIVE_HEADER_NAME_PATTERN =
   /token|secret|session|auth|key|passw(?:or)?d|credential|signature/;
 // Auth challenges carry no secret and explain 401/407 responses, so keep them readable.
-const READABLE_AUTH_HEADERS = new Set(["www-authenticate", "proxy-authenticate"]);
+// `:authority` is the HTTP/2 host pseudo-header; it only matches the name pattern via "auth".
+const READABLE_AUTH_HEADERS = new Set(["www-authenticate", "proxy-authenticate", ":authority"]);
 // Redaction runs on the synchronous ingest hot path (service worker + content/injected contexts).
 // We intentionally keep hashing sync to avoid async pipeline stalls from crypto.subtle.
 const SHA_256_K = [

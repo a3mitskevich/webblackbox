@@ -57,7 +57,8 @@ describe("redactPayload headers", () => {
         "X-Otp-Code": "123456",
         "X-Refresh": ["r-1"],
         "Content-Type": "application/json",
-        "WWW-Authenticate": 'Basic realm="app"'
+        "WWW-Authenticate": 'Basic realm="app"',
+        ":authority": "app.example.test"
       },
       PLAIN_PROFILE
     );
@@ -70,7 +71,8 @@ describe("redactPayload headers", () => {
       "X-Otp-Code": "[REDACTED]",
       "X-Refresh": ["r-1"],
       "Content-Type": "application/json",
-      "WWW-Authenticate": 'Basic realm="app"'
+      "WWW-Authenticate": 'Basic realm="app"',
+      ":authority": "app.example.test"
     });
   });
 
