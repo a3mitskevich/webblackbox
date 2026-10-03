@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { DEFAULT_CAPTURE_POLICY, type CapturePolicy } from "@webblackbox/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   MAX_CAPTURED_INPUT_VALUE_CHARS,
@@ -115,6 +115,22 @@ describe("readCapturableInputValue", () => {
     stop();
 
     expect(value).toBeUndefined();
+  });
+
+  it("shares revealed password fields between separately loaded bundles", async () => {
+    vi.resetModules();
+    const contentScript = await import("./input-value-policy.js");
+    vi.resetModules();
+    const captureAgent = await import("./input-value-policy.js");
+    const stop = contentScript.watchPasswordFieldReveals(document);
+    const input = field('<input data-field type="password" name="pin" />');
+
+    input.setAttribute("type", "text");
+    await Promise.resolve();
+    stop();
+
+    expect(captureAgent).not.toBe(contentScript);
+    expect(captureAgent.readCapturableInputValue(input, policy("allow"))).toBeUndefined();
   });
 
   it("never captures password-named or payment card fields", () => {

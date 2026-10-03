@@ -17,13 +17,30 @@ const NEVER_CAPTURED_AUTOCOMPLETE_TOKENS = new Set([
 ]);
 const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode/i;
 
+type PasswordFieldRegistry = {
+  /**
+   * Fields seen as `type="password"` at least once. A "show password" toggle switches the type
+   * to `text`, so the current type alone cannot tell a revealed password from a text field.
+   */
+  fields: WeakSet<Element>;
+  /** Live reveal watchers; their queued records are read before any value is captured. */
+  watchers: Set<MutationObserver>;
+};
+
 /**
- * Fields seen as `type="password"` at least once. A "show password" toggle switches the type to
- * `text`, so the current type alone cannot tell a revealed password from a plain text field.
+ * Shared by every bundle in the same JavaScript realm: the extension's content script watches
+ * from page load, while the capture agent that reads values is a separately loaded bundle.
  */
-const seenPasswordFields = new WeakSet<Element>();
-/** Live reveal watchers; their queued records are read before any value is captured. */
-const revealWatchers = new Set<MutationObserver>();
+const PASSWORD_FIELD_REGISTRY_KEY = Symbol.for("webblackbox.passwordFieldRegistry");
+const registryHolder = globalThis as typeof globalThis & {
+  [PASSWORD_FIELD_REGISTRY_KEY]?: PasswordFieldRegistry;
+};
+const registry = (registryHolder[PASSWORD_FIELD_REGISTRY_KEY] ??= {
+  fields: new WeakSet<Element>(),
+  watchers: new Set<MutationObserver>()
+});
+const seenPasswordFields = registry.fields;
+const revealWatchers = registry.watchers;
 
 /**
  * Remembers every field the page switches away from `type="password"` (a "show password"

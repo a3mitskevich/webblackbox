@@ -12,6 +12,7 @@
       "@webblackbox/recorder": ["../../packages/recorder/src/index.ts"],
       "webblackbox": ["../../packages/webblackbox/src/index.ts"],
       "webblackbox/injected-hooks": ["../../packages/webblackbox/src/injected-hooks.ts"],
+      "webblackbox/input-value-policy": ["../../packages/webblackbox/src/input-value-policy.ts"],
       "webblackbox/lite-capture-agent": ["../../packages/webblackbox/src/lite-capture-agent.ts"],
       "webblackbox/lite-materializer": ["../../packages/webblackbox/src/lite-materializer.ts"],
       "webblackbox/lite-sdk": ["../../packages/webblackbox/src/lite-sdk.ts"],

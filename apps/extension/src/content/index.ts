@@ -1,5 +1,6 @@
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 import type { LiteCaptureAgent } from "webblackbox/lite-capture-agent";
+import { watchPasswordFieldReveals } from "webblackbox/input-value-policy";
 import type { LiteCaptureAgentOptions } from "webblackbox/types";
 
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
@@ -29,6 +30,10 @@ const PENDING_EVENT_MAX = 1_200;
 const DEFAULT_TAB_ID = -1;
 const PORT_DEBUG_LOG_FLAG = "__WEBBLACKBOX_DEBUG_PORT__";
 const INJECTED_CAPTURE_CONFIG_EVENT = "webblackbox:injected-config";
+
+// The capture agent loads only on Start; a password the page reveals before then must still be
+// known as one when a profile records input values (the registry is shared with the agent).
+watchPasswordFieldReveals(document);
 
 void requestRecordingStatusOnce();
 
