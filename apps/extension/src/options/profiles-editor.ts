@@ -64,6 +64,8 @@ type EditorState = {
   profilesState: ProfilesState;
   draft: RecordingProfilesStore;
   editingId?: string;
+  /** The edited profile as it was when its form opened; Cancel restores it. */
+  editingSnapshot?: RecordingProfile;
   importPreview?: { next: RecordingProfilesStore; diff: ProfilesDiff };
   status?: { text: string; error: boolean };
   sandbox: { profileId: string; kind: RedactionSandboxKind; text: string; output?: string };
@@ -523,9 +525,7 @@ function bindEditor(
 
     switch (action) {
       case "profile-edit":
-        return update(() => {
-          editor.editingId = profileIdOf(target);
-        });
+        return update(() => openProfileForm(editor, profileIdOf(target)));
       case "profile-duplicate":
         return update(() => {
           const source = findProfile(profileIdOf(target));
@@ -533,7 +533,7 @@ function bindEditor(
           if (source) {
             const result = duplicateIntoStore(editor.draft, source);
             editor.draft = result.store;
-            editor.editingId = result.id;
+            openProfileForm(editor, result.id);
           }
         });
       case "profile-default":
@@ -543,19 +543,12 @@ function bindEditor(
       case "profile-delete":
         return update(() => {
           editor.draft = deleteProfileFromStore(editor.draft, profileIdOf(target));
-          editor.editingId = undefined;
+          closeProfileForm(editor);
         });
       case "profile-apply":
-        return update(() => {
-          editor.editingId = undefined;
-        });
+        return update(() => closeProfileForm(editor));
       case "profile-cancel":
-        return update(
-          () => {
-            editor.editingId = undefined;
-          },
-          { discardFormEdits: true }
-        );
+        return update(() => cancelProfileForm(editor), { discardFormEdits: true });
       case "rule-add":
         return update(() => {
           editor.draft = { ...editor.draft, rules: [...editor.draft.rules, newRule(editor)] };
@@ -570,7 +563,14 @@ function bindEditor(
         });
       case "profiles-save":
         syncDraftFromDom(card, editor);
-        void saveDraft(editor, deps).then(rerender);
+        void saveDraft(editor, deps).then(() => {
+          // What was just saved is the new baseline for Cancel.
+          if (editor.editingId) {
+            openProfileForm(editor, editor.editingId);
+          }
+
+          rerender();
+        });
         return;
       case "profiles-export":
         syncDraftFromDom(card, editor);
@@ -581,7 +581,7 @@ function bindEditor(
           if (editor.importPreview) {
             editor.draft = editor.importPreview.next;
             editor.importPreview = undefined;
-            editor.editingId = undefined;
+            closeProfileForm(editor);
           }
         });
       case "sandbox-run":
@@ -621,6 +621,32 @@ function bindEditor(
         })
         .finally(rerender);
     });
+}
+
+function openProfileForm(editor: EditorState, id: string): void {
+  const profile = editor.draft.profiles.find((entry) => entry.id === id);
+
+  editor.editingId = id;
+  editor.editingSnapshot = profile ? structuredClone(profile) : undefined;
+}
+
+function closeProfileForm(editor: EditorState): void {
+  editor.editingId = undefined;
+  editor.editingSnapshot = undefined;
+}
+
+/** Edits kept by other actions while the form was open are rolled back too. */
+function cancelProfileForm(editor: EditorState): void {
+  const snapshot = editor.editingSnapshot;
+
+  if (snapshot) {
+    editor.draft = {
+      ...editor.draft,
+      profiles: editor.draft.profiles.map((entry) => (entry.id === snapshot.id ? snapshot : entry))
+    };
+  }
+
+  closeProfileForm(editor);
 }
 
 function syncDraftFromDom(card: HTMLElement, editor: EditorState): void {

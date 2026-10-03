@@ -232,6 +232,26 @@ describe("profiles editor", () => {
     expect(savedStore(storage).profiles.map((profile) => profile.name)).not.toContain("Discarded");
   });
 
+  it("rolls back form edits that another action already kept when Cancel is clicked", async () => {
+    const storage = createStorage();
+    const container = await mount(storage);
+
+    click(rowOf(container, "default"), "[data-action='profile-edit']");
+    setField(container, "category-inputs", "allow");
+    click(container, "[data-action='rule-add']");
+    click(container, "[data-action='profile-cancel']");
+    click(container, "[data-action='profiles-save']");
+    await flush();
+
+    const saved = storage.data[PROFILES_STORAGE_KEY] as {
+      profiles: Array<{ id: string; categories: Record<string, string> }>;
+    };
+
+    expect(saved.profiles.find((profile) => profile.id === "default")?.categories.inputs).toBe(
+      "length-only"
+    );
+  });
+
   it("keeps a rule whose profile no longer exists selectable", async () => {
     const storage = createStorage({
       [PROFILES_STORAGE_KEY]: {
