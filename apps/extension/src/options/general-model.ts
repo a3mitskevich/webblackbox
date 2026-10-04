@@ -298,15 +298,6 @@ export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
     set: (draft, value) => withBudget(draft, { autoFreezeOnBreach: value })
   },
   {
-    kind: "toggle",
-    id: "archiveAlertSensitiveFindings",
-    section: "export",
-    label: "optionsAlertSensitiveFindings",
-    hint: "optionsAlertSensitiveFindingsHint",
-    get: (draft) => draft.archive.alertSensitiveFindings,
-    set: (draft, value) => withArchive(draft, { alertSensitiveFindings: value })
-  },
-  {
     kind: "number",
     id: "archiveMaxSizeMb",
     section: "export",

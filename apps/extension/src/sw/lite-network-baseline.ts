@@ -1,6 +1,7 @@
-import { sanitizeUrlForPrivacy } from "@webblackbox/protocol";
-
 import type { RawRecorderEvent } from "@webblackbox/recorder";
+
+// URLs stay as the browser reports them: the recorder's normalizer records them under the
+// profile's redaction rules (sanitized, rule-masked or as-is).
 
 type LiteNetworkRuntimeContext = {
   sid: string;
@@ -47,7 +48,7 @@ export function buildLiteNetworkRequestRawEvent(
       reqId: details.requestId,
       requestId: details.requestId,
       method: normalizeMethod(details.method),
-      url: sanitizeUrlForPrivacy(details.url)
+      url: details.url
     }
   };
 }
@@ -72,13 +73,13 @@ export function buildLiteNetworkResponseRawEvent(
       reqId: details.requestId,
       requestId: details.requestId,
       method: normalizeMethod(details.method),
-      url: sanitizeUrlForPrivacy(details.url),
+      url: details.url,
       status,
       statusText: parseStatusText(details.statusLine),
       duration: normalizeDuration(details.duration),
       ok: typeof status === "number" ? status >= 200 && status < 400 : undefined,
       redirected: details.redirected === true,
-      responseUrl: sanitizeOptionalUrl(details.responseUrl)
+      responseUrl: details.responseUrl
     }
   };
 }
@@ -105,16 +106,12 @@ export function buildLiteNetworkFailureRawEvent(
       reqId: details.requestId,
       requestId: details.requestId,
       method: normalizeMethod(details.method),
-      url: sanitizeUrlForPrivacy(details.url),
+      url: details.url,
       duration: normalizeDuration(details.duration),
       message,
       errorText: message
     }
   };
-}
-
-function sanitizeOptionalUrl(value: string | undefined): string | undefined {
-  return value ? sanitizeUrlForPrivacy(value) : undefined;
 }
 
 function normalizeNetworkTime(candidate?: number): { t: number; mono: number } {

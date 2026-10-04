@@ -685,18 +685,22 @@ function syncOpenProfileForm(editor: Editor): void {
     categories: Object.fromEntries(
       CAPTURE_CATEGORY_KEYS.map((key) => [key, readField(form, `category-${key}`)])
     ),
+    contentRedaction: readCheckbox(form, "contentRedaction"),
+    builtInHeuristics: readCheckbox(form, "builtInHeuristics"),
     blockedSelectors: readField(form, "blockedSelectors"),
     unmaskSelectors: readField(form, "unmaskSelectors"),
     redactHeaders: readField(form, "redactHeaders"),
+    redactCookieNames: readField(form, "redactCookieNames"),
     redactBodyPatterns: readField(form, "redactBodyPatterns"),
+    redactQueryParams: readField(form, "redactQueryParams"),
+    redactStorageKeys: readField(form, "redactStorageKeys"),
+    valuePatterns: readField(form, "valuePatterns"),
     bodyMimeAllowlist: readField(form, "bodyMimeAllowlist"),
     bodyMaxBytes: readField(form, "bodyMaxBytes"),
     includeUrls: readField(form, "includeUrls"),
     excludeUrls: readField(form, "excludeUrls"),
     mousemoveHz: readField(form, "mousemoveHz"),
-    visual: readField(form, "visual"),
-    requireEncryption: readCheckbox(form, "requireEncryption"),
-    blockOnFindings: readCheckbox(form, "blockOnFindings")
+    visual: readField(form, "visual")
   });
 
   state.draft = {

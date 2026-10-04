@@ -174,6 +174,64 @@ describe("profiles editor", () => {
     );
   });
 
+  it("edits the profile's own redaction rules and keeps no export switches", async () => {
+    const storage = createStorage();
+    const container = await mount(storage);
+
+    click(rowOf(container, BUILT_IN_PROFILE_IDS.full), "[data-action='profile-duplicate']");
+
+    const checkbox = (name: string): HTMLInputElement => {
+      const input = container.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+
+      if (!input) {
+        throw new Error(`missing checkbox ${name}`);
+      }
+
+      return input;
+    };
+
+    // Archives are always encrypted and the scanner only warns: nothing to switch per profile.
+    expect(container.querySelector('[name="requireEncryption"]')).toBeNull();
+    expect(container.querySelector('[name="blockOnFindings"]')).toBeNull();
+    expect(container.querySelector(".wb-profile-form")?.textContent).toContain(
+      "WebBlackbox does not guarantee that all sensitive data is removed"
+    );
+    expect(checkbox("contentRedaction").checked).toBe(true);
+    expect(checkbox("builtInHeuristics").checked).toBe(true);
+
+    checkbox("contentRedaction").checked = false;
+    checkbox("builtInHeuristics").checked = false;
+    setField(container, "redactCookieNames", "sid");
+    setField(container, "redactQueryParams", "token\ncode");
+    setField(container, "redactStorageKeys", "auth");
+    setField(container, "valuePatterns", "[bodies, console] sk_live_\\w+\nacct-\\d+");
+    click(container, "[data-action='profile-apply']");
+    await saveProfiles();
+
+    expect(savedStore(storage).profiles[1]?.redaction).toMatchObject({
+      contentRedaction: false,
+      builtInHeuristics: false,
+      redactCookieNames: ["sid"],
+      redactQueryParams: ["token", "code"],
+      redactStorageKeys: ["auth"],
+      valuePatterns: [
+        { pattern: "sk_live_\\w+", targets: ["bodies", "console"] },
+        { pattern: "acct-\\d+", targets: ["bodies", "dom", "storage", "inputs", "console", "urls"] }
+      ]
+    });
+
+    click(rowOf(container, "profile-2"), "[data-action='profile-edit']");
+
+    expect(checkbox("contentRedaction").checked).toBe(false);
+    expect(checkbox("builtInHeuristics").checked).toBe(false);
+    expect(container.querySelector<HTMLInputElement>('[name="valuePatterns"]')?.value).toBe(
+      "[bodies, console] sk_live_\\w+\nacct-\\d+"
+    );
+    expect(container.querySelector<HTMLInputElement>('[name="redactQueryParams"]')?.value).toBe(
+      "token\ncode"
+    );
+  });
+
   it("shows validation errors instead of saving invalid rules", async () => {
     const storage = createStorage();
     const container = await mount(storage);

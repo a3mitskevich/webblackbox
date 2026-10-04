@@ -1,3 +1,5 @@
+import { isValidExportPassphrase } from "@webblackbox/protocol/archive-encryption";
+
 import { el } from "./dom.js";
 
 /**
@@ -115,18 +117,31 @@ export type PassphraseDialogOptions = {
   label: string;
   submitLabel: string;
   cancelLabel: string;
+  /** Shown on the input while the passphrase is too short to encrypt an export. */
+  requiredMessage: string;
   /** Optional monospace line, e.g. the session id. */
   detail?: string;
 };
 
-/** Resolves the typed passphrase ("" when left blank), or null when cancelled. */
+/**
+ * Resolves the typed passphrase, or null when cancelled. Archives are always encrypted, so it
+ * only resolves with a passphrase long enough to encrypt an export.
+ */
 export function openPassphraseDialog(options: PassphraseDialogOptions): Promise<string | null> {
   return openDialog<string | null>(null, (finish) => {
     const input = el("input", {
       className: "wb-input wb-prompt-field",
       attrs: { id: "wb-passphrase-input", type: "password", autocomplete: "off" }
     });
-    const submit = (): void => finish(input.value.trim().length > 0 ? input.value : "");
+    const submit = (): void => {
+      if (!isValidExportPassphrase(input.value)) {
+        input.setCustomValidity(options.requiredMessage);
+        input.reportValidity();
+        return;
+      }
+
+      finish(input.value);
+    };
     const cancelButton = dialogButton(options.cancelLabel, "muted", { passphraseCancel: "" });
     const submitButton = dialogButton(options.submitLabel, "accent", { passphraseSubmit: "" });
     const form = el(
@@ -149,6 +164,7 @@ export function openPassphraseDialog(options: PassphraseDialogOptions): Promise<
 
     cancelButton.addEventListener("click", () => finish(null));
     submitButton.addEventListener("click", submit);
+    input.addEventListener("input", () => input.setCustomValidity(""));
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();

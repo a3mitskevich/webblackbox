@@ -139,6 +139,7 @@ Build entries:
 
 - `pnpm e2e:fullchain:full` runs the full-mode end-to-end capture/export demo.
 - `pnpm e2e:profile:qa` checks that a site rule selects the QA profile, that console text and value-masked JSON bodies reach the encrypted archive, and that a plaintext export is refused.
+- `pnpm e2e:profile:full-capture` checks that the Full capture preset records planted secrets (console, storage, URL token, headers, bodies, password field) raw inside the encrypted archive, that the Default profile masks them after the tab moves to a host without a rule, and that neither the secrets nor the site appear in the archive bytes.
 - `pnpm e2e:realworld` and `pnpm e2e:realworld:ci` run the real-world stability matrix across lite/full startup paths, reload recovery, iframe/child-target capture, downloads/uploads, large response previews, export, and player replay. Use `pnpm e2e:realworld:quick` for the reduced local smoke slice.
 - `pnpm e2e:memory:full` runs a synthetic long-session full-mode stress case and samples JS heap usage for the target page, service worker, and offscreen document.
 - `pnpm e2e:perf:lite` runs a lite-mode A/B stress matrix that now covers same-page request/hover pressure, real document navigation, iframe-heavy interaction, and contenteditable typing before comparing baseline vs active-recording budgets.
@@ -172,8 +173,8 @@ Build entries:
 
 1. User clicks **Export** in popup
 2. Popup export policy is applied (defaults: `includeScreenshots=false`, `maxArchiveBytes=100MB`, `recentWindowMs=20 minutes`)
-3. Service worker signals the pipeline to export with policy + optional encryption
-4. Pipeline finalizes indexes, generates archive with optional encryption
+3. Service worker signals the pipeline to export with policy and the (required) passphrase
+4. Pipeline finalizes indexes, generates the encrypted archive
 5. Service worker downloads the `.webblackbox` file via `chrome.downloads`
 
 ### Freeze

@@ -207,7 +207,7 @@ The export process creates a `.webblackbox` ZIP file:
 3. Blobs are included
 4. Manifest is generated with metadata and stats
 5. Integrity hashes are computed for all files
-6. Optional AES-GCM encryption is applied
+6. AES-GCM encryption is applied to every file but the plaintext envelope `manifest.json` (format version and encryption parameters); a passphrase of at least 8 characters is required
 7. Everything is packaged into a ZIP archive
 
 ## Playback Architecture
@@ -215,8 +215,8 @@ The export process creates a `.webblackbox` ZIP file:
 ### Archive Loading
 
 1. ZIP is extracted
-2. Manifest is parsed and validated
-3. If encrypted, encryption metadata is extracted
+2. The envelope manifest is parsed; with a passphrase, the encrypted full manifest (`meta/manifest.json`) is decrypted and merged (format 1 archives keep the full manifest in `manifest.json`)
+3. Encryption metadata is extracted
 4. Chunks are decrypted (if needed) and decoded
 5. Indexes are loaded
 6. Blobs are kept in the archive for on-demand retrieval
@@ -287,9 +287,8 @@ Page World          Extension World         Background
 ### Data Protection
 
 - Sensitive headers are redacted before entering the pipeline
-- Body content is pattern-matched and scrubbed
-- DOM elements with sensitive selectors are masked
-- Archives can be encrypted with AES-GCM
+- Content masking follows each profile's redaction rules (best effort, no guarantee): body keys and value patterns, blocked selectors, header/cookie/query/storage rules, and the optional built-in heuristics; `contentRedaction: false` records content as captured
+- Every archive is encrypted with AES-GCM
 
 ### Encryption Details
 

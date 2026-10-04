@@ -110,6 +110,8 @@ function setControl(selector: string, value: string | boolean): void {
 }
 
 const click = (selector: string): void => document.querySelector<HTMLElement>(selector)?.click();
+/** Archives are always encrypted: the export dialog needs a passphrase of 8+ characters. */
+const typePassphrase = (value: string): void => setControl("#wb-passphrase-input", value);
 const sids = (sessions: SessionListItem[]): string[] => sessions.map((session) => session.sid);
 
 describe("sessions model", () => {
@@ -276,17 +278,20 @@ describe("sessions page", () => {
     expect(document.activeElement).toBe(note());
   });
 
-  it("applies the archive limits and alert setting from Options", async () => {
+  it("applies the archive limits from Options and shows findings on the page", async () => {
     localStorage.setItem(
       "webblackbox.popup.export-policy",
-      JSON.stringify({ maxArchiveMb: 20, recentMinutes: 5, alertSensitiveFindings: false })
+      JSON.stringify({ maxArchiveMb: 20, recentMinutes: 5 })
     );
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => undefined);
     const { port } = setup();
     await load(port);
 
+    expect(document.querySelector<HTMLElement>(".wb-sessions-notice")?.hidden).toBe(true);
+
     click("[data-export='sid-old']");
     await flush();
+    typePassphrase("limits-secret");
     click("[data-passphrase-submit]");
     await flush();
 
@@ -311,6 +316,9 @@ describe("sessions page", () => {
     await flush();
 
     expect(alertSpy).not.toHaveBeenCalled();
+    const notice = document.querySelector<HTMLElement>(".wb-sessions-notice[role='status']");
+    expect(notice?.hidden).toBe(false);
+    expect(notice?.textContent).toContain("jwt");
     localStorage.clear();
   });
 
@@ -320,6 +328,7 @@ describe("sessions page", () => {
 
     click("[data-player='sid-old']");
     await flush();
+    typePassphrase("player-secret");
     click("[data-passphrase-submit]");
     await flush();
 

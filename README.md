@@ -67,7 +67,7 @@ https://github.com/user-attachments/assets/46273fc0-36f2-4aeb-9dfa-9c60cfcba98c
 4. Enable `Developer mode`.
 5. Click `Load unpacked` and select the extracted extension directory.
 6. Click the WebBlackbox toolbar icon, pick a recording profile (or leave `Auto` so site rules choose one), check the `Lite` / `Full` engine the profile preselects, and press `Start recording`.
-7. Reproduce the issue (`Marker` or Ctrl/Cmd + Shift + M flags the moment), press `Stop`, then `Export` the `.webblackbox` archive. Archive limits and privacy alerts live in the options page under `Export & encryption`; the Sessions page lists, filters and bulk-exports past recordings.
+7. Reproduce the issue (`Marker` or Ctrl/Cmd + Shift + M flags the moment), press `Stop`, then `Export` the `.webblackbox` archive with a passphrase of at least 8 characters (every archive is encrypted). Archive limits live in the options page under `Export & encryption`, and privacy scanner findings are shown inline after an export, never blocking it; the Sessions page lists, filters and bulk-exports past recordings.
 8. Open the archive in the hosted Player.
 
 ### Embed Lite Capture in Your App
@@ -97,7 +97,7 @@ WebBlackbox currently records 57 event types across 13 categories, including:
 - Cookies, localStorage, sessionStorage, IndexedDB, Cache, and service worker lifecycle
 - Web Vitals, long tasks, traces, CPU profiles, and heap snapshots
 
-How much of each category is kept depends on the recording profile. The default profile records metadata only (no console text, bodies or input values); the `QA` and `Full capture` presets record console text, bodies and more on the hosts you allow. See [Privacy Model](docs/PRIVACY.md).
+How much of each category is kept depends on the recording profile. The default profile records metadata only (no console text, bodies or input values); the `QA` and `Full capture` presets record console text, bodies and more on the hosts you allow, and `Full capture` records content raw (no masking). See [Privacy Model](docs/PRIVACY.md).
 
 For the full event schema, defaults, and message types, see [packages/protocol/README.md](packages/protocol/README.md).
 
@@ -105,13 +105,14 @@ For the full event schema, defaults, and message types, see [packages/protocol/R
 
 Sessions are exported as `.webblackbox` ZIP archives containing:
 
-- `manifest.json` with export metadata and encryption info (sanitized origin only, no page title)
+- `manifest.json` with only the format version and encryption parameters (plaintext)
+- `meta/manifest.json` with the export metadata (encrypted)
 - chunked NDJSON event streams
 - time/request/text indexes
 - content-addressed blobs for screenshots, DOM snapshots, and captured bodies
 - integrity hashes for verification
 
-Archives can be encrypted with AES-GCM and PBKDF2-derived keys while keeping the manifest readable.
+Every archive is encrypted with AES-GCM and a PBKDF2-derived key from a passphrase of at least 8 characters; there is no plaintext export. Masking captured content follows each profile's redaction rules on a best-effort basis, with no guarantee that all sensitive data is removed. See [Privacy Model](docs/PRIVACY.md).
 
 ## Documentation
 

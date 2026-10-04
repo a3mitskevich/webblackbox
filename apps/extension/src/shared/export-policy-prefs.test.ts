@@ -20,15 +20,14 @@ function memoryStorage(initial: Record<string, string> = {}) {
 }
 
 describe("export policy prefs", () => {
-  it("defaults to 100 MB, 20 minutes and sensitive-finding alerts", () => {
+  it("defaults to 100 MB and 20 minutes", () => {
     expect(loadExportPolicyPrefs(memoryStorage())).toEqual({
-      alertSensitiveFindings: true,
       maxArchiveMb: 100,
       recentMinutes: 20
     });
   });
 
-  it("reads text values the previous popup stored and clamps them", () => {
+  it("reads text values the previous popup stored, clamps them and drops retired fields", () => {
     const storage = memoryStorage({
       [EXPORT_POLICY_PREFS_STORAGE_KEY]: JSON.stringify({
         alertSensitiveFindings: false,
@@ -37,8 +36,8 @@ describe("export policy prefs", () => {
       })
     });
 
+    // Scanner findings are always shown inline: the old alert switch is ignored.
     expect(loadExportPolicyPrefs(storage)).toEqual({
-      alertSensitiveFindings: false,
       maxArchiveMb: 4096,
       recentMinutes: 45
     });
@@ -56,14 +55,8 @@ describe("export policy prefs", () => {
   it("round-trips through storage and reports refused writes", () => {
     const storage = memoryStorage();
 
-    expect(
-      saveExportPolicyPrefs(
-        { alertSensitiveFindings: false, maxArchiveMb: 8, recentMinutes: 5 },
-        storage
-      )
-    ).toBe(true);
+    expect(saveExportPolicyPrefs({ maxArchiveMb: 8, recentMinutes: 5 }, storage)).toBe(true);
     expect(loadExportPolicyPrefs(storage)).toEqual({
-      alertSensitiveFindings: false,
       maxArchiveMb: 8,
       recentMinutes: 5
     });

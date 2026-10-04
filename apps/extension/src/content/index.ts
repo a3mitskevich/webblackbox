@@ -1,5 +1,6 @@
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 import type { LiteCaptureAgent } from "webblackbox/lite-capture-agent";
+import { capturesPageStorageInFullMode } from "webblackbox/capture-scope";
 import { watchPasswordFieldReveals } from "webblackbox/input-value-policy";
 import type { LiteCaptureAgentOptions } from "webblackbox/types";
 
@@ -461,10 +462,18 @@ function syncInjectedCaptureConfig(
       ? normalizeBodyCaptureBudget(message.sampling?.bodyCaptureMaxBytes)
       : 0;
 
+  // Full mode records the page through CDP; the page hooks only add storage, and only when the
+  // profile asks for more than counts (CDP has no storage event stream).
+  const storageOnly =
+    message.mode === "full" &&
+    !!message.capturePolicy &&
+    capturesPageStorageInFullMode(message.capturePolicy.categories);
+
   window.dispatchEvent(
     new CustomEvent(INJECTED_CAPTURE_CONFIG_EVENT, {
       detail: {
-        active: message.active && message.mode === "lite",
+        active: message.active && (message.mode === "lite" || storageOnly),
+        storageOnly,
         bodyCaptureMaxBytes,
         capturePolicy: message.capturePolicy
       }

@@ -52,11 +52,13 @@ const format: SessionFormatters = {
 };
 const root = document.getElementById("sessions-root");
 
-type PendingExport = { passphrase: string; acknowledged: boolean; openPlayer: boolean };
+type PendingExport = { openPlayer: boolean };
 
 type Page = {
   root: HTMLElement;
   count: HTMLElement;
+  /** Privacy scanner findings of the last export: shown on the page, never blocking. */
+  notice: HTMLElement;
   profileFilter: HTMLSelectElement;
   bulk: HTMLElement;
   list: HTMLElement;
@@ -72,7 +74,7 @@ const state: {
   filters: { ...EMPTY_FILTERS },
   selected: new Set()
 };
-/** Exports started on this page, by sid, so a blocked one can be confirmed and re-sent. */
+/** Exports started on this page, by sid: their failures are reported here. */
 const pendingExports = new Map<string, PendingExport>();
 
 if (root) {
@@ -93,7 +95,7 @@ if (root) {
     }
 
     if (typed.kind === "sw.export-status") {
-      handleExportStatus(typed);
+      handleExportStatus(page, typed);
     }
   });
 }
@@ -126,6 +128,8 @@ function createTopBar(count: HTMLElement): HTMLElement {
 
 function createPage(): Page {
   const count = el("span", { className: "wb-sessions__count", dataset: { sessionsCount: "" } });
+  const notice = el("p", { className: "wb-sessions-notice", attrs: { role: "status" } });
+  notice.hidden = true;
   const toolbar = createToolbar({ t, filters: state.filters, profiles: [] });
   const bulk = el("div");
   const list = el("div", { className: "wb-sessions__list" });
@@ -135,16 +139,23 @@ function createPage(): Page {
       createTopBar(count),
       el("div", { className: "wb-sessions__body" }, [
         el("p", { className: "wb-sessions__subtitle", text: t("sessionsSubtitle") }),
+        notice,
         el("div", { className: "wb-sessions__controls" }, [toolbar, bulk]),
         list
       ])
     ]),
     count,
+    notice,
     profileFilter:
       toolbar.querySelector<HTMLSelectElement>("[data-profile-filter]") ?? el("select"),
     bulk,
     list
   };
+}
+
+function showNotice(page: Page, text: string): void {
+  page.notice.textContent = text;
+  page.notice.hidden = false;
 }
 
 function visibleSessions(): SessionListItem[] {
@@ -358,10 +369,7 @@ async function handleButton(page: Page, button: HTMLButtonElement): Promise<void
     const passphrase = await askPassphrase(shortenSessionId(exportSid));
 
     if (passphrase !== null) {
-      requestExport(exportSid, passphrase, {
-        acknowledged: false,
-        openPlayer: Boolean(data.player)
-      });
+      requestExport(exportSid, passphrase, { openPlayer: Boolean(data.player) });
     }
 
     return;
@@ -411,9 +419,7 @@ async function exportSelected(): Promise<void> {
   const passphrase = await askPassphrase(t("sessionsSelectedCount", { count: sids.length }));
 
   if (passphrase !== null) {
-    sids.forEach((sid) =>
-      requestExport(sid, passphrase, { acknowledged: false, openPlayer: false })
-    );
+    sids.forEach((sid) => requestExport(sid, passphrase, { openPlayer: false }));
   }
 }
 
@@ -442,6 +448,7 @@ function askPassphrase(detail: string): Promise<string | null> {
     label: t("popupPassphraseLabel"),
     submitLabel: t("sessionsActionExport"),
     cancelLabel: t("popupCancel"),
+    requiredMessage: t("popupPassphraseRequired"),
     detail
   });
 }
@@ -457,6 +464,7 @@ function confirmDelete(body: string): Promise<boolean> {
 }
 
 function handleExportStatus(
+  page: Page,
   status: Extract<ExtensionOutboundMessage, { kind: "sw.export-status" }>
 ): void {
   const pending = pendingExports.get(status.sid);
@@ -464,8 +472,9 @@ function handleExportStatus(
   if (status.ok) {
     pendingExports.delete(status.sid);
 
-    if (status.privacyWarning && loadExportPolicyPrefs().alertSensitiveFindings) {
-      window.alert(formatExportPrivacyWarning(status.privacyWarning));
+    // Findings are reported on the page, never blocking: the archive is encrypted either way.
+    if (status.privacyWarning) {
+      showNotice(page, formatExportPrivacyWarning(status.privacyWarning));
     }
 
     if (pending?.openPlayer && typeof chromeApi?.tabs?.create === "function") {
@@ -481,34 +490,18 @@ function handleExportStatus(
   }
 
   pendingExports.delete(status.sid);
-  const error = status.error || t("unknownError");
-
-  if (
-    status.privacyBlocked === true &&
-    !pending.acknowledged &&
-    window.confirm(t("popupPrivacyBlockedConfirm", { error }))
-  ) {
-    requestExport(status.sid, pending.passphrase, { ...pending, acknowledged: true });
-    return;
-  }
-
-  window.alert(t("popupExportFailed", { error }));
+  window.alert(t("popupExportFailed", { error: status.error || t("unknownError") }));
 }
 
-function requestExport(
-  sid: string,
-  passphrase: string,
-  options: { acknowledged: boolean; openPlayer: boolean }
-): void {
-  pendingExports.set(sid, { passphrase, ...options });
+function requestExport(sid: string, passphrase: string, options: PendingExport): void {
+  pendingExports.set(sid, options);
   postUiMessage({
     kind: "ui.export",
     sid,
-    ...(passphrase.length > 0 ? { passphrase } : {}),
+    passphrase,
     saveAs: false,
     // Archive limits from Options, as in the popup; screenshots stay out as before.
-    policy: toExportPolicy(loadExportPolicyPrefs(), "none"),
-    ...(options.acknowledged ? { acknowledgePrivacyFindings: true } : {})
+    policy: toExportPolicy(loadExportPolicyPrefs(), "none")
   });
 }
 

@@ -58,7 +58,7 @@ const SECTION_LAYOUT: Record<
   export: [
     {
       title: "optionsGroupArchive",
-      fields: ["archiveMaxSizeMb", "archiveRecentMinutes", "archiveAlertSensitiveFindings"]
+      fields: ["archiveMaxSizeMb", "archiveRecentMinutes"]
     }
   ]
 };

@@ -378,7 +378,7 @@ export function createLastSessionPanel(options: {
 }
 
 export function createPrivacyWarning(title: string, text: string): HTMLElement {
-  return el("section", { className: "wb-popup__privacy-warning", attrs: { role: "alert" } }, [
+  return el("section", { className: "wb-popup__privacy-warning", attrs: { role: "status" } }, [
     el("strong", { text: title }),
     el("p", { text })
   ]);
