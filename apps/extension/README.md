@@ -139,6 +139,7 @@ Build entries:
 
 - `pnpm e2e:fullchain:full` runs the full-mode end-to-end capture/export demo.
 - `pnpm e2e:profile:qa` checks that a site rule selects the QA profile, that console text and value-masked JSON bodies reach the encrypted archive, and that a plaintext export is refused.
+- `pnpm e2e:at-rest` reads the extension's IndexedDB over CDP after a Full capture recording with planted secrets and checks that nothing in it is readable (every chunk and blob AES-GCM framed, session rows without URL or title), that the export still decrypts to the secrets and deletes the recording, and that an unexported recording is gone after Chrome restarts on the same profile.
 - `pnpm e2e:profile:full-capture` checks that the Full capture preset records planted secrets (console, storage, URL token, headers, bodies, password field) raw inside the encrypted archive, that the Default profile masks them after the tab moves to a host without a rule, and that neither the secrets nor the site appear in the archive bytes.
 - `pnpm e2e:realworld` and `pnpm e2e:realworld:ci` run the real-world stability matrix across lite/full startup paths, reload recovery, iframe/child-target capture, downloads/uploads, large response previews, export, and player replay. Use `pnpm e2e:realworld:quick` for the reduced local smoke slice.
 - `pnpm e2e:memory:full` runs a synthetic long-session full-mode stress case and samples JS heap usage for the target page, service worker, and offscreen document.

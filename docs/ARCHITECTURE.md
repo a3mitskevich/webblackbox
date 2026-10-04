@@ -196,7 +196,7 @@ Event: screen.screenshot { shotId: "abc", ... }
   → Storage: blobs/sha256-7f83b1657ff1....webp
 ```
 
-Blobs are deduplicated by hash and reference-counted. The `MemoryPipelineStorage` implementation uses Maps for the extension's offscreen document context.
+Blobs are deduplicated by hash and reference-counted. `MemoryPipelineStorage` keeps them in Maps; the extension's offscreen document uses `IndexedDbPipelineStorage` wrapped in `EncryptedPipelineStorage`, which seals every record with AES-GCM.
 
 ### Archive Export
 
@@ -289,6 +289,7 @@ Page World          Extension World         Background
 - Sensitive headers are redacted before entering the pipeline
 - Content masking follows each profile's redaction rules (best effort, no guarantee): body keys and value patterns, blocked selectors, header/cookie/query/storage rules, and the optional built-in heuristics; `contentRedaction: false` records content as captured
 - Every archive is encrypted with AES-GCM
+- In the extension, everything in the pipeline IndexedDB (chunks, blobs, indexes, integrity, session metadata) is encrypted with AES-GCM under a per-browser-session key held only in `chrome.storage.session`; the offscreen document imports it non-extractable. A new key (browser or extension restart) deletes the database. See [PRIVACY.md](PRIVACY.md#local-storage).
 
 ### Encryption Details
 
