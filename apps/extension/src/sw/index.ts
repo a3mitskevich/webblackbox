@@ -32,6 +32,7 @@ import {
   WebBlackboxRecorder
 } from "@webblackbox/recorder";
 
+import { PIPELINE_DB_NAME } from "../shared/at-rest.js";
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
 import {
   PORT_NAMES,
@@ -69,6 +70,10 @@ import {
 } from "../shared/profiles/resolve.js";
 import type { ProfilesState } from "../shared/profiles/storage.js";
 import {
+  resolveLocalDataSettings,
+  resolveUnexportedRetentionMs
+} from "../shared/profiles/local-data.js";
+import {
   applyEnterprisePolicyToRecorderConfig,
   ENTERPRISE_POLICY_STORAGE_KEY,
   isEnterpriseOriginAllowed,
@@ -93,6 +98,14 @@ import {
   shouldStopForCaptureScopeOriginChange,
   shouldStopForEnterpriseOriginPolicy as shouldStopForEnterpriseOriginPolicyInput
 } from "./capture-scope.js";
+import {
+  deletePipelineDatabase,
+  isOffscreenDocumentPort,
+  loadOrCreateAtRestKey,
+  restrictSessionStorageAccess,
+  toStorageKeyMessage,
+  type AtRestKeyRecord
+} from "./at-rest-key.js";
 import { withCdpCommandTimeout, type CdpCommandOutcome } from "./cdp-command.js";
 import {
   buildLiteNetworkFailureRawEvent,
@@ -477,7 +490,6 @@ const ACTIVE_SESSION_STORAGE_KEY = "webblackbox.runtime.sessions";
 const SESSION_ANNOTATIONS_STORAGE_KEY = "webblackbox.runtime.sessionAnnotations";
 const EXPORT_AUDIT_STORAGE_KEY = "webblackbox.audit.exports";
 const EXPORT_AUDIT_MAX_EVENTS = 200;
-const STOPPED_SESSION_TTL_MS = 10 * 60_000;
 const ACTION_SCREENSHOT_RAW_TYPES = new Set(["click", "dblclick", "submit", "marker"]);
 const STOP_DRAIN_CONTENT_RAW_TYPES = new Set([
   "snapshot",
@@ -500,7 +512,18 @@ const SCREEN_RECORDING_OFFSCREEN_SOURCE = "tab";
 
 console.info("[WebBlackbox] service worker booted");
 
+let atRestKeyReady: Promise<AtRestKeyRecord> | null = null;
+
+void getAtRestKey().catch((error) => {
+  console.warn("[WebBlackbox] at-rest encryption key unavailable", error);
+});
 void restoreRuntimeState();
+
+// Wakes the worker at browser start, so the previous browser session's leftovers are deleted
+// right away instead of on the first click.
+chromeApi?.runtime?.onStartup?.addListener(() => {
+  void getAtRestKey().catch(() => undefined);
+});
 
 chromeApi?.runtime?.onInstalled.addListener(() => {
   void setIdleBadge();
@@ -517,6 +540,7 @@ chromeApi?.runtime?.onConnect.addListener((port) => {
 
   if (port.name === PORT_NAMES.offscreen) {
     offscreenPort = port;
+    void sendAtRestKeyToOffscreen(port);
     notifyOffscreenPipelineStatus();
   }
 
@@ -899,6 +923,8 @@ async function startSession(
     await stopSession(tabId);
   }
 
+  // Nothing is recorded unless it can be encrypted at rest.
+  await getAtRestKey();
   await ensureOffscreenDocument();
 
   const sid = createSessionId();
@@ -1247,7 +1273,11 @@ async function exportSession(
       privacyWarning
     });
 
-    if (runtime.stoppedAt) {
+    // The profile decides whether the local copy goes now or waits out its retention.
+    if (
+      runtime.stoppedAt &&
+      resolveLocalDataSettings(runtime.profile.selection.profile).deleteAfterExport
+    ) {
       await disposeStoppedSession(runtime);
     }
 
@@ -4301,6 +4331,58 @@ function normalizeLiteNetworkTimestamp(candidate: unknown): number {
     : Date.now();
 }
 
+/**
+ * This browser session's at-rest key. Minting a new one means the browser (or the extension)
+ * restarted: whatever the pipeline database still holds was encrypted with a key that is gone, so
+ * the database is deleted before any offscreen document opens it. A failure is retried on the next
+ * call.
+ */
+function getAtRestKey(): Promise<AtRestKeyRecord> {
+  if (!atRestKeyReady) {
+    atRestKeyReady = initializeAtRestKey().catch((error: unknown) => {
+      atRestKeyReady = null;
+      throw error;
+    });
+  }
+
+  return atRestKeyReady;
+}
+
+async function initializeAtRestKey(): Promise<AtRestKeyRecord> {
+  const area = chromeApi?.storage?.session;
+
+  await restrictSessionStorageAccess(area).catch((error) => {
+    console.warn("[WebBlackbox] failed to restrict storage.session access", error);
+  });
+
+  const state = await loadOrCreateAtRestKey(area);
+
+  if (state.fresh) {
+    const outcome = await deletePipelineDatabase(globalThis.indexedDB, PIPELINE_DB_NAME);
+    console.info("[WebBlackbox] new browser session: cleared unexported recordings", { outcome });
+  }
+
+  return state.record;
+}
+
+/** Hands the key to the offscreen document, and to nothing else that connects on its port. */
+async function sendAtRestKeyToOffscreen(port: PortLike): Promise<void> {
+  const offscreenUrl = chromeApi?.runtime?.getURL(OFFSCREEN_PATH) ?? "";
+
+  if (!isOffscreenDocumentPort(port, offscreenUrl)) {
+    console.warn("[WebBlackbox] refused the at-rest key to a non-offscreen port", {
+      tabId: port.sender?.tab?.id
+    });
+    return;
+  }
+
+  try {
+    port.postMessage(toStorageKeyMessage(await getAtRestKey()));
+  } catch (error) {
+    console.warn("[WebBlackbox] failed to send the at-rest key to the offscreen document", error);
+  }
+}
+
 async function ensureOffscreenDocument(): Promise<void> {
   if (!chromeApi?.offscreen?.createDocument || !chromeApi.runtime?.getURL) {
     return;
@@ -4420,7 +4502,7 @@ function scheduleStoppedRuntimeCleanup(runtime: SessionRuntime): void {
 
   runtime.cleanupTimer = setTimeout(() => {
     void disposeStoppedSession(runtime);
-  }, STOPPED_SESSION_TTL_MS);
+  }, resolveUnexportedRetentionMs(runtime.profile.selection.profile));
 }
 
 async function disposeStoppedSession(runtime: SessionRuntime): Promise<void> {
@@ -4830,16 +4912,21 @@ function getSessionAnnotation(sid: string): SessionAnnotation {
   };
 }
 
+/**
+ * Tags and notes describe recordings that do not survive a browser restart, so they live in the
+ * in-memory `storage.session` area too; a copy left on disk by older builds is removed.
+ */
 async function loadSessionAnnotations(): Promise<void> {
   sessionAnnotations.clear();
+  await chromeApi?.storage?.local?.remove?.(SESSION_ANNOTATIONS_STORAGE_KEY).catch(() => undefined);
 
-  if (!chromeApi?.storage?.local?.get) {
+  const area = chromeApi?.storage?.session;
+
+  if (!area) {
     return;
   }
 
-  const values = await chromeApi.storage.local
-    .get(SESSION_ANNOTATIONS_STORAGE_KEY)
-    .catch(() => undefined);
+  const values = await area.get(SESSION_ANNOTATIONS_STORAGE_KEY).catch(() => undefined);
   const raw = asRecord(values?.[SESSION_ANNOTATIONS_STORAGE_KEY]);
 
   if (!raw) {
@@ -4859,7 +4946,9 @@ async function loadSessionAnnotations(): Promise<void> {
 }
 
 async function persistSessionAnnotations(): Promise<void> {
-  if (!chromeApi?.storage?.local?.set) {
+  const area = chromeApi?.storage?.session;
+
+  if (!area) {
     return;
   }
 
@@ -4872,7 +4961,7 @@ async function persistSessionAnnotations(): Promise<void> {
     };
   }
 
-  await chromeApi.storage.local.set({
+  await area.set({
     [SESSION_ANNOTATIONS_STORAGE_KEY]: serialized
   });
 }

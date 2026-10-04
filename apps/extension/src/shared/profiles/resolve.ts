@@ -242,7 +242,8 @@ export function isSameProfileSelection(left: ProfileSelection, right: ProfileSel
 /**
  * The Full preset for an extended profile on a host outside its allowlist. Categories are the
  * lower of the two levels, so nothing the profile turned down is turned back on, and the
- * profile's redaction lists, sampling, retention, site policies and export rules are kept.
+ * profile's redaction lists, sampling, retention, site policies, export and local data rules are
+ * kept.
  * Body filters, pointer rate, visuals and unmask selectors come from Full.
  */
 function downgradeToFullPreset(profile: RecordingProfile): RecordingProfile {
@@ -260,7 +261,8 @@ function downgradeToFullPreset(profile: RecordingProfile): RecordingProfile {
     recorder: { ...profile.recorder },
     sitePolicies: profile.sitePolicies,
     ...(profile.basePolicy ? { basePolicy: profile.basePolicy } : {}),
-    export: { ...profile.export }
+    export: { ...profile.export },
+    ...(profile.localData ? { localData: { ...profile.localData } } : {})
   };
 }
 
