@@ -18,6 +18,7 @@
     "e2e:fullchain:full:defaults": "WB_E2E_MODE=full WB_E2E_CONFIGURE_OPTIONS=0 node scripts/e2e-fullchain-demo.mjs",
     "e2e:profile:qa": "node scripts/e2e-profile-qa.mjs",
     "e2e:profile:full-capture": "node scripts/e2e-profile-full-capture.mjs",
+    "e2e:at-rest": "node scripts/e2e-at-rest-encryption.mjs",
     "e2e:realworld": "node scripts/e2e-realworld-stability.mjs",
     "e2e:realworld:quick": "WB_E2E_REALWORLD_QUICK=1 node scripts/e2e-realworld-stability.mjs",
     "e2e:realworld:ci": "node scripts/e2e-realworld-stability.mjs",
