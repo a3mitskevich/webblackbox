@@ -173,7 +173,7 @@ describe("serializeRawDom", () => {
     }
   });
 
-  it("sanitizes every CSS URL like recorded URLs and leaves other CSS alone", () => {
+  it("sanitizes every CSS URL like recorded URLs, data URLs included, and leaves other CSS alone", () => {
     document.body.innerHTML = `
       <div style="background:url('https://x.imgix.net/a.jpg?rect=0,0,10,10&s=IMGIX-SIG')">a</div>
       <div style="background:url(/b.png?q=(1)&token=PAREN-TOKEN)">b</div>
@@ -188,7 +188,8 @@ describe("serializeRawDom", () => {
       expect(html, secret).not.toContain(secret);
     }
 
-    expect(html).toContain("keep?");
+    expect(html).not.toContain("keep?");
+    expect(html).toContain("url(data:[redacted])");
     expect(html).toContain('title="really? yes"');
 
     for (const css of [`url("`.repeat(50_000), `url('x'`.repeat(50_000), "'".repeat(100_000)]) {

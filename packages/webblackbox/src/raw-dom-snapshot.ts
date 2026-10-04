@@ -1,4 +1,10 @@
-import { sanitizeUrlForPrivacy } from "@webblackbox/protocol";
+import {
+  containsCredential,
+  mentionsSecretName,
+  redactCredentials,
+  sanitizeUrlForPrivacy,
+  unescapeForScan
+} from "@webblackbox/protocol";
 
 import { isNeverCapturedField } from "./input-value-policy.js";
 
@@ -9,8 +15,12 @@ const MASKED_TEXT = "[REDACTED]";
 const MASKED_ATTRIBUTE = "data-webblackbox-masked";
 /** Attributes a masked element keeps, so the page layout still reads. */
 const MASKED_KEPT_ATTRIBUTES = new Set(["class", "style"]);
-/** Never written: code (and secrets inlined in it), noscript markup, the extension's own UI. */
-const DROPPED_SELECTOR = "script, noscript, [data-webblackbox-indicator]";
+/**
+ * Never written: code (and secrets inlined in it), noscript markup, the extension's own UI, and
+ * raw-text elements whose text the serializer writes unescaped.
+ */
+const DROPPED_SELECTOR =
+  "script, noscript, xmp, noembed, noframes, plaintext, [data-webblackbox-indicator]";
 /** Attributes holding URLs; their query and fragment are stripped like every recorded URL. */
 const URL_ATTRIBUTES = new Set([
   "href",
@@ -21,61 +31,57 @@ const URL_ATTRIBUTES = new Set([
   "cite",
   "data",
   "background",
-  "ping"
+  "ping",
+  "longdesc",
+  "lowsrc",
+  "manifest",
+  "codebase",
+  "itemid"
 ]);
 /** Attributes never written: inline documents. Event handler attributes (`on*`) are dropped too. */
 const DROPPED_ATTRIBUTES = new Set(["srcdoc"]);
 /** `<meta>` whose `content` is kept; others (CSRF tokens, verification codes…) lose it. */
 const KEPT_META_NAMES = new Set(["viewport", "theme-color", "color-scheme", "description"]);
-/** Attribute name words that mark a secret value whatever the profile's redaction lists say. */
-const SENSITIVE_ATTRIBUTE_NAME_PARTS = [
-  "csrf",
-  "xsrf",
-  "token",
-  "secret",
-  "password",
-  "nonce",
-  "session",
-  "signature",
-  "otp",
-  "otpcode",
-  "onetime",
-  "credential",
-  "authorization",
-  "apikey",
-  "accesskey",
-  "privatekey",
-  "auth",
-  "sid",
-  "jwt",
-  "pwd"
-];
-/** Name parts matched as whole words only (short, often inside unrelated words). */
-const WORD_ONLY_NAME_PARTS = new Set(["otp", "auth", "sid", "jwt", "pwd"]);
-/**
- * A URL query inside CSS (`?` up to a delimiter): one character class, so stripping stays
- * linear. Only used where the scanner cannot tell the URL bounds (comments, unterminated text).
- */
-// `#…` only with `=` (a token fragment, not a colour or id); each class stops at the next `#`/`=`.
-const CSS_QUERY_PATTERN = /\?[^\s"'()<>;,]*|#[^\s"'()<>;,#=]*=[^\s"'()<>;,]*/g;
-/** Values that are credentials whatever the attribute: JWTs, bearer/basic tokens, keys. */
-const CREDENTIAL_VALUE_PATTERNS = [
-  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
-  /\bBearer\s+[A-Za-z0-9._~+/=_-]{16,}/i,
-  // Base64 credentials: a digit, `+`, `/`, `=` or a lower-to-upper change ("Basic settings" is text).
-  /\b(?:[Bb]asic|BASIC)\s+(?=[A-Za-z0-9+/]{0,64}(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{8,}={0,2}(?![A-Za-z0-9+/=])/,
-  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
-];
-/** Serialized page state (`data-page='{"auth":{"sid":…}}'`) naming a secret field. */
-const JSON_SECRET_KEY_PATTERN =
-  /"[\w$.-]{0,40}?(?:token|secret|passw|pwd|session|sid|auth|jwt|credential|csrf)[\w$.-]{0,40}"\s*:/i;
-/** An attribute value that is a URL on its own (`data-src`, `longdesc`, `codebase`…). */
+/** An attribute value that is a URL on its own (`data-src`, `data-bg`…). */
 const URL_SHAPED_VALUE_PATTERN = /^(?:[a-z][a-z0-9+.-]*:\/\/|\/\/|\/[^\s/]|\.\.?\/)\S*$/i;
 /** A CSS string that is a URL (`@import "/x.css"`, `image-set("a.png" 1x)`). */
 const CSS_URL_STRING_PATTERN =
   /^(?:[a-z][a-z0-9+.-]*:|\/|\.\.?\/)\S*$|^[^\s"']+\.[a-z0-9]{2,5}(?:[?#]\S*)?$|^[^\s"']*[?#][^\s"']*=/i;
 /** Elements whose `value` attribute is form data (inputs are handled field by field). */
 const VALUE_ATTRIBUTE_ELEMENTS = new Set(["BUTTON", "OPTION", "PARAM", "DATA", "METER"]);
+
+/**
+ * Fidelity pass over CSS, one token at a time: escapes, comments and strings are skipped whole
+ * (so a quote inside them never shifts the scan), `url(…)` and URL strings are sanitized like
+ * recorded URLs. Every alternative always matches, so the scan is linear. Safety does not depend
+ * on it: {@link enforceCssInvariant} runs afterwards on the whole text.
+ */
+const CSS_TOKEN_PATTERN =
+  /\\[\s\S]|\/\*[\s\S]*?(?:\*\/|$)|url\(\s*(?:"(?:\\[\s\S]|[^"\\\n])*"?|'(?:\\[\s\S]|[^'\\\n])*'?|(?:\\[\s\S]|[^\s"'()\\])*)\s*\)?|"(?:\\[\s\S]|[^"\\\n])*"?|'(?:\\[\s\S]|[^'\\\n])*'?/gi;
+/**
+ * `?` and what follows up to a delimiter, escapes included (`\?token\=x` in a Tailwind class).
+ * Parentheses and commas belong to the run: it only meets text the token pass did not sanitize
+ * (comments, selectors, malformed URLs), where `?q=(1)&token=…` must go whole.
+ */
+const CSS_QUERY_RUN_PATTERN = /\\?\?(?:\\[\s\S]|[^\s"'`;{}<>\\])+/g;
+/** `#…=…`: a token fragment, not a colour or an id. Runs stop at the next `#`, so this is linear. */
+const CSS_FRAGMENT_RUN_PATTERN = /\\?#(?:\\[^#]|[^\s"'`;{}<>#=\\])*=(?:\\[\s\S]|[^\s"'`;{}<>\\])*/g;
+/** What an escape-decoded CSS text may not contain once the invariant ran. */
+const CSS_LEFTOVER_QUERY_PATTERN = /\?[^\s"'`;{}<>]|#[^\s"'`;{}<>#=]*=/;
+const CSS_ESCAPE_PATTERN = /\\(?:([0-9a-fA-F]{1,6})[ \t\r\n\f]?|([\s\S]))/g;
+/** Credentials inside CSS become an identifier, so selectors and values stay parseable. */
+const CSS_REDACTED = "redacted";
+/** Written instead of style text that is still suspicious after sanitizing. */
+const CSS_DROPPED = "/* [REDACTED] */";
+/** URL query (`?…=…`) or token fragment (`#…=…`) in an attribute value or text. */
+const QUERY_PARAMETER_PATTERN = /[?#][^\s"'`<>?#=]*=[^\s"'`<>]*/g;
+/** `--api-token: …`: a custom property named like a secret; its value is replaced. */
+const CSS_CUSTOM_PROPERTY_PATTERN = /(?<![\w-])(--[\w-]+)(\s*:)[^;}]*/g;
+/** `scheme://user:password@host`: the credentials go, the URL stays. */
+const URL_USERINFO_PATTERN = /\b([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s/?#@"'`<>]+@/gi;
+const HAS_URL_USERINFO_PATTERN = new RegExp(URL_USERINFO_PATTERN.source, "i");
+/** Longer CSS strings are not tested as URLs (the test backtracks); the invariant still runs. */
+const CSS_URL_STRING_MAX_CHARS = 4_096;
 
 export type RawDomSnapshot = {
   html: string;
@@ -94,14 +100,23 @@ export type RawDomSnapshotOptions = {
 
 type SanitizeContext = {
   options: RawDomSnapshotOptions;
-  sensitiveNameParts: string[];
+  /** The profile's body patterns, matched on attribute names besides the shared secret names. */
+  extraNameParts: readonly string[];
 };
 
 /**
  * The page as HTML for `dom: allow`. Works on a detached clone, so the page is never touched.
  * The HTML is stored as a blob the recorder's redactor never sees, so everything that could
- * carry a secret is handled here. Returns null when a blocked selector is invalid: without it
- * nothing proves the blocked content is masked, so the caller records a summary (fail closed).
+ * carry a secret is handled here, fail closed:
+ *
+ * - blocked selectors, field values, editors, code, comments and inline documents are removed;
+ * - every attribute value, text node and style text then goes through a context-free pass that
+ *   strips URL queries, token fragments and URL credentials and masks credential-shaped tokens,
+ *   whatever element or position it sits in;
+ * - style text that still looks suspicious once its CSS escapes are decoded is dropped whole.
+ *
+ * Returns null when a blocked selector is invalid: without it nothing proves the blocked content
+ * is masked, so the caller records a summary (fail closed).
  */
 export function serializeRawDom(
   document: Document,
@@ -127,10 +142,7 @@ export function serializeRawDom(
 
   const context: SanitizeContext = {
     options,
-    sensitiveNameParts: [
-      ...SENSITIVE_ATTRIBUTE_NAME_PARTS,
-      ...(options.sensitiveNamePatterns ?? []).map((pattern) => pattern.toLowerCase())
-    ].filter((part) => part.length > 0)
+    extraNameParts: (options.sensitiveNamePatterns ?? []).filter((part) => part.length > 0)
   };
 
   if (!sanitizeTree(clone, context)) {
@@ -158,11 +170,18 @@ function sanitizeTree(root: Element | DocumentFragment, context: SanitizeContext
     element.remove();
   }
 
+  // Fallback text of a frame is written raw, like a script.
+  for (const frame of Array.from(root.querySelectorAll("iframe"))) {
+    frame.replaceChildren();
+  }
+
   removeComments(root);
 
   if (!maskBlockedElements(root, context.options.blockedSelectors)) {
     return false;
   }
+
+  stripFieldValues(root, context.options.keepInputValues);
 
   const elements = [
     ...(root instanceof Element ? [root] : []),
@@ -173,7 +192,7 @@ function sanitizeTree(root: Element | DocumentFragment, context: SanitizeContext
     sanitizeAttributes(element, context);
   }
 
-  stripFieldValues(root, context.options.keepInputValues);
+  sanitizeTextNodes(root, context);
 
   return Array.from(root.querySelectorAll("template")).every((template) =>
     sanitizeTree(template.content, context)
@@ -181,17 +200,21 @@ function sanitizeTree(root: Element | DocumentFragment, context: SanitizeContext
 }
 
 function removeComments(root: Element | DocumentFragment): void {
-  const ownerDocument = root.ownerDocument ?? document;
-  const walker = ownerDocument.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
-  const comments: Node[] = [];
-
-  while (walker.nextNode()) {
-    comments.push(walker.currentNode);
-  }
-
-  for (const comment of comments) {
+  for (const comment of collectNodes(root, NodeFilter.SHOW_COMMENT)) {
     comment.parentNode?.removeChild(comment);
   }
+}
+
+function collectNodes(root: Element | DocumentFragment, filter: number): Node[] {
+  const ownerDocument = root.ownerDocument ?? document;
+  const walker = ownerDocument.createTreeWalker(root, filter);
+  const nodes: Node[] = [];
+
+  while (walker.nextNode()) {
+    nodes.push(walker.currentNode);
+  }
+
+  return nodes;
 }
 
 function maskBlockedElements(
@@ -236,208 +259,204 @@ function maskBlockedElements(
 }
 
 function sanitizeAttributes(element: Element, context: SanitizeContext): void {
-  const isMeta = element.tagName === "META";
+  for (const attribute of Array.from(element.attributes)) {
+    // `localName` drops namespace prefixes (`xlink:href` → `href`).
+    const name = attribute.localName.toLowerCase();
+
+    if (isDroppedAttribute(element, name)) {
+      element.removeAttributeNode(attribute);
+    } else {
+      attribute.value = sanitizeAttributeValue(name, attribute.value, context);
+    }
+  }
+
+  if (element.localName === "style" && element.textContent) {
+    element.textContent = sanitizeCss(element.textContent);
+  }
+}
+
+/** Inline documents, event handlers and `<meta content>` other than a few display hints. */
+function isDroppedAttribute(element: Element, name: string): boolean {
+  // Every handler name, known to the element or not (`onfocusin`), but not `one`.
+  if (DROPPED_ATTRIBUTES.has(name) || /^on[a-z]{3,}$/.test(name)) {
+    return true;
+  }
+
+  if (element.localName !== "meta" || name !== "content") {
+    return false;
+  }
+
   const metaName = (
     element.getAttribute("name") ??
     element.getAttribute("property") ??
     ""
   ).toLowerCase();
 
-  for (const attribute of Array.from(element.attributes)) {
-    // `localName` drops namespace prefixes (`xlink:href` → `href`).
-    const name = attribute.localName.toLowerCase();
-
-    if (DROPPED_ATTRIBUTES.has(name) || isEventHandlerAttribute(element, name)) {
-      element.removeAttributeNode(attribute);
-    } else if (isMeta && name === "content" && !KEPT_META_NAMES.has(metaName)) {
-      element.removeAttributeNode(attribute);
-    } else if (URL_ATTRIBUTES.has(name)) {
-      attribute.value = sanitizeUrlForPrivacy(attribute.value);
-    } else if (name === "srcset" || name === "imagesrcset") {
-      attribute.value = sanitizeSrcset(attribute.value);
-    } else if (
-      hasSensitiveNamePart(name, context.sensitiveNameParts) ||
-      (name !== "class" && isSecretValue(attribute.value))
-    ) {
-      attribute.value = MASKED_TEXT;
-    } else if (name === "style" || /url\(/i.test(attribute.value)) {
-      // Inline CSS and SVG paint attributes (`fill="url(…)"`, `mask`, `filter`…).
-      attribute.value = sanitizeCssUrls(attribute.value);
-    } else if (URL_SHAPED_VALUE_PATTERN.test(attribute.value.trim())) {
-      // Lazy-load and legacy URL attributes (`data-src`, `data-bg`, `longdesc`…).
-      attribute.value = sanitizeUrlForPrivacy(attribute.value.trim());
-    }
-  }
-
-  if (element.localName === "style" && element.textContent) {
-    element.textContent = sanitizeCssUrls(element.textContent);
-  }
+  // `http-equiv="refresh"` carries a URL whatever `name` says.
+  return !KEPT_META_NAMES.has(metaName) || element.hasAttribute("http-equiv");
 }
 
-/** `onclick`, `onerror`…: only names the element knows as handlers (`one` is kept). */
-function isEventHandlerAttribute(element: Element, name: string): boolean {
-  return /^on[a-z]+$/.test(name) && name in element;
+function sanitizeAttributeValue(name: string, value: string, context: SanitizeContext): string {
+  if (mentionsSecretName(name, context.extraNameParts) || isSecretJson(value, context)) {
+    return MASKED_TEXT;
+  }
+
+  if (name === "style" || /url\(/i.test(value)) {
+    // Inline CSS and SVG paint attributes (`fill="url(…)"`, `mask`, `filter`…).
+    return enforceTextInvariant(sanitizeCss(value), MASKED_TEXT, true);
+  }
+
+  // Queries go before URLs are split or templated: `srcset="/a.png?a=1,b 1x"` holds one query.
+  const withoutQueries = value.replace(QUERY_PARAMETER_PATTERN, "");
+  return enforceTextInvariant(normalizeUrls(name, withoutQueries), MASKED_TEXT, true);
+}
+
+/** JSON page state (`data-props='{"auth":{"sid":…}}'`, `<pre>{…}</pre>`) naming a secret field. */
+function isSecretJson(text: string, context: SanitizeContext): boolean {
+  return /^\s*[[{]/.test(text) && mentionsSecretName(unescapeForScan(text), context.extraNameParts);
+}
+
+/** URL attributes and URL-shaped values (`data-src`) are sanitized like every recorded URL. */
+function normalizeUrls(name: string, value: string): string {
+  if (URL_ATTRIBUTES.has(name)) {
+    return sanitizeUrlForPrivacy(value);
+  }
+
+  if (name === "srcset" || name === "imagesrcset") {
+    return sanitizeSrcset(value);
+  }
+
+  return URL_SHAPED_VALUE_PATTERN.test(value.trim()) ? sanitizeUrlForPrivacy(value.trim()) : value;
 }
 
 /**
- * Attribute names are lowercased by HTML, so words run together (`data-csrftoken`): parts match
- * the name without separators, except short ones that hide in other words (`otp` in
- * `data-hotpath`), which must be a whole word.
+ * The context-free guarantee for attribute values and text: URL queries, token fragments and
+ * URL credentials are stripped wherever they appear, and credential-shaped tokens are masked
+ * (the whole value for an attribute, only the token for text).
  */
-function hasSensitiveNamePart(name: string, parts: readonly string[]): boolean {
-  const words = name.split(/[-_:.]+/);
-  const collapsed = words.join("");
+function enforceTextInvariant(text: string, replacement: string, maskWhole: boolean): string {
+  if (maskWhole && containsCredential(text)) {
+    return replacement;
+  }
 
-  return parts.some((part) => {
-    const collapsedPart = part.replace(/[-_:.\s]+/g, "");
-    return WORD_ONLY_NAME_PARTS.has(collapsedPart)
-      ? words.includes(collapsedPart)
-      : collapsed.includes(collapsedPart);
-  });
+  const stripped = text.replace(QUERY_PARAMETER_PATTERN, "").replace(URL_USERINFO_PATTERN, "$1");
+  return maskWhole ? stripped : redactCredentials(stripped, replacement);
 }
 
-function isSecretValue(value: string): boolean {
+/** Visible text keeps its words; URLs lose their queries and credentials are masked. */
+function sanitizeTextNodes(root: Element | DocumentFragment, context: SanitizeContext): void {
+  for (const node of collectNodes(root, NodeFilter.SHOW_TEXT)) {
+    if (node.parentElement?.localName === "style") {
+      continue;
+    }
+
+    const text = node.nodeValue ?? "";
+    const sanitized = isSecretJson(text, context)
+      ? MASKED_TEXT
+      : enforceTextInvariant(text, MASKED_TEXT, false);
+
+    if (sanitized !== text) {
+      node.nodeValue = sanitized;
+    }
+  }
+}
+
+/**
+ * Inline CSS and `<style>` text. The token pass sanitizes well-formed URLs like recorded URLs;
+ * {@link enforceCssInvariant} then removes every query, token fragment, URL credential and
+ * credential-shaped token from the whole text, so a scanner desync cannot let one through. If
+ * the text, with its CSS escapes decoded, still holds any of them (`\3f token\3d …`), it is
+ * dropped whole.
+ */
+export function sanitizeCss(css: string): string {
+  const withUrls = css.replace(CSS_TOKEN_PATTERN, sanitizeCssToken);
+  // `</style` inside style text would end the element in the stored HTML.
+  const cleaned = enforceCssInvariant(withUrls).replace(/<\//g, "<\\/");
+  const decoded = cleaned.replace(CSS_ESCAPE_PATTERN, decodeCssEscape);
+
+  return CSS_LEFTOVER_QUERY_PATTERN.test(decoded) ||
+    HAS_URL_USERINFO_PATTERN.test(decoded) ||
+    containsCredential(decoded)
+    ? CSS_DROPPED
+    : cleaned;
+}
+
+function sanitizeCssToken(token: string): string {
+  const quote = token[0];
+
+  if (quote === '"' || quote === "'") {
+    const closed = token.length > 1 && token.endsWith(quote);
+    const text = token.slice(1, closed ? -1 : undefined);
+
+    // An unterminated string is left whole for the invariant, which strips it to the end.
+    return closed && isCssUrlString(text) ? `${quote}${sanitizeCssUrl(text)}${quote}` : token;
+  }
+
+  if (!/^url\(/i.test(token)) {
+    return token;
+  }
+
+  // Split by hand: a regex with a lazy body and an optional close backtracks on long data URLs.
+  const afterOpen = token.slice("url(".length);
+  const body = afterOpen.trimStart();
+  if (!body.endsWith(")")) {
+    // Malformed (`url(/a.png?q=(1)&t=…)`): left whole, so the invariant strips the query.
+    return token;
+  }
+
+  const value = body.slice(0, -1).trimEnd();
+  const tail = body.slice(value.length);
+  const head = token.slice(0, token.length - body.length);
+  const valueQuote = value[0] === '"' || value[0] === "'" ? value[0] : "";
+
+  if (valueQuote && (value.length < 2 || !value.endsWith(valueQuote))) {
+    return token;
+  }
+
+  const url = valueQuote ? value.slice(1, -1) : value;
+  return `${head}${valueQuote}${sanitizeCssUrl(url)}${valueQuote}${tail}`;
+}
+
+function isCssUrlString(text: string): boolean {
   return (
-    CREDENTIAL_VALUE_PATTERNS.some((pattern) => pattern.test(value)) ||
-    (/^\s*[[{]/.test(value) && JSON_SECRET_KEY_PATTERN.test(value))
+    /^[a-z][a-z0-9+.-]*:\S*$/i.test(text) ||
+    (text.length <= CSS_URL_STRING_MAX_CHARS && CSS_URL_STRING_PATTERN.test(text))
   );
 }
 
-/**
- * Runs every CSS URL (`url(…)`, quoted or not, and quoted URL strings such as `@import "…"` or
- * `image-set("…")`) through the same sanitizer as recorded URLs, keeping all other CSS text as
- * it is. A hand-written scanner that reads each character once, so adversarial styles cannot
- * slow it down. Comments and anything left unterminated fall back to stripping every `?…`
- * query, so a stray quote or `url(` never lets a later URL through. `data:` URLs are kept.
- */
-function sanitizeCssUrls(css: string): string {
-  const chunks: string[] = [];
-  let index = 0;
-  let copiedUpTo = 0;
-  const copyTo = (end: number): void => {
-    chunks.push(css.slice(copiedUpTo, end));
-    copiedUpTo = end;
-  };
-  const stripRest = (): void => {
-    chunks.push(stripCssQueries(css.slice(copiedUpTo)));
-    copiedUpTo = css.length;
-    index = css.length;
-  };
-
-  while (index < css.length) {
-    const char = css[index];
-
-    if (char === "/" && css[index + 1] === "*") {
-      const close = css.indexOf("*/", index + 2);
-      const end = close === -1 ? css.length : close + 2;
-      copyTo(index);
-      chunks.push(stripCssQueries(css.slice(index, end)));
-      copiedUpTo = end;
-      index = end;
-    } else if (
-      (char === "u" || char === "U") &&
-      css.slice(index, index + 4).toLowerCase() === "url("
-    ) {
-      const url = findCssUrl(css, index + 4);
-
-      if (!url) {
-        copyTo(index);
-        stripRest();
-      } else {
-        copyTo(url.start);
-        chunks.push(sanitizeCssUrl(css.slice(url.start, url.end)));
-        copiedUpTo = url.end;
-        index = url.end;
-      }
-    } else if (char === "\\") {
-      // An escape outside strings (`.content-\[\'\'\]`) is never a string delimiter.
-      index += 2;
-    } else if (char === '"' || char === "'") {
-      const end = findQuoteEnd(css, index + 1, char);
-
-      if (end >= css.length) {
-        copyTo(index);
-        stripRest();
-      } else {
-        const text = css.slice(index + 1, end);
-
-        if (CSS_URL_STRING_PATTERN.test(text)) {
-          copyTo(index + 1);
-          chunks.push(sanitizeCssUrl(text));
-          copiedUpTo = end;
-        }
-
-        index = end + 1;
-      }
-    } else {
-      index += 1;
-    }
-  }
-
-  copyTo(css.length);
-  return chunks.join("");
-}
-
-/**
- * Bounds of the URL inside `url(` (without its quotes), or null when it is unterminated. An
- * unquoted URL ends at whitespace, a quote or an unescaped `)` that closes it; parentheses
- * inside are balanced and backslash escapes are skipped.
- */
-function findCssUrl(css: string, start: number): { start: number; end: number } | null {
-  let index = start;
-
-  while (index < css.length && /\s/.test(css[index] ?? "")) {
-    index += 1;
-  }
-
-  const quote = css[index];
-
-  if (quote === '"' || quote === "'") {
-    const end = findQuoteEnd(css, index + 1, quote);
-    return end >= css.length ? null : { start: index + 1, end };
-  }
-
-  let depth = 0;
-
-  for (let cursor = index; cursor < css.length; cursor += 1) {
-    const char = css[cursor] ?? "";
-
-    if (char === "\\") {
-      cursor += 1;
-    } else if (char === "(") {
-      depth += 1;
-    } else if (char === ")" && depth > 0) {
-      depth -= 1;
-    } else if (char === ")" || /[\s"']/.test(char)) {
-      return { start: index, end: cursor };
-    }
-  }
-
-  return null;
-}
-
-function findQuoteEnd(css: string, start: number, quote: string): number {
-  let index = start;
-
-  while (index < css.length && css[index] !== quote) {
-    index += css[index] === "\\" ? 2 : 1;
-  }
-
-  return Math.min(index, css.length);
-}
-
-/** A URL query anywhere in CSS text; the fallback for comments and unterminated text. */
-function stripCssQueries(css: string): string {
-  return css.replace(CSS_QUERY_PATTERN, "");
-}
-
 function sanitizeCssUrl(url: string): string {
-  if (/^\s*(?:data:|#)/i.test(url)) {
+  // `url(#gradient)`: a reference inside the document, not a request.
+  if (/^\s*#/.test(url)) {
     return url;
   }
 
   // A trailing backslash would escape the closing quote or paren once the query is gone.
-  return stripCssQueries(sanitizeUrlForPrivacy(url.trim())).replace(/\\+$/, "");
+  return sanitizeUrlForPrivacy(url.trim()).replace(/\\+$/, "");
+}
+
+function enforceCssInvariant(css: string): string {
+  const stripped = css
+    .replace(CSS_QUERY_RUN_PATTERN, "")
+    .replace(CSS_FRAGMENT_RUN_PATTERN, "")
+    .replace(URL_USERINFO_PATTERN, "$1")
+    .replace(CSS_CUSTOM_PROPERTY_PATTERN, (declaration, name: string, colon: string) =>
+      mentionsSecretName(name) ? `${name}${colon} ${CSS_REDACTED}` : declaration
+    );
+
+  return redactCredentials(stripped, CSS_REDACTED);
+}
+
+function decodeCssEscape(
+  _match: string,
+  hex: string | undefined,
+  char: string | undefined
+): string {
+  if (hex === undefined) {
+    return char ?? "";
+  }
+
+  const codePoint = Number.parseInt(hex, 16);
+  return codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "�";
 }
 
 function sanitizeSrcset(value: string): string {
@@ -452,7 +471,8 @@ function sanitizeSrcset(value: string): string {
 
 function stripFieldValues(root: Element | DocumentFragment, keepInputValues: boolean): void {
   for (const input of Array.from(root.querySelectorAll("input"))) {
-    const type = (input.getAttribute("type") ?? "").toLowerCase();
+    // HTML does not trim `type`: `"hidden "` is a text field, but its value is still form state.
+    const type = (input.getAttribute("type") ?? "").trim().toLowerCase();
 
     if (!keepInputValues || type === "hidden" || isNeverCapturedField(input)) {
       input.removeAttribute("value");

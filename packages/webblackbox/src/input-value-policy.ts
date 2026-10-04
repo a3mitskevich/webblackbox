@@ -1,4 +1,4 @@
-import type { CapturePolicy } from "@webblackbox/protocol";
+import { mentionsSecretName, type CapturePolicy } from "@webblackbox/protocol";
 
 /** Longest raw input value kept on a `user.input` event. */
 export const MAX_CAPTURED_INPUT_VALUE_CHARS = 1_000;
@@ -18,6 +18,8 @@ const NEVER_CAPTURED_AUTOCOMPLETE_TOKENS = new Set([
 const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode/i;
 /** Whole words of a field name or id that mark a one-time code (`otpCode`, `sms_otp`). */
 const ONE_TIME_CODE_WORDS = new Set(["otp", "totp", "hotp", "mfa"]);
+/** Payment card fields named without an autocomplete hint (`card_number`, `ccNum`). */
+const CARD_FIELD_COMPACT_PATTERN = /card(?:number|num|no)|ccnum|creditcard|debitcard|securitycode/;
 /** One-time-code markers inside a name with its separators removed (`otpcode`). */
 const ONE_TIME_CODE_COMPACT_PATTERN = /otpcode|onetime(?:code|password|pin|pass|token)|twofa/;
 /**
@@ -175,7 +177,10 @@ export function readCapturableInputValue(
   return field.value.slice(0, MAX_CAPTURED_INPUT_VALUE_CHARS);
 }
 
-/** Password, one-time-code and payment card fields: their values are never recorded anywhere. */
+/**
+ * Password, one-time-code, payment card and secret-named fields (tokens, keys, CSRF, PIN…):
+ * their values are never recorded anywhere.
+ */
 export function isNeverCapturedField(field: EditableField): boolean {
   // A reveal in the same task as this check has not reached the observer callback yet.
   for (const watcher of revealWatchers) {
@@ -191,7 +196,14 @@ export function isNeverCapturedField(field: EditableField): boolean {
 
   const nameAndId = `${field.name} ${field.id}`;
 
-  if (PASSWORD_LIKE_NAME_PATTERN.test(nameAndId) || isOneTimeCodeName(nameAndId)) {
+  if (
+    PASSWORD_LIKE_NAME_PATTERN.test(nameAndId) ||
+    isOneTimeCodeName(nameAndId) ||
+    CARD_FIELD_COMPACT_PATTERN.test(nameAndId.toLowerCase().replace(/[^a-z0-9]+/g, "")) ||
+    // Tokens, keys, CSRF fields, CVV, PIN, SSN… (`api_key`, `authToken`, `pin`).
+    mentionsSecretName(field.name) ||
+    mentionsSecretName(field.id)
+  ) {
     return true;
   }
 

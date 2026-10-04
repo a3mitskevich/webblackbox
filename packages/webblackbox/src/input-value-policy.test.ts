@@ -216,6 +216,28 @@ describe("readCapturableInputValue", () => {
     }
   });
 
+  it("never captures secret-named or card-named fields", () => {
+    for (const html of [
+      '<input data-field type="text" name="api_key" />',
+      '<input data-field type="text" name="authToken" />',
+      '<input data-field type="text" id="csrfField" />',
+      '<input data-field type="text" name="pin" />',
+      '<input data-field type="text" name="card_cvv" />',
+      '<input data-field type="text" name="cardNumber" />',
+      '<input data-field type="text" name="ſession" />'
+    ]) {
+      expect(readCapturableInputValue(field(html), policy("allow")), html).toBeUndefined();
+    }
+
+    for (const html of [
+      '<input data-field name="city" />',
+      '<input data-field name="spinner_speed" />',
+      '<input data-field name="author_name" />'
+    ]) {
+      expect(readCapturableInputValue(field(html), policy("allow")), html).toBe("typed value");
+    }
+  });
+
   it("lets a nearer blocked selector win over an unmasked ancestor", () => {
     const sensitive = field('<form class="checkout"><input data-field data-sensitive /></form>');
 
