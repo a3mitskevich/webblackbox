@@ -184,6 +184,8 @@ describe("readCapturableInputValue", () => {
     for (const html of [
       '<input data-field name="footprint" />',
       '<input data-field id="shotput" />',
+      '<input data-field name="donation_onetime_amount" />',
+      '<input data-field id="field-a12fa3" />',
       '<input data-field name="author" />'
     ]) {
       expect(readCapturableInputValue(field(html), policy("allow")), html).toBe("typed value");

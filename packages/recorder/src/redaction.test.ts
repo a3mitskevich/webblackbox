@@ -183,6 +183,29 @@ describe("redactPayload URL fields", () => {
     ]);
   });
 
+  it("masks values under keys that contain short secret names anywhere", () => {
+    const redacted = redactPayload(
+      {
+        entries: [
+          { key: "oauth_code_verifier", value: "pkce-verifier" },
+          { key: "oauthState", value: "state" },
+          { key: "mycsrf", value: "c" },
+          { key: "xsrfval", value: "x" },
+          { key: "appauth", value: "a" },
+          { key: "myjwt", value: "j" },
+          { key: "cache", value: JSON.stringify({ oauthState: "s" }) },
+          { key: "plan", value: "basic membership" }
+        ]
+      },
+      PLAIN_PROFILE
+    ) as { entries: Array<{ value: string }> };
+
+    expect(redacted.entries.map((entry) => entry.value)).toEqual([
+      ...Array.from({ length: 7 }, () => "[REDACTED]"),
+      "basic membership"
+    ]);
+  });
+
   it("sanitizes referrer and src payload fields", () => {
     const redacted = redactPayload(
       {

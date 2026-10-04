@@ -1153,17 +1153,19 @@ export class LiteCaptureAgent {
   }
 
   private emitCookieSnapshot(reason: string): void {
-    const names = document.cookie
+    const cookies = document.cookie
       .split(";")
       .map((entry) => entry.trim())
-      // A cookie without `=` is a bare value, not a name: never list it.
+      .filter((entry) => entry.length > 0);
+    // A cookie without `=` is a bare value, not a name: it is counted but never listed.
+    const names = cookies
       .filter((entry) => entry.includes("="))
       .map((entry) => entry.split("=")[0]?.trim() ?? "");
     const showsNames = this.capturePolicy.categories.cookies === "names-only";
 
     this.queueEvent("cookieSnapshot", {
       reason,
-      count: names.length,
+      count: cookies.length,
       mode: showsNames ? "names-only" : "counts-only",
       redacted: true,
       ...(showsNames

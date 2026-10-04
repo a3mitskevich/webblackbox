@@ -347,20 +347,18 @@ const MAX_JSON_FIELD_NAMES = 200;
 const CREDENTIAL_VALUE_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
   /\bBearer\s+[A-Za-z0-9._~+/=_-]{16,}/i,
-  /\bBasic\s+[A-Za-z0-9+/=]{8,}/i,
+  // Base64 credentials: a digit, `+`, `/`, `=` or a lower-to-upper change ("basic plan" is text).
+  /\b[Bb]asic\s+(?=[A-Za-z0-9+/]{0,64}(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{12,}={0,2}(?![A-Za-z0-9+/=])/,
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
 ];
 
-/** Short names that also start a word (`authstate`, `jwtToken`), but not `author…`. */
-const SHORT_NAME_PREFIX_PATTERNS: Record<string, RegExp> = {
-  auth: /^auth(?!or)/,
-  jwt: /^jwt/
-};
+/** Names matched only as a whole word (`sid` is inside `sidebar`, `inside`…). */
+const WORD_ONLY_SECRET_NAMES = new Set(["sid"]);
 
 /**
- * Whether a key or field name mentions a secret name. Short names (`sid`, `auth`, `jwt`) must
- * be a word or, for some, start one (`authOrigin`, `authstate`, not `author` or `sidebar`);
- * longer ones match anywhere (`JSESSIONID`).
+ * Whether a key or field name mentions a secret name: anywhere in the name without separators
+ * (`JSESSIONID`, `oauthState`, `mycsrf`), except inside `author`; word-only names must be a
+ * whole word (`sid`, not `sidebar`).
  */
 function nameMentions(field: string, secretName: string): boolean {
   const normalized = secretName.toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -369,21 +367,25 @@ function nameMentions(field: string, secretName: string): boolean {
     return false;
   }
 
-  if (normalized.length > 4) {
-    return field
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "")
-      .includes(normalized);
-  }
-
-  const prefix = SHORT_NAME_PREFIX_PATTERNS[normalized];
-
-  return field
+  const words = field
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
     .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .some((word) => word === normalized || (prefix?.test(word) ?? false));
+    .split(/[^a-z0-9]+/);
+
+  if (WORD_ONLY_SECRET_NAMES.has(normalized)) {
+    return words.includes(normalized);
+  }
+
+  // `authOrigin` is `auth` + `origin` even though its letters spell `author…`.
+  return (
+    words.some((word) => word.startsWith(normalized) && !word.startsWith("author")) ||
+    field
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "")
+      .replaceAll("author", "")
+      .includes(normalized)
+  );
 }
 
 /** Field names in a JSON-looking value (capped), so nested secrets are found. */

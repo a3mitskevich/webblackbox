@@ -52,11 +52,17 @@ const SENSITIVE_ATTRIBUTE_NAME_PARTS = [
 ];
 /** Name parts matched as whole words only (short, often inside unrelated words). */
 const WORD_ONLY_NAME_PARTS = new Set(["otp", "auth", "sid", "jwt", "pwd"]);
+/**
+ * A URL query inside CSS (`?` up to a delimiter): one character class, so stripping stays
+ * linear. Only used where the scanner cannot tell the URL bounds (comments, unterminated text).
+ */
+const CSS_QUERY_PATTERN = /\?[^\s"'()<>;,]*/g;
 /** Values that are credentials whatever the attribute: JWTs, bearer/basic tokens, keys. */
 const CREDENTIAL_VALUE_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
   /\bBearer\s+[A-Za-z0-9._~+/=_-]{16,}/i,
-  /\bBasic\s+[A-Za-z0-9+/=]{8,}/i,
+  // Base64 credentials: a digit, `+`, `/`, `=` or a lower-to-upper change ("Basic settings" is text).
+  /\b[Bb]asic\s+(?=[A-Za-z0-9+/]{0,64}(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{12,}={0,2}(?![A-Za-z0-9+/=])/,
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
 ];
 /** Serialized page state (`data-page='{"auth":{"sid":…}}'`) naming a secret field. */
@@ -128,6 +134,11 @@ export function serializeRawDom(
 
   if (!sanitizeTree(clone, context)) {
     return null;
+  }
+
+  // `designMode` makes the whole page an editor without any attribute to find.
+  if (document.designMode === "on" && !options.keepInputValues) {
+    clone.querySelector("body")?.replaceChildren(document.createTextNode(MASKED_TEXT));
   }
 
   const doctype = document.doctype ? `<!DOCTYPE ${document.doctype.name}>` : "";
@@ -245,7 +256,7 @@ function sanitizeAttributes(element: Element, context: SanitizeContext): void {
       attribute.value = sanitizeSrcset(attribute.value);
     } else if (
       hasSensitiveNamePart(name, context.sensitiveNameParts) ||
-      isSecretValue(attribute.value)
+      (name !== "class" && isSecretValue(attribute.value))
     ) {
       attribute.value = MASKED_TEXT;
     } else if (name === "style" || /url\(/i.test(attribute.value)) {
@@ -293,89 +304,112 @@ function isSecretValue(value: string): boolean {
 
 /**
  * Runs every CSS URL (`url(…)`, quoted or not, and quoted URL strings such as `@import "…"` or
- * `image-set("…")`) through the same sanitizer as recorded URLs. A hand-written scanner: each
- * character is read once, so adversarial styles cannot slow it down. `data:` URLs are kept.
+ * `image-set("…")`) through the same sanitizer as recorded URLs, keeping all other CSS text as
+ * it is. A hand-written scanner that reads each character once, so adversarial styles cannot
+ * slow it down. Comments and anything left unterminated fall back to stripping every `?…`
+ * query, so a stray quote or `url(` never lets a later URL through. `data:` URLs are kept.
  */
 function sanitizeCssUrls(css: string): string {
-  const lower = css.toLowerCase();
   const chunks: string[] = [];
-  let copiedUpTo = 0;
   let index = 0;
+  let copiedUpTo = 0;
+  const copyTo = (end: number): void => {
+    chunks.push(css.slice(copiedUpTo, end));
+    copiedUpTo = end;
+  };
+  const stripRest = (): void => {
+    chunks.push(stripCssQueries(css.slice(copiedUpTo)));
+    copiedUpTo = css.length;
+    index = css.length;
+  };
 
   while (index < css.length) {
     const char = css[index];
 
-    if (lower.startsWith("url(", index)) {
-      const parsed = readCssUrl(css, index + 4);
-      chunks.push(
-        css.slice(copiedUpTo, index),
-        `url(${parsed.quote}${sanitizeCssUrl(parsed.url)}${parsed.quote})`
-      );
-      index = parsed.end;
-      copiedUpTo = index;
+    if (char === "/" && css[index + 1] === "*") {
+      const close = css.indexOf("*/", index + 2);
+      const end = close === -1 ? css.length : close + 2;
+      copyTo(index);
+      chunks.push(stripCssQueries(css.slice(index, end)));
+      copiedUpTo = end;
+      index = end;
+    } else if (
+      (char === "u" || char === "U") &&
+      css.slice(index, index + 4).toLowerCase() === "url("
+    ) {
+      const url = findCssUrl(css, index + 4);
+
+      if (!url) {
+        copyTo(index);
+        stripRest();
+      } else {
+        copyTo(url.start);
+        chunks.push(sanitizeCssUrl(css.slice(url.start, url.end)));
+        copiedUpTo = url.end;
+        index = url.end;
+      }
     } else if (char === '"' || char === "'") {
       const end = findQuoteEnd(css, index + 1, char);
-      const text = css.slice(index + 1, end);
 
-      if (CSS_URL_STRING_PATTERN.test(text)) {
-        chunks.push(css.slice(copiedUpTo, index + 1), sanitizeCssUrl(text));
-        copiedUpTo = end;
+      if (end >= css.length) {
+        copyTo(index);
+        stripRest();
+      } else {
+        const text = css.slice(index + 1, end);
+
+        if (CSS_URL_STRING_PATTERN.test(text)) {
+          copyTo(index + 1);
+          chunks.push(sanitizeCssUrl(text));
+          copiedUpTo = end;
+        }
+
+        index = end + 1;
       }
-
-      index = end + 1;
     } else {
       index += 1;
     }
   }
 
-  chunks.push(css.slice(copiedUpTo));
+  copyTo(css.length);
   return chunks.join("");
 }
 
-/** `url(` argument from `start`: a quoted string or an unquoted run up to the matching `)`. */
-function readCssUrl(css: string, start: number): { quote: string; url: string; end: number } {
+/**
+ * Bounds of the URL inside `url(` (without its quotes), or null when it is unterminated. An
+ * unquoted URL ends at whitespace, a quote or an unescaped `)` that closes it; parentheses
+ * inside are balanced and backslash escapes are skipped.
+ */
+function findCssUrl(css: string, start: number): { start: number; end: number } | null {
   let index = start;
 
   while (index < css.length && /\s/.test(css[index] ?? "")) {
     index += 1;
   }
 
-  const quote = css[index] === '"' || css[index] === "'" ? (css[index] as string) : "";
+  const quote = css[index];
 
-  if (quote) {
+  if (quote === '"' || quote === "'") {
     const end = findQuoteEnd(css, index + 1, quote);
-    let after = end + 1;
-
-    while (after < css.length && /\s/.test(css[after] ?? "")) {
-      after += 1;
-    }
-
-    return {
-      quote,
-      url: css.slice(index + 1, end),
-      end: css[after] === ")" ? after + 1 : Math.min(after, css.length)
-    };
+    return end >= css.length ? null : { start: index + 1, end };
   }
 
-  // Unquoted: parentheses inside (invalid CSS, but pages write it) must not end the URL early.
   let depth = 0;
-  let cursor = index;
 
-  for (; cursor < css.length; cursor += 1) {
-    const char = css[cursor];
+  for (let cursor = index; cursor < css.length; cursor += 1) {
+    const char = css[cursor] ?? "";
 
-    if (char === "(") {
+    if (char === "\\") {
+      cursor += 1;
+    } else if (char === "(") {
       depth += 1;
-    } else if (char === ")") {
-      if (depth === 0) {
-        break;
-      }
-
+    } else if (char === ")" && depth > 0) {
       depth -= 1;
+    } else if (char === ")" || /[\s"']/.test(char)) {
+      return { start: index, end: cursor };
     }
   }
 
-  return { quote: "", url: css.slice(index, cursor).trim(), end: Math.min(cursor + 1, css.length) };
+  return null;
 }
 
 function findQuoteEnd(css: string, start: number, quote: string): number {
@@ -388,8 +422,13 @@ function findQuoteEnd(css: string, start: number, quote: string): number {
   return Math.min(index, css.length);
 }
 
+/** A URL query anywhere in CSS text; the fallback for comments and unterminated text. */
+function stripCssQueries(css: string): string {
+  return css.replace(CSS_QUERY_PATTERN, "");
+}
+
 function sanitizeCssUrl(url: string): string {
-  return /^\s*data:/i.test(url) ? url : sanitizeUrlForPrivacy(url.trim());
+  return /^\s*data:/i.test(url) ? url : stripCssQueries(sanitizeUrlForPrivacy(url.trim()));
 }
 
 function sanitizeSrcset(value: string): string {
@@ -422,9 +461,13 @@ function stripFieldValues(root: Element | DocumentFragment, keepInputValues: boo
   }
 
   // Rich editors hold typed text (chat, mail); without input values it is masked like a field.
-  for (const editor of Array.from(
-    root.querySelectorAll('[contenteditable]:not([contenteditable="false"])')
-  )) {
+  const editorSelector = '[contenteditable]:not([contenteditable="false"])';
+  const editors = [
+    ...(root instanceof Element && root.matches(editorSelector) ? [root] : []),
+    ...Array.from(root.querySelectorAll(editorSelector))
+  ];
+
+  for (const editor of editors) {
     editor.replaceChildren(editor.ownerDocument.createTextNode(MASKED_TEXT));
   }
 

@@ -18,8 +18,8 @@ const NEVER_CAPTURED_AUTOCOMPLETE_TOKENS = new Set([
 const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode/i;
 /** Whole words of a field name or id that mark a one-time code (`otpCode`, `sms_otp`). */
 const ONE_TIME_CODE_WORDS = new Set(["otp", "totp", "hotp", "mfa"]);
-/** One-time-code markers inside a name with its separators removed (`otpcode`, `verify2fa`). */
-const ONE_TIME_CODE_COMPACT_PATTERN = /2fa|otpcode|onetime/;
+/** One-time-code markers inside a name with its separators removed (`otpcode`). */
+const ONE_TIME_CODE_COMPACT_PATTERN = /otpcode|onetime(?:code|password|pin|pass)/;
 
 type PasswordFieldRegistry = {
   /**
@@ -225,9 +225,13 @@ function nearestMatch(
 /** `otp1`, `otpCode`, `verifyOTP`, `code2fa`, `otpcode`: split-box and named OTP fields. */
 function isOneTimeCodeName(value: string): boolean {
   const compact = value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const words = splitNameWords(value);
+
   return (
     ONE_TIME_CODE_COMPACT_PATTERN.test(compact) ||
-    splitNameWords(value).some((word) => ONE_TIME_CODE_WORDS.has(word))
+    words.some(
+      (word, index) => ONE_TIME_CODE_WORDS.has(word) || (word === "2" && words[index + 1] === "fa")
+    )
   );
 }
 

@@ -234,6 +234,47 @@ describe("serializeRawDom", () => {
     );
   });
 
+  it("keeps sanitizing after comments, odd characters and unterminated CSS", () => {
+    const sanitizeStyle = (css: string): string => {
+      document.body.innerHTML = "";
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.body.append(style);
+      return serializeRawDom(document, OPTIONS)?.html ?? "";
+    };
+
+    expect(
+      sanitizeStyle("/* don't */ .a{background:url(x.png?token=COMMENT-QUOTE)}")
+    ).not.toContain("COMMENT-QUOTE");
+    expect(
+      sanitizeStyle(`.t{content:"${"İ".repeat(40)}"} .b{background:url(/x.png?token=WIDE-CHAR)}`)
+    ).not.toContain("WIDE-CHAR");
+    expect(sanitizeStyle("url(a\\)b.png?t=ESCAPED-PAREN)")).not.toContain("ESCAPED-PAREN");
+    expect(sanitizeStyle(".x{background:url(/open.png?t=UNCLOSED")).not.toContain("UNCLOSED");
+
+    const kept = sanitizeStyle('/* url( */ #hdr{color:red} .c{background:url("a.png?q=1" x) red}');
+    expect(kept).toContain("#hdr{color:red}");
+    expect(kept).toContain('url("a.png" x) red');
+  });
+
+  it("does not mistake ordinary text for credentials and masks whole-page editors", () => {
+    document.body.innerHTML =
+      '<div class="ui basic inverted segment" title="Basic settings panel">PAGE-TEXT</div>';
+
+    const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+
+    expect(html).toContain('class="ui basic inverted segment"');
+    expect(html).toContain('title="Basic settings panel"');
+
+    document.designMode = "on";
+
+    try {
+      expect(serializeRawDom(document, OPTIONS)?.html).not.toContain("PAGE-TEXT");
+    } finally {
+      document.designMode = "off";
+    }
+  });
+
   it("fails closed on an invalid blocked selector and caps the size", () => {
     document.body.innerHTML = `<p>${"x".repeat(RAW_DOM_SNAPSHOT_MAX_CHARS)}</p>`;
 
