@@ -25,7 +25,9 @@ const CREDENTIALS = {
   openai: join("sk", "-proj-", "Ab3Cd5Ef7Gh9Ij1Kl3Mn5Op"),
   npm: join("np", "m_", "a".repeat(18), "1".repeat(18)),
   hex: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
-  base62: "q8Zt3Lm9Xw2Rv7Kp4Nd6"
+  base62: "q8Zt3Lm9Xw2Rv7Kp4Nd6",
+  base64url: "oHtmr-lAc6KRN_ofgVW0Eb4q_BSs5GbCvqHPmMvlAtg",
+  base64: "/rF/qS9xfuDvY2LNmFA4"
 };
 
 describe("containsCredential", () => {
@@ -40,6 +42,9 @@ describe("containsCredential", () => {
       "orderSummaryRow12",
       "550e8400-e29b-41d4-a716-446655440000",
       "checkout_submit_button_primary_variant",
+      "product_card_12345_title_wrapper",
+      "orderSummaryRow12_mobileVariant3",
+      "/static/js/main-chunk-vendors.js",
       "Internationalization2024",
       "Order 42 shipped on 2024-05-01",
       "#a1b2c3"

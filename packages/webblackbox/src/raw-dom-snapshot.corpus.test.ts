@@ -24,6 +24,11 @@ const GITLAB = join("gl", "pat-", "Xy7Zq2Wv4Ut6Sr8Qp0On");
 const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2lnbmF0dXJlLXZhbHVlLTE";
 const DIGEST = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
 const SSH_KEY_LINE = "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ";
+/** base64url session tokens: separators split them into short letter/digit runs. */
+const BASE64URL_TOKENS = [
+  "oHtmr-lAc6KRN_ofgVW0Eb4q_BSs5GbCvqHPmMvlAtg",
+  "a1B2c3D4e5-F6g7H8i9j0_K1l2m3N4o5"
+];
 
 type CssCase = { name: string; css: string; secrets: string[]; kept?: string[] };
 
@@ -147,7 +152,8 @@ describe("raw DOM corpus: CSS", () => {
   it("keeps ordinary stylesheets readable", () => {
     const ordinary =
       "@font-face{unicode-range:U+0000-00FF}.x{color:#fff;background:url(/img/logo.png) no-repeat}" +
-      'a[href^="/docs"]:hover{text-decoration:underline}.btn::before{content:"Next ›"}';
+      'a[href^="/docs"]:hover{text-decoration:underline}.btn::before{content:"Next ›"}' +
+      "#app[data-state=open]{color:red}.k#id[x=y]{a:b}#nav[aria-expanded=true]>ul{display:block}";
 
     expect(sanitizeCss(ordinary)).toBe(ordinary);
   });
@@ -311,6 +317,9 @@ describe("raw DOM corpus: text", () => {
       <p>visit https://h.test/r?BARE2SECRET or https://h.test/r#BARE3SECRET</p>
       <p>https://h.test/r?a%3dENC1SECRET and https://h.test/r;x=PATHPARAM1SECRET</p>
       <p title="go to /cb?BARE4SECRET now" data-x="see /p;jsessionid=PATHPARAM2SECRET">t</p>
+      <p>session ${BASE64URL_TOKENS[0]}</p>
+      <p data-x="${BASE64URL_TOKENS[1]}">login https://u:SEC@RETPW1SECRET@h.test/p</p>
+      <svg><use href="#icon-cart"></use></svg>
       <p>Session expired? Sign in again.</p>`;
     document.getElementById("escaped")!.textContent = escapedJson;
 
@@ -334,7 +343,9 @@ describe("raw DOM corpus: text", () => {
       "ENC1SECRET",
       "PATHPARAM1SECRET",
       "BARE4SECRET",
-      "PATHPARAM2SECRET"
+      "PATHPARAM2SECRET",
+      "RETPW1SECRET",
+      ...BASE64URL_TOKENS
     ]) {
       expect(html, secret).not.toContain(secret);
     }
@@ -342,6 +353,7 @@ describe("raw DOM corpus: text", () => {
     expect(html).toContain("Your API key: [REDACTED]");
     expect(html).toContain("https://h.test/reset</a>");
     expect(html).toContain("Session expired? Sign in again.");
+    expect(html).toContain('<use href="#icon-cart">');
   });
 
   it("never serializes shadow roots, and sanitizes declarative shadow templates", () => {

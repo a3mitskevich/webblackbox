@@ -82,8 +82,8 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   /(?<![\w-])SG\.[\w-]{16,}\.[\w-]{16,}/g
 ];
 
-/** Candidate runs for {@link isTokenShaped}: long letter/digit runs without separators. */
-const ALPHANUMERIC_RUN_PATTERN = /[A-Za-z0-9]{20,}/g;
+/** Candidate runs for {@link isTokenShaped}: base64/base64url characters, separators included. */
+const TOKEN_RUN_PATTERN = /[A-Za-z0-9_+/=-]{20,}/g;
 const MIN_TOKEN_CHARS = 20;
 /** A run this long that mixes letters and digits is a token (hex digests, base64, API keys). */
 const LONG_TOKEN_CHARS = 32;
@@ -145,25 +145,47 @@ export function unescapeForScan(text: string): string {
     );
 }
 
-/** A letter/digit run that reads as a generated secret rather than a word or an id. */
+/**
+ * A run that reads as a generated secret rather than a word, an id or a test id: a letter/digit
+ * segment that is random-looking on its own (hex digests, API keys), or a base64/base64url run
+ * mixing upper case, lower case and digits across `-`, `_`, `+`, `/` (`oHtmr-lAc6KRN_ofgVW0…`).
+ * UUIDs and `snake_case_ids_12` are not tokens.
+ */
 export function isTokenShaped(run: string): boolean {
-  if (run.length < MIN_TOKEN_CHARS || !/[0-9]/.test(run) || !/[A-Za-z]/.test(run)) {
-    return false;
-  }
-
-  if (run.length >= LONG_TOKEN_CHARS) {
+  if (run.split(/[^A-Za-z0-9]+/).some(isRandomSegment)) {
     return true;
   }
 
+  return (
+    run.length >= MIN_TOKEN_CHARS &&
+    /[a-z]/.test(run) &&
+    /[A-Z]/.test(run) &&
+    /[0-9]/.test(run) &&
+    // No length shortcut: `orderSummaryRow12_mobileVariant3` is long, mixed and still an id.
+    countDigitTransitions(run) >= MIN_TOKEN_TRANSITIONS
+  );
+}
+
+function isRandomSegment(segment: string): boolean {
+  if (segment.length < MIN_TOKEN_CHARS || !/[0-9]/.test(segment) || !/[A-Za-z]/.test(segment)) {
+    return false;
+  }
+
+  return (
+    segment.length >= LONG_TOKEN_CHARS || countDigitTransitions(segment) >= MIN_TOKEN_TRANSITIONS
+  );
+}
+
+function countDigitTransitions(text: string): number {
   let transitions = 0;
 
-  for (let index = 1; index < run.length; index += 1) {
-    if (isDigit(run[index - 1] ?? "") !== isDigit(run[index] ?? "")) {
+  for (let index = 1; index < text.length; index += 1) {
+    if (isDigit(text[index - 1] ?? "") !== isDigit(text[index] ?? "")) {
       transitions += 1;
     }
   }
 
-  return transitions >= MIN_TOKEN_TRANSITIONS;
+  return transitions;
 }
 
 /** Whether text holds a known credential format or a token-shaped run. */
@@ -172,9 +194,7 @@ export function containsCredential(text: string): boolean {
     return true;
   }
 
-  return Array.from(text.matchAll(ALPHANUMERIC_RUN_PATTERN), (match) => match[0]).some(
-    isTokenShaped
-  );
+  return Array.from(text.matchAll(TOKEN_RUN_PATTERN), (match) => match[0]).some(isTokenShaped);
 }
 
 /** Replaces every credential and token-shaped run in free text, keeping the rest. */
@@ -184,7 +204,7 @@ export function redactCredentials(text: string, replacement = REDACTED_SECRET): 
     text
   );
 
-  return withoutFormats.replace(ALPHANUMERIC_RUN_PATTERN, (run) =>
+  return withoutFormats.replace(TOKEN_RUN_PATTERN, (run) =>
     isTokenShaped(run) ? replacement : run
   );
 }

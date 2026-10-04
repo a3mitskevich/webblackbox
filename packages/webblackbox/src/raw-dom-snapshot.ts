@@ -61,10 +61,13 @@ const CSS_TOKEN_PATTERN =
  * (comments, selectors, malformed URLs), where `?q=(1)&token=…` must go whole.
  */
 const CSS_QUERY_RUN_PATTERN = /\\?\?(?:\\[\s\S]|[^\s"'`;{}<>\\])+/g;
-/** `#…=…`: a token fragment, not a colour or an id. Runs stop at the next `#`, so this is linear. */
-const CSS_FRAGMENT_RUN_PATTERN = /\\?#(?:\\[^#]|[^\s"'`;{}<>#=\\])*=(?:\\[\s\S]|[^\s"'`;{}<>\\])*/g;
+/**
+ * `#key=…`: a token fragment, not a colour or an id selector (`#app[data-state=open]` keeps its
+ * attribute selector: the key holds only name characters). Linear: keys stop at the next `#`.
+ */
+const CSS_FRAGMENT_RUN_PATTERN = /\\?#(?:\\[^#]|[\w.%&-])*=(?:\\[\s\S]|[^\s"'`;{}<>\\])*/g;
 /** What an escape-decoded CSS text may not contain once the invariant ran. */
-const CSS_LEFTOVER_QUERY_PATTERN = /\?[^\s"'`;{}<>]|#[^\s"'`;{}<>#=]*=/;
+const CSS_LEFTOVER_QUERY_PATTERN = /\?[^\s"'`;{}<>]|#[\w.%&-]*=/;
 const CSS_ESCAPE_PATTERN = /\\(?:([0-9a-fA-F]{1,6})[ \t\r\n\f]?|([\s\S]))/g;
 /** Credentials inside CSS become an identifier, so selectors and values stay parseable. */
 const CSS_REDACTED = "redacted";
@@ -85,7 +88,8 @@ const URL_SUFFIX_PATTERN =
 /** `--api-token: …`: a custom property named like a secret; its value is replaced. */
 const CSS_CUSTOM_PROPERTY_PATTERN = /(?<![\w-])(--[\w-]+)(\s*:)[^;}]*/g;
 /** `scheme://user:password@host`: the credentials go, the URL stays. */
-const URL_USERINFO_PATTERN = /\b([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s/?#@"'`<>]+@/gi;
+// Up to the last `@` before the path: a password may hold `@` itself.
+const URL_USERINFO_PATTERN = /\b([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s/?#"'`<>]*@/gi;
 // Without `g`: `test` on a global pattern keeps `lastIndex` between calls.
 const HAS_URL_USERINFO_PATTERN = new RegExp(URL_USERINFO_PATTERN.source, "i");
 
@@ -325,7 +329,8 @@ function isSecretJson(text: string, context: SanitizeContext): boolean {
 /** URL attributes and URL-shaped values (`data-src`) are sanitized like every recorded URL. */
 function normalizeUrls(name: string, value: string): string {
   if (URL_ATTRIBUTES.has(name)) {
-    return sanitizeUrlForPrivacy(value);
+    // `href="#icon"` (SVG sprites, in-page links) points inside the document, not to a server.
+    return /^#[\w.:-]*$/.test(value.trim()) ? value : sanitizeUrlForPrivacy(value);
   }
 
   if (name === "srcset" || name === "imagesrcset") {
