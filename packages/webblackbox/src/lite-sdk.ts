@@ -89,8 +89,7 @@ export class WebBlackboxLiteSdk {
       storage: this.storage,
       maxChunkBytes: options.maxChunkBytes,
       redactionProfile: this.config.redaction,
-      capturePolicy: this.config.capturePolicy,
-      trustedPlaintextExemptionEvidenceRefs: options.trustedPlaintextExemptionEvidenceRefs
+      capturePolicy: this.config.capturePolicy
     });
 
     const recorderHooks = options.recorderHooks;
@@ -553,6 +552,15 @@ function mergeRecorderConfig(
     ...topLevelOverrides
   } = topLevelConfig;
 
+  // A caller's policy rules, then `config.redaction` on top: the page agents and the recorder
+  // apply the same set.
+  const redaction = {
+    ...baseConfig.redaction,
+    ...topLevelOverrides.capturePolicy?.redaction,
+    ...redactionFromConfig
+  };
+  const capturePolicy = topLevelOverrides.capturePolicy ?? baseConfig.capturePolicy;
+
   return {
     ...baseConfig,
     ...topLevelOverrides,
@@ -562,10 +570,8 @@ function mergeRecorderConfig(
       ...samplingFromConfig,
       ...sampling
     },
-    redaction: {
-      ...baseConfig.redaction,
-      ...redactionFromConfig
-    },
+    redaction,
+    ...(capturePolicy ? { capturePolicy: { ...capturePolicy, redaction } } : {}),
     sitePolicies: Array.isArray(sitePolicies)
       ? sitePolicies.map((policy) => ({
           ...policy,

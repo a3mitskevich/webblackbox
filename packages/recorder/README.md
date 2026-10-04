@@ -118,6 +118,8 @@ The `DefaultEventNormalizer` handles mapping from raw source events to `WebBlack
 
 CDP `Network.*` payloads pass through a field allowlist: ids, timing, sanitized URLs, method, status, MIME type, sizes, normalized headers and the initiator type. Everything else — raw header text, security details, initiator stacks, base64 `postDataEntries`, WebSocket `payloadData` — is dropped.
 
+`Runtime.exceptionThrown` is projected onto the page-hook `pageError` shape: `message`, `name`, `stack`, sanitized `filename`, 1-based `lineno`/`colno`, `rejection: true` for unhandled promise rejections, `exceptionId` and `timestamp`; remote object handles and previews are dropped. Under `capturePolicy.categories.console === "metadata"` every `error.exception` / `error.unhandledrejection` keeps only that metadata, marked `messageRedacted`/`stackRedacted` (or `reasonRedacted`), exactly like lite mode.
+
 ### Content Script Events
 
 | Raw Type                                             | WebBlackbox Event                                                 |

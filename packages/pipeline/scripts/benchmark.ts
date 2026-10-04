@@ -21,7 +21,10 @@ const DEFAULT_SCREENSHOT_INTERVAL = 120;
 const DEFAULT_BLOB_POOL = 24;
 const DEFAULT_BLOB_BYTES = 24 * 1024;
 const EVENT_STEP_MS = 120;
+// Archives are always encrypted, so the benchmark includes key derivation and AES-GCM.
+const BENCHMARK_PASSPHRASE = "benchmark-passphrase";
 const FULL_EXPORT_OPTIONS = {
+  passphrase: BENCHMARK_PASSPHRASE,
   includeScreenshots: true,
   includeScreenRecordings: true,
   maxArchiveBytes: null,
@@ -295,11 +298,14 @@ async function run(): Promise<void> {
   const fullExportMs = performance.now() - fullExportStart;
 
   const fullParseStart = performance.now();
-  const fullParsed = await readWebBlackboxArchive(fullExport.bytes);
+  const fullParsed = await readWebBlackboxArchive(fullExport.bytes, {
+    passphrase: BENCHMARK_PASSPHRASE
+  });
   const fullParseMs = performance.now() - fullParseStart;
 
   const filteredExportStart = performance.now();
   const filteredExport = await pipeline.exportBundle({
+    passphrase: BENCHMARK_PASSPHRASE,
     includeScreenshots: false,
     includeScreenRecordings: false,
     maxArchiveBytes,
@@ -308,7 +314,9 @@ async function run(): Promise<void> {
   const filteredExportMs = performance.now() - filteredExportStart;
 
   const filteredParseStart = performance.now();
-  const filteredParsed = await readWebBlackboxArchive(filteredExport.bytes);
+  const filteredParsed = await readWebBlackboxArchive(filteredExport.bytes, {
+    passphrase: BENCHMARK_PASSPHRASE
+  });
   const filteredParseMs = performance.now() - filteredParseStart;
 
   const exportDropRatio =

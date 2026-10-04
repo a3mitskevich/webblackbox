@@ -2,8 +2,9 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 68000,
-      "maxGzipBytes": 15000
+      "maxBytes": 72000,
+      "maxGzipBytes": 16800,
+      "note": "Measured 69,867 / 16,314 B (+3%): pointer capture options (#13) on top of CDP allowlists, runtime error policy (#9) and per-profile redaction rules (#10)."
     },
     {
       "path": "packages/pipeline/dist/index.js",
@@ -21,9 +22,15 @@
       "maxGzipBytes": 330000
     },
     {
+      "path": "apps/extension/build/content.js",
+      "maxBytes": 48000,
+      "maxGzipBytes": 13000
+    },
+    {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 850000,
-      "maxGzipBytes": 150000
+      "maxBytes": 876500,
+      "maxGzipBytes": 154600,
+      "note": "Measured 857,449 / 151,540 B with pointer capture (#13) on top of 850,791 / 150,067 B (+3%) for recording profiles, redaction rules and the linear regex engine (#10)."
     }
   ]
 }

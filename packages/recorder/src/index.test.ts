@@ -1030,6 +1030,40 @@ describe("recorder", () => {
       },
       {
         raw: createRawEvent({
+          rawType: "indexedDbOp",
+          payload: {
+            op: "open",
+            name: "app-db"
+          }
+        }),
+        policy: createPolicy({
+          categories: {
+            ...TEST_CAPTURE_POLICY.categories,
+            indexedDb: "counts-only"
+          }
+        }),
+        reason: "storage-detail-disabled",
+        blockedType: "storage.idb.op"
+      },
+      {
+        raw: createRawEvent({
+          rawType: "localStorageSnapshot",
+          payload: {
+            count: 1,
+            entries: [{ key: "theme", value: "dark" }]
+          }
+        }),
+        policy: createPolicy({
+          categories: {
+            ...TEST_CAPTURE_POLICY.categories,
+            storage: "counts-only"
+          }
+        }),
+        reason: "storage-detail-disabled",
+        blockedType: "storage.local.snapshot"
+      },
+      {
+        raw: createRawEvent({
           rawType: "indexedDbSnapshot",
           payload: {
             databaseNames: ["app-db"]

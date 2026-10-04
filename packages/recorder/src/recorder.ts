@@ -1,6 +1,7 @@
 import {
   DEFAULT_CAPTURE_POLICY,
   EventIdFactory,
+  isContentRedactionEnabled,
   stripUnreadablePointerDetail,
   type CapturePolicy,
   type FreezeReason,
@@ -11,6 +12,7 @@ import {
 } from "@webblackbox/protocol";
 
 import { ActionSpanTracker } from "./action-span.js";
+import { applyErrorTextPolicy } from "./error-text-policy.js";
 import { FreezePolicy } from "./freeze.js";
 import {
   attachInlineNetworkBody,
@@ -21,6 +23,8 @@ import {
 import { DefaultEventNormalizer } from "./normalizer.js";
 import type { RecorderPlugin, RecorderPluginContext } from "./plugins.js";
 import { createRedactionHashKey, redactPayload } from "./redaction.js";
+import { withUrlRules } from "./url-recording.js";
+import { applyValuePatterns } from "./value-pattern-rules.js";
 import { EventRingBuffer } from "./ring-buffer.js";
 import type { EventNormalizer, RawRecorderEvent, RecorderIngestResult } from "./types.js";
 
@@ -69,12 +73,18 @@ export class WebBlackboxRecorder {
       return {};
     }
 
-    const normalized = this.normalizer.normalize(nextRawEvent);
+    const rules = this.config.redaction;
+    const normalized = withUrlRules(rules, () => this.normalizer.normalize(nextRawEvent));
 
     if (!normalized) {
       return {};
     }
 
+    const policyPayload = applyErrorTextPolicy(
+      normalized.eventType,
+      normalized.payload,
+      this.config.capturePolicy
+    );
     // Inline bodies skip key/value redaction: they get value masking under the body policy instead.
     const detached = detachInlineNetworkBody(
       normalized.eventType,
@@ -82,31 +92,34 @@ export class WebBlackboxRecorder {
       // bypassing it.
       stripUnreadablePointerDetail(
         normalized.eventType,
-        normalized.payload,
+        policyPayload,
         this.config.capturePolicy ?? DEFAULT_CAPTURE_POLICY
       )
     );
     const shouldKeepBody = this.hooks.shouldKeepInlineNetworkBody;
-    const redactedPayload = attachInlineNetworkBody(
-      redactPayload(detached.payload, this.config.redaction, {
-        hashKey: this.redactionHashKey
-      }),
-      detached.body,
-      {
-        capturePolicy: this.config.capturePolicy,
-        redactBodyPatterns: this.config.redaction.redactBodyPatterns,
-        isBodyAllowed: shouldKeepBody
-          ? () =>
-              shouldKeepBody(
-                readInlineNetworkBodyContext(
-                  normalized.eventType,
-                  nextRawEvent.payload,
-                  detached.payload
-                )
+    // The single masking switch of the recorder: with `contentRedaction: false` the payload is
+    // kept as captured (categories still decide below what may be recorded at all).
+    const maskedPayload = isContentRedactionEnabled(rules)
+      ? applyValuePatterns(
+          normalized.eventType,
+          redactPayload(detached.payload, rules, { hashKey: this.redactionHashKey }),
+          rules
+        )
+      : detached.payload;
+    const redactedPayload = attachInlineNetworkBody(maskedPayload, detached.body, {
+      capturePolicy: this.config.capturePolicy,
+      redaction: rules,
+      isBodyAllowed: shouldKeepBody
+        ? () =>
+            shouldKeepBody(
+              readInlineNetworkBodyContext(
+                normalized.eventType,
+                nextRawEvent.payload,
+                detached.payload
               )
-          : undefined
-      }
-    );
+            )
+        : undefined
+    });
     const privacy = classifyPrivacy(
       normalized.eventType,
       redactedPayload,
@@ -582,8 +595,13 @@ function hasStorageDetail(payload: unknown): boolean {
   return (
     hasBlobReference(row) ||
     typeof row.key === "string" ||
+    typeof row.name === "string" ||
+    typeof row.value === "string" ||
     Array.isArray(row.names) ||
+    Array.isArray(row.keys) ||
+    Array.isArray(row.lengths) ||
     Array.isArray(row.databaseNames) ||
+    Array.isArray(row.entries) ||
     asRecord(row.entries) !== null
   );
 }

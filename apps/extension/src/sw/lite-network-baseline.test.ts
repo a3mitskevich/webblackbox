@@ -1,3 +1,9 @@
+import {
+  DEFAULT_CAPTURE_POLICY,
+  DEFAULT_RECORDER_CONFIG,
+  type RedactionProfile
+} from "@webblackbox/protocol";
+import { WebBlackboxRecorder } from "@webblackbox/recorder";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -34,11 +40,34 @@ describe("lite-network-baseline", () => {
         reqId: "123",
         requestId: "123",
         method: "POST",
-        url: "https://example.com/api/items/:id"
+        url: "https://example.com/api/items/123?token=secret#frag"
       }
     });
     expect(rawEvent.payload).not.toHaveProperty("headers");
     expect(rawEvent.payload).not.toHaveProperty("postDataSize");
+  });
+
+  it("leaves URLs to the recorder, which records them under the profile's rules", () => {
+    const rawUrl = "https://example.com/api/items/123?token=secret#frag";
+    const rawEvent = buildLiteNetworkRequestRawEvent(TEST_CONTEXT, {
+      requestId: "123",
+      url: rawUrl,
+      timeStamp: 101
+    });
+    const recordedUrl = (redaction: Partial<RedactionProfile>) =>
+      (
+        new WebBlackboxRecorder({
+          ...DEFAULT_RECORDER_CONFIG,
+          redaction: { ...DEFAULT_RECORDER_CONFIG.redaction, ...redaction },
+          capturePolicy: DEFAULT_CAPTURE_POLICY
+        }).ingest(rawEvent).event?.data as { url?: string }
+      ).url;
+
+    expect(recordedUrl({})).toBe("https://example.com/api/items/:id");
+    expect(recordedUrl({ contentRedaction: false })).toBe(rawUrl);
+    expect(recordedUrl({ builtInHeuristics: false, redactQueryParams: ["token"] })).toBe(
+      "https://example.com/api/items/123?token=[REDACTED]#frag"
+    );
   });
 
   it("builds minimal browser-side response events for lite mode", () => {

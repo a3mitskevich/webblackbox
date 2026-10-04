@@ -1,4 +1,12 @@
-import { sanitizeUrlForPrivacy, type RedactionProfile } from "@webblackbox/protocol";
+import {
+  containsCredential,
+  isMaskedStorageKey,
+  mentionsSecretName,
+  recordUrl,
+  unescapeForScan,
+  usesBuiltInHeuristics,
+  type RedactionProfile
+} from "@webblackbox/protocol";
 
 export type RedactionOptions = {
   /**
@@ -96,7 +104,7 @@ function redactValue(input: unknown, context: RedactionContext): unknown {
       const normalizedKey = key.toLowerCase();
 
       if (isUrlLikeField(normalizedKey) && typeof value === "string") {
-        output[key] = sanitizeUrlForPrivacy(value);
+        output[key] = recordUrl(value, profile);
         continue;
       }
 
@@ -124,7 +132,9 @@ function redactValue(input: unknown, context: RedactionContext): unknown {
 
       if (
         (normalizedKey === "value" || normalizedKey === "text") &&
-        (shouldMaskBySelector(source, profile) || shouldMaskByCookieName(source, profile))
+        (shouldMaskBySelector(source, profile) ||
+          shouldMaskByCookieName(source, profile) ||
+          hasSensitiveStorageKey(source, profile))
       ) {
         output[key] = typeof value === "string" ? maskString(value, context) : REDACTED;
         continue;
@@ -163,7 +173,7 @@ function redactHeaders(
     }
 
     if (typeof value === "string" && isUrlValuedHeader(normalized)) {
-      next[header] = sanitizeUrlForPrivacy(value);
+      next[header] = recordUrl(value, context.profile);
       continue;
     }
 
@@ -187,7 +197,10 @@ function isSensitiveHeaderName(header: string, profile: RedactionProfile): boole
     return false;
   }
 
-  return SENSITIVE_HEADER_NAME_PATTERN.test(header) || isSensitiveKey(header, profile);
+  return (
+    (usesBuiltInHeuristics(profile) && SENSITIVE_HEADER_NAME_PATTERN.test(header)) ||
+    isSensitiveKey(header, profile)
+  );
 }
 
 function isCookieField(key: string): boolean {
@@ -333,6 +346,45 @@ function shouldMaskByCookieName(
   }
 
   return shouldRedactCookieName(cookieName, profile);
+}
+
+/**
+ * `{ key, value }` records (storage ops and snapshot entries): the value is masked when the key
+ * matches the user's storage key or body key rules. With the built-in heuristics, also when the
+ * key, or anything in the value, mentions a secret name (the shared list, cookie names and body
+ * patterns, read through JSON and URL escapes and Unicode lookalikes), or when the value holds a
+ * credential-shaped token: scanning the whole value, not parsed field names, keeps nested,
+ * escaped, oddly named and non-JSON secrets covered.
+ */
+function hasSensitiveStorageKey(
+  source: Record<string, unknown>,
+  profile: RedactionProfile
+): boolean {
+  if (typeof source.key !== "string") {
+    return false;
+  }
+
+  const value =
+    typeof source.value === "string"
+      ? source.value
+      : typeof source.text === "string"
+        ? source.text
+        : "";
+  if (
+    isSensitiveKey(source.key.toLowerCase(), profile) ||
+    isMaskedStorageKey(source.key, profile)
+  ) {
+    return true;
+  }
+
+  if (!usesBuiltInHeuristics(profile)) {
+    return false;
+  }
+
+  const names = [...profile.redactCookieNames, ...profile.redactBodyPatterns];
+  const texts = [source.key, value, unescapeForScan(value)];
+
+  return texts.some((text) => mentionsSecretName(text, names) || containsCredential(text));
 }
 
 function isSensitiveKey(key: string, profile: RedactionProfile): boolean {

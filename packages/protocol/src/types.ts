@@ -87,7 +87,37 @@ export type SamplingProfile = {
   bodyCaptureMaxBytes: number;
 };
 
+/** Where a user value pattern is applied. */
+export type RedactionTarget = "bodies" | "dom" | "storage" | "inputs" | "console" | "urls";
+
+/** A user regex (linear-time engine, case-insensitive) masked wherever its targets are recorded. */
+export type RedactionValuePattern = {
+  pattern: string;
+  targets: RedactionTarget[];
+};
+
+/**
+ * What is masked inside captured content. Masking applies the user's rules on a best-effort
+ * basis and does not guarantee that all sensitive data is removed; what is captured at all is
+ * decided by the capture policy categories, and archives are always encrypted.
+ */
 export type RedactionProfile = {
+  /**
+   * Master switch (default true). `false` records captured content as-is wherever the categories
+   * allow it: no masking, hashing, URL stripping or DOM sanitizing.
+   */
+  contentRedaction?: boolean;
+  /**
+   * The built-in heuristic rule set (default true): URL query stripping and path templating,
+   * secret detection by name and shape, and the fail-closed raw DOM sanitizer.
+   */
+  builtInHeuristics?: boolean;
+  /** URL query parameter names whose values are masked (case-insensitive). */
+  redactQueryParams?: string[];
+  /** Storage key parts whose values are masked (case-insensitive substring). */
+  redactStorageKeys?: string[];
+  /** User regexes masked in the listed targets. */
+  valuePatterns?: RedactionValuePattern[];
   redactHeaders: string[];
   redactCookieNames: string[];
   redactBodyPatterns: string[];
@@ -311,8 +341,12 @@ export type PrivacyManifest = {
   };
 };
 
+/**
+ * The full archive manifest. Format 1 archives store it as plaintext `manifest.json`; format 2
+ * archives encrypt it (`meta/manifest.json`) and readers merge it with the envelope.
+ */
 export type ExportManifest = {
-  protocolVersion: 1;
+  protocolVersion: 1 | 2;
   createdAt: string;
   mode: CaptureMode;
   site: {
@@ -323,6 +357,12 @@ export type ExportManifest = {
   redactionProfile: RedactionProfile;
   stats: ExportStats;
   encryption?: ExportEncryption;
+};
+
+/** Plaintext `manifest.json` of a format 2 archive: only what decryption needs. */
+export type ArchiveEnvelopeManifest = {
+  protocolVersion: 2;
+  encryption: ExportEncryption;
 };
 
 export type SessionStartMessage = {

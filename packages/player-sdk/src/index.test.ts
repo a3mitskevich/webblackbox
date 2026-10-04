@@ -294,6 +294,34 @@ describe("WebBlackboxPlayer", () => {
     expect(Array.from(blob?.bytes ?? [])).toEqual([1, 2, 3]);
   });
 
+  it("opens format 2 archives, whose manifest is encrypted, and keeps reading format 1", async () => {
+    const fixture = await createFixtureArchive();
+    const envelopeBytes = await createEncryptedArchive(fixture, "test-passphrase", {
+      envelope: true
+    });
+    const envelope = JSON.parse(
+      (await (await JSZip.loadAsync(envelopeBytes)).file("manifest.json")?.async("string")) ?? "{}"
+    );
+
+    expect(Object.keys(envelope).sort()).toEqual(["encryption", "protocolVersion"]);
+    await expect(WebBlackboxPlayer.open(envelopeBytes)).rejects.toThrow(/encrypted/i);
+
+    const player = await WebBlackboxPlayer.open(envelopeBytes, { passphrase: "test-passphrase" });
+
+    expect(player.archive.manifest.protocolVersion).toBe(2);
+    expect(player.archive.manifest.site.origin).toBeTruthy();
+    expect(player.archive.manifest.encryption?.files).toHaveProperty(["meta/manifest.json"]);
+    expect(player.query({ types: ["network.request"] })).toHaveLength(1);
+    expect((await WebBlackboxPlayer.open(fixture)).archive.manifest.protocolVersion).toBe(1);
+  });
+
+  it("opens archives encrypted with an untrimmed passphrase (older exports)", async () => {
+    const bytes = await createEncryptedArchive(await createFixtureArchive(), " spaced-passphrase ");
+    const player = await WebBlackboxPlayer.open(bytes, { passphrase: " spaced-passphrase " });
+
+    expect(player.query({ types: ["network.request"] })).toHaveLength(1);
+  });
+
   it("opens encrypted archives when atob is unavailable (Buffer fallback)", async () => {
     const originalAtob = (globalThis as unknown as { atob?: typeof atob }).atob;
     const bytes = await createEncryptedArchive(await createFixtureArchive(), "test-passphrase");
@@ -2052,7 +2080,15 @@ function createDomSnapshotPayload(bodyChildren: string[]): Record<string, unknow
   };
 }
 
-async function createEncryptedArchive(source: Uint8Array, passphrase: string): Promise<Uint8Array> {
+/**
+ * Encrypts a fixture archive. `envelope`: the format 2 layout, where the full manifest is
+ * encrypted (`meta/manifest.json`) and `manifest.json` keeps only the decryption parameters.
+ */
+async function createEncryptedArchive(
+  source: Uint8Array,
+  passphrase: string,
+  options: { envelope?: boolean } = {}
+): Promise<Uint8Array> {
   const zip = await JSZip.loadAsync(source);
   const manifestFile = zip.file("manifest.json");
 
@@ -2065,6 +2101,10 @@ async function createEncryptedArchive(source: Uint8Array, passphrase: string): P
   const iterations = 120_000;
   const key = await deriveArchiveKey(passphrase, salt, iterations);
   const files: Record<string, { ivBase64: string }> = {};
+
+  if (options.envelope) {
+    zip.file("meta/manifest.json", JSON.stringify({ ...manifest, protocolVersion: 2 }));
+  }
 
   for (const path of Object.keys(zip.files)) {
     if (!isEncryptedArchivePrivatePath(path)) {
@@ -2086,7 +2126,7 @@ async function createEncryptedArchive(source: Uint8Array, passphrase: string): P
     };
   }
 
-  manifest.encryption = {
+  const encryption: NonNullable<ExportManifest["encryption"]> = {
     algorithm: "AES-GCM",
     kdf: {
       name: "PBKDF2",
@@ -2097,7 +2137,14 @@ async function createEncryptedArchive(source: Uint8Array, passphrase: string): P
     files
   };
 
-  zip.file("manifest.json", JSON.stringify(manifest, null, 2));
+  zip.file(
+    "manifest.json",
+    JSON.stringify(
+      options.envelope ? { protocolVersion: 2, encryption } : { ...manifest, encryption },
+      null,
+      2
+    )
+  );
   await writeIntegrityManifest(zip);
   return zip.generateAsync({ type: "uint8array" });
 }
@@ -2109,7 +2156,8 @@ function isEncryptedArchivePrivatePath(path: string): boolean {
     path === "index/time.json" ||
     path === "index/req.json" ||
     path === "index/inv.json" ||
-    path === "privacy/manifest.json"
+    path === "privacy/manifest.json" ||
+    path === "meta/manifest.json"
   );
 }
 

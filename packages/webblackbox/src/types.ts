@@ -90,7 +90,6 @@ export type WebBlackboxLiteSdkOptions = {
   sampling?: Partial<LiteCaptureSampling>;
   showIndicator?: boolean;
   maxChunkBytes?: number;
-  trustedPlaintextExemptionEvidenceRefs?: readonly string[];
   indexedDbName?: string;
   storage?: "memory" | "indexeddb";
   pipelineStorage?: PipelineStorage;
@@ -106,6 +105,7 @@ export type WebBlackboxLiteSdkOptions = {
  * Export-time options for generating `.webblackbox` archives.
  */
 export type WebBlackboxLiteExportOptions = {
+  /** Required: every archive is encrypted (at least 8 characters, trimmed). */
   passphrase?: string;
   stopCapture?: boolean;
   includeScreenshots?: ExportPolicy["includeScreenshots"];

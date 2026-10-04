@@ -1,4 +1,9 @@
-import type { CaptureMode } from "@webblackbox/protocol";
+import {
+  REDACTION_TARGETS,
+  type CaptureMode,
+  type RedactionTarget,
+  type RedactionValuePattern
+} from "@webblackbox/protocol";
 
 import {
   CAPTURE_CATEGORY_KEYS,
@@ -23,18 +28,25 @@ export type ProfileFormValues = {
   name: string;
   base: string;
   categories: Partial<Record<keyof CaptureCategories, string>>;
+  /** "Mask captured content": the master switch of every redaction rule below. */
+  contentRedaction: boolean;
+  /** The built-in heuristic rule set (best effort). */
+  builtInHeuristics: boolean;
   blockedSelectors: string;
   unmaskSelectors: string;
   redactHeaders: string;
+  redactCookieNames: string;
   redactBodyPatterns: string;
+  redactQueryParams: string;
+  redactStorageKeys: string;
+  /** One rule per line: `[bodies, console] regex`, or just `regex` for every target. */
+  valuePatterns: string;
   bodyMimeAllowlist: string;
   bodyMaxBytes: string;
   includeUrls: string;
   excludeUrls: string;
   mousemoveHz: string;
   visual: string;
-  requireEncryption: boolean;
-  blockOnFindings: boolean;
 };
 
 /** Raw string values of one rule row. */
@@ -55,6 +67,41 @@ export type RuleFormValues = {
 };
 
 const VISUAL_VALUES: readonly ProfileVisualCapture[] = ["none", "screenshots", "recording", "both"];
+const VALUE_PATTERN_LINE = /^\[([^\]]*)\]\s*(.*)$/;
+
+/**
+ * Value pattern lines as rules. Targets and patterns are not checked here: the profile schema
+ * rejects unknown targets and unsupported patterns when the profile is saved.
+ */
+export function parseValuePatternLines(value: string): RedactionValuePattern[] {
+  return splitLines(value).map((line) => {
+    const match = VALUE_PATTERN_LINE.exec(line);
+
+    if (!match) {
+      return { pattern: line, targets: [...REDACTION_TARGETS] };
+    }
+
+    const targets = (match[1] ?? "")
+      .split(",")
+      .map((target) => target.trim().toLowerCase())
+      .filter((target) => target.length > 0) as RedactionTarget[];
+
+    return { pattern: (match[2] ?? "").trim(), targets };
+  });
+}
+
+export function formatValuePatternLines(rules: readonly RedactionValuePattern[] = []): string {
+  return rules
+    .map((rule) =>
+      // A pattern starting with `[` keeps an explicit prefix, or it would read back as targets.
+      !rule.pattern.startsWith("[") &&
+      rule.targets.length === REDACTION_TARGETS.length &&
+      REDACTION_TARGETS.every((target) => rule.targets.includes(target))
+        ? rule.pattern
+        : `[${rule.targets.join(", ")}] ${rule.pattern}`
+    )
+    .join("\n");
+}
 
 export function splitLines(value: string): string[] {
   return value
@@ -124,9 +171,15 @@ export function applyProfileFormValues(
     categories,
     redaction: {
       ...profile.redaction,
+      contentRedaction: values.contentRedaction,
+      builtInHeuristics: values.builtInHeuristics,
       blockedSelectors: splitLines(values.blockedSelectors),
       redactHeaders: splitLines(values.redactHeaders).map((header) => header.toLowerCase()),
-      redactBodyPatterns: splitLines(values.redactBodyPatterns)
+      redactCookieNames: splitLines(values.redactCookieNames),
+      redactBodyPatterns: splitLines(values.redactBodyPatterns),
+      redactQueryParams: splitLines(values.redactQueryParams),
+      redactStorageKeys: splitLines(values.redactStorageKeys),
+      valuePatterns: parseValuePatternLines(values.valuePatterns)
     },
     unmaskSelectors: splitLines(values.unmaskSelectors),
     network: {
@@ -141,11 +194,7 @@ export function applyProfileFormValues(
       wheel: profile.pointer.wheel,
       ...(mousemoveHz !== undefined ? { mousemoveHz } : {})
     },
-    ...(visual ? { visual } : {}),
-    export: {
-      encryption: values.requireEncryption ? "required" : "optional",
-      privacyScanner: values.blockOnFindings ? "block" : "warn"
-    }
+    ...(visual ? { visual } : {})
   };
 }
 
