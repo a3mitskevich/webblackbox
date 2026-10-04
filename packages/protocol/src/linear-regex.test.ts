@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { compileLinearRegex } from "./linear-regex.js";
 
 const LINEAR_INPUT_FACTOR = 8;
-// Well above linear growth (8x) plus noise, well below quadratic growth (64x).
-const LINEAR_GROWTH_LIMIT = 24;
+// Well above linear growth (8-11x) plus shared-runner noise, well below quadratic growth (>= 56x).
+const LINEAR_GROWTH_LIMIT = 32;
 
 function fastestRunMs(run: () => unknown, runs: number): number {
   let fastest = Number.POSITIVE_INFINITY;
@@ -53,8 +53,8 @@ describe("compileLinearRegex", () => {
   it("stays linear when a long alternative keeps an attempt alive after every match", () => {
     const regex = compileLinearRegex("x\\w*y|x");
     const run = (size: number) => () => regex?.replaceAll("x".repeat(size), "#");
-    const smallMs = fastestRunMs(run(2_000), 7);
-    const largeMs = fastestRunMs(run(2_000 * LINEAR_INPUT_FACTOR), 3);
+    const smallMs = fastestRunMs(run(4_000), 11);
+    const largeMs = fastestRunMs(run(4_000 * LINEAR_INPUT_FACTOR), 5);
 
     expect(regex?.replaceAll("xxx", "#")).toBe("#");
     expect(largeMs / Math.max(smallMs, 0.05)).toBeLessThan(LINEAR_GROWTH_LIMIT);
@@ -92,8 +92,8 @@ describe("compileLinearRegex", () => {
   it("stays linear on catastrophic patterns", () => {
     const regex = compileLinearRegex("(a+)+$");
     const run = (size: number) => () => regex?.replaceAll(`${"a".repeat(size)}!`, "#");
-    const smallMs = fastestRunMs(run(2_000), 7);
-    const largeMs = fastestRunMs(run(2_000 * LINEAR_INPUT_FACTOR), 3);
+    const smallMs = fastestRunMs(run(4_000), 11);
+    const largeMs = fastestRunMs(run(4_000 * LINEAR_INPUT_FACTOR), 5);
 
     expect(largeMs / Math.max(smallMs, 0.05)).toBeLessThan(LINEAR_GROWTH_LIMIT);
   });

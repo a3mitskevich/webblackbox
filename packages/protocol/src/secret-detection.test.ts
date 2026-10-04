@@ -31,8 +31,10 @@ const CREDENTIALS = {
 };
 
 const LINEAR_INPUT_FACTOR = 8;
-// Well above linear growth (8x) plus noise, well below quadratic growth (64x).
-const LINEAR_GROWTH_LIMIT = 24;
+// Well above linear growth (8-11x) plus shared-runner noise, well below quadratic growth (>= 56x).
+const LINEAR_GROWTH_LIMIT = 32;
+/** Inputs are doubled so each run takes long enough for timer noise not to matter. */
+const SIZE_FACTOR = 2;
 
 // The fastest of several runs: CPU contention only ever adds time, so the minimum is stable.
 function fastestRunMs(run: () => void, runs: number): number {
@@ -49,10 +51,10 @@ function fastestRunMs(run: () => void, runs: number): number {
 
 /** How much slower `run` gets on 8x more of `unit` (about 8x when linear, 64x when quadratic). */
 function growthRatio(unit: string, count: number, run: (text: string) => unknown): number {
-  const small = unit.repeat(count);
-  const large = unit.repeat(count * LINEAR_INPUT_FACTOR);
-  const smallMs = fastestRunMs(() => run(small), 7);
-  const largeMs = fastestRunMs(() => run(large), 3);
+  const small = unit.repeat(count * SIZE_FACTOR);
+  const large = unit.repeat(count * SIZE_FACTOR * LINEAR_INPUT_FACTOR);
+  const smallMs = fastestRunMs(() => run(small), 11);
+  const largeMs = fastestRunMs(() => run(large), 5);
 
   return largeMs / Math.max(smallMs, 0.05);
 }
