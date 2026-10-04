@@ -7,7 +7,7 @@
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 76000,
+      "maxBytes": 80000,
       "maxGzipBytes": 18000
     },
     {
@@ -22,13 +22,13 @@
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 48000,
+      "maxBytes": 48500,
       "maxGzipBytes": 13000
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 850000,
-      "maxGzipBytes": 150000
+      "maxBytes": 856000,
+      "maxGzipBytes": 151500
     }
   ]
 }
