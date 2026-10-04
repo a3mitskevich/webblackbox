@@ -2,8 +2,9 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 55000,
-      "maxGzipBytes": 15500
+      "maxBytes": 70700,
+      "maxGzipBytes": 16450,
+      "note": "Measured 68,581 / 15,968 B (+3%): CDP allowlists and runtime error policy (#9) plus per-profile redaction rules (#10); no dead code or duplicated helpers left to cut."
     },
     {
       "path": "packages/pipeline/dist/index.js",
@@ -27,8 +28,9 @@
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 856000,
-      "maxGzipBytes": 151500
+      "maxBytes": 876500,
+      "maxGzipBytes": 154600,
+      "note": "Measured 857,461 / 151,908 B with at-rest encryption (#15) on top of 850,791 / 150,067 B (+3%) for recording profiles, redaction rules and the linear regex engine (#10)."
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { extractRequestIdFromPayload, type WebBlackboxEventType } from "@webblackbox/protocol";
 
 import { normalizeCdpNetworkPayload } from "./cdp-network.js";
+import { normalizeCdpExceptionPayload } from "./cdp-runtime.js";
 import {
   asArray,
   asBoolean,
@@ -155,6 +156,10 @@ function normalizeCdpPayload(
 ): unknown {
   if (eventType === "console.entry") {
     return normalizeCdpConsolePayload(rawType, payload);
+  }
+
+  if (eventType === "error.exception") {
+    return normalizeCdpExceptionPayload(payload);
   }
 
   if (eventType.startsWith("network.")) {

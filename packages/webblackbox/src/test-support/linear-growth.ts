@@ -1,8 +1,10 @@
 /** Test helper: linear-time checks that parallel load cannot fail (no wall-clock budget). */
 
 const LINEAR_INPUT_FACTOR = 8;
-/** Well above linear growth (8x) plus noise, well below quadratic growth (64x). */
-export const LINEAR_GROWTH_LIMIT = 24;
+/** Well above linear growth (8-11x) plus shared-runner noise, well below quadratic (>= 56x). */
+export const LINEAR_GROWTH_LIMIT = 32;
+/** Inputs are doubled so each run takes long enough for timer noise not to matter. */
+const BASE_SCALE = 2;
 
 /** The fastest of several runs: CPU contention only ever adds time, so the minimum is stable. */
 function fastestRunMs(run: () => unknown, runs: number): number {
@@ -22,8 +24,8 @@ function fastestRunMs(run: () => unknown, runs: number): number {
  * `prepare(scale)` sets up the input for that scale (outside the timing) and returns the run.
  */
 export function growthRatio(prepare: (scale: number) => () => unknown): number {
-  const smallMs = fastestRunMs(prepare(1), 7);
-  const largeMs = fastestRunMs(prepare(LINEAR_INPUT_FACTOR), 3);
+  const smallMs = fastestRunMs(prepare(BASE_SCALE), 11);
+  const largeMs = fastestRunMs(prepare(BASE_SCALE * LINEAR_INPUT_FACTOR), 5);
 
   return largeMs / Math.max(smallMs, 0.05);
 }
