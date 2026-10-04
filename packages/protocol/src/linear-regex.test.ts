@@ -1,22 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compileLinearRegex } from "./linear-regex.js";
-
-const LINEAR_INPUT_FACTOR = 8;
-// Well above linear growth (8-11x) plus shared-runner noise, well below quadratic growth (>= 56x).
-const LINEAR_GROWTH_LIMIT = 32;
-
-function fastestRunMs(run: () => unknown, runs: number): number {
-  let fastest = Number.POSITIVE_INFINITY;
-
-  for (let index = 0; index < runs; index += 1) {
-    const startedAt = performance.now();
-    run();
-    fastest = Math.min(fastest, performance.now() - startedAt);
-  }
-
-  return fastest;
-}
+import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
 
 describe("compileLinearRegex", () => {
   it("rejects patterns that need backtracking", () => {
@@ -52,12 +37,14 @@ describe("compileLinearRegex", () => {
 
   it("stays linear when a long alternative keeps an attempt alive after every match", () => {
     const regex = compileLinearRegex("x\\w*y|x");
-    const run = (size: number) => () => regex?.replaceAll("x".repeat(size), "#");
-    const smallMs = fastestRunMs(run(4_000), 11);
-    const largeMs = fastestRunMs(run(4_000 * LINEAR_INPUT_FACTOR), 5);
+    const ratio = growthRatio((scale) => {
+      const text = "x".repeat(2_000 * scale);
+
+      return () => regex?.replaceAll(text, "#");
+    });
 
     expect(regex?.replaceAll("xxx", "#")).toBe("#");
-    expect(largeMs / Math.max(smallMs, 0.05)).toBeLessThan(LINEAR_GROWTH_LIMIT);
+    expect(ratio).toBeLessThan(LINEAR_GROWTH_LIMIT);
   });
 
   it("masks the whole text instead of stalling when a scan runs out of budget", () => {
@@ -91,10 +78,12 @@ describe("compileLinearRegex", () => {
 
   it("stays linear on catastrophic patterns", () => {
     const regex = compileLinearRegex("(a+)+$");
-    const run = (size: number) => () => regex?.replaceAll(`${"a".repeat(size)}!`, "#");
-    const smallMs = fastestRunMs(run(4_000), 11);
-    const largeMs = fastestRunMs(run(4_000 * LINEAR_INPUT_FACTOR), 5);
+    const ratio = growthRatio((scale) => {
+      const text = `${"a".repeat(2_000 * scale)}!`;
 
-    expect(largeMs / Math.max(smallMs, 0.05)).toBeLessThan(LINEAR_GROWTH_LIMIT);
+      return () => regex?.replaceAll(text, "#");
+    });
+
+    expect(ratio).toBeLessThan(LINEAR_GROWTH_LIMIT);
   });
 });

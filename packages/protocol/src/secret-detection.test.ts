@@ -8,6 +8,7 @@ import {
   redactCredentials,
   unescapeForScan
 } from "./secret-detection.js";
+import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
 
 // Real formats, assembled at runtime so secret scanners do not flag this source.
 const join = (...parts: string[]): string => parts.join("");
@@ -29,35 +30,6 @@ const CREDENTIALS = {
   base64url: "oHtmr-lAc6KRN_ofgVW0Eb4q_BSs5GbCvqHPmMvlAtg",
   base64: "/rF/qS9xfuDvY2LNmFA4"
 };
-
-const LINEAR_INPUT_FACTOR = 8;
-// Well above linear growth (8-11x) plus shared-runner noise, well below quadratic growth (>= 56x).
-const LINEAR_GROWTH_LIMIT = 32;
-/** Inputs are doubled so each run takes long enough for timer noise not to matter. */
-const SIZE_FACTOR = 2;
-
-// The fastest of several runs: CPU contention only ever adds time, so the minimum is stable.
-function fastestRunMs(run: () => void, runs: number): number {
-  let fastest = Number.POSITIVE_INFINITY;
-
-  for (let index = 0; index < runs; index += 1) {
-    const startedAt = performance.now();
-    run();
-    fastest = Math.min(fastest, performance.now() - startedAt);
-  }
-
-  return fastest;
-}
-
-/** How much slower `run` gets on 8x more of `unit` (about 8x when linear, 64x when quadratic). */
-function growthRatio(unit: string, count: number, run: (text: string) => unknown): number {
-  const small = unit.repeat(count * SIZE_FACTOR);
-  const large = unit.repeat(count * SIZE_FACTOR * LINEAR_INPUT_FACTOR);
-  const smallMs = fastestRunMs(() => run(small), 11);
-  const largeMs = fastestRunMs(() => run(large), 5);
-
-  return largeMs / Math.max(smallMs, 0.05);
-}
 
 describe("containsCredential", () => {
   it.each(Object.entries(CREDENTIALS))("finds a %s anywhere in text", (_name, credential) => {
@@ -86,15 +58,19 @@ describe("containsCredential", () => {
   it("stays linear on adversarial runs", () => {
     // Growth, not an absolute budget, so parallel load cannot fail the test.
     for (const [unit, count] of [
-      ["a-eyJ", 4_000],
-      ["xoxb-", 4_000],
+      ["a-eyJ", 6_000],
+      ["xoxb-", 20_000],
       ["Bearer x-", 2_200],
       ["Basic ", 3_300],
-      ["a1", 10_000]
+      ["a1", 40_000]
     ] as const) {
-      const ratio = growthRatio(unit, count, (text) => {
-        containsCredential(text);
-        redactCredentials(text);
+      const ratio = growthRatio((scale) => {
+        const text = unit.repeat(count * scale);
+
+        return () => {
+          containsCredential(text);
+          redactCredentials(text);
+        };
       });
 
       expect(ratio, unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
@@ -156,9 +132,17 @@ describe("text folding and unescaping", () => {
   });
 
   it("unescapes long backslash runs and splits long capital runs in linear time", () => {
-    expect(growthRatio("\\", 20_000, unescapeForScan)).toBeLessThan(LINEAR_GROWTH_LIMIT);
-    expect(growthRatio("A", 5_000, (text) => mentionsSecretName(text))).toBeLessThan(
-      LINEAR_GROWTH_LIMIT
-    );
+    for (const [unit, count, scan] of [
+      ["\\", 20_000, (text: string) => unescapeForScan(text)],
+      ["A", 5_000, (text: string) => mentionsSecretName(text)]
+    ] as const) {
+      const ratio = growthRatio((scale) => {
+        const text = unit.repeat(count * scale);
+
+        return () => scan(text);
+      });
+
+      expect(ratio, unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
+    }
   });
 });
