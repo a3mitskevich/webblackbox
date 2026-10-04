@@ -4366,10 +4366,16 @@ async function initializeAtRestKey(): Promise<AtRestKeyRecord> {
     }
   );
 
-  console.info("[WebBlackbox] cleared unexported recordings left by an earlier worker", {
-    newBrowserSession: state.fresh,
-    outcome: state.database
-  });
+  if (state.database === "unavailable") {
+    console.warn("[WebBlackbox] IndexedDB is unavailable: leftover recordings were not cleared");
+  } else {
+    // "blocked": the deletion is queued and completes before the database is opened again.
+    console.info("[WebBlackbox] cleared recordings left by an earlier worker", {
+      newBrowserSession: state.fresh,
+      outcome: state.database
+    });
+  }
+
   return state.record;
 }
 
