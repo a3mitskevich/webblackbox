@@ -10,7 +10,7 @@
  */
 
 /**
- * Most thread steps one scan may take (about half a second). Linear time can still be long for a
+ * Most VM steps (threads advanced and states visited) one scan may take (about half a second). Linear time can still be long for a
  * large program on a large text; past the budget, the text is treated as matching whole (masked
  * by `replaceAll`, `true` for `test`): fail closed rather than stall the page or the worker.
  */
@@ -409,6 +409,8 @@ function scan(
 
     while (stack.length > 0) {
       const pc = stack.pop() as number;
+      // Closure work counts too: alternatives that die on an assertion leave few threads.
+      steps += 1;
 
       if (visited[pc] === generation) {
         continue;

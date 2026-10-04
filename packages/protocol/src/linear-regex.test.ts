@@ -71,6 +71,19 @@ describe("compileLinearRegex", () => {
     expect(regex?.replaceAll("b".repeat(300), "#")).toBe("b".repeat(300));
   });
 
+  it("counts the states visited at every position, not only the live threads", () => {
+    // Every alternative dies on `^` after the first position: few threads, much closure work.
+    const regex = compileLinearRegex(
+      Array.from({ length: 150 }, (_, index) => `^abc${index}`).join("|")
+    );
+    const text = "z".repeat(1_000_000);
+    const started = performance.now();
+
+    expect(regex?.replaceAll(text, "#")).toBe("#");
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(regex?.replaceAll("abc7 zz", "#")).toBe("# zz");
+  });
+
   it("rejects programs above the requested size", () => {
     expect(compileLinearRegex("[a-z]{300}", { maxProgramSize: 256 })).toBeNull();
     expect(compileLinearRegex("[a-z]{30}", { maxProgramSize: 256 })).not.toBeNull();
