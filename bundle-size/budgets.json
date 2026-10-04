@@ -21,6 +21,11 @@
       "maxGzipBytes": 330000
     },
     {
+      "path": "apps/extension/build/content.js",
+      "maxBytes": 48000,
+      "maxGzipBytes": 12500
+    },
+    {
       "path": "apps/extension/build/sw.js",
       "maxBytes": 850000,
       "maxGzipBytes": 150000

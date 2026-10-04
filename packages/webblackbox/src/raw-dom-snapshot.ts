@@ -1,10 +1,10 @@
+import { sanitizeUrlForPrivacy } from "@webblackbox/protocol";
 import {
   containsCredential,
   mentionsSecretName,
   redactCredentials,
-  sanitizeUrlForPrivacy,
   unescapeForScan
-} from "@webblackbox/protocol";
+} from "@webblackbox/protocol/secret-detection";
 
 import { isNeverCapturedField } from "./input-value-policy.js";
 

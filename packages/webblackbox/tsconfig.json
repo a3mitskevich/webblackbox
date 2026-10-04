@@ -8,6 +8,7 @@
     "paths": {
       "@webblackbox/pipeline": ["../pipeline/src/index.ts"],
       "@webblackbox/protocol": ["../protocol/src/index.ts"],
+      "@webblackbox/protocol/secret-detection": ["../protocol/src/secret-detection.ts"],
       "@webblackbox/recorder": ["../recorder/src/index.ts"]
     }
   },

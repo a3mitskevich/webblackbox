@@ -1,4 +1,6 @@
-import { mentionsSecretName, type CapturePolicy } from "@webblackbox/protocol";
+import type { CapturePolicy } from "@webblackbox/protocol";
+// The zod-free leaf, not the package index: the content script loads this module on every page.
+import { mentionsSecretName } from "@webblackbox/protocol/secret-detection";
 
 /** Longest raw input value kept on a `user.input` event. */
 export const MAX_CAPTURED_INPUT_VALUE_CHARS = 1_000;
