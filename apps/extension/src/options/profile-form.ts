@@ -394,7 +394,7 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
           value: String(localData.unexportedRetentionMinutes),
           min: MIN_UNEXPORTED_RETENTION_MINUTES,
           max: MAX_UNEXPORTED_RETENTION_MINUTES,
-          unit: "min"
+          unit: t(EXTENSION_UNIT_LABEL_KEYS.min)
         })
       ])
     ]
