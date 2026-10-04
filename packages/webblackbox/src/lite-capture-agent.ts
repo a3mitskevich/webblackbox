@@ -1512,10 +1512,10 @@ export class LiteCaptureAgent {
   private createKeydownPayload(event: KeyboardEvent): Record<string, unknown> {
     const focusTarget = resolveComposedTarget(event);
     const editable = isKeystrokeEditableTarget(focusTarget);
-    const sensitive = isSensitiveKeystrokeTarget(
-      focusTarget,
-      this.capturePolicy.redaction.blockedSelectors
-    );
+    // Masking off (`contentRedaction: false`): keys are recorded as typed, passwords included.
+    const sensitive =
+      isContentRedactionEnabled(this.capturePolicy.redaction) &&
+      isSensitiveKeystrokeTarget(focusTarget, this.capturePolicy.redaction.blockedSelectors);
     const payload = stripUndefinedRecord({
       key: event.key,
       code: event.code,
