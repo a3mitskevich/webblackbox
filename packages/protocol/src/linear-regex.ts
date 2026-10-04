@@ -9,6 +9,13 @@
  * the limit (or like no upper bound).
  */
 
+/**
+ * Most thread steps one scan may take (about half a second). Linear time can still be long for a
+ * large program on a large text; past the budget, the text is treated as matching whole (masked
+ * by `replaceAll`, `true` for `test`): fail closed rather than stall the page or the worker.
+ */
+export const MAX_SCAN_STEPS = 10_000_000;
+
 /** Largest repeat count compiled as written. */
 export const REPETITION_LIMIT = 257;
 /** Largest compiled program; bounds the work per text character. */
@@ -341,8 +348,15 @@ export function compileLinearRegex(
 
     return {
       test: (text) => scan(program, text, true) !== null,
-      replaceAll: (text, replacement) =>
-        replaceSpans(text, scan(program, text, false) ?? [], replacement)
+      replaceAll: (text, replacement) => {
+        const spans = scan(program, text, false);
+
+        if (spans === OVER_BUDGET) {
+          return text.length > 0 ? replacement : text;
+        }
+
+        return replaceSpans(text, spans ?? [], replacement);
+      }
     };
   } catch {
     return null;
@@ -374,11 +388,19 @@ function replaceSpans(text: string, spans: readonly Span[], replacement: string)
  * non-empty matches: a superset of the leftmost-longest matches, the right bias for masking.
  * `firstOnly` stops at the first match (enough for `test`) and returns an empty list.
  */
-function scan(program: readonly Instruction[], input: string, firstOnly: boolean): Span[] | null {
+/** A scan that ran out of {@link MAX_SCAN_STEPS}. */
+const OVER_BUDGET = "over-budget";
+
+function scan(
+  program: readonly Instruction[],
+  input: string,
+  firstOnly: boolean
+): Span[] | typeof OVER_BUDGET | null {
   const visited = new Int32Array(program.length).fill(-1);
   const longestEnd = new Int32Array(input.length + 1).fill(-1);
   let generation = 0;
   let matched = false;
+  let steps = 0;
 
   type Thread = { pc: number; start: number };
 
@@ -427,6 +449,12 @@ function scan(program: readonly Instruction[], input: string, firstOnly: boolean
     }
 
     const char = input[position] ?? "";
+    steps += threads.length;
+
+    if (steps > MAX_SCAN_STEPS) {
+      return OVER_BUDGET;
+    }
+
     const next: Thread[] = [];
     generation += 1;
 

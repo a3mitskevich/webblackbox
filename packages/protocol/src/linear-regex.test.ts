@@ -60,6 +60,17 @@ describe("compileLinearRegex", () => {
     expect(largeMs / Math.max(smallMs, 0.05)).toBeLessThan(LINEAR_GROWTH_LIMIT);
   });
 
+  it("masks the whole text instead of stalling when a scan runs out of budget", () => {
+    const regex = compileLinearRegex("[a-z]{250}x");
+    const text = "b".repeat(200_000);
+    const started = performance.now();
+
+    expect(regex?.replaceAll(text, "#")).toBe("#");
+    expect(regex?.test(text)).toBe(true);
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(regex?.replaceAll("b".repeat(300), "#")).toBe("b".repeat(300));
+  });
+
   it("rejects programs above the requested size", () => {
     expect(compileLinearRegex("[a-z]{300}", { maxProgramSize: 256 })).toBeNull();
     expect(compileLinearRegex("[a-z]{30}", { maxProgramSize: 256 })).not.toBeNull();
