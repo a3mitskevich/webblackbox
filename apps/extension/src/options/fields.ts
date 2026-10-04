@@ -503,9 +503,14 @@ export function sectionHeader(options: {
 }
 
 /** Titled group of fields inside a section, laid out as a responsive grid. */
-export function fieldGroup(title: string | null, fields: HTMLElement[]): HTMLElement {
+export function fieldGroup(
+  title: string | null,
+  fields: HTMLElement[],
+  note?: string
+): HTMLElement {
   return el("div", { className: "wb-group" }, [
     ...(title ? [el("h3", { className: "wb-group__title", text: title })] : []),
+    ...(note ? [el("p", { className: "wb-field__hint", text: note })] : []),
     el("div", { className: "wb-grid" }, fields)
   ]);
 }

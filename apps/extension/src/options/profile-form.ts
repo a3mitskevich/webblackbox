@@ -12,6 +12,7 @@ import {
   type RecordingProfile
 } from "../shared/profiles/model.js";
 import { button, el } from "./dom.js";
+import { formatValuePatternLines } from "./profile-form-model.js";
 import {
   chipListField,
   fieldGroup,
@@ -229,37 +230,82 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
         })
       ]),
       createCategoryMatrix(profile, t),
-      fieldGroup(t("optionsProfileGroupMasking"), [
-        chips(
-          "blockedSelectors",
-          "optionsBlockedSelectors",
-          profile.redaction.blockedSelectors,
-          "optionsSelectorPlaceholder",
-          selectorValidator(t)
-        ),
-        chips(
-          "unmaskSelectors",
-          "optionsProfileUnmaskSelectors",
-          profile.unmaskSelectors,
-          "optionsSelectorPlaceholder",
-          selectorValidator(t),
-          "optionsProfileUnmaskHint"
-        ),
-        chips(
-          "redactHeaders",
-          "optionsRedactedHeaders",
-          profile.redaction.redactHeaders,
-          "optionsHeaderPlaceholder",
-          headerValidator(t)
-        ),
-        chips(
-          "redactBodyPatterns",
-          "optionsBodySensitivePatterns",
-          profile.redaction.redactBodyPatterns,
-          "optionsPatternPlaceholder",
-          patternValidator(t)
-        )
-      ]),
+      fieldGroup(
+        t("optionsProfileGroupMasking"),
+        [
+          toggleField({
+            id: "pf-contentRedaction",
+            name: "contentRedaction",
+            label: t("optionsProfileContentRedaction"),
+            checked: profile.redaction.contentRedaction !== false
+          }),
+          toggleField({
+            id: "pf-builtInHeuristics",
+            name: "builtInHeuristics",
+            label: t("optionsProfileBuiltInHeuristics"),
+            checked: profile.redaction.builtInHeuristics !== false
+          }),
+          chips(
+            "blockedSelectors",
+            "optionsBlockedSelectors",
+            profile.redaction.blockedSelectors,
+            "optionsSelectorPlaceholder",
+            selectorValidator(t)
+          ),
+          chips(
+            "unmaskSelectors",
+            "optionsProfileUnmaskSelectors",
+            profile.unmaskSelectors,
+            "optionsSelectorPlaceholder",
+            selectorValidator(t),
+            "optionsProfileUnmaskHint"
+          ),
+          chips(
+            "redactHeaders",
+            "optionsRedactedHeaders",
+            profile.redaction.redactHeaders,
+            "optionsHeaderPlaceholder",
+            headerValidator(t)
+          ),
+          chips(
+            "redactCookieNames",
+            "optionsProfileRedactCookieNames",
+            profile.redaction.redactCookieNames,
+            "optionsCookieNamePlaceholder",
+            patternValidator(t)
+          ),
+          chips(
+            "redactBodyPatterns",
+            "optionsBodySensitivePatterns",
+            profile.redaction.redactBodyPatterns,
+            "optionsPatternPlaceholder",
+            patternValidator(t)
+          ),
+          chips(
+            "redactQueryParams",
+            "optionsProfileRedactQueryParams",
+            profile.redaction.redactQueryParams ?? [],
+            "optionsQueryParamPlaceholder",
+            patternValidator(t)
+          ),
+          chips(
+            "redactStorageKeys",
+            "optionsProfileRedactStorageKeys",
+            profile.redaction.redactStorageKeys ?? [],
+            "optionsStorageKeyPlaceholder",
+            patternValidator(t)
+          ),
+          chips(
+            "valuePatterns",
+            "optionsProfileValuePatterns",
+            // One chip per rule: `[bodies, console] regex`, or just `regex` for every target.
+            (profile.redaction.valuePatterns ?? []).map((rule) => formatValuePatternLines([rule])),
+            "optionsValuePatternPlaceholder",
+            patternValidator(t)
+          )
+        ],
+        t("optionsRedactionDisclaimer")
+      ),
       fieldGroup(t("optionsProfileGroupBodies"), [
         numberField({
           id: "pf-bodyMaxBytes",
@@ -304,20 +350,6 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
           "optionsUrlGlobPlaceholder",
           patternValidator(t)
         )
-      ]),
-      fieldGroup(t("optionsProfileGroupExport"), [
-        toggleField({
-          id: "pf-requireEncryption",
-          name: "requireEncryption",
-          label: t("optionsProfileRequireEncryption"),
-          checked: profile.export.encryption === "required"
-        }),
-        toggleField({
-          id: "pf-blockOnFindings",
-          name: "blockOnFindings",
-          label: t("optionsProfileBlockOnFindings"),
-          checked: profile.export.privacyScanner === "block"
-        })
       ])
     ]
   );

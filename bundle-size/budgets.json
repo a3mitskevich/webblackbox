@@ -2,8 +2,9 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 55000,
-      "maxGzipBytes": 15000
+      "maxBytes": 70700,
+      "maxGzipBytes": 16450,
+      "note": "Measured 68,581 / 15,968 B (+3%): CDP allowlists and runtime error policy (#9) plus per-profile redaction rules (#10); no dead code or duplicated helpers left to cut."
     },
     {
       "path": "packages/pipeline/dist/index.js",
@@ -21,9 +22,16 @@
       "maxGzipBytes": 330000
     },
     {
+      "path": "apps/extension/build/content.js",
+      "maxBytes": 70000,
+      "maxGzipBytes": 18500,
+      "note": "Measured 67,875 / 17,877 B (+3%): the content script bundles both shared i18n locale tables, which the redesigned UI (#12) grew, plus the capture-scope and redaction changes (#10)."
+    },
+    {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 850000,
-      "maxGzipBytes": 150000
+      "maxBytes": 876500,
+      "maxGzipBytes": 154600,
+      "note": "Measured 850,791 / 150,067 B (+3%): recording profiles, redaction rules and the linear regex engine run in the service worker."
     }
   ]
 }

@@ -25,7 +25,6 @@ import {
   AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
   isExtendedCaptureProfile,
-  resolveProfileExportRequirements,
   selectRecordingProfile,
   toArchivedProfileInfo
 } from "./resolve.js";
@@ -151,7 +150,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     }
   });
 
-  it("QA records console text and 256 KiB JSON bodies with raw DOM and screenshots", () => {
+  it("QA records console text, 256 KiB JSON bodies and screenshots, but not the raw DOM", () => {
     const config = buildProfileRecorderConfig({
       mode: "full",
       profile: preset(BUILT_IN_PROFILE_IDS.qa),
@@ -163,7 +162,6 @@ describe("buildProfileRecorderConfig — presets", () => {
       actions: "allow",
       console: "allow",
       network: "body-allowlist",
-      dom: "allow",
       screenshots: "allow",
       cdp: "safe-subset"
     });
@@ -171,7 +169,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.redaction).toEqual(DEFAULT_REDACTION_PROFILE);
   });
 
-  it("Full capture raises every category except heap profiles and samples the pointer at 60 Hz", () => {
+  it("Full capture raises every category except the DOM and heap profiles and samples the pointer at 60 Hz", () => {
     const config = buildProfileRecorderConfig({
       mode: "full",
       profile: preset(BUILT_IN_PROFILE_IDS.fullCapture),
@@ -181,7 +179,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.capturePolicy?.categories).toEqual({
       actions: "allow",
       inputs: "allow",
-      dom: "allow",
+      dom: "masked",
       screenshots: "allow",
       screenRecordings: "allow",
       console: "allow",
@@ -194,7 +192,60 @@ describe("buildProfileRecorderConfig — presets", () => {
     });
     expect(config.sampling.mousemoveHz).toBe(60);
     expect(config.sampling.bodyCaptureMaxBytes).toBe(1024 * 1024);
-    expect(config.capturePolicy?.redaction.blockedSelectors).toContain("input[type='password']");
+    // Content is recorded raw: masking off, no blocked selectors (both views of the rules).
+    expect(config.redaction.contentRedaction).toBe(false);
+    expect(config.capturePolicy?.redaction.contentRedaction).toBe(false);
+    expect(config.capturePolicy?.redaction.blockedSelectors).toEqual([]);
+  });
+
+  it("records the raw DOM only when a duplicated profile opts in", () => {
+    for (const id of [BUILT_IN_PROFILE_IDS.qa, BUILT_IN_PROFILE_IDS.fullCapture]) {
+      expect(preset(id).categories.dom, id).toBe(preset(BUILT_IN_PROFILE_IDS.full).categories.dom);
+    }
+
+    const copy = duplicateProfile(preset(BUILT_IN_PROFILE_IDS.qa), { id: "raw-dom" });
+    const config = buildProfileRecorderConfig({
+      mode: "full",
+      profile: { ...copy, categories: { ...copy.categories, dom: "allow" } },
+      visualCapture: "screenshots"
+    });
+
+    expect(config.capturePolicy?.categories.dom).toBe("allow");
+  });
+
+  it("keeps content masking on in every preset but Full capture", () => {
+    for (const profile of BUILT_IN_PROFILES) {
+      expect(profile.redaction.contentRedaction !== false, profile.id).toBe(
+        profile.id !== BUILT_IN_PROFILE_IDS.fullCapture
+      );
+    }
+
+    expect(createDefaultProfile().redaction.contentRedaction).toBeUndefined();
+  });
+
+  it("treats a profile that turns masking off as extended and masks again when downgraded", () => {
+    const fullCopy = duplicateProfile(preset(BUILT_IN_PROFILE_IDS.full), { id: "raw" });
+    const raw = { ...fullCopy, redaction: { ...fullCopy.redaction, contentRedaction: false } };
+
+    expect(isExtendedCaptureProfile(fullCopy)).toBe(false);
+    expect(isExtendedCaptureProfile(raw)).toBe(true);
+    expect(
+      isExtendedCaptureProfile({
+        ...fullCopy,
+        redaction: { ...fullCopy.redaction, builtInHeuristics: false }
+      })
+    ).toBe(true);
+
+    const state = v2State({ profiles: [createDefaultProfile(), raw] });
+    const selection = selectRecordingProfile({
+      state,
+      page: { url: "https://elsewhere.test/" },
+      requestedProfileId: "raw"
+    });
+
+    expect(selection.downgradedFrom?.id).toBe("raw");
+    expect(selection.profile.redaction.contentRedaction).not.toBe(false);
+    expect(selection.profile.redaction.blockedSelectors).toContain("input[type='password']");
   });
 
   it("keeps the lite transport boundary: no page-side bodies even for QA", () => {
@@ -461,36 +512,5 @@ describe("selectRecordingProfile", () => {
 
     expect(selection).toMatchObject({ source: "default" });
     expect(selection.profile.id).toBe(DEFAULT_PROFILE_ID);
-  });
-});
-
-describe("resolveProfileExportRequirements", () => {
-  it("is permissive for the Default profile and strict once any extended profile ran", () => {
-    const standard = { profile: createDefaultProfile(), extended: false };
-    const qa = { profile: preset(BUILT_IN_PROFILE_IDS.qa), extended: true };
-
-    expect(resolveProfileExportRequirements([standard])).toEqual({
-      requireEncryption: false,
-      blockOnPrivacyFindings: false
-    });
-    expect(resolveProfileExportRequirements([standard, qa])).toEqual({
-      requireEncryption: true,
-      blockOnPrivacyFindings: true
-    });
-  });
-
-  it("honours per-profile export settings", () => {
-    const strict = {
-      profile: {
-        ...createDefaultProfile(),
-        export: { encryption: "required" as const, privacyScanner: "warn" as const }
-      },
-      extended: false
-    };
-
-    expect(resolveProfileExportRequirements([strict])).toEqual({
-      requireEncryption: true,
-      blockOnPrivacyFindings: false
-    });
   });
 });

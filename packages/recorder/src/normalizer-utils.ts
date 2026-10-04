@@ -1,4 +1,4 @@
-import { sanitizeUrlForPrivacy } from "@webblackbox/protocol";
+import { recordedUrl } from "./url-recording.js";
 
 export function normalizeHeaderRecord(value: unknown): Record<string, string> | undefined {
   const row = asRecord(value);
@@ -58,9 +58,16 @@ export function asBoolean(value: unknown): boolean | undefined {
 }
 
 export function sanitizeOptionalUrl(value: string | undefined): string | undefined {
-  return value ? sanitizeUrlForPrivacy(value) : undefined;
+  return value ? recordedUrl(value) : undefined;
 }
 
 export function compactText(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, Math.max(0, maxLength - 3))}...` : value;
+}
+
+export function omitKeys(
+  row: Record<string, unknown>,
+  keys: readonly string[]
+): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(row).filter(([key]) => !keys.includes(key)));
 }

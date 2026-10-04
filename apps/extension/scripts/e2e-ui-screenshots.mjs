@@ -174,7 +174,12 @@ const POPUP_STATES = [
     name: "popup-exporting",
     sessions: [STOPPED_SESSION],
     preview: PREVIEW_RULE,
-    steps: [{ click: ["[data-action='export']"] }, { click: ["[data-passphrase-submit]"] }]
+    // Archives are always encrypted: the dialog only submits a passphrase of 8+ characters.
+    steps: [
+      { click: ["[data-action='export']"] },
+      { type: { selector: "#wb-passphrase-input", value: "ui-shots-passphrase" } },
+      { click: ["[data-passphrase-submit]"] }
+    ]
   },
   {
     name: "popup-other-tab",
@@ -298,6 +303,14 @@ async function capturePopupState(browser, extensionId, state, outDir) {
     await navigate(page, `chrome-extension://${extensionId}/popup.html`);
 
     for (const step of state.steps ?? []) {
+      if (step.type) {
+        if (!(await typeInto(page, step.type.selector, step.type.value))) {
+          failures.push(`${state.name}: ${step.type.selector} not found`);
+        }
+
+        continue;
+      }
+
       const clicked = await clickFirst(page, step.click);
 
       if (!clicked && !step.optional) {
@@ -659,6 +672,20 @@ async function navigate(page, url) {
   await page.send("Page.navigate", { url });
   await Promise.race([loaded, sleep(10_000)]);
   await sleep(SETTLE_MS);
+}
+
+async function typeInto(page, selector, value) {
+  return page.evaluate(`(() => {
+    const input = document.querySelector(${JSON.stringify(selector)});
+
+    if (!(input instanceof HTMLInputElement)) {
+      return false;
+    }
+
+    input.value = ${JSON.stringify(value)};
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  })()`);
 }
 
 async function clickFirst(page, selectors) {

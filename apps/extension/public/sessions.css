@@ -18,6 +18,15 @@
   color: var(--wb-text-subtle);
 }
 
+.wb-sessions-notice {
+  padding: 8px 12px;
+  border: 1px solid var(--wb-warn-border);
+  border-radius: var(--wb-radius-sm);
+  background: var(--wb-warn-soft);
+  color: var(--wb-warn-ink);
+  font-size: 12.5px;
+}
+
 .wb-sessions__count {
   font-family: var(--wb-mono);
   font-size: 12px;

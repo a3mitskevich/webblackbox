@@ -180,16 +180,99 @@ describe("readCapturableInputValue", () => {
     observeSpy.mockRestore();
   });
 
+  it("keeps fields whose names only contain the letters of a one-time-code word", () => {
+    for (const html of [
+      '<input data-field name="footprint" />',
+      '<input data-field id="shotput" />',
+      '<input data-field name="donation_onetime_amount" />',
+      '<input data-field id="field-a12fa3" />',
+      '<input data-field id="field-9c2fa1" />',
+      '<input data-field id="a7f2fa3b" />',
+      '<input data-field name="author" />'
+    ]) {
+      expect(readCapturableInputValue(field(html), policy("allow")), html).toBe("typed value");
+    }
+  });
+
   it("never captures password-named or payment card fields", () => {
     for (const html of [
       '<input data-field type="text" name="user_password" />',
       '<input data-field type="text" id="pwd" />',
+      '<input data-field type="text" name="otpCode" />',
+      '<input data-field type="text" id="verifyOTP" />',
+      '<input data-field type="text" name="otp1" />',
+      '<input data-field type="text" id="otp0" />',
+      '<input data-field type="text" name="verify2FA" />',
+      '<input data-field type="text" name="code2fa" />',
+      '<input data-field type="text" name="oneTimeToken" />',
+      '<input data-field type="text" name="twoFa" />',
+      '<input data-field type="text" name="2fa_code" />',
+      '<input data-field type="text" name="otpcode" />',
       '<input data-field autocomplete="billing cc-number" />',
       '<input data-field autocomplete="cc-csc" />',
       '<input data-field autocomplete="cc-exp" />'
     ]) {
       expect(readCapturableInputValue(field(html), policy("allow"))).toBeUndefined();
     }
+  });
+
+  it("never captures secret-named or card-named fields", () => {
+    for (const html of [
+      '<input data-field type="text" name="api_key" />',
+      '<input data-field type="text" name="authToken" />',
+      '<input data-field type="text" id="csrfField" />',
+      '<input data-field type="text" name="pin" />',
+      '<input data-field type="text" name="card_cvv" />',
+      '<input data-field type="text" name="cardNumber" />',
+      '<input data-field type="text" name="ſession" />'
+    ]) {
+      expect(readCapturableInputValue(field(html), policy("allow")), html).toBeUndefined();
+    }
+
+    for (const html of [
+      '<input data-field name="city" />',
+      '<input data-field name="spinner_speed" />',
+      '<input data-field name="author_name" />'
+    ]) {
+      expect(readCapturableInputValue(field(html), policy("allow")), html).toBe("typed value");
+    }
+  });
+
+  it("records every allowed field, passwords included, when content masking is off", () => {
+    const raw = {
+      ...policy("allow", { blockedSelectors: [] }),
+      redaction: {
+        ...DEFAULT_CAPTURE_POLICY.redaction,
+        blockedSelectors: [],
+        contentRedaction: false
+      }
+    };
+
+    for (const html of [
+      '<input data-field type="password" />',
+      '<input data-field name="api_key" />',
+      '<input data-field autocomplete="cc-number" />'
+    ]) {
+      expect(readCapturableInputValue(field(html), raw), html).toBe("typed value");
+    }
+
+    expect(
+      readCapturableInputValue(field('<input data-field type="password" />'), policy("length-only"))
+    ).toBeUndefined();
+  });
+
+  it("keeps secret-named fields when only the built-in heuristics are off", () => {
+    const rules = {
+      ...policy("allow"),
+      redaction: { ...DEFAULT_CAPTURE_POLICY.redaction, builtInHeuristics: false }
+    };
+
+    expect(readCapturableInputValue(field('<input data-field name="api_key" />'), rules)).toBe(
+      "typed value"
+    );
+    expect(
+      readCapturableInputValue(field('<input data-field type="password" />'), rules)
+    ).toBeUndefined();
   });
 
   it("lets a nearer blocked selector win over an unmasked ancestor", () => {

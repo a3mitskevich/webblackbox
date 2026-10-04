@@ -65,4 +65,30 @@ describe("previewRedaction", () => {
 
     expect(invalid).toMatchObject({ output: "{oops", changed: false, error: "invalid-json" });
   });
+
+  it("tests the user's own rules, and shows samples as captured when masking is off", () => {
+    const rules: RedactionProfile = {
+      ...PLAIN_PROFILE,
+      builtInHeuristics: false,
+      redactQueryParams: ["code"],
+      valuePatterns: [{ pattern: "acct-\\d+", targets: ["bodies"] }]
+    };
+
+    expect(previewRedaction({ kind: "body", text: '{"note":"acct-42"}' }, rules).output).toBe(
+      '{"note":"[REDACTED]"}'
+    );
+    expect(
+      previewRedaction({ kind: "url", text: "https://h.test/cb?code=C1&state=s" }, rules).output
+    ).toBe("https://h.test/cb?code=[REDACTED]&state=s");
+
+    const raw = { ...rules, contentRedaction: false };
+
+    for (const input of [
+      { kind: "body" as const, text: '{"password":"P1","note":"acct-42"}' },
+      { kind: "url" as const, text: "https://h.test/cb?code=C1" },
+      { kind: "headers" as const, text: "Authorization: Bearer abc" }
+    ]) {
+      expect(previewRedaction(input, raw), input.kind).toMatchObject({ changed: false });
+    }
+  });
 });

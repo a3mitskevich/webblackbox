@@ -66,7 +66,6 @@ const state: {
   exportPrivacyWarning?: ExportPrivacyWarning;
   statusText?: string;
   statusIsError?: boolean;
-  lastPrivacyAlertKey?: string;
   lastFreeze?: { sid: string; reason: FreezeReason; at: number };
 } = {
   tabId: null,
@@ -123,11 +122,9 @@ function requestProfilePreview(): void {
   });
 }
 
-/** A runtime response with `ok: false`, kept whole so callers can read extra flags. */
+/** A runtime response with `ok: false`, kept whole for callers. */
 class UiMessageRejectedError extends Error {
-  public constructor(
-    public readonly response: { ok: false; error: string; privacyBlocked?: boolean }
-  ) {
+  public constructor(public readonly response: { ok: false; error: string }) {
     super(response.error);
   }
 }
@@ -466,7 +463,8 @@ async function exportWithDialog(container: HTMLElement, session: SessionListItem
     body: t("popupExportPassphraseBody"),
     label: t("popupPassphraseLabel"),
     submitLabel: t("popupExport"),
-    cancelLabel: t("popupCancel")
+    cancelLabel: t("popupCancel"),
+    requiredMessage: t("popupPassphraseRequired")
   });
 
   if (passphrase !== null) {
@@ -596,12 +594,10 @@ async function exportSessionFromPopup(
   container: HTMLElement,
   sid: string,
   passphrase: string,
-  policy: ExportPolicy,
-  options: { acknowledgePrivacyFindings?: boolean } = {}
+  policy: ExportPolicy
 ): Promise<void> {
   state.pendingExportSid = sid;
   state.exportPrivacyWarning = undefined;
-  state.lastPrivacyAlertKey = undefined;
   setStatus(t("popupExporting"), false);
   render(container);
 
@@ -610,35 +606,22 @@ async function exportSessionFromPopup(
       sendUiMessage({
         kind: "ui.export",
         sid,
-        ...(passphrase.length > 0 ? { passphrase } : {}),
+        passphrase,
         saveAs: false,
-        policy,
-        ...(options.acknowledgePrivacyFindings ? { acknowledgePrivacyFindings: true } : {})
+        policy
       })
     );
     state.pendingExportSid = undefined;
 
     if (isSuccessfulExportResponse(response)) {
       setStatus(t("popupExported", { name: response.fileName ?? sid }), false);
-      applyExportPrivacyWarning(response.privacyWarning);
+      // Findings are reported inline, never blocking: the archive is encrypted either way.
+      state.exportPrivacyWarning = response.privacyWarning;
     }
 
     render(container);
   } catch (error) {
     state.pendingExportSid = undefined;
-
-    if (
-      error instanceof UiMessageRejectedError &&
-      error.response.privacyBlocked === true &&
-      !options.acknowledgePrivacyFindings &&
-      window.confirm(t("popupPrivacyBlockedConfirm", { error: error.message }))
-    ) {
-      await exportSessionFromPopup(container, sid, passphrase, policy, {
-        acknowledgePrivacyFindings: true
-      });
-      return;
-    }
-
     setStatus(t("popupExportFailed", { error: errorMessage(error) }), true);
     render(container);
   }
@@ -657,23 +640,6 @@ function isSuccessfulExportResponse(value: unknown): value is {
   privacyWarning?: ExportPrivacyWarning;
 } {
   return value !== null && typeof value === "object" && (value as { ok?: unknown }).ok === true;
-}
-
-function applyExportPrivacyWarning(warning: ExportPrivacyWarning | undefined): void {
-  if (!warning || !loadExportPolicyPrefs().alertSensitiveFindings) {
-    state.exportPrivacyWarning = undefined;
-    return;
-  }
-
-  state.exportPrivacyWarning = warning;
-  const alertKey = `${warning.findingCount}:${warning.summary}`;
-
-  if (state.lastPrivacyAlertKey === alertKey) {
-    return;
-  }
-
-  state.lastPrivacyAlertKey = alertKey;
-  window.alert(formatExportPrivacyWarning(warning));
 }
 
 function formatExportPrivacyWarning(warning: ExportPrivacyWarning): string {
@@ -699,17 +665,13 @@ function applyMessage(message: ExtensionOutboundMessage): void {
         state.pendingExportSid = undefined;
       }
 
-      state.exportPrivacyWarning = undefined;
+      state.exportPrivacyWarning = message.ok ? message.privacyWarning : undefined;
       setStatus(
         message.ok
           ? t("popupExported", { name: message.fileName ?? message.sid })
           : t("popupExportFailed", { error: message.error ?? t("unknownError") }),
         !message.ok
       );
-
-      if (message.ok) {
-        applyExportPrivacyWarning(message.privacyWarning);
-      }
       return;
     case "sw.profile-preview":
       state.profilePreview = message;

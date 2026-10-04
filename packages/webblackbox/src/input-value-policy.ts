@@ -1,4 +1,11 @@
 import type { CapturePolicy } from "@webblackbox/protocol";
+// The zod-free leaf, not the package index: the content script loads this module on every page.
+import {
+  isContentRedactionEnabled,
+  usesBuiltInHeuristics,
+  type RedactionRules
+} from "@webblackbox/protocol/redaction-rules";
+import { mentionsSecretName } from "@webblackbox/protocol/secret-detection";
 
 /** Longest raw input value kept on a `user.input` event. */
 export const MAX_CAPTURED_INPUT_VALUE_CHARS = 1_000;
@@ -16,6 +23,18 @@ const NEVER_CAPTURED_AUTOCOMPLETE_TOKENS = new Set([
   "cc-exp-year"
 ]);
 const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode/i;
+/** Whole words of a field name or id that mark a one-time code (`otpCode`, `sms_otp`). */
+const ONE_TIME_CODE_WORDS = new Set(["otp", "totp", "hotp", "mfa"]);
+/** Payment card fields named without an autocomplete hint (`card_number`, `ccNum`). */
+const CARD_FIELD_COMPACT_PATTERN = /card(?:number|num|no)|ccnum|creditcard|debitcard|securitycode/;
+/** One-time-code markers inside a name with its separators removed (`otpcode`). */
+const ONE_TIME_CODE_COMPACT_PATTERN = /otpcode|onetime(?:code|password|pin|pass|token)|twofa/;
+/**
+ * `2fa` as its own token: after a separator or the start (`2fa_code`), as `…2FA` after a word
+ * (`verify2FA`), or ending a word (`code2fa`); not inside hex ids (`a7f2fa3b`, `9c2fa1`).
+ */
+const TWO_FACTOR_PATTERN =
+  /(?:^|[^A-Za-z0-9])2[Ff][Aa](?![A-Za-z0-9])|[a-z]2FA(?![a-z])|[A-Za-z]{3,}2[Ff][Aa](?![A-Za-z0-9])/;
 
 type PasswordFieldRegistry = {
   /**
@@ -148,14 +167,9 @@ export function readCapturableInputValue(
 ): string | undefined {
   const level = policy.categories.inputs;
 
-  // A reveal in the same task as this read has not reached the observer callback yet.
-  for (const watcher of revealWatchers) {
-    rememberRevealedFields(watcher.takeRecords());
-  }
-
   notePasswordField(field);
 
-  if ((level !== "allow" && level !== "masked") || isNeverCapturedField(field)) {
+  if ((level !== "allow" && level !== "masked") || isNeverCapturedField(field, policy.redaction)) {
     return undefined;
   }
 
@@ -170,7 +184,22 @@ export function readCapturableInputValue(
   return field.value.slice(0, MAX_CAPTURED_INPUT_VALUE_CHARS);
 }
 
-function isNeverCapturedField(field: EditableField): boolean {
+/**
+ * Password, one-time-code and payment card fields, and with the built-in heuristics secret-named
+ * fields (tokens, keys, CSRF, PIN…): their values are never recorded while content masking is on.
+ * With masking off (`rules.contentRedaction: false`) no field is excluded.
+ */
+export function isNeverCapturedField(field: EditableField, rules?: RedactionRules): boolean {
+  // Masking off (`contentRedaction: false`): every field the inputs level allows is recorded.
+  if (!isContentRedactionEnabled(rules)) {
+    return false;
+  }
+
+  // A reveal in the same task as this check has not reached the observer callback yet.
+  for (const watcher of revealWatchers) {
+    rememberRevealedFields(watcher.takeRecords());
+  }
+
   const isPasswordNow =
     field instanceof HTMLInputElement && field.type.toLowerCase() === "password";
 
@@ -178,7 +207,16 @@ function isNeverCapturedField(field: EditableField): boolean {
     return true;
   }
 
-  if (PASSWORD_LIKE_NAME_PATTERN.test(`${field.name} ${field.id}`)) {
+  const nameAndId = `${field.name} ${field.id}`;
+
+  if (
+    PASSWORD_LIKE_NAME_PATTERN.test(nameAndId) ||
+    isOneTimeCodeName(nameAndId) ||
+    CARD_FIELD_COMPACT_PATTERN.test(nameAndId.toLowerCase().replace(/[^a-z0-9]+/g, "")) ||
+    // Built-in heuristics: tokens, keys, CSRF fields, CVV, PIN, SSN… (`api_key`, `pin`).
+    (usesBuiltInHeuristics(rules) &&
+      (mentionsSecretName(field.name) || mentionsSecretName(field.id)))
+  ) {
     return true;
   }
 
@@ -213,4 +251,28 @@ function nearestMatch(
   }
 
   return nearest;
+}
+
+/** `otp1`, `otpCode`, `verifyOTP`, `code2fa`, `otpcode`: split-box and named OTP fields. */
+function isOneTimeCodeName(value: string): boolean {
+  const compact = value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const words = splitNameWords(value);
+
+  return (
+    ONE_TIME_CODE_COMPACT_PATTERN.test(compact) ||
+    TWO_FACTOR_PATTERN.test(value) ||
+    words.some((word) => ONE_TIME_CODE_WORDS.has(word))
+  );
+}
+
+/** `verifyOTP code` → verify, otp, code; `otp1` → otp, 1. */
+function splitNameWords(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-zA-Z])([0-9])/g, "$1 $2")
+    .replace(/([0-9])([a-zA-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0);
 }

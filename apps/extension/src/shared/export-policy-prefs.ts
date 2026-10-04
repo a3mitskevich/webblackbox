@@ -3,8 +3,8 @@ import { DEFAULT_EXPORT_POLICY, type ExportPolicy } from "@webblackbox/protocol"
 import type { FullModeVisualCapture } from "./messages.js";
 
 /**
- * Archive export preferences (sensitive-finding alerts, size cap, recent window). Edited on the
- * options page, read by the popup when it exports. Extension pages share one origin, so
+ * Archive export preferences (size cap, recent window). Edited on the options page, read by the
+ * popup and the sessions page when they export. Extension pages share one origin, so
  * `localStorage` is common to both; the key predates the move out of the popup.
  */
 export const EXPORT_POLICY_PREFS_STORAGE_KEY = "webblackbox.popup.export-policy";
@@ -16,13 +16,11 @@ const BYTES_PER_MB = 1024 * 1024;
 const MS_PER_MINUTE = 60 * 1000;
 
 export type ExportPolicyPrefs = {
-  alertSensitiveFindings: boolean;
   maxArchiveMb: number;
   recentMinutes: number;
 };
 
 export const DEFAULT_EXPORT_POLICY_PREFS: ExportPolicyPrefs = {
-  alertSensitiveFindings: true,
   maxArchiveMb: Math.round(DEFAULT_EXPORT_POLICY.maxArchiveBytes / BYTES_PER_MB),
   recentMinutes: Math.round(DEFAULT_EXPORT_POLICY.recentWindowMs / MS_PER_MINUTE)
 };
@@ -42,10 +40,6 @@ export function normalizeExportPolicyPrefs(raw: unknown): ExportPolicyPrefs {
   const record = raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
 
   return {
-    alertSensitiveFindings:
-      typeof record.alertSensitiveFindings === "boolean"
-        ? record.alertSensitiveFindings
-        : DEFAULT_EXPORT_POLICY_PREFS.alertSensitiveFindings,
     maxArchiveMb: toBoundedInt(
       record.maxArchiveMb,
       DEFAULT_EXPORT_POLICY_PREFS.maxArchiveMb,

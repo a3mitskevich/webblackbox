@@ -1,4 +1,9 @@
-import { redactBodyText, type RedactionProfile } from "@webblackbox/protocol";
+import {
+  isContentRedactionEnabled,
+  maskBodyText,
+  recordUrl,
+  type RedactionProfile
+} from "@webblackbox/protocol";
 import { createRedactionHashKey, redactPayload } from "@webblackbox/recorder";
 
 /** What kind of sample the redaction sandbox receives. */
@@ -22,9 +27,11 @@ export type RedactionSandboxOptions = {
 };
 
 /**
- * Shows what a redaction profile hides in a pasted sample, using the exact functions the recorder
- * runs: `redactBodyText` for network bodies (JSON, form, XML/HTML, plain text) and `redactPayload`
- * for event payloads, headers and URLs. Pure: no I/O, safe to call from any extension page.
+ * Shows what a profile's redaction rules hide in a pasted sample, using the exact functions the
+ * capture stages run: `maskBodyText` for network bodies (key rules and value patterns),
+ * `recordUrl` for URLs (built-in sanitizer or query parameter rules), and `redactPayload` for
+ * event payloads and headers. With masking off, every sample comes back as captured. Pure: no
+ * I/O, safe to call from any extension page.
  */
 export function previewRedaction(
   input: RedactionSandboxInput,
@@ -35,9 +42,9 @@ export function previewRedaction(
 
   switch (input.kind) {
     case "body":
-      return toResult(input, redactBodyText(input.text, profile.redactBodyPatterns).value);
+      return toResult(input, maskBodyText(input.text, profile).value);
     case "url":
-      return toResult(input, readString(redactPayload({ url: input.text }, profile, { hashKey })));
+      return toResult(input, recordUrl(input.text, profile));
     case "headers":
       return previewHeaders(input, profile, hashKey);
     case "event":
@@ -51,7 +58,10 @@ function previewHeaders(
   hashKey: Uint8Array
 ): RedactionSandboxResult {
   const headers = parseHeaderLines(input.text);
-  const redacted = redactPayload({ headers: Object.fromEntries(headers) }, profile, { hashKey });
+  const record = { headers: Object.fromEntries(headers) };
+  const redacted = isContentRedactionEnabled(profile)
+    ? redactPayload(record, profile, { hashKey })
+    : record;
   const redactedHeaders = asRecord(asRecord(redacted)?.headers) ?? {};
   const output = headers
     .map(([name]) => `${name}: ${String(redactedHeaders[name] ?? "")}`)
@@ -75,7 +85,11 @@ function previewEventPayload(
     return { kind: input.kind, output: input.text, changed: false, error: "invalid-json" };
   }
 
-  return toResult(input, JSON.stringify(redactPayload(parsed, profile, { hashKey }), null, 2), {
+  const redacted = isContentRedactionEnabled(profile)
+    ? redactPayload(parsed, profile, { hashKey })
+    : parsed;
+
+  return toResult(input, JSON.stringify(redacted, null, 2), {
     normalizedInput: JSON.stringify(parsed, null, 2)
   });
 }
@@ -110,10 +124,6 @@ function toResult(
     output,
     changed: output !== (options.normalizedInput ?? input.text)
   };
-}
-
-function readString(value: unknown): string {
-  return typeof asRecord(value)?.url === "string" ? String(asRecord(value)?.url) : "";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
