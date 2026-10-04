@@ -103,6 +103,12 @@ const CSS_CASES: CssCase[] = [
     kept: ["https://bucket.s3.amazonaws.com/a.jpg"]
   },
   {
+    name: "fragments and queries in strings and attribute selectors",
+    css: '@import "page#FRAG1SECRET";a[href="x#FRAG2SECRET"]{color:red}a[href="y?BARE1SECRET"]{}',
+    secrets: ["FRAG1SECRET", "FRAG2SECRET", "BARE1SECRET"],
+    kept: ["{color:red}"]
+  },
+  {
     name: "URL credentials and vendor keys in comments",
     css: `.u{background:url(https://user:USERINFO1SECRET@cdn.test/a.png)} /* ftp://admin:USERINFO2SECRET@files.test ${GITHUB} */`,
     secrets: ["USERINFO1SECRET", "USERINFO2SECRET", GITHUB]
@@ -302,6 +308,9 @@ describe("raw DOM corpus: text", () => {
       <noembed>NOEMBED1SECRET</noembed>
       <p>-----BEGIN OPENSSH PRIVATE KEY----- ${SSH_KEY_LINE}</p>
       <p>login https://admin:USERINFO4SECRET@h.test/</p>
+      <p>visit https://h.test/r?BARE2SECRET or https://h.test/r#BARE3SECRET</p>
+      <p>https://h.test/r?a%3dENC1SECRET and https://h.test/r;x=PATHPARAM1SECRET</p>
+      <p title="go to /cb?BARE4SECRET now" data-x="see /p;jsessionid=PATHPARAM2SECRET">t</p>
       <p>Session expired? Sign in again.</p>`;
     document.getElementById("escaped")!.textContent = escapedJson;
 
@@ -319,7 +328,13 @@ describe("raw DOM corpus: text", () => {
       "XMP1SECRET",
       "NOEMBED1SECRET",
       SSH_KEY_LINE,
-      "USERINFO4SECRET"
+      "USERINFO4SECRET",
+      "BARE2SECRET",
+      "BARE3SECRET",
+      "ENC1SECRET",
+      "PATHPARAM1SECRET",
+      "BARE4SECRET",
+      "PATHPARAM2SECRET"
     ]) {
       expect(html, secret).not.toContain(secret);
     }
@@ -351,7 +366,10 @@ describe("raw DOM corpus: text", () => {
       `${BACKSLASH}#`.repeat(100_000),
       "--".repeat(100_000),
       "a://".repeat(50_000),
-      "url(".repeat(50_000)
+      "url(".repeat(50_000),
+      `{${"A".repeat(200_000)}`,
+      "/-".repeat(100_000),
+      `"${"#a".repeat(100_000)} "`
     ];
 
     for (const text of hostile) {

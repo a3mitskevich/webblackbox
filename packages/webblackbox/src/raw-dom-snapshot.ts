@@ -44,9 +44,6 @@ const DROPPED_ATTRIBUTES = new Set(["srcdoc"]);
 const KEPT_META_NAMES = new Set(["viewport", "theme-color", "color-scheme", "description"]);
 /** An attribute value that is a URL on its own (`data-src`, `data-bg`…). */
 const URL_SHAPED_VALUE_PATTERN = /^(?:[a-z][a-z0-9+.-]*:\/\/|\/\/|\/[^\s/]|\.\.?\/)\S*$/i;
-/** A CSS string that is a URL (`@import "/x.css"`, `image-set("a.png" 1x)`). */
-const CSS_URL_STRING_PATTERN =
-  /^(?:[a-z][a-z0-9+.-]*:|\/|\.\.?\/)\S*$|^[^\s"']+\.[a-z0-9]{2,5}(?:[?#]\S*)?$|^[^\s"']*[?#][^\s"']*=/i;
 /** Elements whose `value` attribute is form data (inputs are handled field by field). */
 const VALUE_ATTRIBUTE_ELEMENTS = new Set(["BUTTON", "OPTION", "PARAM", "DATA", "METER"]);
 
@@ -73,15 +70,24 @@ const CSS_ESCAPE_PATTERN = /\\(?:([0-9a-fA-F]{1,6})[ \t\r\n\f]?|([\s\S]))/g;
 const CSS_REDACTED = "redacted";
 /** Written instead of style text that is still suspicious after sanitizing. */
 const CSS_DROPPED = "/* [REDACTED] */";
-/** URL query (`?…=…`) or token fragment (`#…=…`) in an attribute value or text. */
+/**
+ * A `key=value` query (`?…=…`) or fragment (`#…=…`) anywhere in an attribute value or text, URL
+ * or not (`a.html?code=…`). Bare queries are handled by {@link URL_SUFFIX_PATTERN}.
+ */
 const QUERY_PARAMETER_PATTERN = /[?#][^\s"'`<>?#=]*=[^\s"'`<>]*/g;
+/**
+ * A URL in text (`https://…`, or a path starting `/` after a space or quote) and its query,
+ * fragment or path parameters (`?TOKEN`, `#TOKEN`, `;jsessionid=…`), which are dropped. The
+ * suffix is optional so every match succeeds and the scan never restarts inside a path.
+ */
+const URL_SUFFIX_PATTERN =
+  /((?:\b[a-z][a-z0-9+.-]{0,30}:\/\/|(?<![\w/.~-])\/)[^\s"'`<>?#;]*)(?:[?#;][^\s"'`<>]*)?/gi;
 /** `--api-token: …`: a custom property named like a secret; its value is replaced. */
 const CSS_CUSTOM_PROPERTY_PATTERN = /(?<![\w-])(--[\w-]+)(\s*:)[^;}]*/g;
 /** `scheme://user:password@host`: the credentials go, the URL stays. */
 const URL_USERINFO_PATTERN = /\b([a-z][a-z0-9+.-]{0,30}:\/\/)[^\s/?#@"'`<>]+@/gi;
+// Without `g`: `test` on a global pattern keeps `lastIndex` between calls.
 const HAS_URL_USERINFO_PATTERN = new RegExp(URL_USERINFO_PATTERN.source, "i");
-/** Longer CSS strings are not tested as URLs (the test backtracks); the invariant still runs. */
-const CSS_URL_STRING_MAX_CHARS = 4_096;
 
 export type RawDomSnapshot = {
   html: string;
@@ -339,7 +345,10 @@ function enforceTextInvariant(text: string, replacement: string, maskWhole: bool
     return replacement;
   }
 
-  const stripped = text.replace(QUERY_PARAMETER_PATTERN, "").replace(URL_USERINFO_PATTERN, "$1");
+  const stripped = text
+    .replace(QUERY_PARAMETER_PATTERN, "")
+    .replace(URL_SUFFIX_PATTERN, "$1")
+    .replace(URL_USERINFO_PATTERN, "$1");
   return maskWhole ? stripped : redactCredentials(stripped, replacement);
 }
 
@@ -417,10 +426,18 @@ function sanitizeCssToken(token: string): string {
   return `${head}${valueQuote}${sanitizeCssUrl(url)}${valueQuote}${tail}`;
 }
 
+/**
+ * A CSS string that is a URL or a reference: `@import "/x.css"`, `image-set("a.png" 1x)`,
+ * `"page#ref"`, `"x?y"`. Plain checks, no backtracking pattern: strings are page-controlled.
+ */
 function isCssUrlString(text: string): boolean {
+  if (/^[a-z][a-z0-9+.-]*:\S*$/i.test(text)) {
+    return true;
+  }
+
   return (
-    /^[a-z][a-z0-9+.-]*:\S*$/i.test(text) ||
-    (text.length <= CSS_URL_STRING_MAX_CHARS && CSS_URL_STRING_PATTERN.test(text))
+    !/[\s"']/.test(text) &&
+    (/^\.{0,2}\//.test(text) || /\.[a-z0-9]{2,5}(?:[?#]|$)/i.test(text) || /[?#]./.test(text))
   );
 }
 

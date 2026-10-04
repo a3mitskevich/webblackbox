@@ -138,6 +138,16 @@ describe("storage value corpus", () => {
     });
   }
 
+  it("scans hostile values in linear time", () => {
+    for (const value of ["A".repeat(200_000), `{${"Ab".repeat(100_000)}}`, "%".repeat(200_000)]) {
+      const started = performance.now();
+
+      redactPayload({ op: "setItem", key: "k", value }, DEFAULT_PROFILE);
+
+      expect(performance.now() - started, value.slice(0, 4)).toBeLessThan(1_000);
+    }
+  });
+
   it("keeps ordinary app state readable", () => {
     const entries = [
       { key: "theme", value: "dark" },
