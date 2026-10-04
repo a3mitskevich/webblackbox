@@ -314,7 +314,47 @@
     "network": "network",
     "screenshot": "screenshot",
     "recording": "recording",
-    "action": "action"
+    "action": "action",
+    "pointer": "pointer"
+  },
+  "pointerLaneLabel": "Pointer actions",
+  "pointerKinds": {
+    "click": "Click",
+    "double": "Double click",
+    "right": "Right click",
+    "middle": "Middle click",
+    "hold": "Long press",
+    "drag": "Drag",
+    "dnd": "Drag and drop",
+    "wheel": "Wheel",
+    "zoom": "Ctrl+wheel zoom",
+    "hover": "Hover",
+    "selection": "Text selection",
+    "rage": "Rage click",
+    "dead": "Dead click"
+  },
+  "pointerRippleLabels": {
+    "double": "double",
+    "right": "right",
+    "middle": "middle",
+    "hold": "hold",
+    "drag": "drag",
+    "dnd": "drop"
+  },
+  "stackView": {
+    "heading": "Stack trace",
+    "showOriginal": "Show original",
+    "showRaw": "Show raw",
+    "loadMapFiles": "Load .map files",
+    "loadMapFolder": "Load maps folder",
+    "symbolServerPlaceholder": "Symbol server URL (maps by file name)",
+    "symbolServerApply": "Use",
+    "mapsLoaded": "{count} source map file(s) loaded.",
+    "resolving": "Resolving original sources…",
+    "noMap": "no source map",
+    "noMapping": "no mapping at this position",
+    "mapError": "source map error",
+    "invalidSymbolServer": "Symbol server URL must be http(s)."
   },
   "privacyHiddenByProfile": "Hidden by profile: {what}",
   "privacySubjects": {

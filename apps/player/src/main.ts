@@ -2758,7 +2758,7 @@ function renderPointerLane(model: ArchiveModel): void {
     button.dataset.pointerMono = String(mark.mono);
     button.dataset.pointerKind = mark.kind;
     button.style.left = `${(Math.min(1, Math.max(0, ratio)) * 100).toFixed(3)}%`;
-    button.title = `${mark.label} @ ${formatMono(mark.mono - model.minMono)}`;
+    button.title = `${mark.label} @ ${i18n.formatSeconds(mark.mono - model.minMono)}`;
     button.setAttribute("aria-label", button.title);
     fragment.append(button);
   }
