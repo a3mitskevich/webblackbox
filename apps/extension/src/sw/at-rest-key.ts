@@ -95,6 +95,35 @@ export async function loadOrCreateAtRestKey(
   return { record, fresh: true };
 }
 
+export type AtRestKeyBootstrap = AtRestKeyState & {
+  database: "deleted" | "blocked" | "unavailable";
+};
+
+/**
+ * Readies at-rest storage when a service worker instance starts: pins `storage.session`, loads or
+ * mints the key, then deletes the pipeline database, before any offscreen document can open it.
+ * Nothing in the database is reachable from a new worker. A fresh key means everything was
+ * written under a lost key. A restored key means an earlier worker instance stopped, and this
+ * build does not recover sessions across worker restarts, so its recordings can no longer be
+ * listed or exported. Chrome may stop an idle worker 30 seconds after the last recording
+ * stops, before the in-memory retention timer fires, and this purge is what bounds those leftovers.
+ */
+export async function bootstrapAtRestKey(
+  area: SessionStorageAreaLike | undefined,
+  indexedDb: IDBFactory | undefined,
+  dbName: string,
+  options: { onAccessLevelError?: (error: unknown) => void } = {}
+): Promise<AtRestKeyBootstrap> {
+  await restrictSessionStorageAccess(area).catch((error: unknown) => {
+    options.onAccessLevelError?.(error);
+  });
+
+  const state = await loadOrCreateAtRestKey(area);
+  const database = await deletePipelineDatabase(indexedDb, dbName);
+
+  return { ...state, database };
+}
+
 /**
  * Pins `chrome.storage.session` to trusted extension contexts. That is Chrome's default; setting
  * it explicitly keeps a future `setAccessLevel` call elsewhere from exposing the key to content
@@ -110,7 +139,10 @@ export function toStorageKeyMessage(record: AtRestKeyRecord): StorageKeyMessage 
   return { kind: STORAGE_KEY_MESSAGE_KIND, keyId: record.keyId, key: record.key };
 }
 
-/** Only the extension's own offscreen document may receive the key: no tab, exact URL. */
+/**
+ * Only the extension's own offscreen document may hold the offscreen port, which carries the key
+ * and every recorded event: no tab, exact URL.
+ */
 export function isOffscreenDocumentPort(
   port: { sender?: { url?: string; tab?: unknown } },
   offscreenUrl: string

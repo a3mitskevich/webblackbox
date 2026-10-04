@@ -99,10 +99,8 @@ import {
   shouldStopForEnterpriseOriginPolicy as shouldStopForEnterpriseOriginPolicyInput
 } from "./capture-scope.js";
 import {
-  deletePipelineDatabase,
+  bootstrapAtRestKey,
   isOffscreenDocumentPort,
-  loadOrCreateAtRestKey,
-  restrictSessionStorageAccess,
   toStorageKeyMessage,
   type AtRestKeyRecord
 } from "./at-rest-key.js";
@@ -533,6 +531,15 @@ chromeApi?.runtime?.onConnect.addListener((port) => {
   if (
     !Object.values(PORT_NAMES).includes(port.name as (typeof PORT_NAMES)[keyof typeof PORT_NAMES])
   ) {
+    return;
+  }
+
+  // The offscreen port carries the at-rest key and every recorded event: only the extension's own
+  // offscreen document may take it, never a content script.
+  if (port.name === PORT_NAMES.offscreen && !isTrustedOffscreenPort(port)) {
+    console.warn("[WebBlackbox] refused an offscreen port from another context", {
+      tabId: port.sender?.tab?.id
+    });
     return;
   }
 
@@ -4332,9 +4339,8 @@ function normalizeLiteNetworkTimestamp(candidate: unknown): number {
 }
 
 /**
- * This browser session's at-rest key. Minting a new one means the browser (or the extension)
- * restarted: whatever the pipeline database still holds was encrypted with a key that is gone, so
- * the database is deleted before any offscreen document opens it. A failure is retried on the next
+ * This browser session's at-rest key. Each worker instance deletes the pipeline database before
+ * any offscreen document opens it (see `bootstrapAtRestKey`). A failure is retried on the next
  * call.
  */
 function getAtRestKey(): Promise<AtRestKeyRecord> {
@@ -4349,33 +4355,30 @@ function getAtRestKey(): Promise<AtRestKeyRecord> {
 }
 
 async function initializeAtRestKey(): Promise<AtRestKeyRecord> {
-  const area = chromeApi?.storage?.session;
+  const state = await bootstrapAtRestKey(
+    chromeApi?.storage?.session,
+    globalThis.indexedDB,
+    PIPELINE_DB_NAME,
+    {
+      onAccessLevelError: (error) => {
+        console.warn("[WebBlackbox] failed to restrict storage.session access", error);
+      }
+    }
+  );
 
-  await restrictSessionStorageAccess(area).catch((error) => {
-    console.warn("[WebBlackbox] failed to restrict storage.session access", error);
+  console.info("[WebBlackbox] cleared unexported recordings left by an earlier worker", {
+    newBrowserSession: state.fresh,
+    outcome: state.database
   });
-
-  const state = await loadOrCreateAtRestKey(area);
-
-  if (state.fresh) {
-    const outcome = await deletePipelineDatabase(globalThis.indexedDB, PIPELINE_DB_NAME);
-    console.info("[WebBlackbox] new browser session: cleared unexported recordings", { outcome });
-  }
-
   return state.record;
 }
 
-/** Hands the key to the offscreen document, and to nothing else that connects on its port. */
+function isTrustedOffscreenPort(port: PortLike): boolean {
+  return isOffscreenDocumentPort(port, chromeApi?.runtime?.getURL(OFFSCREEN_PATH) ?? "");
+}
+
+/** Hands the key to the offscreen document; the port was checked on connect. */
 async function sendAtRestKeyToOffscreen(port: PortLike): Promise<void> {
-  const offscreenUrl = chromeApi?.runtime?.getURL(OFFSCREEN_PATH) ?? "";
-
-  if (!isOffscreenDocumentPort(port, offscreenUrl)) {
-    console.warn("[WebBlackbox] refused the at-rest key to a non-offscreen port", {
-      tabId: port.sender?.tab?.id
-    });
-    return;
-  }
-
   try {
     port.postMessage(toStorageKeyMessage(await getAtRestKey()));
   } catch (error) {

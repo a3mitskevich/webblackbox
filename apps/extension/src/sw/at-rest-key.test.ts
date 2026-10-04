@@ -7,6 +7,7 @@ import {
 } from "../shared/at-rest.js";
 import {
   AT_REST_KEY_STORAGE_KEY,
+  bootstrapAtRestKey,
   createAtRestKeyRecord,
   deletePipelineDatabase,
   isOffscreenDocumentPort,
@@ -164,5 +165,52 @@ describe("deletePipelineDatabase", () => {
 
   it("reports a missing IndexedDB factory instead of throwing", async () => {
     await expect(deletePipelineDatabase(undefined, "any")).resolves.toBe("unavailable");
+  });
+});
+
+describe("bootstrapAtRestKey", () => {
+  it("mints a key and deletes the database on a new browser session", async () => {
+    const area = createSessionArea();
+    const { factory, deleted } = createStubFactory("success");
+
+    const boot = await bootstrapAtRestKey(area, factory, "webblackbox-flight-recorder");
+
+    expect(boot.fresh).toBe(true);
+    expect(boot.database).toBe("deleted");
+    expect(deleted).toEqual(["webblackbox-flight-recorder"]);
+    expect(area.setAccessLevel).toHaveBeenCalledWith({ accessLevel: "TRUSTED_CONTEXTS" });
+  });
+
+  it("deletes what an earlier worker of this browser session left, keeping its key", async () => {
+    const record = createAtRestKeyRecord(1);
+    const area = createSessionArea({ [AT_REST_KEY_STORAGE_KEY]: record });
+    const { factory, deleted } = createStubFactory("blocked");
+
+    const boot = await bootstrapAtRestKey(area, factory, "db");
+
+    expect(boot).toEqual({ record, fresh: false, database: "blocked" });
+    expect(deleted).toEqual(["db"]);
+  });
+
+  it("reports a failing access-level call and still loads the key", async () => {
+    const area = createSessionArea();
+    const failure = new Error("denied");
+    area.setAccessLevel = vi.fn(async () => {
+      throw failure;
+    });
+    const onAccessLevelError = vi.fn();
+
+    const boot = await bootstrapAtRestKey(area, undefined, "db", { onAccessLevelError });
+
+    expect(onAccessLevelError).toHaveBeenCalledWith(failure);
+    expect(boot.database).toBe("unavailable");
+    expect(boot.fresh).toBe(true);
+  });
+
+  it("does not touch the database when there is no storage.session", async () => {
+    const { factory, deleted } = createStubFactory("success");
+
+    await expect(bootstrapAtRestKey(undefined, factory, "db")).rejects.toThrow(/storage\.session/);
+    expect(deleted).toEqual([]);
   });
 });
