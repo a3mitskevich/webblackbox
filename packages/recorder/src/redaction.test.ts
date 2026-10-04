@@ -152,6 +152,37 @@ describe("redactPayload URL fields", () => {
     ]);
   });
 
+  it("masks storage values with secrets nested in JSON and keeps neutral ones", () => {
+    const redacted = redactPayload(
+      {
+        entries: [
+          { key: "app_state", value: JSON.stringify({ sessionId: "S3CR3T" }) },
+          { key: "persist:root", value: JSON.stringify({ auth: '{"accessJwt":"abc"}' }) },
+          { key: "user", value: JSON.stringify({ access: "x", sid: "y" }) },
+          { key: "x", value: JSON.stringify({ Authorization: "Basic dXNlcjpwYXNz" }) },
+          { key: "creds", value: JSON.stringify({ pwd: "hunter2" }) },
+          { key: "sid", value: "SIDVALUE" },
+          { key: "authOrigin", value: "o" },
+          { key: "sidebarOpen", value: "true" },
+          { key: "prefs", value: JSON.stringify({ theme: "dark", author: "Ann" }) }
+        ]
+      },
+      PLAIN_PROFILE
+    ) as { entries: Array<{ value: string }> };
+
+    expect(redacted.entries.map((entry) => entry.value)).toEqual([
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "true",
+      JSON.stringify({ theme: "dark", author: "Ann" })
+    ]);
+  });
+
   it("sanitizes referrer and src payload fields", () => {
     const redacted = redactPayload(
       {

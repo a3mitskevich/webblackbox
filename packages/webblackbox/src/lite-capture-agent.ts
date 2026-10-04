@@ -1156,7 +1156,8 @@ export class LiteCaptureAgent {
     const names = document.cookie
       .split(";")
       .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0)
+      // A cookie without `=` is a bare value, not a name: never list it.
+      .filter((entry) => entry.includes("="))
       .map((entry) => entry.split("=")[0]?.trim() ?? "");
     const showsNames = this.capturePolicy.categories.cookies === "names-only";
 

@@ -173,6 +173,67 @@ describe("serializeRawDom", () => {
     }
   });
 
+  it("sanitizes every CSS URL like recorded URLs and leaves other CSS alone", () => {
+    document.body.innerHTML = `
+      <div style="background:url('https://x.imgix.net/a.jpg?rect=0,0,10,10&s=IMGIX-SIG')">a</div>
+      <div style="background:url(/b.png?q=(1)&token=PAREN-TOKEN)">b</div>
+      <div style="background:url(/c.png#access_token=FRAGMENT-TOKEN)">c</div>
+      <svg><rect fill="URL(https://h.test/p?token=UPPER-TOKEN)"></rect></svg>
+      <div style="background:url(data:image/svg+xml;utf8,<svg><text>keep?</text></svg>)">d</div>
+      <p title="really? yes">e</p>`;
+
+    const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+
+    for (const secret of ["IMGIX-SIG", "PAREN-TOKEN", "FRAGMENT-TOKEN", "UPPER-TOKEN"]) {
+      expect(html, secret).not.toContain(secret);
+    }
+
+    expect(html).toContain("keep?");
+    expect(html).toContain('title="really? yes"');
+
+    for (const css of [`url("`.repeat(50_000), `url('x'`.repeat(50_000), "'".repeat(100_000)]) {
+      document.body.innerHTML = "";
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.body.append(style);
+      const started = performance.now();
+
+      serializeRawDom(document, OPTIONS);
+
+      expect(performance.now() - started, css.slice(0, 8)).toBeLessThan(1_000);
+    }
+  });
+
+  it("checks attribute values, not only names, and masks editors without input values", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2lnbmF0dXJlLXZhbHVlLTE";
+    document.body.innerHTML = `
+      <img data-src="https://cdn.test/a.png?X-Amz-Signature=LAZY-SIG">
+      <div data-authorization="Bearer ${"b".repeat(24)}" data-auth="AUTH-VALUE" data-jwt="JWT-VALUE"
+        data-x="${jwt}" data-page='{"props":{"auth":{"sid":"PAGE-SID"}}}' data-color="red">x</div>
+      <div contenteditable="true">TYPED-MESSAGE</div>
+      <div contenteditable="false">STATIC-TEXT</div>`;
+
+    const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+
+    for (const secret of [
+      "LAZY-SIG",
+      "AUTH-VALUE",
+      "JWT-VALUE",
+      jwt,
+      "PAGE-SID",
+      "TYPED-MESSAGE"
+    ]) {
+      expect(html, secret).not.toContain(secret);
+    }
+
+    expect(html).not.toContain("b".repeat(24));
+    expect(html).toContain('data-color="red"');
+    expect(html).toContain("STATIC-TEXT");
+    expect(serializeRawDom(document, { ...OPTIONS, keepInputValues: true })?.html).toContain(
+      "TYPED-MESSAGE"
+    );
+  });
+
   it("fails closed on an invalid blocked selector and caps the size", () => {
     document.body.innerHTML = `<p>${"x".repeat(RAW_DOM_SNAPSHOT_MAX_CHARS)}</p>`;
 

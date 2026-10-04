@@ -337,12 +337,66 @@ function shouldMaskByCookieName(
   return shouldRedactCookieName(cookieName, profile);
 }
 
+/** Short secret names stores use besides the cookie list (`sid`, `pwd`, `accessJwt`…). */
+const STORAGE_SECRET_NAMES = ["sid", "pwd", "jwt", "auth", "session", "credential", "passwd"];
+/** Field names of JSON text, escaped or not (`{"sessionId":…}`, `{\"accessJwt\":…}`). */
+const JSON_FIELD_NAME_PATTERN = /\\?"([A-Za-z0-9_$.-]{1,64})\\?"\s*:/g;
+const MAX_JSON_FIELD_NAMES = 200;
+
 /** Values that are credentials whatever their key: JWTs, bearer tokens, private keys. */
 const CREDENTIAL_VALUE_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
   /\bBearer\s+[A-Za-z0-9._~+/=_-]{16,}/i,
+  /\bBasic\s+[A-Za-z0-9+/=]{8,}/i,
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
 ];
+
+/** Short names that also start a word (`authstate`, `jwtToken`), but not `author…`. */
+const SHORT_NAME_PREFIX_PATTERNS: Record<string, RegExp> = {
+  auth: /^auth(?!or)/,
+  jwt: /^jwt/
+};
+
+/**
+ * Whether a key or field name mentions a secret name. Short names (`sid`, `auth`, `jwt`) must
+ * be a word or, for some, start one (`authOrigin`, `authstate`, not `author` or `sidebar`);
+ * longer ones match anywhere (`JSESSIONID`).
+ */
+function nameMentions(field: string, secretName: string): boolean {
+  const normalized = secretName.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  if (normalized.length > 4) {
+    return field
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "")
+      .includes(normalized);
+  }
+
+  const prefix = SHORT_NAME_PREFIX_PATTERNS[normalized];
+
+  return field
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .some((word) => word === normalized || (prefix?.test(word) ?? false));
+}
+
+/** Field names in a JSON-looking value (capped), so nested secrets are found. */
+function jsonFieldNames(value: string): string[] {
+  if (!/[{[]/.test(value)) {
+    return [];
+  }
+
+  return Array.from(value.matchAll(JSON_FIELD_NAME_PATTERN), (match) => match[1] ?? "").slice(
+    0,
+    MAX_JSON_FIELD_NAMES
+  );
+}
 
 /**
  * `{ key, value }` records (storage ops and snapshot entries): the value is masked when the key
@@ -358,22 +412,23 @@ function hasSensitiveStorageKey(
   }
 
   const key = source.key.toLowerCase();
-  // Cookie-style names match anywhere (`JSESSIONID`, `authstate`), except inside `author`.
-  const keyForNames = key.replace(/[^a-z0-9]+/g, "").replaceAll("author", "");
   const value =
     typeof source.value === "string"
       ? source.value
       : typeof source.text === "string"
         ? source.text
         : "";
+  const names = [...profile.redactCookieNames, ...STORAGE_SECRET_NAMES];
 
   return (
     isSensitiveKey(key, profile) ||
-    profile.redactCookieNames.some((name) => {
-      const normalized = name.toLowerCase().replace(/[^a-z0-9]+/g, "");
-      return normalized.length > 0 && keyForNames.includes(normalized);
-    }) ||
-    CREDENTIAL_VALUE_PATTERNS.some((pattern) => pattern.test(value))
+    names.some((name) => nameMentions(source.key as string, name)) ||
+    CREDENTIAL_VALUE_PATTERNS.some((pattern) => pattern.test(value)) ||
+    jsonFieldNames(value).some(
+      (field) =>
+        isSensitiveKey(field.toLowerCase(), profile) ||
+        names.some((name) => nameMentions(field, name))
+    )
   );
 }
 

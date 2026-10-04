@@ -180,12 +180,27 @@ describe("readCapturableInputValue", () => {
     observeSpy.mockRestore();
   });
 
+  it("keeps fields whose names only contain the letters of a one-time-code word", () => {
+    for (const html of [
+      '<input data-field name="footprint" />',
+      '<input data-field id="shotput" />',
+      '<input data-field name="author" />'
+    ]) {
+      expect(readCapturableInputValue(field(html), policy("allow")), html).toBe("typed value");
+    }
+  });
+
   it("never captures password-named or payment card fields", () => {
     for (const html of [
       '<input data-field type="text" name="user_password" />',
       '<input data-field type="text" id="pwd" />',
       '<input data-field type="text" name="otpCode" />',
       '<input data-field type="text" id="verifyOTP" />',
+      '<input data-field type="text" name="otp1" />',
+      '<input data-field type="text" id="otp0" />',
+      '<input data-field type="text" name="verify2FA" />',
+      '<input data-field type="text" name="code2fa" />',
+      '<input data-field type="text" name="otpcode" />',
       '<input data-field autocomplete="billing cc-number" />',
       '<input data-field autocomplete="cc-csc" />',
       '<input data-field autocomplete="cc-exp" />'

@@ -1545,6 +1545,19 @@ describe("profile-driven page capture", () => {
     ).toBe(false);
   });
 
+  it("never lists a cookie without a name as a cookie name", () => {
+    document.cookie = "NAMELESS-SECRET-VALUE";
+    document.cookie = "theme=dark";
+
+    const snapshot = markerEvents("lite", withCategories({ cookies: "names-only" })).find(
+      (event) => event.rawType === "cookieSnapshot"
+    )?.payload;
+
+    expect(snapshot?.names).toEqual(["theme"]);
+    expect(JSON.stringify(snapshot)).not.toContain("NAMELESS-SECRET-VALUE");
+    document.cookie = "theme=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
+
   it("lists localStorage per profile level, in full mode too", () => {
     localStorage.setItem("theme", "dark");
 

@@ -38,18 +38,35 @@ const SENSITIVE_ATTRIBUTE_NAME_PARTS = [
   "session",
   "signature",
   "otp",
+  "otpcode",
+  "onetime",
   "credential",
+  "authorization",
   "apikey",
   "accesskey",
-  "privatekey"
+  "privatekey",
+  "auth",
+  "sid",
+  "jwt",
+  "pwd"
 ];
-/**
- * A URL query inside CSS (`url(…)`, `@import "…"`, `image-set(…)`): from `?` up to a
- * delimiter. One character class, so matching stays linear on any input.
- */
-const CSS_QUERY_PATTERN = /\?[^\s"'()<>;,]*/g;
 /** Name parts matched as whole words only (short, often inside unrelated words). */
-const WORD_ONLY_NAME_PARTS = new Set(["otp"]);
+const WORD_ONLY_NAME_PARTS = new Set(["otp", "auth", "sid", "jwt", "pwd"]);
+/** Values that are credentials whatever the attribute: JWTs, bearer/basic tokens, keys. */
+const CREDENTIAL_VALUE_PATTERNS = [
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
+  /\bBearer\s+[A-Za-z0-9._~+/=_-]{16,}/i,
+  /\bBasic\s+[A-Za-z0-9+/=]{8,}/i,
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
+];
+/** Serialized page state (`data-page='{"auth":{"sid":…}}'`) naming a secret field. */
+const JSON_SECRET_KEY_PATTERN =
+  /"[\w$.-]{0,40}?(?:token|secret|passw|pwd|session|sid|auth|jwt|credential|csrf)[\w$.-]{0,40}"\s*:/i;
+/** An attribute value that is a URL on its own (`data-src`, `longdesc`, `codebase`…). */
+const URL_SHAPED_VALUE_PATTERN = /^(?:[a-z][a-z0-9+.-]*:\/\/|\/\/|\/[^\s/]|\.\.?\/)\S*$/i;
+/** A CSS string that is a URL (`@import "/x.css"`, `image-set("a.png" 1x)`). */
+const CSS_URL_STRING_PATTERN =
+  /^(?:[a-z][a-z0-9+.-]*:|\/|\.\.?\/)\S*$|^[^\s/]+\.[a-z0-9]{2,5}(?:[?#]\S*)?$/i;
 /** Elements whose `value` attribute is form data (inputs are handled field by field). */
 const VALUE_ATTRIBUTE_ELEMENTS = new Set(["BUTTON", "OPTION", "PARAM", "DATA", "METER"]);
 
@@ -226,11 +243,17 @@ function sanitizeAttributes(element: Element, context: SanitizeContext): void {
       attribute.value = sanitizeUrlForPrivacy(attribute.value);
     } else if (name === "srcset" || name === "imagesrcset") {
       attribute.value = sanitizeSrcset(attribute.value);
-    } else if (hasSensitiveNamePart(name, context.sensitiveNameParts)) {
+    } else if (
+      hasSensitiveNamePart(name, context.sensitiveNameParts) ||
+      isSecretValue(attribute.value)
+    ) {
       attribute.value = MASKED_TEXT;
-    } else if (name === "style" || attribute.value.includes("url(")) {
+    } else if (name === "style" || /url\(/i.test(attribute.value)) {
       // Inline CSS and SVG paint attributes (`fill="url(…)"`, `mask`, `filter`…).
       attribute.value = sanitizeCssUrls(attribute.value);
+    } else if (URL_SHAPED_VALUE_PATTERN.test(attribute.value.trim())) {
+      // Lazy-load and legacy URL attributes (`data-src`, `data-bg`, `longdesc`…).
+      attribute.value = sanitizeUrlForPrivacy(attribute.value.trim());
     }
   }
 
@@ -261,8 +284,112 @@ function hasSensitiveNamePart(name: string, parts: readonly string[]): boolean {
   });
 }
 
+function isSecretValue(value: string): boolean {
+  return (
+    CREDENTIAL_VALUE_PATTERNS.some((pattern) => pattern.test(value)) ||
+    (/^\s*[[{]/.test(value) && JSON_SECRET_KEY_PATTERN.test(value))
+  );
+}
+
+/**
+ * Runs every CSS URL (`url(…)`, quoted or not, and quoted URL strings such as `@import "…"` or
+ * `image-set("…")`) through the same sanitizer as recorded URLs. A hand-written scanner: each
+ * character is read once, so adversarial styles cannot slow it down. `data:` URLs are kept.
+ */
 function sanitizeCssUrls(css: string): string {
-  return css.replace(CSS_QUERY_PATTERN, "");
+  const lower = css.toLowerCase();
+  const chunks: string[] = [];
+  let copiedUpTo = 0;
+  let index = 0;
+
+  while (index < css.length) {
+    const char = css[index];
+
+    if (lower.startsWith("url(", index)) {
+      const parsed = readCssUrl(css, index + 4);
+      chunks.push(
+        css.slice(copiedUpTo, index),
+        `url(${parsed.quote}${sanitizeCssUrl(parsed.url)}${parsed.quote})`
+      );
+      index = parsed.end;
+      copiedUpTo = index;
+    } else if (char === '"' || char === "'") {
+      const end = findQuoteEnd(css, index + 1, char);
+      const text = css.slice(index + 1, end);
+
+      if (CSS_URL_STRING_PATTERN.test(text)) {
+        chunks.push(css.slice(copiedUpTo, index + 1), sanitizeCssUrl(text));
+        copiedUpTo = end;
+      }
+
+      index = end + 1;
+    } else {
+      index += 1;
+    }
+  }
+
+  chunks.push(css.slice(copiedUpTo));
+  return chunks.join("");
+}
+
+/** `url(` argument from `start`: a quoted string or an unquoted run up to the matching `)`. */
+function readCssUrl(css: string, start: number): { quote: string; url: string; end: number } {
+  let index = start;
+
+  while (index < css.length && /\s/.test(css[index] ?? "")) {
+    index += 1;
+  }
+
+  const quote = css[index] === '"' || css[index] === "'" ? (css[index] as string) : "";
+
+  if (quote) {
+    const end = findQuoteEnd(css, index + 1, quote);
+    let after = end + 1;
+
+    while (after < css.length && /\s/.test(css[after] ?? "")) {
+      after += 1;
+    }
+
+    return {
+      quote,
+      url: css.slice(index + 1, end),
+      end: css[after] === ")" ? after + 1 : Math.min(after, css.length)
+    };
+  }
+
+  // Unquoted: parentheses inside (invalid CSS, but pages write it) must not end the URL early.
+  let depth = 0;
+  let cursor = index;
+
+  for (; cursor < css.length; cursor += 1) {
+    const char = css[cursor];
+
+    if (char === "(") {
+      depth += 1;
+    } else if (char === ")") {
+      if (depth === 0) {
+        break;
+      }
+
+      depth -= 1;
+    }
+  }
+
+  return { quote: "", url: css.slice(index, cursor).trim(), end: Math.min(cursor + 1, css.length) };
+}
+
+function findQuoteEnd(css: string, start: number, quote: string): number {
+  let index = start;
+
+  while (index < css.length && css[index] !== quote) {
+    index += css[index] === "\\" ? 2 : 1;
+  }
+
+  return Math.min(index, css.length);
+}
+
+function sanitizeCssUrl(url: string): string {
+  return /^\s*data:/i.test(url) ? url : sanitizeUrlForPrivacy(url.trim());
 }
 
 function sanitizeSrcset(value: string): string {
@@ -292,6 +419,13 @@ function stripFieldValues(root: Element | DocumentFragment, keepInputValues: boo
 
   if (keepInputValues) {
     return;
+  }
+
+  // Rich editors hold typed text (chat, mail); without input values it is masked like a field.
+  for (const editor of Array.from(
+    root.querySelectorAll('[contenteditable]:not([contenteditable="false"])')
+  )) {
+    editor.replaceChildren(editor.ownerDocument.createTextNode(MASKED_TEXT));
   }
 
   for (const element of Array.from(root.querySelectorAll("[value]"))) {
