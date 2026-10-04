@@ -30,6 +30,33 @@ const CREDENTIALS = {
   base64: "/rF/qS9xfuDvY2LNmFA4"
 };
 
+const LINEAR_INPUT_FACTOR = 8;
+// Well above linear growth (8x) plus noise, well below quadratic growth (64x).
+const LINEAR_GROWTH_LIMIT = 24;
+
+// The fastest of several runs: CPU contention only ever adds time, so the minimum is stable.
+function fastestRunMs(run: () => void, runs: number): number {
+  let fastest = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < runs; index += 1) {
+    const startedAt = performance.now();
+    run();
+    fastest = Math.min(fastest, performance.now() - startedAt);
+  }
+
+  return fastest;
+}
+
+/** How much slower `run` gets on 8x more of `unit` (about 8x when linear, 64x when quadratic). */
+function growthRatio(unit: string, count: number, run: (text: string) => unknown): number {
+  const small = unit.repeat(count);
+  const large = unit.repeat(count * LINEAR_INPUT_FACTOR);
+  const smallMs = fastestRunMs(() => run(small), 7);
+  const largeMs = fastestRunMs(() => run(large), 3);
+
+  return largeMs / Math.max(smallMs, 0.05);
+}
+
 describe("containsCredential", () => {
   it.each(Object.entries(CREDENTIALS))("finds a %s anywhere in text", (_name, credential) => {
     expect(containsCredential(`value: ${credential};`)).toBe(true);
@@ -55,19 +82,20 @@ describe("containsCredential", () => {
   });
 
   it("stays linear on adversarial runs", () => {
-    for (const text of [
-      "a-eyJ".repeat(200_000),
-      "xoxb-".repeat(200_000),
-      "Bearer x-".repeat(100_000),
-      "Basic ".repeat(100_000),
-      "a1".repeat(500_000)
-    ]) {
-      const started = performance.now();
+    // Growth, not an absolute budget, so parallel load cannot fail the test.
+    for (const [unit, count] of [
+      ["a-eyJ", 4_000],
+      ["xoxb-", 4_000],
+      ["Bearer x-", 2_200],
+      ["Basic ", 3_300],
+      ["a1", 10_000]
+    ] as const) {
+      const ratio = growthRatio(unit, count, (text) => {
+        containsCredential(text);
+        redactCredentials(text);
+      });
 
-      containsCredential(text);
-      redactCredentials(text);
-
-      expect(performance.now() - started, text.slice(0, 10)).toBeLessThan(1_000);
+      expect(ratio, unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
     }
   });
 });
@@ -125,11 +153,10 @@ describe("text folding and unescaping", () => {
     expect(unescapeForScan("%7B%22token%22%3A1%7D")).toBe('{"token":1}');
   });
 
-  it("unescapes long backslash runs in linear time", () => {
-    const started = performance.now();
-
-    unescapeForScan("\\".repeat(500_000));
-
-    expect(performance.now() - started).toBeLessThan(1_000);
+  it("unescapes long backslash runs and splits long capital runs in linear time", () => {
+    expect(growthRatio("\\", 20_000, unescapeForScan)).toBeLessThan(LINEAR_GROWTH_LIMIT);
+    expect(growthRatio("A", 5_000, (text) => mentionsSecretName(text))).toBeLessThan(
+      LINEAR_GROWTH_LIMIT
+    );
   });
 });

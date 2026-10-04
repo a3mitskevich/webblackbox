@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { sanitizeCss, serializeRawDom } from "./raw-dom-snapshot.js";
+import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
 
 const OPTIONS = { blockedSelectors: [".secret"], keepInputValues: true };
 const BACKSLASH = "\\";
@@ -372,28 +373,30 @@ describe("raw DOM corpus: text", () => {
   });
 
   it("stays linear on large hostile pages", () => {
-    const hostile = [
-      "?a".repeat(100_000),
-      "#a".repeat(100_000),
-      `${BACKSLASH}#`.repeat(100_000),
-      "--".repeat(100_000),
-      "a://".repeat(50_000),
-      "url(".repeat(50_000),
-      `{${"A".repeat(200_000)}`,
-      "/-".repeat(100_000),
-      `"${"#a".repeat(100_000)} "`
+    // Each input goes into style text, a text node and an attribute value.
+    const hostile: Array<[string, (scale: number) => string]> = [
+      ["?a", (scale) => "?a".repeat(5_000 * scale)],
+      ["#a", (scale) => "#a".repeat(5_000 * scale)],
+      ["\\#", (scale) => `${BACKSLASH}#`.repeat(5_000 * scale)],
+      ["--", (scale) => "--".repeat(5_000 * scale)],
+      ["a://", (scale) => "a://".repeat(2_500 * scale)],
+      ["url(", (scale) => "url(".repeat(2_500 * scale)],
+      ["{AAA", (scale) => `{${"A".repeat(10_000 * scale)}`],
+      ["/-", (scale) => "/-".repeat(5_000 * scale)],
+      ['"#a', (scale) => `"${"#a".repeat(5_000 * scale)} "`]
     ];
 
-    for (const text of hostile) {
-      document.body.innerHTML = "<style></style><p></p>";
-      document.querySelector("style")!.textContent = text;
-      document.querySelector("p")!.textContent = text;
-      document.querySelector("p")!.setAttribute("data-x", text);
-      const started = performance.now();
+    for (const [label, build] of hostile) {
+      const ratio = growthRatio((scale) => {
+        const text = build(scale);
+        document.body.innerHTML = "<style></style><p></p>";
+        document.querySelector("style")!.textContent = text;
+        document.querySelector("p")!.textContent = text;
+        document.querySelector("p")!.setAttribute("data-x", text);
+        return () => serializeRawDom(document, OPTIONS);
+      });
 
-      serializeRawDom(document, OPTIONS);
-
-      expect(performance.now() - started, text.slice(0, 6)).toBeLessThan(1_500);
+      expect(ratio, label).toBeLessThan(LINEAR_GROWTH_LIMIT);
     }
   });
 });

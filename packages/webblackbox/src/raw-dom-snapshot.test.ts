@@ -4,8 +4,17 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { notePasswordField } from "./input-value-policy.js";
 import { RAW_DOM_SNAPSHOT_MAX_CHARS, serializeRawDom } from "./raw-dom-snapshot.js";
+import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
 
 const OPTIONS = { blockedSelectors: [".secret", "[data-sensitive]"], keepInputValues: false };
+
+/** Puts `css` into a fresh page's only stylesheet. */
+function placeStylesheet(css: string): void {
+  document.body.innerHTML = "";
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.body.append(style);
+}
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -160,16 +169,16 @@ describe("serializeRawDom", () => {
       expect(html, secret).not.toContain(secret);
     }
 
-    for (const css of [`url(${" ".repeat(200_000)}`, "url(".repeat(100_000)]) {
-      document.body.innerHTML = "";
-      const style = document.createElement("style");
-      style.textContent = css;
-      document.body.append(style);
-      const started = performance.now();
+    for (const build of [
+      (scale: number) => `url(${" ".repeat(25_000 * scale)}`,
+      (scale: number) => "url(".repeat(6_000 * scale)
+    ]) {
+      const ratio = growthRatio((scale) => {
+        placeStylesheet(build(scale));
+        return () => serializeRawDom(document, OPTIONS);
+      });
 
-      serializeRawDom(document, OPTIONS);
-
-      expect(performance.now() - started).toBeLessThan(1_000);
+      expect(ratio, build(1).slice(0, 8)).toBeLessThan(LINEAR_GROWTH_LIMIT);
     }
   });
 
@@ -192,16 +201,17 @@ describe("serializeRawDom", () => {
     expect(html).toContain("url(data:[redacted])");
     expect(html).toContain('title="really? yes"');
 
-    for (const css of [`url("`.repeat(50_000), `url('x'`.repeat(50_000), "'".repeat(100_000)]) {
-      document.body.innerHTML = "";
-      const style = document.createElement("style");
-      style.textContent = css;
-      document.body.append(style);
-      const started = performance.now();
+    for (const [unit, count] of [
+      [`url("`, 5_000],
+      [`url('x'`, 3_500],
+      ["'", 25_000]
+    ] as const) {
+      const ratio = growthRatio((scale) => {
+        placeStylesheet(unit.repeat(count * scale));
+        return () => serializeRawDom(document, OPTIONS);
+      });
 
-      serializeRawDom(document, OPTIONS);
-
-      expect(performance.now() - started, css.slice(0, 8)).toBeLessThan(1_000);
+      expect(ratio, unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
     }
   });
 

@@ -20,6 +20,22 @@ const NARROWED_PROFILE: RedactionProfile = {
   redactBodyPatterns: []
 };
 const BACKSLASH = "\\";
+const LINEAR_INPUT_FACTOR = 8;
+// Well above linear growth (8x) plus noise, well below quadratic growth (64x).
+const LINEAR_GROWTH_LIMIT = 24;
+
+// The fastest of several runs: CPU contention only ever adds time, so the minimum is stable.
+function fastestRunMs(run: () => void, runs: number): number {
+  let fastest = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < runs; index += 1) {
+    const startedAt = performance.now();
+    run();
+    fastest = Math.min(fastest, performance.now() - startedAt);
+  }
+
+  return fastest;
+}
 
 // Real formats, assembled at runtime so secret scanners do not flag this source.
 const join = (...parts: string[]): string => parts.join("");
@@ -139,12 +155,18 @@ describe("storage value corpus", () => {
   }
 
   it("scans hostile values in linear time", () => {
-    for (const value of ["A".repeat(200_000), `{${"Ab".repeat(100_000)}}`, "%".repeat(200_000)]) {
-      const started = performance.now();
+    // Growth, not an absolute budget, so parallel load cannot fail the test.
+    for (const [unit, count] of [
+      ["A", 10_000],
+      ["Ab", 5_000],
+      ["%", 10_000]
+    ] as const) {
+      const redact = (value: string) => () =>
+        redactPayload({ op: "setItem", key: "k", value }, DEFAULT_PROFILE);
+      const smallMs = fastestRunMs(redact(unit.repeat(count)), 7);
+      const largeMs = fastestRunMs(redact(unit.repeat(count * LINEAR_INPUT_FACTOR)), 3);
 
-      redactPayload({ op: "setItem", key: "k", value }, DEFAULT_PROFILE);
-
-      expect(performance.now() - started, value.slice(0, 4)).toBeLessThan(1_000);
+      expect(largeMs / Math.max(smallMs, 0.05), unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
     }
   });
 
