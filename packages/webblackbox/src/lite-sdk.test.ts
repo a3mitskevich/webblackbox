@@ -198,11 +198,12 @@ describe("WebBlackboxLiteSdk", () => {
       | undefined;
     const blockedSelectors = policy?.redaction.blockedSelectors ?? [];
 
-    expect(blockedSelectors).toEqual(
-      expect.arrayContaining([...DEFAULT_CAPTURE_POLICY.redaction.blockedSelectors, ".pin-pad"])
+    // The rule lists are the caller's own: `config.redaction` replaces the default selectors,
+    // and the agent and the recorder apply the same set.
+    expect(blockedSelectors).toEqual([".pin-pad", "input[type='password']"]);
+    expect(sdk.getRecorderConfig().capturePolicy?.redaction.blockedSelectors).toEqual(
+      blockedSelectors
     );
-    expect(new Set(blockedSelectors).size).toBe(blockedSelectors.length);
-    expect(sdk.getRecorderConfig().capturePolicy).toEqual(DEFAULT_CAPTURE_POLICY);
 
     await sdk.dispose();
   });
