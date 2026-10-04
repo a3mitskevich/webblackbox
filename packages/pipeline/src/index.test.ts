@@ -887,7 +887,7 @@ describe("pipeline", () => {
     );
     await pipeline.ingest(createEvent("E-schema-3", "error.exception", wallClockBase + 40.5));
 
-    for (const passphrase of [undefined, "secret-passphrase"]) {
+    for (const passphrase of ["secret-passphrase", " padded-passphrase "]) {
       const exported = await pipeline.exportBundle({ ...FULL_EXPORT_OPTIONS, passphrase });
       const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase });
 
@@ -921,7 +921,11 @@ describe("pipeline", () => {
     await pipeline.start();
     await pipeline.ingest(createEvent("E-profile-1", "user.click", 100));
 
-    const parsed = await readWebBlackboxArchive((await pipeline.exportBundle()).bytes);
+    const passphrase = "secret-passphrase";
+    const parsed = await readWebBlackboxArchive(
+      (await pipeline.exportBundle({ passphrase })).bytes,
+      { passphrase }
+    );
 
     expect(parsed.manifest.redactionProfile).toEqual({
       redactHeaders: ["authorization"],
