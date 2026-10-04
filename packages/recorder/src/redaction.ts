@@ -1,4 +1,10 @@
-import { sanitizeUrlForPrivacy, type RedactionProfile } from "@webblackbox/protocol";
+import {
+  containsCredential,
+  mentionsSecretName,
+  sanitizeUrlForPrivacy,
+  unescapeForScan,
+  type RedactionProfile
+} from "@webblackbox/protocol";
 
 export type RedactionOptions = {
   /**
@@ -337,77 +343,12 @@ function shouldMaskByCookieName(
   return shouldRedactCookieName(cookieName, profile);
 }
 
-/** Short secret names stores use besides the cookie list (`sid`, `pwd`, `accessJwt`…). */
-const STORAGE_SECRET_NAMES = ["sid", "pwd", "jwt", "auth", "session", "credential", "passwd"];
-/** Field names of JSON text, escaped or not (`{"sessionId":…}`, `{\"accessJwt\":…}`). */
-const JSON_FIELD_NAME_PATTERN = /\\?"([A-Za-z0-9_$.-]{1,64})\\?"\s*:/g;
-const MAX_JSON_FIELD_NAMES = 200;
-
-/** Values that are credentials whatever their key: JWTs, bearer tokens, private keys. */
-const CREDENTIAL_VALUE_PATTERNS = [
-  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
-  /\bBearer\s+[A-Za-z0-9._~+/=_-]{16,}/i,
-  // Base64 credentials: a digit, `+`, `/`, `=` or a lower-to-upper change ("basic plan" is text).
-  /\b(?:[Bb]asic|BASIC)\s+(?=[A-Za-z0-9+/]{0,64}(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{8,}={0,2}(?![A-Za-z0-9+/=])/,
-  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
-];
-
-/** `author…` is not `auth`, but `authorization` is. */
-const AUTHOR_WORD_PATTERN = /^author(?!i[sz]ation)/;
-const AUTHOR_TEXT_PATTERN = /author(?!i[sz]ation)/g;
-
-/** Names matched only as a whole word (`sid` is inside `sidebar`, `inside`…). */
-const WORD_ONLY_SECRET_NAMES = new Set(["sid"]);
-
 /**
- * Whether a key or field name mentions a secret name: anywhere in the name without separators
- * (`JSESSIONID`, `oauthState`, `mycsrf`), except inside `author`; word-only names must be a
- * whole word (`sid`, not `sidebar`).
- */
-function nameMentions(field: string, secretName: string): boolean {
-  const normalized = secretName.toLowerCase().replace(/[^a-z0-9]+/g, "");
-
-  if (normalized.length === 0) {
-    return false;
-  }
-
-  const words = field
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/);
-
-  if (WORD_ONLY_SECRET_NAMES.has(normalized)) {
-    return words.includes(normalized);
-  }
-
-  // `authOrigin` is `auth` + `origin` even though its letters spell `author…`.
-  return (
-    words.some((word) => word.startsWith(normalized) && !AUTHOR_WORD_PATTERN.test(word)) ||
-    field
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "")
-      .replace(AUTHOR_TEXT_PATTERN, "")
-      .includes(normalized)
-  );
-}
-
-/** Field names in a JSON-looking value (capped), so nested secrets are found. */
-function jsonFieldNames(value: string): string[] {
-  if (!/[{[]/.test(value)) {
-    return [];
-  }
-
-  return Array.from(value.matchAll(JSON_FIELD_NAME_PATTERN), (match) => match[1] ?? "").slice(
-    0,
-    MAX_JSON_FIELD_NAMES
-  );
-}
-
-/**
- * `{ key, value }` records (storage ops and snapshot entries): the value is masked when the key
- * name is sensitive (body patterns or a cookie-style name such as `session` or `jwt`) or when
- * the value itself looks like a credential.
+ * `{ key, value }` records (storage ops and snapshot entries): the value is masked when the key,
+ * or anything in the value, mentions a secret name (the shared list, cookie names and body
+ * patterns, read through JSON and URL escapes and Unicode lookalikes), or when the value holds a
+ * credential-shaped token. Scanning the whole value, not parsed field names, keeps nested,
+ * escaped, oddly named and non-JSON secrets covered (fail closed).
  */
 function hasSensitiveStorageKey(
   source: Record<string, unknown>,
@@ -417,24 +358,18 @@ function hasSensitiveStorageKey(
     return false;
   }
 
-  const key = source.key.toLowerCase();
   const value =
     typeof source.value === "string"
       ? source.value
       : typeof source.text === "string"
         ? source.text
         : "";
-  const names = [...profile.redactCookieNames, ...STORAGE_SECRET_NAMES];
+  const names = [...profile.redactCookieNames, ...profile.redactBodyPatterns];
+  const texts = [source.key, value, unescapeForScan(value)];
 
   return (
-    isSensitiveKey(key, profile) ||
-    names.some((name) => nameMentions(source.key as string, name)) ||
-    CREDENTIAL_VALUE_PATTERNS.some((pattern) => pattern.test(value)) ||
-    jsonFieldNames(value).some(
-      (field) =>
-        isSensitiveKey(field.toLowerCase(), profile) ||
-        names.some((name) => nameMentions(field, name))
-    )
+    isSensitiveKey(source.key.toLowerCase(), profile) ||
+    texts.some((text) => mentionsSecretName(text, names) || containsCredential(text))
   );
 }
 
