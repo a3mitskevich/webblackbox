@@ -1,8 +1,4 @@
-import {
-  extractRequestIdFromPayload,
-  sanitizeUrlForPrivacy,
-  type WebBlackboxEventType
-} from "@webblackbox/protocol";
+import { extractRequestIdFromPayload, type WebBlackboxEventType } from "@webblackbox/protocol";
 
 import { normalizeCdpNetworkPayload } from "./cdp-network.js";
 import {
@@ -16,6 +12,7 @@ import {
   sanitizeOptionalUrl,
   stripUndefined
 } from "./normalizer-utils.js";
+import { recordedUrl } from "./url-recording.js";
 import type { EventNormalizer, RawRecorderEvent } from "./types.js";
 
 const CDP_EVENT_MAP: Record<string, WebBlackboxEventType> = {
@@ -227,7 +224,7 @@ function normalizeContentNetworkRequestPayload(
   payload: Record<string, unknown> | null
 ): Record<string, unknown> {
   const method = (asString(payload?.method) ?? "GET").toUpperCase();
-  const url = sanitizeUrlForPrivacy(asString(payload?.url) ?? "unknown://request");
+  const url = recordedUrl(asString(payload?.url) ?? "unknown://request");
   const reqId = readRequestId(payload) ?? buildFallbackReqId(method, url);
 
   return stripUndefined({
@@ -249,7 +246,7 @@ function normalizeContentNetworkResponsePayload(
 ): Record<string, unknown> {
   const method = asString(payload?.method);
   const url = asString(payload?.url);
-  const sanitizedUrl = url ? sanitizeUrlForPrivacy(url) : undefined;
+  const sanitizedUrl = url ? recordedUrl(url) : undefined;
   const reqId =
     readRequestId(payload) ??
     buildFallbackReqId(method ?? "GET", sanitizedUrl ?? "unknown://request");
@@ -281,7 +278,7 @@ function normalizeContentNetworkFailedPayload(
 ): Record<string, unknown> {
   const method = asString(payload?.method);
   const url = asString(payload?.url);
-  const sanitizedUrl = url ? sanitizeUrlForPrivacy(url) : undefined;
+  const sanitizedUrl = url ? recordedUrl(url) : undefined;
   const reqId =
     readRequestId(payload) ??
     buildFallbackReqId(method ?? "GET", sanitizedUrl ?? "unknown://request");

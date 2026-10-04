@@ -320,6 +320,66 @@ describe("serializeRawDom", () => {
     }
   });
 
+  it("records the page as captured when content masking is off", () => {
+    document.body.innerHTML = `
+      <script>window.token = "SCRIPT-RAW"</script>
+      <!-- COMMENT-RAW -->
+      <a href="https://h.test/reset?token=URL-RAW">reset</a>
+      <div data-api-key="ATTR-RAW" style="background:url(/a.png?sig=CSS-RAW)">x</div>
+      <input type="password" value="PASSWORD-RAW">
+      <p class="secret">BLOCKED-KEPT</p>
+      <div data-webblackbox-indicator="true">REC</div>`;
+
+    const html =
+      serializeRawDom(document, {
+        ...OPTIONS,
+        blockedSelectors: [],
+        redaction: { contentRedaction: false }
+      })?.html ?? "";
+
+    for (const raw of [
+      "SCRIPT-RAW",
+      "COMMENT-RAW",
+      "token=URL-RAW",
+      "ATTR-RAW",
+      "sig=CSS-RAW",
+      "PASSWORD-RAW",
+      "BLOCKED-KEPT"
+    ]) {
+      expect(html, raw).toContain(raw);
+    }
+
+    expect(html).not.toContain("REC");
+    // Blocked selectors still apply when the profile keeps them.
+    expect(
+      serializeRawDom(document, { ...OPTIONS, redaction: { contentRedaction: false } })?.html
+    ).not.toContain("BLOCKED-KEPT");
+  });
+
+  it("applies only the user's rules when the built-in heuristics are off", () => {
+    document.body.innerHTML = `
+      <a href="https://h.test/p?token=PARAM-SECRET&page=2">p</a>
+      <p data-note="acct-123">Account acct-456 for jwt-free text</p>
+      <input type="password" value="PASSWORD-SECRET">`;
+
+    const html =
+      serializeRawDom(document, {
+        ...OPTIONS,
+        keepInputValues: true,
+        redaction: {
+          builtInHeuristics: false,
+          redactQueryParams: ["token"],
+          valuePatterns: [{ pattern: "acct-\\d+", targets: ["dom"] }]
+        }
+      })?.html ?? "";
+
+    expect(html).toContain("token=[REDACTED]&amp;page=2");
+    expect(html).not.toContain("PARAM-SECRET");
+    expect(html).not.toContain("acct-");
+    // Password fields stay out whenever masking is on.
+    expect(html).not.toContain("PASSWORD-SECRET");
+  });
+
   it("fails closed on an invalid blocked selector and caps the size", () => {
     document.body.innerHTML = `<p>${"x".repeat(RAW_DOM_SNAPSHOT_MAX_CHARS)}</p>`;
 

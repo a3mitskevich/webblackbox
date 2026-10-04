@@ -1,5 +1,6 @@
 import {
   DEFAULT_CAPTURE_POLICY,
+  isContentRedactionEnabled,
   type CaptureMode,
   type RecorderConfig
 } from "@webblackbox/protocol";
@@ -124,9 +125,16 @@ export function downgradeExtendedSelection(selection: ProfileSelection): Profile
   };
 }
 
-/** Categories above the standard Full ceiling (or any unmask list) make a profile "extended". */
+/**
+ * Categories above the standard Full ceiling, any unmask list, or content masking turned off
+ * make a profile "extended".
+ */
 export function isExtendedCaptureProfile(profile: RecordingProfile): boolean {
-  return listExtendedCategories(profile).length > 0 || profile.unmaskSelectors.length > 0;
+  return (
+    listExtendedCategories(profile).length > 0 ||
+    profile.unmaskSelectors.length > 0 ||
+    !isContentRedactionEnabled(profile.redaction)
+  );
 }
 
 export function listExtendedCategories(profile: RecordingProfile): CaptureCategoryKey[] {
@@ -266,7 +274,11 @@ function downgradeToFullPreset(profile: RecordingProfile): RecordingProfile {
   return {
     ...full,
     categories: clampCategoriesToCeiling(profile.categories, full.categories),
-    redaction: withoutRedactionUnmask(profile.redaction),
+    // Recording content as-is is extended capture: masking comes back on, with the Full preset's
+    // rules when the profile had turned masking off (its own lists may be emptied).
+    redaction: isContentRedactionEnabled(profile.redaction)
+      ? withoutRedactionUnmask(profile.redaction)
+      : structuredClone(full.redaction),
     sampling: { ...profile.sampling },
     recorder: { ...profile.recorder },
     sitePolicies: profile.sitePolicies,

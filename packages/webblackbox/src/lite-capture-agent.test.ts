@@ -1340,6 +1340,32 @@ describe("LiteCaptureAgent", () => {
     agent.dispose();
   });
 
+  it("records selector tokens as-is when content masking is off", async () => {
+    const { agent, emitBatch } = createAgent({
+      capturePolicy: {
+        ...DEFAULT_CAPTURE_POLICY,
+        redaction: { ...DEFAULT_CAPTURE_POLICY.redaction, contentRedaction: false }
+      }
+    });
+
+    clickTarget();
+    agent.flush();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const clickEvent = emitBatch.mock.calls
+      .flatMap(
+        (call) => (call as [Array<{ rawType?: string; payload?: Record<string, unknown> }>])[0]
+      )
+      .find((entry) => entry.rawType === "click");
+
+    expect(clickEvent?.payload?.target).toMatchObject({
+      selector: "button[id:target]",
+      idToken: "target"
+    });
+
+    agent.dispose();
+  });
+
   it("coalesces scroll bursts into leading and trailing samples", async () => {
     const { agent, emitBatch } = createAgent();
 

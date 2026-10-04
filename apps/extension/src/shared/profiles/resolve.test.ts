@@ -193,7 +193,10 @@ describe("buildProfileRecorderConfig — presets", () => {
     });
     expect(config.sampling.mousemoveHz).toBe(60);
     expect(config.sampling.bodyCaptureMaxBytes).toBe(1024 * 1024);
-    expect(config.capturePolicy?.redaction.blockedSelectors).toContain("input[type='password']");
+    // Content is recorded raw: masking off, no blocked selectors (both views of the rules).
+    expect(config.redaction.contentRedaction).toBe(false);
+    expect(config.capturePolicy?.redaction.contentRedaction).toBe(false);
+    expect(config.capturePolicy?.redaction.blockedSelectors).toEqual([]);
   });
 
   it("records the raw DOM only when a duplicated profile opts in", () => {
@@ -209,6 +212,35 @@ describe("buildProfileRecorderConfig — presets", () => {
     });
 
     expect(config.capturePolicy?.categories.dom).toBe("allow");
+  });
+
+  it("keeps content masking on in every preset but Full capture", () => {
+    for (const profile of BUILT_IN_PROFILES) {
+      expect(profile.redaction.contentRedaction !== false, profile.id).toBe(
+        profile.id !== BUILT_IN_PROFILE_IDS.fullCapture
+      );
+    }
+
+    expect(createDefaultProfile().redaction.contentRedaction).toBeUndefined();
+  });
+
+  it("treats a profile that turns masking off as extended and masks again when downgraded", () => {
+    const fullCopy = duplicateProfile(preset(BUILT_IN_PROFILE_IDS.full), { id: "raw" });
+    const raw = { ...fullCopy, redaction: { ...fullCopy.redaction, contentRedaction: false } };
+
+    expect(isExtendedCaptureProfile(fullCopy)).toBe(false);
+    expect(isExtendedCaptureProfile(raw)).toBe(true);
+
+    const state = v2State({ profiles: [createDefaultProfile(), raw] });
+    const selection = selectRecordingProfile({
+      state,
+      page: { url: "https://elsewhere.test/" },
+      requestedProfileId: "raw"
+    });
+
+    expect(selection.downgradedFrom?.id).toBe("raw");
+    expect(selection.profile.redaction.contentRedaction).not.toBe(false);
+    expect(selection.profile.redaction.blockedSelectors).toContain("input[type='password']");
   });
 
   it("keeps the lite transport boundary: no page-side bodies even for QA", () => {

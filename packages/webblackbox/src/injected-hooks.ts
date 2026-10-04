@@ -1,6 +1,7 @@
 import {
   DEFAULT_CAPTURE_POLICY,
-  sanitizeUrlForPrivacy,
+  isContentRedactionEnabled,
+  recordUrl,
   type CapturePolicy
 } from "@webblackbox/protocol";
 
@@ -866,8 +867,9 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
             return;
           }
 
-          const url = sanitizeUrlForPrivacy(
-            typeof args[0] === "string" ? args[0] : String(args[0])
+          const url = recordUrl(
+            typeof args[0] === "string" ? args[0] : String(args[0]),
+            capturePolicy.redaction
           );
           const streamId = nextRequestId("sse");
 
@@ -1302,7 +1304,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
         return;
       }
 
-      if (!NETWORK_HEADER_ALLOWLIST.has(key.toLowerCase())) {
+      if (!isHeaderRecorded(key)) {
         return;
       }
 
@@ -1343,7 +1345,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
         continue;
       }
 
-      if (!NETWORK_HEADER_ALLOWLIST.has(key)) {
+      if (!isHeaderRecorded(key)) {
         continue;
       }
 
@@ -1446,9 +1448,17 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
     return undefined;
   }
 
+  /** Headers outside the allowlist are left out unless masking is off. */
+  function isHeaderRecorded(name: string): boolean {
+    return (
+      !isContentRedactionEnabled(capturePolicy.redaction) ||
+      NETWORK_HEADER_ALLOWLIST.has(name.toLowerCase())
+    );
+  }
+
   function readCurrentPageUrl(): string {
     return typeof location !== "undefined" && typeof location.href === "string"
-      ? sanitizeUrlForPrivacy(location.href)
+      ? recordUrl(location.href, capturePolicy.redaction)
       : "";
   }
 
@@ -1457,7 +1467,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
       return undefined;
     }
 
-    const sanitized = sanitizeUrlForPrivacy(value);
+    const sanitized = recordUrl(value, capturePolicy.redaction);
     return sanitized.length > 0 ? sanitized : undefined;
   }
 

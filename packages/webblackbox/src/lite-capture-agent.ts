@@ -1,7 +1,9 @@
 import {
   DEFAULT_CAPTURE_POLICY,
-  sanitizeUrlForPrivacy,
-  type CapturePolicy
+  isContentRedactionEnabled,
+  recordUrl,
+  type CapturePolicy,
+  type RedactionRules
 } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 import { snapdom } from "@zumer/snapdom";
@@ -209,7 +211,7 @@ export class LiteCaptureAgent {
   private mutationSummary: MutationBatchSummary = createEmptyMutationSummary();
   private selectorCache = new WeakMap<Element, string>();
   private selectorCacheSize = 0;
-  private readonly selectorSalt = createSelectorSalt();
+  private readonly hashingSalt = createSelectorSalt();
   private droppedLowPriorityEvents = 0;
   private disposed = false;
   private readonly stopWatchingPasswordReveals: () => void;
@@ -226,6 +228,11 @@ export class LiteCaptureAgent {
   }
 
   /** Updates recording state and sampling profile from the host SDK. */
+  /** The salt that hashes selector tokens, or null to record them as-is (masking off). */
+  private selectorSalt(): SelectorSalt {
+    return isContentRedactionEnabled(this.capturePolicy.redaction) ? this.hashingSalt : null;
+  }
+
   public setRecordingStatus(state: LiteCaptureState): void {
     if (this.disposed) {
       return;
@@ -587,7 +594,7 @@ export class LiteCaptureAgent {
           monotonicTime() + Math.max(POINTERMOVE_SUPPRESS_AFTER_SCROLL_MS, scrollGapMs);
 
         const payload = {
-          target: toFastTargetPayload(event.target, this.selectorSalt),
+          target: toFastTargetPayload(event.target, this.selectorSalt()),
           scrollX: window.scrollX,
           scrollY: window.scrollY
         };
@@ -638,7 +645,7 @@ export class LiteCaptureAgent {
         this.queueEvent("mousemove", {
           x: event.clientX,
           y: event.clientY,
-          target: toFastTargetPayload(event.target, this.selectorSalt)
+          target: toFastTargetPayload(event.target, this.selectorSalt())
         });
       },
       PASSIVE_INPUT_OPTIONS_TRUE
@@ -835,7 +842,7 @@ export class LiteCaptureAgent {
       this.selectorCacheSize = 0;
     }
 
-    const selector = safeSelector(target, this.selectorSalt);
+    const selector = safeSelector(target, this.selectorSalt());
     this.selectorCache.set(target, selector);
     this.selectorCacheSize += 1;
 
@@ -1067,7 +1074,7 @@ export class LiteCaptureAgent {
           attributeNames: [...summary.attributeNames]
         }
       },
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title
     });
   }
@@ -1081,7 +1088,7 @@ export class LiteCaptureAgent {
     }
 
     const html = buildDomSnapshotSummaryHtml({
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title,
       reason,
       nodeCount,
@@ -1095,7 +1102,7 @@ export class LiteCaptureAgent {
 
     this.queueEvent("snapshot", {
       reason,
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title,
       nodeCount,
       htmlLength: html.length,
@@ -1117,7 +1124,8 @@ export class LiteCaptureAgent {
     const snapshot = serializeRawDom(document, {
       blockedSelectors: redaction.blockedSelectors,
       keepInputValues: categories.inputs === "allow",
-      sensitiveNamePatterns: redaction.redactBodyPatterns
+      sensitiveNamePatterns: redaction.redactBodyPatterns,
+      redaction
     });
 
     if (!snapshot) {
@@ -1127,7 +1135,7 @@ export class LiteCaptureAgent {
     this.hasDomSnapshot = true;
     this.queueEvent("snapshot", {
       reason,
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title,
       nodeCount,
       htmlLength: snapshot.htmlLength,
@@ -1506,7 +1514,7 @@ export class LiteCaptureAgent {
 
   private queueTrailingScrollEvent(event: Event): void {
     this.pendingScrollPayload = {
-      target: toFastTargetPayload(event.target, this.selectorSalt),
+      target: toFastTargetPayload(event.target, this.selectorSalt()),
       scrollX: window.scrollX,
       scrollY: window.scrollY
     };
@@ -1875,7 +1883,7 @@ export class LiteCaptureAgent {
   private emitPressureRecoverySnapshot(): void {
     const nodeCount = document.getElementsByTagName("*").length;
     const html = buildDomSnapshotSummaryHtml({
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title,
       reason: "pressure-recovery",
       nodeCount,
@@ -1886,7 +1894,7 @@ export class LiteCaptureAgent {
     this.hasDomSnapshot = true;
     this.queueEvent("snapshot", {
       reason: "pressure-recovery",
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title,
       nodeCount,
       htmlLength: html.length,
@@ -1983,7 +1991,7 @@ export class LiteCaptureAgent {
     detail: TargetPayloadDetail
   ): Record<string, unknown> {
     if (this.mode === "full" || detail === "fast") {
-      return toFastTargetPayload(target, this.selectorSalt);
+      return toFastTargetPayload(target, this.selectorSalt());
     }
 
     if (detail === "navigation") {
@@ -1998,7 +2006,7 @@ export class LiteCaptureAgent {
       return {};
     }
 
-    const payload = toDeferredTargetPayload(target, this.selectorSalt);
+    const payload = toDeferredTargetPayload(target, this.selectorSalt());
     const cachedSelector = this.selectorCache.get(target);
 
     if (cachedSelector) {
@@ -2024,13 +2032,14 @@ export class LiteCaptureAgent {
     const navigationTarget = resolveNavigationTarget(target);
 
     if (!navigationTarget) {
-      return toFastTargetPayload(target, this.selectorSalt);
+      return toFastTargetPayload(target, this.selectorSalt());
     }
 
     const href = sanitizeOptionalUrl(
-      navigationTarget.getAttribute("href") ?? navigationTarget.href
+      navigationTarget.getAttribute("href") ?? navigationTarget.href,
+      this.capturePolicy.redaction
     );
-    const payload = toFastTargetPayload(navigationTarget, this.selectorSalt);
+    const payload = toFastTargetPayload(navigationTarget, this.selectorSalt());
     payload.selector = this.readCachedSelector(navigationTarget);
 
     if (href) {
@@ -2307,14 +2316,17 @@ function resolveContentFrameContext(scope: LiteCaptureAgentOptions["frameScope"]
   };
 }
 
-function toDeferredTargetPayload(target: Element, salt: string): Record<string, unknown> {
+function toDeferredTargetPayload(target: Element, salt: SelectorSalt): Record<string, unknown> {
   return {
     ...toFastTargetPayload(target, salt),
     dataTestIdToken: tokenForValue(readDataTestId(target), salt)
   };
 }
 
-function toFastTargetPayload(target: EventTarget | null, salt: string): Record<string, unknown> {
+function toFastTargetPayload(
+  target: EventTarget | null,
+  salt: SelectorSalt
+): Record<string, unknown> {
   if (!(target instanceof Element)) {
     return {};
   }
@@ -2420,7 +2432,7 @@ function isRichTextEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
-function safeSelector(target: EventTarget | null, salt: string): string {
+function safeSelector(target: EventTarget | null, salt: SelectorSalt): string {
   if (!(target instanceof Element)) {
     return "unknown";
   }
@@ -2485,13 +2497,17 @@ function readClassTokens(target: Element): string[] {
     : [];
 }
 
-function tokenForValue(value: string | undefined | null, salt: string): string | undefined {
+function tokenForValue(value: string | undefined | null, salt: SelectorSalt): string | undefined {
   return value && value.length > 0 ? hashToken(value, salt) : undefined;
 }
 
-function hashToken(value: string, salt: string): string {
-  return `t_${hashString(`${salt}:${value}`)}`;
+/** `salt` null: masking is off and tokens are recorded as they are. */
+function hashToken(value: string, salt: SelectorSalt): string {
+  return salt === null ? value : `t_${hashString(`${salt}:${value}`)}`;
 }
+
+/** Per-agent salt of selector token hashes; null records tokens as-is. */
+type SelectorSalt = string | null;
 
 function createSelectorSalt(): string {
   const bytes = new Uint32Array(2);
@@ -2521,18 +2537,21 @@ function stripUndefinedRecord(value: Record<string, unknown>): Record<string, un
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
-function readCurrentPageUrl(): string {
+function readPageUrl(rules: RedactionRules): string {
   return typeof location !== "undefined" && typeof location.href === "string"
-    ? sanitizeUrlForPrivacy(location.href)
+    ? recordUrl(location.href, rules)
     : "";
 }
 
-function sanitizeOptionalUrl(value: string | null | undefined): string | undefined {
+function sanitizeOptionalUrl(
+  value: string | null | undefined,
+  rules: RedactionRules
+): string | undefined {
   if (typeof value !== "string" || value.length === 0) {
     return undefined;
   }
 
-  const sanitized = sanitizeUrlForPrivacy(value);
+  const sanitized = recordUrl(value, rules);
   return sanitized.length > 0 ? sanitized : undefined;
 }
 

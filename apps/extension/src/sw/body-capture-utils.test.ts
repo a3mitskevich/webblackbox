@@ -140,11 +140,25 @@ describe("body-capture utils", () => {
     expect(rule.maxBytes).toBe(0);
   });
 
+  it("keeps response bodies as captured when content masking is off", () => {
+    const body = "user=qa&password=hunter2&csrf_token=abc123";
+    const transformed = transformResponseBodyForCapture({
+      body,
+      base64Encoded: false,
+      redaction: { redactBodyPatterns: DEFAULT_PATTERNS, contentRedaction: false },
+      maxBytes: 4_096,
+      decodeBase64: decodeBase64ForTest
+    });
+
+    expect(transformed.redacted).toBe(false);
+    expect(new TextDecoder().decode(transformed.sampledBytes)).toBe(body);
+  });
+
   it("redacts values (not keys) and truncates utf8 response bodies for capture", () => {
     const transformed = transformResponseBodyForCapture({
       body: `user=qa&password=hunter2&csrf_token=abc123&${"x".repeat(5_000)}`,
       base64Encoded: false,
-      redactPatterns: DEFAULT_PATTERNS,
+      redaction: { redactBodyPatterns: DEFAULT_PATTERNS },
       maxBytes: 4_096,
       decodeBase64: decodeBase64ForTest
     });
@@ -168,7 +182,7 @@ describe("body-capture utils", () => {
     const transformed = transformResponseBodyForCapture({
       body: JSON.stringify({ user: { id: 1, session: { accessToken: "eyJ.secret" } } }),
       base64Encoded: false,
-      redactPatterns: DEFAULT_PATTERNS,
+      redaction: { redactBodyPatterns: DEFAULT_PATTERNS },
       maxBytes: 64 * 1024,
       mimeType: "application/json",
       decodeBase64: decodeBase64ForTest
@@ -184,7 +198,7 @@ describe("body-capture utils", () => {
     const transformed = transformResponseBodyForCapture({
       body: Buffer.from('{"otp":"123456","ok":true}', "utf8").toString("base64"),
       base64Encoded: true,
-      redactPatterns: DEFAULT_PATTERNS,
+      redaction: { redactBodyPatterns: DEFAULT_PATTERNS },
       maxBytes: 64 * 1024,
       mimeType: "application/json",
       decodeBase64: decodeBase64ForTest
@@ -202,7 +216,7 @@ describe("body-capture utils", () => {
     const transformed = transformResponseBodyForCapture({
       body: binary.toString("base64"),
       base64Encoded: true,
-      redactPatterns: DEFAULT_PATTERNS,
+      redaction: { redactBodyPatterns: DEFAULT_PATTERNS },
       maxBytes: 64 * 1024,
       mimeType: "image/png",
       decodeBase64: decodeBase64ForTest

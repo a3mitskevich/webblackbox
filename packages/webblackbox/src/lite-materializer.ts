@@ -1,7 +1,7 @@
 import {
   DEFAULT_CAPTURE_POLICY,
-  redactBodyBytes,
-  redactBodyText,
+  maskBodyBytes,
+  maskBodyText,
   type RecorderConfig
 } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
@@ -342,16 +342,16 @@ async function materializeLiteNetworkBody(
     return null;
   }
 
-  const patterns = context.config.redaction.redactBodyPatterns;
+  const rules = context.config.redaction;
   let bytes: Uint8Array;
   let redacted = payload.redacted === true;
 
   if (encoding === "utf8") {
-    const redaction = redactBodyText(body, patterns);
+    const redaction = maskBodyText(body, rules);
     redacted = redacted || redaction.redacted;
     bytes = new TextEncoder().encode(redaction.value);
   } else {
-    const redaction = redactBodyBytes(decodeBase64(body), patterns, { mimeType });
+    const redaction = maskBodyBytes(decodeBase64(body), rules, { mimeType });
     redacted = redacted || redaction.redacted;
     bytes = redaction.bytes;
   }

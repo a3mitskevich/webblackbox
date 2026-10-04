@@ -9,7 +9,7 @@
       "@webblackbox/cdp-router": ["../../packages/cdp-router/src/index.ts"],
       "@webblackbox/pipeline": ["../../packages/pipeline/src/index.ts"],
       "@webblackbox/protocol": ["../../packages/protocol/src/index.ts"],
-      "@webblackbox/protocol/secret-detection": ["../../packages/protocol/src/secret-detection.ts"],
+      "@webblackbox/protocol/*": ["../../packages/protocol/src/*.ts"],
       "@webblackbox/recorder": ["../../packages/recorder/src/index.ts"],
       "webblackbox": ["../../packages/webblackbox/src/index.ts"],
       "webblackbox/capture-scope": ["../../packages/webblackbox/src/capture-scope.ts"],

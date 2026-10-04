@@ -13,6 +13,14 @@
     "./secret-detection": {
       "types": "./dist/secret-detection.d.ts",
       "import": "./dist/secret-detection.js"
+    },
+    "./linear-regex": {
+      "types": "./dist/linear-regex.d.ts",
+      "import": "./dist/linear-regex.js"
+    },
+    "./redaction-rules": {
+      "types": "./dist/redaction-rules.d.ts",
+      "import": "./dist/redaction-rules.js"
     }
   },
   "files": [
@@ -42,8 +50,8 @@
   "author": "unadlib",
   "license": "MIT",
   "scripts": {
-    "dev": "tsup src/index.ts src/secret-detection.ts --format esm --dts --watch --clean",
-    "build": "tsup src/index.ts src/secret-detection.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts src/secret-detection.ts src/linear-regex.ts src/redaction-rules.ts --format esm --dts --watch --clean",
+    "build": "tsup src/index.ts src/secret-detection.ts src/linear-regex.ts src/redaction-rules.ts --format esm --dts --clean",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"

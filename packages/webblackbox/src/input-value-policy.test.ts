@@ -238,6 +238,43 @@ describe("readCapturableInputValue", () => {
     }
   });
 
+  it("records every allowed field, passwords included, when content masking is off", () => {
+    const raw = {
+      ...policy("allow", { blockedSelectors: [] }),
+      redaction: {
+        ...DEFAULT_CAPTURE_POLICY.redaction,
+        blockedSelectors: [],
+        contentRedaction: false
+      }
+    };
+
+    for (const html of [
+      '<input data-field type="password" />',
+      '<input data-field name="api_key" />',
+      '<input data-field autocomplete="cc-number" />'
+    ]) {
+      expect(readCapturableInputValue(field(html), raw), html).toBe("typed value");
+    }
+
+    expect(
+      readCapturableInputValue(field('<input data-field type="password" />'), policy("length-only"))
+    ).toBeUndefined();
+  });
+
+  it("keeps secret-named fields when only the built-in heuristics are off", () => {
+    const rules = {
+      ...policy("allow"),
+      redaction: { ...DEFAULT_CAPTURE_POLICY.redaction, builtInHeuristics: false }
+    };
+
+    expect(readCapturableInputValue(field('<input data-field name="api_key" />'), rules)).toBe(
+      "typed value"
+    );
+    expect(
+      readCapturableInputValue(field('<input data-field type="password" />'), rules)
+    ).toBeUndefined();
+  });
+
   it("lets a nearer blocked selector win over an unmasked ancestor", () => {
     const sensitive = field('<form class="checkout"><input data-field data-sensitive /></form>');
 

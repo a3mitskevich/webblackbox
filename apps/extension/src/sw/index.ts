@@ -8,8 +8,8 @@ import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_EXPORT_POLICY,
   DEFAULT_RECORDER_CONFIG,
-  redactBodyBytes,
-  redactBodyText,
+  maskBodyBytes,
+  maskBodyText,
   sanitizeUrlForPrivacy,
   type CapturePolicy,
   type CaptureMode,
@@ -1845,16 +1845,16 @@ async function materializeLiteNetworkBody(
     return null;
   }
 
-  const patterns = runtime.config.redaction.redactBodyPatterns;
+  const rules = runtime.config.redaction;
   let bytes: Uint8Array;
   let redacted = payload.redacted === true;
 
   if (encoding === "utf8") {
-    const redaction = redactBodyText(body, patterns, LITE_BODY_REDACTED_TOKEN);
+    const redaction = maskBodyText(body, rules, LITE_BODY_REDACTED_TOKEN);
     redacted = redacted || redaction.redacted;
     bytes = new TextEncoder().encode(redaction.value);
   } else {
-    const redaction = redactBodyBytes(decodeBase64(body), patterns, {
+    const redaction = maskBodyBytes(decodeBase64(body), rules, {
       mimeType,
       redactionToken: LITE_BODY_REDACTED_TOKEN
     });
@@ -2726,7 +2726,7 @@ async function captureResponseBody(
   const transformed = transformResponseBodyForCapture({
     body: response.body,
     base64Encoded: response.base64Encoded === true,
-    redactPatterns: runtime.config.redaction.redactBodyPatterns,
+    redaction: runtime.config.redaction,
     maxBytes: captureRule.maxBytes,
     mimeType: normalizedMime,
     redactionToken: LITE_BODY_REDACTED_TOKEN,

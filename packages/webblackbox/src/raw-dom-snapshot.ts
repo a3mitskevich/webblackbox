@@ -1,5 +1,12 @@
 import { sanitizeUrlForPrivacy } from "@webblackbox/protocol";
 import {
+  isContentRedactionEnabled,
+  maskValuePatterns,
+  recordUrl,
+  usesBuiltInHeuristics,
+  type RedactionRules
+} from "@webblackbox/protocol/redaction-rules";
+import {
   containsCredential,
   mentionsSecretName,
   redactCredentials,
@@ -21,6 +28,8 @@ const MASKED_KEPT_ATTRIBUTES = new Set(["class", "style"]);
  */
 const DROPPED_SELECTOR =
   "script, noscript, xmp, noembed, noframes, plaintext, [data-webblackbox-indicator]";
+/** The extension's own UI: never part of the page, whatever the rules. */
+const OWN_UI_SELECTOR = "[data-webblackbox-indicator]";
 /** Attributes holding URLs; their query and fragment are stripped like every recorded URL. */
 const URL_ATTRIBUTES = new Set([
   "href",
@@ -106,18 +115,27 @@ export type RawDomSnapshotOptions = {
   keepInputValues: boolean;
   /** Extra attribute-name parts that mark secret values (the profile's body patterns). */
   sensitiveNamePatterns?: readonly string[];
+  /** The profile's redaction rules: masking switch, built-in heuristics, DOM value patterns. */
+  redaction?: RedactionRules;
 };
 
 type SanitizeContext = {
   options: RawDomSnapshotOptions;
+  rules: RedactionRules;
   /** The profile's body patterns, matched on attribute names besides the shared secret names. */
   extraNameParts: readonly string[];
 };
 
 /**
  * The page as HTML for `dom: allow`. Works on a detached clone, so the page is never touched.
- * The HTML is stored as a blob the recorder's redactor never sees, so everything that could
- * carry a secret is handled here, fail closed:
+ * The HTML is stored as a blob the recorder's redactor never sees, so the profile's redaction
+ * rules are applied here, best effort:
+ *
+ * - masking off (`contentRedaction: false`): the page as it is, minus the extension's own UI
+ *   and any blocked selectors the profile keeps;
+ * - user rules only (`builtInHeuristics: false`): blocked selectors, field values, URL query
+ *   parameter rules and DOM value patterns;
+ * - with the built-in heuristics (the default), fail closed:
  *
  * - blocked selectors, field values, editors, code, comments and inline documents are removed;
  * - every attribute value, text node and style text then goes through a context-free pass that
@@ -139,8 +157,9 @@ export function serializeRawDom(
   }
 
   // Decided on the live fields: a revealed password is only known as one on the page itself.
+  const rules = options.redaction;
   const privateFields = Array.from(root.querySelectorAll("input"), (input) =>
-    isNeverCapturedField(input)
+    isNeverCapturedField(input, rules)
   );
   const clone = root.cloneNode(true) as Element;
 
@@ -152,15 +171,26 @@ export function serializeRawDom(
 
   const context: SanitizeContext = {
     options,
+    rules,
     extraNameParts: (options.sensitiveNamePatterns ?? []).filter((part) => part.length > 0)
   };
+  // The single switch of the raw DOM: which rule set runs on the clone.
+  const applied = !isContentRedactionEnabled(rules)
+    ? keepAsCaptured(clone, options.blockedSelectors)
+    : usesBuiltInHeuristics(rules)
+      ? sanitizeTree(clone, context)
+      : applyUserRules(clone, context);
 
-  if (!sanitizeTree(clone, context)) {
+  if (!applied) {
     return null;
   }
 
   // `designMode` makes the whole page an editor without any attribute to find.
-  if (document.designMode === "on" && !options.keepInputValues) {
+  if (
+    document.designMode === "on" &&
+    !options.keepInputValues &&
+    isContentRedactionEnabled(rules)
+  ) {
     clone.querySelector("body")?.replaceChildren(document.createTextNode(MASKED_TEXT));
   }
 
@@ -191,7 +221,7 @@ function sanitizeTree(root: Element | DocumentFragment, context: SanitizeContext
     return false;
   }
 
-  stripFieldValues(root, context.options.keepInputValues);
+  stripFieldValues(root, context);
 
   const elements = [
     ...(root instanceof Element ? [root] : []),
@@ -206,6 +236,59 @@ function sanitizeTree(root: Element | DocumentFragment, context: SanitizeContext
 
   return Array.from(root.querySelectorAll("template")).every((template) =>
     sanitizeTree(template.content, context)
+  );
+}
+
+/** Masking off: only the extension's own UI and the blocked selectors the profile keeps. */
+function keepAsCaptured(root: Element, blockedSelectors: readonly string[]): boolean {
+  for (const element of Array.from(root.querySelectorAll(OWN_UI_SELECTOR))) {
+    element.remove();
+  }
+
+  return maskBlockedElements(root, blockedSelectors);
+}
+
+/**
+ * The user's rules without the built-in heuristics: blocked selectors, field values, URL query
+ * parameter rules in URL attributes, and DOM value patterns in attribute values and text.
+ */
+function applyUserRules(root: Element | DocumentFragment, context: SanitizeContext): boolean {
+  for (const element of Array.from(root.querySelectorAll(OWN_UI_SELECTOR))) {
+    element.remove();
+  }
+
+  if (!maskBlockedElements(root, context.options.blockedSelectors)) {
+    return false;
+  }
+
+  stripFieldValues(root, context);
+
+  const elements = [
+    ...(root instanceof Element ? [root] : []),
+    ...Array.from(root.querySelectorAll("*"))
+  ];
+
+  for (const element of elements) {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.localName.toLowerCase();
+      const value = URL_ATTRIBUTES.has(name)
+        ? recordUrl(attribute.value, context.rules)
+        : attribute.value;
+      attribute.value = maskValuePatterns(value, context.rules, "dom");
+    }
+  }
+
+  for (const node of collectNodes(root, NodeFilter.SHOW_TEXT)) {
+    const text = node.nodeValue ?? "";
+    const masked = maskValuePatterns(text, context.rules, "dom");
+
+    if (masked !== text) {
+      node.nodeValue = masked;
+    }
+  }
+
+  return Array.from(root.querySelectorAll("template")).every((template) =>
+    applyUserRules(template.content, context)
   );
 }
 
@@ -276,12 +359,16 @@ function sanitizeAttributes(element: Element, context: SanitizeContext): void {
     if (isDroppedAttribute(element, name)) {
       element.removeAttributeNode(attribute);
     } else {
-      attribute.value = sanitizeAttributeValue(name, attribute.value, context);
+      attribute.value = maskValuePatterns(
+        sanitizeAttributeValue(name, attribute.value, context),
+        context.rules,
+        "dom"
+      );
     }
   }
 
   if (element.localName === "style" && element.textContent) {
-    element.textContent = sanitizeCss(element.textContent);
+    element.textContent = maskValuePatterns(sanitizeCss(element.textContent), context.rules, "dom");
   }
 }
 
@@ -367,7 +454,7 @@ function sanitizeTextNodes(root: Element | DocumentFragment, context: SanitizeCo
     const text = node.nodeValue ?? "";
     const sanitized = isSecretJson(text, context)
       ? MASKED_TEXT
-      : enforceTextInvariant(text, MASKED_TEXT, false);
+      : maskValuePatterns(enforceTextInvariant(text, MASKED_TEXT, false), context.rules, "dom");
 
     if (sanitized !== text) {
       node.nodeValue = sanitized;
@@ -491,18 +578,20 @@ function sanitizeSrcset(value: string): string {
     .join(", ");
 }
 
-function stripFieldValues(root: Element | DocumentFragment, keepInputValues: boolean): void {
+function stripFieldValues(root: Element | DocumentFragment, context: SanitizeContext): void {
+  const { keepInputValues } = context.options;
+
   for (const input of Array.from(root.querySelectorAll("input"))) {
     // HTML does not trim `type`: `"hidden "` is a text field, but its value is still form state.
     const type = (input.getAttribute("type") ?? "").trim().toLowerCase();
 
-    if (!keepInputValues || type === "hidden" || isNeverCapturedField(input)) {
+    if (!keepInputValues || type === "hidden" || isNeverCapturedField(input, context.rules)) {
       input.removeAttribute("value");
     }
   }
 
   for (const textarea of Array.from(root.querySelectorAll("textarea"))) {
-    if (!keepInputValues || isNeverCapturedField(textarea)) {
+    if (!keepInputValues || isNeverCapturedField(textarea, context.rules)) {
       textarea.textContent = "";
     }
   }

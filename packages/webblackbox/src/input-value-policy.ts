@@ -1,5 +1,10 @@
 import type { CapturePolicy } from "@webblackbox/protocol";
 // The zod-free leaf, not the package index: the content script loads this module on every page.
+import {
+  isContentRedactionEnabled,
+  usesBuiltInHeuristics,
+  type RedactionRules
+} from "@webblackbox/protocol/redaction-rules";
 import { mentionsSecretName } from "@webblackbox/protocol/secret-detection";
 
 /** Longest raw input value kept on a `user.input` event. */
@@ -164,7 +169,7 @@ export function readCapturableInputValue(
 
   notePasswordField(field);
 
-  if ((level !== "allow" && level !== "masked") || isNeverCapturedField(field)) {
+  if ((level !== "allow" && level !== "masked") || isNeverCapturedField(field, policy.redaction)) {
     return undefined;
   }
 
@@ -180,10 +185,16 @@ export function readCapturableInputValue(
 }
 
 /**
- * Password, one-time-code, payment card and secret-named fields (tokens, keys, CSRF, PIN…):
- * their values are never recorded anywhere.
+ * Password, one-time-code and payment card fields, and with the built-in heuristics secret-named
+ * fields (tokens, keys, CSRF, PIN…): their values are never recorded while content masking is on.
+ * With masking off (`rules.contentRedaction: false`) no field is excluded.
  */
-export function isNeverCapturedField(field: EditableField): boolean {
+export function isNeverCapturedField(field: EditableField, rules?: RedactionRules): boolean {
+  // Masking off (`contentRedaction: false`): every field the inputs level allows is recorded.
+  if (!isContentRedactionEnabled(rules)) {
+    return false;
+  }
+
   // A reveal in the same task as this check has not reached the observer callback yet.
   for (const watcher of revealWatchers) {
     rememberRevealedFields(watcher.takeRecords());
@@ -202,9 +213,9 @@ export function isNeverCapturedField(field: EditableField): boolean {
     PASSWORD_LIKE_NAME_PATTERN.test(nameAndId) ||
     isOneTimeCodeName(nameAndId) ||
     CARD_FIELD_COMPACT_PATTERN.test(nameAndId.toLowerCase().replace(/[^a-z0-9]+/g, "")) ||
-    // Tokens, keys, CSRF fields, CVV, PIN, SSN… (`api_key`, `authToken`, `pin`).
-    mentionsSecretName(field.name) ||
-    mentionsSecretName(field.id)
+    // Built-in heuristics: tokens, keys, CSRF fields, CVV, PIN, SSN… (`api_key`, `pin`).
+    (usesBuiltInHeuristics(rules) &&
+      (mentionsSecretName(field.name) || mentionsSecretName(field.id)))
   ) {
     return true;
   }

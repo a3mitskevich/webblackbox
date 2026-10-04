@@ -1,8 +1,9 @@
 import {
   BODY_REDACTION_TOKEN,
   isTextualMimeType,
-  redactBodyBytes,
+  maskBodyBytes,
   type CaptureMode,
+  type RedactionRules,
   type RecorderConfig
 } from "@webblackbox/protocol";
 
@@ -29,7 +30,8 @@ type RuleResolutionOptions = {
 type TransformResponseBodyArgs = {
   body: string;
   base64Encoded: boolean;
-  redactPatterns: string[];
+  /** The profile's redaction rules (key and value patterns; none when masking is off). */
+  redaction: RedactionRules;
   maxBytes: number;
   decodeBase64: (value: string) => Uint8Array;
   mimeType?: string;
@@ -316,7 +318,7 @@ export function transformResponseBodyForCapture(args: TransformResponseBodyArgs)
   const originalBytes = args.base64Encoded
     ? args.decodeBase64(args.body)
     : new TextEncoder().encode(args.body);
-  const { bytes: candidateBytes, redacted } = redactBodyBytes(originalBytes, args.redactPatterns, {
+  const { bytes: candidateBytes, redacted } = maskBodyBytes(originalBytes, args.redaction, {
     // Plain (non-base64) CDP bodies are always text, whatever the declared MIME type.
     mimeType: args.base64Encoded ? args.mimeType : "text/plain",
     redactionToken: args.redactionToken ?? BODY_REDACTION_TOKEN

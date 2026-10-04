@@ -1,6 +1,7 @@
 import {
-  redactBodyText,
+  maskBodyText as maskCapturedBodyText,
   type CapturePolicy,
+  type RedactionRules,
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
@@ -30,7 +31,8 @@ export type DetachNetworkBodyResult = {
 
 export type AttachNetworkBodyOptions = {
   capturePolicy: CapturePolicy | undefined;
-  redactBodyPatterns: readonly string[];
+  /** The profile's redaction rules: body key patterns and value patterns (none when off). */
+  redaction: RedactionRules;
   /** Extra gate on top of `body-allowlist` (e.g. site policies); called only when a body would be kept. */
   isBodyAllowed?: () => boolean;
 };
@@ -190,7 +192,7 @@ function maskBodyText(
   options: AttachNetworkBodyOptions
 ): { value: string; truncated: boolean } {
   const scanned = text.slice(0, MAX_INLINE_BODY_SCAN_CHARS);
-  const masked = redactBodyText(scanned, options.redactBodyPatterns).value;
+  const masked = maskCapturedBodyText(scanned, options.redaction).value;
 
   return {
     value: masked.slice(0, maxChars),
