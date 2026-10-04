@@ -19,8 +19,9 @@ By default, WebBlackbox does not collect raw input values, DOM text, screenshots
 What the extension records is decided by the recording profile in effect. The `Default` profile keeps the defaults above unchanged; read-only presets raise them:
 
 - `Lite` / `Full`: the defaults above on each transport (Full adds CDP screenshots).
-- `QA`: console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, raw DOM snapshots, screenshots.
+- `QA`: console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots.
 - `Full capture`: everything above plus input values, storage values, all textual bodies up to 1 MiB, optional tab video and 60 Hz pointer sampling.
+- No preset records the raw DOM (the page HTML). It stays opt-in: duplicate a preset and set `dom` to `allow`.
 
 Profiles whose capture levels exceed the standard Full ceiling are **extended**. Safeguards:
 

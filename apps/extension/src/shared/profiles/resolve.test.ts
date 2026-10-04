@@ -151,7 +151,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     }
   });
 
-  it("QA records console text and 256 KiB JSON bodies with raw DOM and screenshots", () => {
+  it("QA records console text, 256 KiB JSON bodies and screenshots, but not the raw DOM", () => {
     const config = buildProfileRecorderConfig({
       mode: "full",
       profile: preset(BUILT_IN_PROFILE_IDS.qa),
@@ -163,7 +163,6 @@ describe("buildProfileRecorderConfig — presets", () => {
       actions: "allow",
       console: "allow",
       network: "body-allowlist",
-      dom: "allow",
       screenshots: "allow",
       cdp: "safe-subset"
     });
@@ -171,7 +170,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.redaction).toEqual(DEFAULT_REDACTION_PROFILE);
   });
 
-  it("Full capture raises every category except heap profiles and samples the pointer at 60 Hz", () => {
+  it("Full capture raises every category except the DOM and heap profiles and samples the pointer at 60 Hz", () => {
     const config = buildProfileRecorderConfig({
       mode: "full",
       profile: preset(BUILT_IN_PROFILE_IDS.fullCapture),
@@ -181,7 +180,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.capturePolicy?.categories).toEqual({
       actions: "allow",
       inputs: "allow",
-      dom: "allow",
+      dom: "masked",
       screenshots: "allow",
       screenRecordings: "allow",
       console: "allow",
@@ -195,6 +194,21 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.sampling.mousemoveHz).toBe(60);
     expect(config.sampling.bodyCaptureMaxBytes).toBe(1024 * 1024);
     expect(config.capturePolicy?.redaction.blockedSelectors).toContain("input[type='password']");
+  });
+
+  it("records the raw DOM only when a duplicated profile opts in", () => {
+    for (const id of [BUILT_IN_PROFILE_IDS.qa, BUILT_IN_PROFILE_IDS.fullCapture]) {
+      expect(preset(id).categories.dom, id).toBe(preset(BUILT_IN_PROFILE_IDS.full).categories.dom);
+    }
+
+    const copy = duplicateProfile(preset(BUILT_IN_PROFILE_IDS.qa), { id: "raw-dom" });
+    const config = buildProfileRecorderConfig({
+      mode: "full",
+      profile: { ...copy, categories: { ...copy.categories, dom: "allow" } },
+      visualCapture: "screenshots"
+    });
+
+    expect(config.capturePolicy?.categories.dom).toBe("allow");
   });
 
   it("keeps the lite transport boundary: no page-side bodies even for QA", () => {

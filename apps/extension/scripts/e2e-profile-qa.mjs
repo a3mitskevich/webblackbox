@@ -250,6 +250,10 @@ async function main() {
     })
   );
   const jsonBody = bodyTexts.find((text) => text.includes(BODY_MARKER));
+  // QA keeps the DOM at the Full level: no page HTML (raw DOM blob) is recorded.
+  const rawDomSnapshots = events.filter(
+    (event) => event.type === "dom.snapshot" && event.data?.source === "html"
+  );
 
   assert(profileConfig, "meta.config does not record the QA profile");
   assert(profileConfig.data.profile.ruleId === QA_RULE.id, "meta.config misses the rule", {
@@ -273,6 +277,9 @@ async function main() {
     bodies: bodyEvents.length
   });
   assert(!jsonBody.includes("hunter2"), "Sensitive body value was not masked", { jsonBody });
+  assert(rawDomSnapshots.length === 0, "QA recorded the raw DOM", {
+    snapshots: rawDomSnapshots.length
+  });
   assert(!manifestText.includes("alice@example.com"), "Page title leaked into the manifest");
   assert(swExceptions.length === 0, "Service worker threw", swExceptions);
   assert(
