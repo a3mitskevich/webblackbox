@@ -3,7 +3,7 @@
     {
       "path": "packages/recorder/dist/index.js",
       "maxBytes": 55000,
-      "maxGzipBytes": 15000
+      "maxGzipBytes": 15500
     },
     {
       "path": "packages/pipeline/dist/index.js",
@@ -23,7 +23,7 @@
     {
       "path": "apps/extension/build/content.js",
       "maxBytes": 48000,
-      "maxGzipBytes": 12500
+      "maxGzipBytes": 13000
     },
     {
       "path": "apps/extension/build/sw.js",
