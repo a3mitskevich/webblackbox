@@ -11,6 +11,8 @@ import {
   createUniqueId,
   deleteProfileFromStore,
   formatQueryLines,
+  formatValuePatternLines,
+  parseValuePatternLines,
   parseOptionalInt,
   parseQueryLines,
   ruleFromFormValues,
@@ -22,10 +24,16 @@ const FORM: ProfileFormValues = {
   name: " Stage QA ",
   base: "full",
   categories: { console: "allow", network: "body-allowlist", inputs: "bogus" },
+  contentRedaction: true,
+  builtInHeuristics: false,
   blockedSelectors: ".pii\n.pii\n",
   unmaskSelectors: ".order-id",
   redactHeaders: "Authorization\nX-Token",
+  redactCookieNames: "sid",
   redactBodyPatterns: "password",
+  redactQueryParams: "token\ncode",
+  redactStorageKeys: "auth",
+  valuePatterns: "[bodies, console] sk_live_\\w+\nacct-\\d+",
   bodyMimeAllowlist: "Application/JSON",
   bodyMaxBytes: "65536",
   includeUrls: "",
@@ -33,9 +41,7 @@ const FORM: ProfileFormValues = {
   mousemoveHz: "",
   visual: "screenshots",
   sourceMaps: "embed",
-  sourceMapMaxBytes: "1048576",
-  requireEncryption: true,
-  blockOnFindings: false
+  sourceMapMaxBytes: "1048576"
 };
 
 describe("profile form model", () => {
@@ -66,8 +72,31 @@ describe("profile form model", () => {
       },
       visual: "screenshots",
       sampling: { scrollHz: 9 },
-      export: { encryption: "required", privacyScanner: "warn" }
+      // Export rules are no longer edited: every archive is encrypted.
+      export: base.export
     });
+    expect(next.redaction).toMatchObject({
+      contentRedaction: true,
+      builtInHeuristics: false,
+      redactCookieNames: ["sid"],
+      redactQueryParams: ["token", "code"],
+      redactStorageKeys: ["auth"],
+      valuePatterns: [
+        { pattern: "sk_live_\\w+", targets: ["bodies", "console"] },
+        { pattern: "acct-\\d+", targets: ["bodies", "dom", "storage", "inputs", "console", "urls"] }
+      ]
+    });
+    const bracketed = [
+      {
+        pattern: "[A-Z]{3}\\d+",
+        targets: ["bodies", "dom", "storage", "inputs", "console", "urls"] as const
+      }
+    ].map((rule) => ({ ...rule, targets: [...rule.targets] }));
+
+    expect(parseValuePatternLines(formatValuePatternLines(bracketed))).toEqual(bracketed);
+    expect(formatValuePatternLines(next.redaction.valuePatterns)).toBe(
+      "[bodies, console] sk_live_\\w+\nacct-\\d+"
+    );
     expect(next.redaction.blockedSelectors).toEqual([".pii"]);
     expect(next.redaction.redactHeaders).toEqual(["authorization", "x-token"]);
     expect(next.pointer.mousemoveHz).toBeUndefined();

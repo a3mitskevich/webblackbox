@@ -38,6 +38,7 @@ import {
 import {
   applyProfileFormValues,
   createUniqueId,
+  formatValuePatternLines,
   deleteProfileFromStore,
   duplicateIntoStore,
   formatQueryLines,
@@ -268,6 +269,17 @@ function createProfileForm(profile: RecordingProfile, t: Translate): HTMLElement
       { value: "full", label: "Full" }
     ]),
     matrix,
+    el("p", { className: "wb-options-help", text: t("optionsRedactionDisclaimer") }),
+    labeledCheckbox(
+      t("optionsProfileContentRedaction"),
+      "contentRedaction",
+      profile.redaction.contentRedaction !== false
+    ),
+    labeledCheckbox(
+      t("optionsProfileBuiltInHeuristics"),
+      "builtInHeuristics",
+      profile.redaction.builtInHeuristics !== false
+    ),
     labeledTextarea(
       t("optionsBlockedSelectors"),
       "blockedSelectors",
@@ -284,9 +296,29 @@ function createProfileForm(profile: RecordingProfile, t: Translate): HTMLElement
       joinLines(profile.redaction.redactHeaders)
     ),
     labeledTextarea(
+      t("optionsProfileRedactCookieNames"),
+      "redactCookieNames",
+      joinLines(profile.redaction.redactCookieNames)
+    ),
+    labeledTextarea(
       t("optionsBodySensitivePatterns"),
       "redactBodyPatterns",
       joinLines(profile.redaction.redactBodyPatterns)
+    ),
+    labeledTextarea(
+      t("optionsProfileRedactQueryParams"),
+      "redactQueryParams",
+      joinLines(profile.redaction.redactQueryParams ?? [])
+    ),
+    labeledTextarea(
+      t("optionsProfileRedactStorageKeys"),
+      "redactStorageKeys",
+      joinLines(profile.redaction.redactStorageKeys ?? [])
+    ),
+    labeledTextarea(
+      t("optionsProfileValuePatterns"),
+      "valuePatterns",
+      formatValuePatternLines(profile.redaction.valuePatterns)
     ),
     labeledTextarea(
       t("optionsProfileBodyMimeAllowlist"),
@@ -333,16 +365,6 @@ function createProfileForm(profile: RecordingProfile, t: Translate): HTMLElement
       "sourceMapMaxBytes",
       profile.sourceMaps?.maxMapBytes?.toString() ?? "",
       "number"
-    ),
-    labeledCheckbox(
-      t("optionsProfileRequireEncryption"),
-      "requireEncryption",
-      profile.export.encryption === "required"
-    ),
-    labeledCheckbox(
-      t("optionsProfileBlockOnFindings"),
-      "blockOnFindings",
-      profile.export.privacyScanner === "block"
     ),
     el("div", { className: "wb-options-actions" }, [
       button(t("optionsProfileSave"), "profile-apply", "brand"),
@@ -687,10 +709,16 @@ function syncOpenProfileForm(card: HTMLElement, editor: EditorState): void {
     categories: Object.fromEntries(
       CAPTURE_CATEGORY_KEYS.map((key) => [key, readField(form, `category-${key}`)])
     ),
+    contentRedaction: readCheckbox(form, "contentRedaction"),
+    builtInHeuristics: readCheckbox(form, "builtInHeuristics"),
     blockedSelectors: readField(form, "blockedSelectors"),
     unmaskSelectors: readField(form, "unmaskSelectors"),
     redactHeaders: readField(form, "redactHeaders"),
+    redactCookieNames: readField(form, "redactCookieNames"),
     redactBodyPatterns: readField(form, "redactBodyPatterns"),
+    redactQueryParams: readField(form, "redactQueryParams"),
+    redactStorageKeys: readField(form, "redactStorageKeys"),
+    valuePatterns: readField(form, "valuePatterns"),
     bodyMimeAllowlist: readField(form, "bodyMimeAllowlist"),
     bodyMaxBytes: readField(form, "bodyMaxBytes"),
     includeUrls: readField(form, "includeUrls"),
@@ -698,9 +726,7 @@ function syncOpenProfileForm(card: HTMLElement, editor: EditorState): void {
     mousemoveHz: readField(form, "mousemoveHz"),
     visual: readField(form, "visual"),
     sourceMaps: readField(form, "sourceMaps"),
-    sourceMapMaxBytes: readField(form, "sourceMapMaxBytes"),
-    requireEncryption: readCheckbox(form, "requireEncryption"),
-    blockOnFindings: readCheckbox(form, "blockOnFindings")
+    sourceMapMaxBytes: readField(form, "sourceMapMaxBytes")
   });
 
   editor.draft = {

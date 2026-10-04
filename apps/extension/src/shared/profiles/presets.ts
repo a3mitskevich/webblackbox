@@ -119,15 +119,13 @@ const FULL_PRESET = createBaseProfile({
 const QA_PRESET = createBaseProfile({
   id: BUILT_IN_PROFILE_IDS.qa,
   name: "QA",
-  description:
-    "Console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, raw DOM and screenshots.",
+  description: "Console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB and screenshots.",
   base: "full",
   categories: {
     ...DEFAULT_CATEGORIES,
     actions: "allow",
     console: "allow",
     network: "body-allowlist",
-    dom: "allow",
     screenshots: "allow",
     cdp: "safe-subset"
   },
@@ -148,13 +146,15 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
   id: BUILT_IN_PROFILE_IDS.fullCapture,
   name: "Full capture",
   description:
-    "Everything: console with stacks, all textual bodies, input values (never passwords or blocked " +
-    "selectors), storage values, raw DOM, screenshots, optional tab video, 60 Hz pointer.",
+    "Everything, recorded raw (no content masking): console with stacks, all textual bodies, " +
+    "input values and keys (passwords included), storage values, screenshots, optional tab " +
+    "video, 60 Hz pointer. No raw DOM: duplicate the profile to record it.",
   base: "full",
   categories: {
     actions: "allow",
     inputs: "allow",
-    dom: "allow",
+    // Raw DOM stays opt-in (a duplicated profile): page text and markup can hold secrets.
+    dom: DEFAULT_CATEGORIES.dom,
     screenshots: "allow",
     screenRecordings: "allow",
     console: "allow",
@@ -170,6 +170,13 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
     bodyMaxBytes: FULL_CAPTURE_BODY_MAX_BYTES,
     includeUrls: [],
     excludeUrls: []
+  },
+  // Content is recorded as captured: no masking, hashing or URL stripping. The categories above
+  // still decide what is captured, and the archive is always encrypted.
+  redaction: {
+    ...cloneRedaction(DEFAULT_REDACTION_PROFILE),
+    contentRedaction: false,
+    blockedSelectors: []
   },
   pointer: {
     mousemoveHz: FULL_CAPTURE_MOUSEMOVE_HZ,

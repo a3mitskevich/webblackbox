@@ -12,7 +12,7 @@ import type {
   WebBlackboxEvent,
   WebBlackboxEventType
 } from "@webblackbox/protocol";
-import { extractRequestId, inferBlobMime } from "@webblackbox/protocol";
+import { ENCRYPTED_MANIFEST_PATH, extractRequestId, inferBlobMime } from "@webblackbox/protocol";
 
 /** Player lifecycle status. */
 export * from "./recording-profile.js";
@@ -563,9 +563,22 @@ export class WebBlackboxPlayer {
     const integrity = await readJson<HashesManifest>(zip, "integrity/hashes.json");
     assertArchiveFileSet(zip, integrity);
     await assertManifestIntegrity(zip, integrity);
-    const manifest = await readJson<ExportManifest>(zip, "manifest.json");
-    const archiveKey = await resolveArchiveReadKey(manifest, options.passphrase);
-    const encryptedFiles = manifest.encryption?.files ?? {};
+    const envelope = await readJson<ExportManifest>(zip, "manifest.json");
+    const archiveKey = await resolveArchiveReadKey(zip, envelope, options.passphrase);
+    const encryptedFiles = envelope.encryption?.files ?? {};
+    // Format 2 keeps the full manifest encrypted; format 1 stores it as `manifest.json` itself.
+    const manifest = zip.file(ENCRYPTED_MANIFEST_PATH)
+      ? {
+          ...(await readIntegrityArchiveJson<ExportManifest>(
+            zip,
+            integrity,
+            ENCRYPTED_MANIFEST_PATH,
+            archiveKey,
+            encryptedFiles
+          )),
+          ...(envelope.encryption ? { encryption: envelope.encryption } : {})
+        }
+      : envelope;
     const timeIndex = await readIntegrityArchiveJson<ChunkTimeIndexEntry[]>(
       zip,
       integrity,
@@ -2959,7 +2972,12 @@ function resolveReplayConfidence(
   return "low";
 }
 
+/**
+ * The archive key. Writers encrypt with the trimmed passphrase; older archives may have used it
+ * untrimmed, so both are tried against one encrypted file before the key is used.
+ */
 async function resolveArchiveReadKey(
+  zip: JSZip,
   manifest: ExportManifest,
   passphrase?: string
 ): Promise<CryptoKey | null> {
@@ -2973,11 +2991,33 @@ async function resolveArchiveReadKey(
     throw new Error("Archive is encrypted. Provide a passphrase to open it.");
   }
 
-  return deriveArchiveKey(
-    passphrase,
-    fromBase64(encryption.kdf.saltBase64),
-    encryption.kdf.iterations
+  const candidates = [...new Set([passphrase.trim(), passphrase])].filter(
+    (candidate) => candidate.length > 0
   );
+  const probe = Object.entries(encryption.files).find(([path]) => zip.file(path));
+  let key: CryptoKey | null = null;
+
+  for (const candidate of candidates) {
+    key = await deriveArchiveKey(
+      candidate,
+      fromBase64(encryption.kdf.saltBase64),
+      encryption.kdf.iterations
+    );
+
+    if (!probe || candidates.length === 1) {
+      return key;
+    }
+
+    try {
+      const bytes = (await zip.file(probe[0])?.async("uint8array")) ?? new Uint8Array();
+      await decryptBytes(bytes, key, fromBase64(probe[1].ivBase64));
+      return key;
+    } catch {
+      // Wrong candidate: try the next one.
+    }
+  }
+
+  return key;
 }
 
 async function readEventChunkSources(

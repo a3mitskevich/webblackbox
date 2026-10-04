@@ -1,3 +1,4 @@
+import { isValidExportPassphrase } from "@webblackbox/protocol/archive-encryption";
 import {
   DEFAULT_EXPORT_POLICY,
   type CaptureMode,
@@ -45,7 +46,6 @@ const START_PENDING_TIMEOUT_MS = 45_000;
 const EXPORT_ACK_TIMEOUT_MS = 120_000;
 
 type PopupExportPolicyForm = {
-  alertSensitiveFindings: boolean;
   maxArchiveMb: string;
   recentMinutes: string;
 };
@@ -63,7 +63,6 @@ const state: {
   exportPolicyForm: PopupExportPolicyForm;
   exportStatus?: string;
   exportStatusIsError?: boolean;
-  lastPrivacyAlertKey?: string;
   lastFreeze?: { sid: string; reason: FreezeReason; at: number };
 } = {
   tabId: null,
@@ -78,7 +77,6 @@ const state: {
   exportPolicyForm: toPopupExportPolicyForm(DEFAULT_EXPORT_POLICY),
   exportStatus: undefined,
   exportStatusIsError: false,
-  lastPrivacyAlertKey: undefined,
   lastFreeze: undefined
 };
 
@@ -117,9 +115,7 @@ function requestProfilePreview(): void {
 
 /** A runtime response with `ok: false`, kept whole so callers can read extra flags. */
 class UiMessageRejectedError extends Error {
-  public constructor(
-    public readonly response: { ok: false; error: string; privacyBlocked?: boolean }
-  ) {
+  public constructor(public readonly response: { ok: false; error: string }) {
     super(response.error);
   }
 }
@@ -428,19 +424,7 @@ function bindExportPolicyForm(container: HTMLElement): void {
     state.exportPolicyForm = readPopupExportPolicyFormFromContainer(container);
     savePopupExportPolicyForm(state.exportPolicyForm);
   };
-  const persistAlertDraft = (): void => {
-    persistDraft();
 
-    if (!state.exportPolicyForm.alertSensitiveFindings) {
-      state.exportPrivacyWarning = undefined;
-      state.lastPrivacyAlertKey = undefined;
-      render(container);
-    }
-  };
-
-  container
-    .querySelector<HTMLInputElement>("#export-alert-sensitive-findings")
-    ?.addEventListener("change", persistAlertDraft);
   container
     .querySelector<HTMLInputElement>("#export-max-size-mb")
     ?.addEventListener("input", persistDraft);
@@ -602,9 +586,14 @@ function openPassphraseDialog(): Promise<string | null> {
     };
 
     const submitPassphrase = (): void => {
-      const passphrase = input.value;
+      // Archives are always encrypted: no export without a passphrase of the minimum length.
+      if (!isValidExportPassphrase(input.value)) {
+        input.setCustomValidity(t("popupPassphraseRequired"));
+        input.reportValidity();
+        return;
+      }
 
-      finish(passphrase.trim().length > 0 ? passphrase : "");
+      finish(input.value);
     };
 
     const onKeydown = (event: KeyboardEvent): void => {
@@ -739,12 +728,10 @@ async function exportSessionFromPopup(
   container: HTMLElement,
   sid: string,
   passphrase: string,
-  policy: ExportPolicy,
-  options: { acknowledgePrivacyFindings?: boolean } = {}
+  policy: ExportPolicy
 ): Promise<void> {
   state.pendingExportSid = sid;
   state.exportPrivacyWarning = undefined;
-  state.lastPrivacyAlertKey = undefined;
   state.exportStatusIsError = false;
   state.exportStatus = t("popupExporting");
   render(container);
@@ -754,10 +741,9 @@ async function exportSessionFromPopup(
       sendUiMessage({
         kind: "ui.export",
         sid,
-        ...(hasDialogPassphrase(passphrase) ? { passphrase } : {}),
+        passphrase,
         saveAs: false,
-        policy,
-        ...(options.acknowledgePrivacyFindings ? { acknowledgePrivacyFindings: true } : {})
+        policy
       })
     );
     state.pendingExportSid = undefined;
@@ -767,7 +753,8 @@ async function exportSessionFromPopup(
       state.exportStatus = t("popupExported", {
         name: response.fileName ?? sid
       });
-      applyExportPrivacyWarning(response.privacyWarning);
+      // Findings are reported, never blocking: the archive is encrypted either way.
+      state.exportPrivacyWarning = response.privacyWarning;
       render(container);
       return;
     }
@@ -775,19 +762,6 @@ async function exportSessionFromPopup(
     render(container);
   } catch (error) {
     state.pendingExportSid = undefined;
-
-    if (
-      error instanceof UiMessageRejectedError &&
-      error.response.privacyBlocked === true &&
-      !options.acknowledgePrivacyFindings &&
-      window.confirm(t("popupPrivacyBlockedConfirm", { error: error.message }))
-    ) {
-      await exportSessionFromPopup(container, sid, passphrase, policy, {
-        acknowledgePrivacyFindings: true
-      });
-      return;
-    }
-
     state.exportStatusIsError = true;
     state.exportStatus = t("popupExportFailed", {
       error: error instanceof Error ? error.message : String(error)
@@ -796,33 +770,12 @@ async function exportSessionFromPopup(
   }
 }
 
-function hasDialogPassphrase(passphrase: string): boolean {
-  return passphrase.length > 0;
-}
-
 function isSuccessfulExportResponse(value: unknown): value is {
   ok: true;
   fileName?: string;
   privacyWarning?: ExportPrivacyWarning;
 } {
   return value !== null && typeof value === "object" && (value as { ok?: unknown }).ok === true;
-}
-
-function applyExportPrivacyWarning(warning: ExportPrivacyWarning | undefined): void {
-  if (!warning || !state.exportPolicyForm.alertSensitiveFindings) {
-    state.exportPrivacyWarning = undefined;
-    return;
-  }
-
-  state.exportPrivacyWarning = warning;
-  const alertKey = `${warning.findingCount}:${warning.summary}`;
-
-  if (state.lastPrivacyAlertKey === alertKey) {
-    return;
-  }
-
-  state.lastPrivacyAlertKey = alertKey;
-  window.alert(formatExportPrivacyWarning(warning));
 }
 
 function formatExportPrivacyWarning(warning: ExportPrivacyWarning): string {
@@ -859,7 +812,7 @@ function applyMessage(message: ExtensionOutboundMessage): void {
     }
 
     state.exportStatusIsError = !message.ok;
-    state.exportPrivacyWarning = undefined;
+    state.exportPrivacyWarning = message.ok ? message.privacyWarning : undefined;
     state.exportStatus = message.ok
       ? t("popupExported", {
           name: message.fileName ?? message.sid
@@ -867,10 +820,6 @@ function applyMessage(message: ExtensionOutboundMessage): void {
       : t("popupExportFailed", {
           error: message.error ?? t("unknownError")
         });
-
-    if (message.ok) {
-      applyExportPrivacyWarning(message.privacyWarning);
-    }
 
     return;
   }
@@ -892,7 +841,7 @@ function applyMessage(message: ExtensionOutboundMessage): void {
 function createPrivacyWarningSection(warning: ExportPrivacyWarning): HTMLElement {
   const section = document.createElement("section");
   section.className = "wb-popup__privacy-warning";
-  section.setAttribute("role", "alert");
+  section.setAttribute("role", "status");
 
   const title = document.createElement("strong");
   title.textContent = t("popupExportPrivacyWarningTitle");
@@ -975,7 +924,6 @@ function readExportPolicyFromForm(
 
 function toPopupExportPolicyForm(policy: ExportPolicy): PopupExportPolicyForm {
   return {
-    alertSensitiveFindings: true,
     maxArchiveMb: String(Math.max(1, Math.round(policy.maxArchiveBytes / (1024 * 1024)))),
     recentMinutes: String(Math.max(1, Math.round(policy.recentWindowMs / (60 * 1000))))
   };
@@ -996,8 +944,6 @@ function loadPopupExportPolicyForm(): PopupExportPolicyForm {
     const parsed = JSON.parse(raw) as Partial<PopupExportPolicyForm>;
 
     return {
-      alertSensitiveFindings:
-        typeof parsed.alertSensitiveFindings === "boolean" ? parsed.alertSensitiveFindings : true,
       maxArchiveMb: normalizeStoredBoundedIntText(
         parsed.maxArchiveMb,
         Math.round(DEFAULT_EXPORT_POLICY.maxArchiveBytes / (1024 * 1024)),
@@ -1057,15 +1003,8 @@ function writeExportPolicyFormToContainer(
   container: HTMLElement,
   form: PopupExportPolicyForm
 ): void {
-  const alertSensitiveFindings = container.querySelector<HTMLInputElement>(
-    "#export-alert-sensitive-findings"
-  );
   const maxArchiveMb = container.querySelector<HTMLInputElement>("#export-max-size-mb");
   const recentMinutes = container.querySelector<HTMLInputElement>("#export-recent-minutes");
-
-  if (alertSensitiveFindings) {
-    alertSensitiveFindings.checked = form.alertSensitiveFindings;
-  }
 
   if (maxArchiveMb) {
     maxArchiveMb.value = form.maxArchiveMb;
@@ -1078,9 +1017,6 @@ function writeExportPolicyFormToContainer(
 
 function readPopupExportPolicyFormFromContainer(container: HTMLElement): PopupExportPolicyForm {
   return {
-    alertSensitiveFindings:
-      container.querySelector<HTMLInputElement>("#export-alert-sensitive-findings")?.checked ??
-      state.exportPolicyForm.alertSensitiveFindings,
     maxArchiveMb:
       container.querySelector<HTMLInputElement>("#export-max-size-mb")?.value ??
       state.exportPolicyForm.maxArchiveMb,
@@ -1326,17 +1262,6 @@ function createArchivePolicySection(): HTMLElement {
   title.className = "wb-popup__policy-title";
   title.textContent = t("popupArchivePolicyTitle");
 
-  const sensitiveToggleLabel = document.createElement("label");
-  sensitiveToggleLabel.className = "wb-toggle";
-
-  const alertSensitiveFindings = document.createElement("input");
-  alertSensitiveFindings.id = "export-alert-sensitive-findings";
-  alertSensitiveFindings.type = "checkbox";
-
-  const sensitiveToggleText = document.createElement("span");
-  sensitiveToggleText.textContent = t("popupAlertSensitiveFindings");
-  sensitiveToggleLabel.append(alertSensitiveFindings, sensitiveToggleText);
-
   const sizeLabel = document.createElement("label");
   sizeLabel.className = "wb-field-label";
   sizeLabel.htmlFor = "export-max-size-mb";
@@ -1363,6 +1288,6 @@ function createArchivePolicySection(): HTMLElement {
   recentInput.step = "1";
   recentInput.className = "wb-input";
 
-  section.append(title, sensitiveToggleLabel, sizeLabel, sizeInput, recentLabel, recentInput);
+  section.append(title, sizeLabel, sizeInput, recentLabel, recentInput);
   return section;
 }

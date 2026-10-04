@@ -68,7 +68,7 @@ const indexes = await pipeline.finalizeIndexes();
 
 // Export as archive
 const result = await pipeline.exportBundle({
-  passphrase: "optional-encryption-key",
+  passphrase: "required-encryption-key", // every archive is encrypted (8+ characters)
   includeScreenshots: true,
   maxArchiveBytes: 100 * 1024 * 1024,
   recentWindowMs: 20 * 60 * 1000
@@ -278,13 +278,16 @@ const result = await pipeline.exportBundle({
 });
 ```
 
-When a passphrase is provided:
+Every archive is encrypted: `exportBundle` and `createWebBlackboxArchive` refuse to write one
+without a passphrase of at least 8 characters (trimmed).
 
 - **KDF**: PBKDF2 with SHA-256, 120,000 iterations, random salt
 - **Encryption**: AES-GCM with per-file random IVs
-- **Scope**: Event chunks, indexes, and blobs are encrypted
-- **Manifest**: Remains unencrypted (contains encryption metadata)
+- **Scope**: Event chunks, indexes, blobs, the privacy manifest and the full manifest
+  (`meta/manifest.json`) are encrypted
+- **Plaintext `manifest.json`**: only `protocolVersion: 2` and the encryption parameters
 - **Integrity**: SHA-256 hashes computed on encrypted content
+- **Older archives**: format 1 archives (plaintext manifest, optionally unencrypted) still open
 
 ### Archive Creation
 
@@ -301,7 +304,7 @@ const { bytes, integrity } = await createWebBlackboxArchive(
     blobs // StoredBlob[]
   },
   {
-    passphrase: "optional"
+    passphrase: "required-passphrase"
   }
 );
 ```

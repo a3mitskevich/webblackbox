@@ -1,5 +1,6 @@
 import {
   DEFAULT_CAPTURE_POLICY,
+  usesBuiltInHeuristics,
   type CaptureMode,
   type RecorderConfig
 } from "@webblackbox/protocol";
@@ -50,11 +51,6 @@ export type ArchivedProfileInfo = {
   ruleName?: string;
   extended: boolean;
   downgradedFrom?: { id: string; name: string; reason: string };
-};
-
-export type ProfileExportRequirements = {
-  requireEncryption: boolean;
-  blockOnPrivacyFindings: boolean;
 };
 
 /**
@@ -130,9 +126,17 @@ export function downgradeExtendedSelection(selection: ProfileSelection): Profile
   };
 }
 
-/** Categories above the standard Full ceiling (or any unmask list) make a profile "extended". */
+/**
+ * Categories above the standard Full ceiling, any unmask list, or content masking turned off
+ * make a profile "extended".
+ */
 export function isExtendedCaptureProfile(profile: RecordingProfile): boolean {
-  return listExtendedCategories(profile).length > 0 || profile.unmaskSelectors.length > 0;
+  return (
+    listExtendedCategories(profile).length > 0 ||
+    profile.unmaskSelectors.length > 0 ||
+    // Masking off, or only the user's own rules: content the defaults would strip is recorded.
+    !usesBuiltInHeuristics(profile.redaction)
+  );
 }
 
 export function listExtendedCategories(profile: RecordingProfile): CaptureCategoryKey[] {
@@ -220,25 +224,6 @@ export function toLegacyOptionsRecord(profile: RecordingProfile): Record<string,
   };
 }
 
-/** Export rules for a session: the strictest of every profile it recorded under. */
-export function resolveProfileExportRequirements(
-  selections: readonly Pick<ProfileSelection, "profile" | "extended">[]
-): ProfileExportRequirements {
-  return selections.reduce<ProfileExportRequirements>(
-    (acc, selection) => ({
-      requireEncryption:
-        acc.requireEncryption ||
-        selection.extended ||
-        selection.profile.export.encryption === "required",
-      blockOnPrivacyFindings:
-        acc.blockOnPrivacyFindings ||
-        selection.extended ||
-        selection.profile.export.privacyScanner === "block"
-    }),
-    { requireEncryption: false, blockOnPrivacyFindings: false }
-  );
-}
-
 export function toArchivedProfileInfo(selection: ProfileSelection): ArchivedProfileInfo {
   return {
     id: selection.profile.id,
@@ -291,7 +276,11 @@ function downgradeToFullPreset(profile: RecordingProfile): RecordingProfile {
   return {
     ...full,
     categories: clampCategoriesToCeiling(profile.categories, full.categories),
-    redaction: withoutRedactionUnmask(profile.redaction),
+    // Masking off or without the built-in heuristics is extended capture: the Full preset's rules
+    // apply instead (the profile's own lists may have been emptied).
+    redaction: usesBuiltInHeuristics(profile.redaction)
+      ? withoutRedactionUnmask(profile.redaction)
+      : structuredClone(full.redaction),
     sampling: { ...profile.sampling },
     recorder: { ...profile.recorder },
     sitePolicies: profile.sitePolicies,

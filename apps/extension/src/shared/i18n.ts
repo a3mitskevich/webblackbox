@@ -56,8 +56,6 @@ const EXTENSION_MESSAGES = {
     popupProfileByRule: "Records with {name} (rule: {rule}).",
     popupProfileDowngraded: "{requested} is limited to allowed sites; {name} is used here.",
     popupProfileRecommends: "Recommended start: {mode}.",
-    popupPrivacyBlockedConfirm:
-      "The privacy scanner found sensitive data in this archive:\n{error}\n\nExport anyway?",
     popupStop: "Stop",
     popupExport: "Export",
     popupSessions: "Sessions",
@@ -65,9 +63,10 @@ const EXTENSION_MESSAGES = {
     popupMarkerHint: "Marker: Ctrl/Cmd + Shift + M",
     popupExportPassphraseTitle: "Export Passphrase",
     popupExportPassphraseBody:
-      "Add an AES-GCM passphrase to encrypt this export. Leave blank to export without encryption.",
+      "Archives are always encrypted (AES-GCM). Enter a passphrase of at least 8 characters: you need it to open the archive.",
     popupPassphraseLabel: "Passphrase",
-    popupPassphraseRequired: "Enter a passphrase to encrypt this export.",
+    popupPassphraseRequired:
+      "Enter a passphrase of at least 8 characters: archives are always encrypted.",
     popupCancel: "Cancel",
     popupExporting: "Exporting...",
     popupExported: "Exported: {name}",
@@ -85,7 +84,6 @@ const EXTENSION_MESSAGES = {
     popupLiteStartWithoutReload: "Start Without Reload",
     popupRingBuffer: "Ring buffer",
     popupArchivePolicyTitle: "Archive Policy",
-    popupAlertSensitiveFindings: "Alert when sensitive info is found",
     popupMaxArchiveSizeMb: "Max archive size (MB)",
     popupRecentWindowMinutes: "Recent window (minutes)",
     contentKeyboardMarker: "Keyboard marker",
@@ -141,8 +139,16 @@ const EXTENSION_MESSAGES = {
     optionsProfileSourceMapsMetadata: "Record script → source map references",
     optionsProfileSourceMapsEmbed: "Embed source maps in the archive",
     optionsProfileSourceMapMaxBytes: "Largest embedded source map (bytes, default 8 MiB)",
-    optionsProfileRequireEncryption: "Require an encrypted export",
-    optionsProfileBlockOnFindings: "Block export on privacy scanner findings",
+    optionsRedactionDisclaimer:
+      "Masking applies your rules on a best-effort basis; WebBlackbox does not guarantee that all sensitive data is removed. Archives are always encrypted.",
+    optionsProfileContentRedaction: "Mask captured content",
+    optionsProfileBuiltInHeuristics:
+      "Built-in heuristics (secret detection, URL stripping, raw DOM sanitizing)",
+    optionsProfileRedactCookieNames: "Cookie names to mask",
+    optionsProfileRedactQueryParams: "URL query parameters to mask",
+    optionsProfileRedactStorageKeys: "Storage keys to mask",
+    optionsProfileValuePatterns:
+      "Value patterns, one per line: [bodies, dom, storage, inputs, console, urls] regex (no prefix: everywhere)",
     optionsProfileSave: "Apply",
     optionsProfileCancel: "Cancel",
     optionsRulesTitle: "Site rules",
@@ -235,7 +241,7 @@ const EXTENSION_MESSAGES = {
     sessionsDeletePrompt: "Delete session {sid}? This removes local archive data.",
     sessionsExportDialogTitle: "Export Session",
     sessionsExportDialogBody:
-      "Add an AES-GCM passphrase to encrypt this export. Leave blank to export without encryption.",
+      "Archives are always encrypted (AES-GCM). Enter a passphrase of at least 8 characters: you need it to open the archive.",
     sessionsConfirmDeleteTitle: "Confirm Delete",
     sessionsTitle: "Sessions"
   },
@@ -289,16 +295,16 @@ const EXTENSION_MESSAGES = {
     popupProfileByRule: "将使用 {name} 录制（规则：{rule}）。",
     popupProfileDowngraded: "{requested} 仅限允许的站点；此处使用 {name}。",
     popupProfileRecommends: "推荐启动方式：{mode}。",
-    popupPrivacyBlockedConfirm: "隐私扫描器在此归档中发现敏感数据：\n{error}\n\n仍要导出吗？",
     popupStop: "停止",
     popupExport: "导出",
     popupSessions: "会话",
     popupOptions: "设置",
     popupMarkerHint: "标记快捷键：Ctrl/Cmd + Shift + M",
     popupExportPassphraseTitle: "导出口令",
-    popupExportPassphraseBody: "填写 AES-GCM 口令可加密导出；留空则不加密导出。",
+    popupExportPassphraseBody:
+      "归档始终加密（AES-GCM）。请输入至少 8 个字符的口令，打开归档时需要它。",
     popupPassphraseLabel: "口令",
-    popupPassphraseRequired: "填写口令将加密导出。",
+    popupPassphraseRequired: "请输入至少 8 个字符的口令：归档始终加密。",
     popupCancel: "取消",
     popupExporting: "正在导出...",
     popupExported: "已导出：{name}",
@@ -315,7 +321,6 @@ const EXTENSION_MESSAGES = {
     popupLiteStartWithoutReload: "不刷新，直接开始",
     popupRingBuffer: "环形缓冲区",
     popupArchivePolicyTitle: "归档策略",
-    popupAlertSensitiveFindings: "发现敏感信息时提醒",
     popupMaxArchiveSizeMb: "归档最大体积（MB）",
     popupRecentWindowMinutes: "最近窗口（分钟）",
     contentKeyboardMarker: "键盘标记",
@@ -370,8 +375,15 @@ const EXTENSION_MESSAGES = {
     optionsProfileSourceMapsMetadata: "记录脚本 → source map 引用",
     optionsProfileSourceMapsEmbed: "将 source map 嵌入归档",
     optionsProfileSourceMapMaxBytes: "嵌入的 source map 最大字节数（默认 8 MiB）",
-    optionsProfileRequireEncryption: "导出必须加密",
-    optionsProfileBlockOnFindings: "隐私扫描发现问题时阻止导出",
+    optionsRedactionDisclaimer:
+      "遮盖按尽力而为的方式应用你的规则；WebBlackbox 不保证移除所有敏感数据。归档始终加密。",
+    optionsProfileContentRedaction: "遮盖采集的内容",
+    optionsProfileBuiltInHeuristics: "内置启发式规则（密钥检测、URL 清理、原始 DOM 清理）",
+    optionsProfileRedactCookieNames: "要遮盖的 Cookie 名称",
+    optionsProfileRedactQueryParams: "要遮盖的 URL 查询参数",
+    optionsProfileRedactStorageKeys: "要遮盖的存储键",
+    optionsProfileValuePatterns:
+      "值模式，每行一个：[bodies, dom, storage, inputs, console, urls] 正则（无前缀：全部）",
     optionsProfileSave: "应用",
     optionsProfileCancel: "取消",
     optionsRulesTitle: "站点规则",
@@ -459,7 +471,8 @@ const EXTENSION_MESSAGES = {
     sessionsFallbackTab: "标签页 {tabId}",
     sessionsDeletePrompt: "删除会话 {sid}？这会移除本地归档数据。",
     sessionsExportDialogTitle: "导出会话",
-    sessionsExportDialogBody: "填写 AES-GCM 口令可加密导出；留空则不加密导出。",
+    sessionsExportDialogBody:
+      "归档始终加密（AES-GCM）。请输入至少 8 个字符的口令，打开归档时需要它。",
     sessionsConfirmDeleteTitle: "确认删除",
     sessionsTitle: "会话"
   }

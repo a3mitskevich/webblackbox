@@ -2,8 +2,9 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 66000,
-      "maxGzipBytes": 16000
+      "maxBytes": 73100,
+      "maxGzipBytes": 17100,
+      "note": "Measured 70,960 / 16,596 B (+3%): CDP allowlists (#9), redaction rules (#10) and script/source-map events (#11)."
     },
     {
       "path": "packages/pipeline/dist/index.js",
@@ -21,9 +22,16 @@
       "maxGzipBytes": 330000
     },
     {
+      "path": "apps/extension/build/content.js",
+      "maxBytes": 49900,
+      "maxGzipBytes": 13300,
+      "note": "Measured 48,433 / 12,892 B (+3%): profiles UI strings in the shared dictionary (moved out by #14) plus source-map settings (#11)."
+    },
+    {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 850000,
-      "maxGzipBytes": 150000
+      "maxBytes": 894300,
+      "maxGzipBytes": 159300,
+      "note": "Measured 868,171 / 154,620 B (+3%): recording profiles, redaction rules and source-map capture in the service worker."
     }
   ]
 }

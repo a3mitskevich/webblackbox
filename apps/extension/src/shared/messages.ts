@@ -43,11 +43,10 @@ export type UiStopSessionMessage = {
 export type UiExportSessionMessage = {
   kind: "ui.export";
   sid: string;
+  /** Required: every archive is encrypted (at least 8 characters, trimmed). */
   passphrase?: string;
   saveAs?: boolean;
   policy?: Partial<ExportPolicy>;
-  /** User confirmed exporting although the blocking privacy scanner found secrets. */
-  acknowledgePrivacyFindings?: boolean;
 };
 
 export type UiDeleteSessionMessage = {
@@ -162,8 +161,6 @@ export type ExportStatusMessage = {
   fileName?: string;
   error?: string;
   privacyWarning?: ExportPrivacyWarning;
-  /** Export stopped by the blocking privacy scanner; re-send with acknowledgePrivacyFindings. */
-  privacyBlocked?: boolean;
 };
 
 /** One selectable profile as the popup shows it. */

@@ -8,8 +8,11 @@ import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_EXPORT_POLICY,
   DEFAULT_RECORDER_CONFIG,
-  redactBodyBytes,
-  redactBodyText,
+  assertExportPassphrase,
+  isValidExportPassphrase,
+  maskBodyBytes,
+  maskBodyText,
+  normalizeExportPassphrase,
   sanitizeUrlForPrivacy,
   type CapturePolicy,
   type CaptureMode,
@@ -50,12 +53,16 @@ import {
   shouldInjectPageHooksForMode
 } from "../shared/mode-profile.js";
 import {
+  capturesPageStorageInFullMode,
+  isPageEventKeptInFullMode
+} from "webblackbox/capture-scope";
+import { materializeLiteRawEvent } from "webblackbox/lite-materializer";
+import {
   AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
   downgradeExtendedSelection,
   isHostAllowedForExtendedCapture,
   isSameProfileSelection,
-  resolveProfileExportRequirements,
   resolveSourceMapCapture,
   selectRecordingProfile,
   toArchivedProfileInfo,
@@ -168,7 +175,6 @@ type SessionRuntime = {
   lastViewport: ViewportState | null;
   lastActionScreenshotMono: number;
   lastIncidentCaptureAt: number;
-  lastNavigationSnapshotAt: number;
   queueDepth: number;
   droppedBestEffortTasks: number;
   pipelineEventBuffer: WebBlackboxEvent[];
@@ -277,8 +283,6 @@ type SessionPipelineClient = {
     includeScreenRecordings?: boolean;
     maxArchiveBytes?: number;
     recentWindowMs?: number;
-    allowPlaintextLocalExport?: boolean;
-    strictPrivacyScanner?: boolean;
   }) => Promise<PipelineExportDownloadResult>;
   close: (options?: { purge?: boolean }) => Promise<void>;
 };
@@ -309,8 +313,6 @@ type OffscreenPipelineRequest = {
   includeScreenRecordings?: boolean;
   maxArchiveBytes?: number;
   recentWindowMs?: number;
-  allowPlaintextLocalExport?: boolean;
-  strictPrivacyScanner?: boolean;
   purge?: boolean;
   recordingId?: string;
   streamId?: string;
@@ -429,7 +431,6 @@ const FULL_MODE_BODY_CAPTURE_MAX_PER_MINUTE = 80;
 const FULL_MODE_BODY_CAPTURE_MAX_PER_SESSION = 2_000;
 const FULL_MODE_INCIDENT_CAPTURE_COOLDOWN_MS = 15_000;
 const FULL_MODE_MIN_SCREENSHOT_INTERVAL_MS = 12_000;
-const FULL_MODE_NAV_SNAPSHOT_COOLDOWN_MS = 30_000;
 const FREEZE_NOTICE_COOLDOWN_MS = 20_000;
 const FREEZE_BADGE_HIGHLIGHT_MS = 15_000;
 const PERFORMANCE_BUDGET_BREACH_COOLDOWN_MS = 15_000;
@@ -485,14 +486,9 @@ const LITE_BODY_REDACTED_TOKEN = "[REDACTED]";
 const LITE_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const LITE_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
 const LITE_DOM_SNAPSHOT_MAX_BYTES = 1_500 * 1024;
-const LITE_STORAGE_SNAPSHOT_MAX_BYTES = 600 * 1024;
 const CPU_PROFILE_SAMPLE_MS = 350;
 const HEAP_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024;
 const OPTIONS_STORAGE_KEY = "webblackbox.options";
-const PROFILE_ENCRYPTION_REQUIRED_MESSAGE =
-  "This recording profile requires an encrypted export: enter a passphrase.";
-// Matches the error thrown by assertPrivacyScannerPassed in @webblackbox/pipeline.
-const PRIVACY_SCANNER_BLOCKED_PREFIX = "Privacy scanner blocked export";
 const ACTIVE_SESSION_STORAGE_KEY = "webblackbox.runtime.sessions";
 const SESSION_ANNOTATIONS_STORAGE_KEY = "webblackbox.runtime.sessionAnnotations";
 const EXPORT_AUDIT_STORAGE_KEY = "webblackbox.audit.exports";
@@ -748,8 +744,7 @@ async function handleInboundMessage(
       message.sid,
       message.passphrase,
       message.saveAs,
-      resolveExportPolicy(message.policy),
-      { acknowledgePrivacyFindings: message.acknowledgePrivacyFindings === true }
+      resolveExportPolicy(message.policy)
     );
   }
 
@@ -1009,7 +1004,6 @@ async function startSession(
     lastViewport: null,
     lastActionScreenshotMono: Number.NEGATIVE_INFINITY,
     lastIncidentCaptureAt: Number.NEGATIVE_INFINITY,
-    lastNavigationSnapshotAt: Number.NEGATIVE_INFINITY,
     queueDepth: 0,
     droppedBestEffortTasks: 0,
     pipelineEventBuffer: [],
@@ -1204,11 +1198,10 @@ async function exportSession(
   sid: string,
   passphrase: string | undefined,
   saveAs = true,
-  policy: ExportPolicy = DEFAULT_EXPORT_POLICY,
-  options: { acknowledgePrivacyFindings?: boolean } = {}
+  policy: ExportPolicy = DEFAULT_EXPORT_POLICY
 ): Promise<
   | { ok: true; fileName: string; privacyWarning?: ExportPrivacyWarning }
-  | { ok: false; error: string; privacyBlocked?: boolean }
+  | { ok: false; error: string }
 > {
   const runtime = sessionsBySid.get(sid);
 
@@ -1228,14 +1221,12 @@ async function exportSession(
   }
 
   const effectivePolicy = resolveSessionExportPolicy(runtime, policy);
-  const requirements = resolveProfileExportRequirements(runtime.profile.history);
+  // Every archive is encrypted, whatever the profile; whitespace around it is not part of it.
+  const encryptionPassphrase = normalizeExportPassphrase(passphrase);
 
   try {
-    const encrypted = hasExportPassphrase(passphrase);
-
-    if (requirements.requireEncryption && !encrypted) {
-      throw new Error(PROFILE_ENCRYPTION_REQUIRED_MESSAGE);
-    }
+    // Before stopping the session: a refused export leaves the recording running.
+    assertExportPassphrase(encryptionPassphrase);
 
     if (!runtime.stoppedAt) {
       await stopSession(runtime.tabId);
@@ -1245,14 +1236,11 @@ async function exportSession(
 
     const exported = await enqueueWithResult(runtime, async () => {
       return runtime.pipeline.exportAndDownload({
-        passphrase: encrypted ? passphrase : undefined,
+        passphrase: encryptionPassphrase,
         includeScreenshots: effectivePolicy.includeScreenshots,
         includeScreenRecordings: effectivePolicy.includeScreenRecordings,
         maxArchiveBytes: effectivePolicy.maxArchiveBytes,
-        recentWindowMs: effectivePolicy.recentWindowMs,
-        allowPlaintextLocalExport: !encrypted && !requirements.requireEncryption,
-        strictPrivacyScanner:
-          requirements.blockOnPrivacyFindings && options.acknowledgePrivacyFindings !== true
+        recentWindowMs: effectivePolicy.recentWindowMs
       });
     });
 
@@ -1264,7 +1252,7 @@ async function exportSession(
       sid,
       mode: runtime.mode,
       outcome: "ok",
-      encrypted,
+      encrypted: true,
       includeScreenshots: effectivePolicy.includeScreenshots,
       includeScreenRecordings: effectivePolicy.includeScreenRecordings,
       maxArchiveBytes: effectivePolicy.maxArchiveBytes,
@@ -1297,26 +1285,23 @@ async function exportSession(
       sid,
       mode: runtime.mode,
       outcome: "error",
-      encrypted: hasExportPassphrase(passphrase),
+      encrypted: isValidExportPassphrase(encryptionPassphrase),
       includeScreenshots: effectivePolicy.includeScreenshots,
       includeScreenRecordings: effectivePolicy.includeScreenRecordings,
       maxArchiveBytes: effectivePolicy.maxArchiveBytes,
       recentWindowMs: effectivePolicy.recentWindowMs,
       error: redactOperationalMessage(message)
     });
-    const privacyBlocked = message.includes(PRIVACY_SCANNER_BLOCKED_PREFIX);
     console.warn("[WebBlackbox] export failed", error);
     broadcast({
       kind: "sw.export-status",
       sid,
       ok: false,
-      error: message,
-      ...(privacyBlocked ? { privacyBlocked } : {})
+      error: message
     });
     return {
       ok: false,
-      error: message,
-      ...(privacyBlocked ? { privacyBlocked } : {})
+      error: message
     };
   }
 }
@@ -1599,10 +1584,6 @@ function resolveSessionExportPolicy(runtime: SessionRuntime, policy: ExportPolic
   };
 }
 
-function hasExportPassphrase(passphrase: string | undefined): passphrase is string {
-  return typeof passphrase === "string" && passphrase.length > 0;
-}
-
 function ingestRawEvent(rawEvent: RawRecorderEvent): void {
   const runtime =
     sessionsByTab.get(rawEvent.tabId) ??
@@ -1679,10 +1660,13 @@ function shouldSkipFullModeContentRawEvent(
   runtime: SessionRuntime,
   rawEvent: RawRecorderEvent
 ): boolean {
+  const categories = runtime.config.capturePolicy?.categories;
+
   return (
     runtime.mode === "full" &&
     rawEvent.source === "content" &&
-    SKIPPED_FULL_MODE_CONTENT_RAW_TYPES.has(rawEvent.rawType)
+    SKIPPED_FULL_MODE_CONTENT_RAW_TYPES.has(rawEvent.rawType) &&
+    !(categories && isPageEventKeptInFullMode(rawEvent.rawType, categories))
   );
 }
 
@@ -1690,7 +1674,11 @@ function shouldMaterializeLiteContentEvent(
   runtime: SessionRuntime,
   rawEvent: RawRecorderEvent
 ): boolean {
-  if (runtime.mode !== "lite") {
+  const categories = runtime.config.capturePolicy?.categories;
+  const isKeptInFullMode =
+    categories !== undefined && isPageEventKeptInFullMode(rawEvent.rawType, categories);
+
+  if (runtime.mode !== "lite" && !isKeptInFullMode) {
     return false;
   }
 
@@ -1712,16 +1700,13 @@ function shouldMaterializeLiteContentEvent(
     return typeof payload.html === "string" && payload.html.length > 0;
   }
 
-  if (rawEvent.rawType === "localStorageSnapshot") {
-    return asRecord(payload.entries) !== null;
-  }
-
-  if (rawEvent.rawType === "indexedDbSnapshot") {
-    return Array.isArray(payload.databaseNames);
-  }
-
-  if (rawEvent.rawType === "cookieSnapshot") {
-    return Array.isArray(payload.names);
+  // Storage snapshots are always normalized to what the capture policy allows.
+  if (
+    rawEvent.rawType === "localStorageSnapshot" ||
+    rawEvent.rawType === "indexedDbSnapshot" ||
+    rawEvent.rawType === "cookieSnapshot"
+  ) {
+    return true;
   }
 
   if (rawEvent.rawType === "networkBody") {
@@ -1751,7 +1736,11 @@ async function materializeLiteContentEvent(
     rawEvent.rawType === "indexedDbSnapshot" ||
     rawEvent.rawType === "cookieSnapshot"
   ) {
-    return materializeLiteStorageSnapshot(runtime, rawEvent);
+    // Details stay inline (never in blobs) so the recorder's redactor and policy checks see them.
+    return materializeLiteRawEvent(rawEvent, {
+      config: runtime.config,
+      putBlob: (mime, bytes) => runtime.pipeline.putBlob(mime, bytes)
+    });
   }
 
   if (rawEvent.rawType === "networkBody") {
@@ -1840,90 +1829,6 @@ async function materializeLiteDomSnapshot(
   };
 }
 
-async function materializeLiteStorageSnapshot(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): Promise<RawRecorderEvent | null> {
-  const payload = asRecord(rawEvent.payload);
-
-  if (!payload) {
-    return null;
-  }
-
-  const reason = asString(payload.reason) ?? undefined;
-
-  if (rawEvent.rawType === "localStorageSnapshot") {
-    const entries = asRecord(payload.entries) ?? {};
-    const serialized = JSON.stringify(entries);
-    const encoded = encodeTextWithByteLimit(serialized, LITE_STORAGE_SNAPSHOT_MAX_BYTES);
-    const hash =
-      encoded.bytes.byteLength > 0
-        ? await runtime.pipeline.putBlob("application/json", encoded.bytes)
-        : undefined;
-    const count = normalizeNonNegativeInt(payload.count) ?? Object.keys(entries).length;
-
-    return {
-      ...rawEvent,
-      payload: {
-        hash,
-        count,
-        mode: "sample",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true || encoded.truncated
-      }
-    };
-  }
-
-  if (rawEvent.rawType === "indexedDbSnapshot") {
-    const names = asStringArray(payload.databaseNames, 400);
-    const serialized = JSON.stringify(names);
-    const encoded = encodeTextWithByteLimit(serialized, LITE_STORAGE_SNAPSHOT_MAX_BYTES);
-    const hash =
-      encoded.bytes.byteLength > 0
-        ? await runtime.pipeline.putBlob("application/json", encoded.bytes)
-        : undefined;
-    const count = normalizeNonNegativeInt(payload.count) ?? names.length;
-
-    return {
-      ...rawEvent,
-      payload: {
-        hash,
-        count,
-        mode: "schema-only",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true || encoded.truncated
-      }
-    };
-  }
-
-  if (rawEvent.rawType === "cookieSnapshot") {
-    const names = asStringArray(payload.names, 400);
-    const serialized = JSON.stringify(names);
-    const encoded = encodeTextWithByteLimit(serialized, LITE_STORAGE_SNAPSHOT_MAX_BYTES);
-    const hash =
-      encoded.bytes.byteLength > 0
-        ? await runtime.pipeline.putBlob("application/json", encoded.bytes)
-        : undefined;
-    const count = normalizeNonNegativeInt(payload.count) ?? names.length;
-
-    return {
-      ...rawEvent,
-      payload: {
-        hash,
-        count,
-        mode: "sample",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true || encoded.truncated
-      }
-    };
-  }
-
-  return rawEvent;
-}
-
 async function materializeLiteNetworkBody(
   runtime: SessionRuntime,
   rawEvent: RawRecorderEvent
@@ -1950,16 +1855,16 @@ async function materializeLiteNetworkBody(
     return null;
   }
 
-  const patterns = runtime.config.redaction.redactBodyPatterns;
+  const rules = runtime.config.redaction;
   let bytes: Uint8Array;
   let redacted = payload.redacted === true;
 
   if (encoding === "utf8") {
-    const redaction = redactBodyText(body, patterns, LITE_BODY_REDACTED_TOKEN);
+    const redaction = maskBodyText(body, rules, LITE_BODY_REDACTED_TOKEN);
     redacted = redacted || redaction.redacted;
     bytes = new TextEncoder().encode(redaction.value);
   } else {
-    const redaction = redactBodyBytes(decodeBase64(body), patterns, {
+    const redaction = maskBodyBytes(decodeBase64(body), rules, {
       mimeType,
       redactionToken: LITE_BODY_REDACTED_TOKEN
     });
@@ -2331,9 +2236,7 @@ function createOffscreenPipelineClient(sid: string): SessionPipelineClient {
         includeScreenshots: options.includeScreenshots,
         includeScreenRecordings: options.includeScreenRecordings,
         maxArchiveBytes: options.maxArchiveBytes,
-        recentWindowMs: options.recentWindowMs,
-        allowPlaintextLocalExport: options.allowPlaintextLocalExport,
-        strictPrivacyScanner: options.strictPrivacyScanner
+        recentWindowMs: options.recentWindowMs
       });
 
       return normalizePipelineExportDownloadResult(exported);
@@ -2784,10 +2687,6 @@ async function processFullModeEvent(
 
     return;
   }
-
-  if (method === "Page.frameNavigated" && shouldCaptureNavigationSnapshot(runtime)) {
-    await captureDomSnapshot(runtime, "navigation");
-  }
 }
 
 async function primeChildCdpSession(
@@ -2987,7 +2886,7 @@ async function captureResponseBody(
   const transformed = transformResponseBodyForCapture({
     body: response.body,
     base64Encoded: response.base64Encoded === true,
-    redactPatterns: runtime.config.redaction.redactBodyPatterns,
+    redaction: runtime.config.redaction,
     maxBytes: captureRule.maxBytes,
     mimeType: normalizedMime,
     redactionToken: LITE_BODY_REDACTED_TOKEN,
@@ -3123,29 +3022,6 @@ async function captureIncidentArtifacts(runtime: SessionRuntime, reason: string)
   ]);
 }
 
-function shouldCaptureNavigationSnapshot(runtime: SessionRuntime): boolean {
-  if (runtime.stopping) {
-    return false;
-  }
-
-  if (runtime.config.capturePolicy?.categories.dom !== "allow") {
-    return false;
-  }
-
-  if (runtime.queueDepth >= Math.floor(BEST_EFFORT_QUEUE_MAX_PENDING / 4)) {
-    return false;
-  }
-
-  const now = Date.now();
-
-  if (now - runtime.lastNavigationSnapshotAt < FULL_MODE_NAV_SNAPSHOT_COOLDOWN_MS) {
-    return false;
-  }
-
-  runtime.lastNavigationSnapshotAt = now;
-  return true;
-}
-
 function handleFreezeNotice(runtime: SessionRuntime, reason: FreezeReason): void {
   if (runtime.stopping) {
     return;
@@ -3170,7 +3046,9 @@ async function captureFullModeArtifacts(runtime: SessionRuntime, reason: string)
   ];
 
   if (reason !== "session-start") {
-    tasks.push(captureDomSnapshot(runtime, reason), captureStorageSnapshots(runtime, reason));
+    // The DOM comes from the page agent's raw snapshot (`dom: allow`), which masks blocked
+    // selectors and field values; a CDP DOMSnapshot would carry both unmasked.
+    tasks.push(captureStorageSnapshots(runtime, reason));
   }
 
   if (shouldCaptureAdvancedProfiles(reason)) {
@@ -3528,54 +3406,6 @@ function createScreenRecordingId(sid: string): string {
   return `VR-${sid}-${Date.now()}-${random}`;
 }
 
-async function captureDomSnapshot(runtime: SessionRuntime, reason: string): Promise<void> {
-  if (!runtime.cdpRouter) {
-    return;
-  }
-
-  if (runtime.config.capturePolicy?.categories.dom !== "allow") {
-    return;
-  }
-
-  const snapshot = await sendCdpCommand<Record<string, unknown>>(
-    runtime,
-    { tabId: runtime.tabId },
-    "DOMSnapshot.captureSnapshot",
-    {
-      computedStyles: [],
-      includeDOMRects: false,
-      includePaintOrder: false
-    }
-  );
-
-  if (!snapshot) {
-    return;
-  }
-
-  const bytes = new TextEncoder().encode(JSON.stringify(snapshot));
-  const hash = await runtime.pipeline.putBlob("application/json", bytes);
-  const documents = Array.isArray(snapshot.documents) ? snapshot.documents : [];
-  const firstDocument = documents[0] as Record<string, unknown> | undefined;
-  const nodes = firstDocument ? asRecord(firstDocument.nodes) : null;
-  const nodeNameArray = Array.isArray(nodes?.nodeName) ? nodes.nodeName : [];
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "cdp.dom.snapshot",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      snapshotId: `D-${Date.now()}`,
-      contentHash: hash,
-      source: "cdp",
-      nodeCount: nodeNameArray.length,
-      reason
-    }
-  });
-}
-
 async function captureStorageSnapshots(runtime: SessionRuntime, reason: string): Promise<void> {
   if (!runtime.cdpRouter) {
     return;
@@ -3583,12 +3413,18 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
 
   const policy = runtime.config.capturePolicy;
 
+  // The page agent records localStorage and IndexedDB itself (inline, through the redactor);
+  // the CDP snapshots below would duplicate them in blobs the redactor never sees. Cookie names
+  // stay on CDP: `document.cookie` cannot see HttpOnly cookies.
+  const pageRecordsStorage = !!policy && capturesPageStorageInFullMode(policy.categories);
+
   const cookies =
     policy?.categories.cookies === "names-only"
       ? await sendCdpCommand<{ cookies?: unknown[] }>(
           runtime,
           { tabId: runtime.tabId },
-          "Storage.getCookies"
+          // The page's cookies only; Storage.getCookies would list every site in the browser.
+          "Network.getCookies"
         )
       : null;
 
@@ -3618,7 +3454,7 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
     });
   }
 
-  const localStorageMode = resolveLocalStorageSnapshotMode(policy);
+  const localStorageMode = pageRecordsStorage ? null : resolveLocalStorageSnapshotMode(policy);
   const localStorageData = localStorageMode
     ? await evaluateExpression(runtime, buildLocalStorageSnapshotExpression(localStorageMode))
     : null;
@@ -3648,7 +3484,7 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
   }
 
   const origin =
-    policy?.categories.indexedDb === "names-only"
+    !pageRecordsStorage && policy?.categories.indexedDb === "names-only"
       ? await evaluateExpression(runtime, "location.origin")
       : null;
 
@@ -4106,28 +3942,6 @@ function normalizeNonNegativeInt(value: unknown): number | undefined {
   }
 
   return Math.max(0, Math.round(candidate));
-}
-
-function asStringArray(value: unknown, limit: number): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const output: string[] = [];
-
-  for (const entry of value) {
-    if (typeof entry !== "string" || entry.length === 0) {
-      continue;
-    }
-
-    output.push(entry);
-
-    if (output.length >= limit) {
-      break;
-    }
-  }
-
-  return output;
 }
 
 function encodeTextWithByteLimit(
