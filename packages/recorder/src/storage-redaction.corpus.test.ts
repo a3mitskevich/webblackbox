@@ -7,6 +7,7 @@ import { DEFAULT_REDACTION_PROFILE, type RedactionProfile } from "@webblackbox/p
 import { describe, expect, it } from "vitest";
 
 import { redactPayload } from "./redaction.js";
+import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
 
 const DEFAULT_PROFILE: RedactionProfile = {
   ...DEFAULT_REDACTION_PROFILE,
@@ -20,23 +21,6 @@ const NARROWED_PROFILE: RedactionProfile = {
   redactBodyPatterns: []
 };
 const BACKSLASH = "\\";
-const LINEAR_INPUT_FACTOR = 8;
-// Well above linear growth (8-11x) plus shared-runner noise, well below quadratic growth (>= 56x).
-const LINEAR_GROWTH_LIMIT = 32;
-
-// The fastest of several runs: CPU contention only ever adds time, so the minimum is stable.
-function fastestRunMs(run: () => void, runs: number): number {
-  let fastest = Number.POSITIVE_INFINITY;
-
-  for (let index = 0; index < runs; index += 1) {
-    const startedAt = performance.now();
-    run();
-    fastest = Math.min(fastest, performance.now() - startedAt);
-  }
-
-  return fastest;
-}
-
 // Real formats, assembled at runtime so secret scanners do not flag this source.
 const join = (...parts: string[]): string => parts.join("");
 const STRIPE = join("sk_", "live_", "51HxQ2eKmT9vYbR3nLp8wZaC");
@@ -157,16 +141,17 @@ describe("storage value corpus", () => {
   it("scans hostile values in linear time", () => {
     // Growth, not an absolute budget, so parallel load cannot fail the test.
     for (const [unit, count] of [
-      ["A", 20_000],
-      ["Ab", 10_000],
-      ["%", 20_000]
+      ["A", 10_000],
+      ["Ab", 5_000],
+      ["%", 10_000]
     ] as const) {
-      const redact = (value: string) => () =>
-        redactPayload({ op: "setItem", key: "k", value }, DEFAULT_PROFILE);
-      const smallMs = fastestRunMs(redact(unit.repeat(count)), 11);
-      const largeMs = fastestRunMs(redact(unit.repeat(count * LINEAR_INPUT_FACTOR)), 5);
+      const ratio = growthRatio((scale) => {
+        const value = unit.repeat(count * scale);
 
-      expect(largeMs / Math.max(smallMs, 0.05), unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
+        return () => redactPayload({ op: "setItem", key: "k", value }, DEFAULT_PROFILE);
+      });
+
+      expect(ratio, unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
     }
   });
 
