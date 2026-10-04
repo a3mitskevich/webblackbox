@@ -133,6 +133,9 @@ const EXTENSION_MESSAGES = {
     optionsProfileMousemoveHz: "Pointer rate, Hz (empty = transport default)",
     optionsProfileVisual: "Visual capture",
     optionsProfileVisualPopup: "Chosen in the popup",
+    optionsProfileDeleteAfterExport: "Delete the local recording after a successful export",
+    optionsProfileUnexportedRetention: "Keep unexported recordings for, minutes (1–1440)",
+    localDataRestartNotice: "Unexported recordings are cleared when the browser restarts.",
     optionsRedactionDisclaimer:
       "Masking applies your rules on a best-effort basis; WebBlackbox does not guarantee that all sensitive data is removed. Archives are always encrypted.",
     optionsProfileContentRedaction: "Mask captured content",
@@ -363,6 +366,9 @@ const EXTENSION_MESSAGES = {
     optionsProfileMousemoveHz: "指针采样频率 Hz（留空 = 传输默认）",
     optionsProfileVisual: "视觉采集",
     optionsProfileVisualPopup: "在弹窗中选择",
+    optionsProfileDeleteAfterExport: "导出成功后删除本地录制",
+    optionsProfileUnexportedRetention: "未导出录制的保留时间（分钟，1–1440）",
+    localDataRestartNotice: "浏览器重启后，未导出的录制会被清除。",
     optionsRedactionDisclaimer:
       "遮盖按尽力而为的方式应用你的规则；WebBlackbox 不保证移除所有敏感数据。归档始终加密。",
     optionsProfileContentRedaction: "遮盖采集的内容",

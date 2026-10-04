@@ -119,6 +119,11 @@ function render(container: HTMLElement): void {
   subtitle.textContent = t("sessionsSubtitle");
   section.append(subtitle);
 
+  const localDataNotice = document.createElement("p");
+  localDataNotice.className = "wb-sessions-subtitle";
+  localDataNotice.textContent = t("localDataRestartNotice");
+  section.append(localDataNotice);
+
   if (exportNotice) {
     const notice = document.createElement("p");
     notice.className = "wb-sessions-notice";

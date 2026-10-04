@@ -3,6 +3,7 @@ import type { ExtensionMessageKey } from "../shared/i18n.js";
 import { readManagedEnterprisePolicy } from "../shared/options-storage.js";
 import { previewRedaction, type RedactionSandboxKind } from "../shared/redaction-sandbox.js";
 import { CAPTURE_CATEGORY_KEYS, CAPTURE_CATEGORY_LEVELS } from "../shared/profiles/categories.js";
+import { resolveLocalDataSettings } from "../shared/profiles/local-data.js";
 import {
   DEFAULT_PROFILE_ID,
   isReadOnlyProfileId,
@@ -244,6 +245,7 @@ function createProfileList(
 
 function createProfileForm(profile: RecordingProfile, t: Translate): HTMLElement {
   const form = el("form", { className: "wb-options-inset wb-profiles__form" });
+  const localData = resolveLocalDataSettings(profile);
   const matrix = el("fieldset", { className: "wb-profiles__matrix" }, [
     el("legend", { text: t("optionsProfileCategories") })
   ]);
@@ -354,6 +356,18 @@ function createProfileForm(profile: RecordingProfile, t: Translate): HTMLElement
       { value: "both", label: t("popupFullVisualBoth") },
       { value: "none", label: t("popupFullVisualNone") }
     ]),
+    el("p", { className: "wb-options-help", text: t("localDataRestartNotice") }),
+    labeledCheckbox(
+      t("optionsProfileDeleteAfterExport"),
+      "deleteAfterExport",
+      localData.deleteAfterExport
+    ),
+    labeledInput(
+      t("optionsProfileUnexportedRetention"),
+      "unexportedRetentionMinutes",
+      String(localData.unexportedRetentionMinutes),
+      "number"
+    ),
     el("div", { className: "wb-options-actions" }, [
       button(t("optionsProfileSave"), "profile-apply", "brand"),
       button(t("optionsProfileCancel"), "profile-cancel", "muted")
@@ -712,7 +726,9 @@ function syncOpenProfileForm(card: HTMLElement, editor: EditorState): void {
     includeUrls: readField(form, "includeUrls"),
     excludeUrls: readField(form, "excludeUrls"),
     mousemoveHz: readField(form, "mousemoveHz"),
-    visual: readField(form, "visual")
+    visual: readField(form, "visual"),
+    deleteAfterExport: readCheckbox(form, "deleteAfterExport"),
+    unexportedRetentionMinutes: readField(form, "unexportedRetentionMinutes")
   });
 
   editor.draft = {
