@@ -45,6 +45,26 @@ describe("compileLinearRegex", () => {
     expect(compileLinearRegex("x*")?.replaceAll("abc", "#")).toBe("abc");
   });
 
+  it("masks the union of all matches, so no part of a longer match is left out", () => {
+    expect(compileLinearRegex("abcdef|cd")?.replaceAll("abcdef", "#")).toBe("#");
+    expect(compileLinearRegex("ab|bc")?.replaceAll("xabcx", "#")).toBe("x#x");
+  });
+
+  it("stays linear when a long alternative keeps an attempt alive after every match", () => {
+    const regex = compileLinearRegex("x\\w*y|x");
+    const run = (size: number) => () => regex?.replaceAll("x".repeat(size), "#");
+    const smallMs = fastestRunMs(run(2_000), 7);
+    const largeMs = fastestRunMs(run(2_000 * LINEAR_INPUT_FACTOR), 3);
+
+    expect(regex?.replaceAll("xxx", "#")).toBe("#");
+    expect(largeMs / Math.max(smallMs, 0.05)).toBeLessThan(LINEAR_GROWTH_LIMIT);
+  });
+
+  it("rejects programs above the requested size", () => {
+    expect(compileLinearRegex("[a-z]{300}", { maxProgramSize: 256 })).toBeNull();
+    expect(compileLinearRegex("[a-z]{30}", { maxProgramSize: 256 })).not.toBeNull();
+  });
+
   it("stays linear on catastrophic patterns", () => {
     const regex = compileLinearRegex("(a+)+$");
     const run = (size: number) => () => regex?.replaceAll(`${"a".repeat(size)}!`, "#");

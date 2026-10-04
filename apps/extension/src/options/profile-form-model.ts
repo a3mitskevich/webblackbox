@@ -93,6 +93,8 @@ export function parseValuePatternLines(value: string): RedactionValuePattern[] {
 export function formatValuePatternLines(rules: readonly RedactionValuePattern[] = []): string {
   return rules
     .map((rule) =>
+      // A pattern starting with `[` keeps an explicit prefix, or it would read back as targets.
+      !rule.pattern.startsWith("[") &&
       rule.targets.length === REDACTION_TARGETS.length &&
       REDACTION_TARGETS.every((target) => rule.targets.includes(target))
         ? rule.pattern

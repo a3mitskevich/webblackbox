@@ -12,6 +12,7 @@ import {
   deleteProfileFromStore,
   formatQueryLines,
   formatValuePatternLines,
+  parseValuePatternLines,
   parseOptionalInt,
   parseQueryLines,
   ruleFromFormValues,
@@ -83,6 +84,14 @@ describe("profile form model", () => {
         { pattern: "acct-\\d+", targets: ["bodies", "dom", "storage", "inputs", "console", "urls"] }
       ]
     });
+    const bracketed = [
+      {
+        pattern: "[A-Z]{3}\\d+",
+        targets: ["bodies", "dom", "storage", "inputs", "console", "urls"] as const
+      }
+    ].map((rule) => ({ ...rule, targets: [...rule.targets] }));
+
+    expect(parseValuePatternLines(formatValuePatternLines(bracketed))).toEqual(bracketed);
     expect(formatValuePatternLines(next.redaction.valuePatterns)).toBe(
       "[bodies, console] sk_live_\\w+\nacct-\\d+"
     );

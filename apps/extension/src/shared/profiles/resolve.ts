@@ -1,6 +1,6 @@
 import {
   DEFAULT_CAPTURE_POLICY,
-  isContentRedactionEnabled,
+  usesBuiltInHeuristics,
   type CaptureMode,
   type RecorderConfig
 } from "@webblackbox/protocol";
@@ -128,7 +128,8 @@ export function isExtendedCaptureProfile(profile: RecordingProfile): boolean {
   return (
     listExtendedCategories(profile).length > 0 ||
     profile.unmaskSelectors.length > 0 ||
-    !isContentRedactionEnabled(profile.redaction)
+    // Masking off, or only the user's own rules: content the defaults would strip is recorded.
+    !usesBuiltInHeuristics(profile.redaction)
   );
 }
 
@@ -250,9 +251,9 @@ function downgradeToFullPreset(profile: RecordingProfile): RecordingProfile {
   return {
     ...full,
     categories: clampCategoriesToCeiling(profile.categories, full.categories),
-    // Recording content as-is is extended capture: masking comes back on, with the Full preset's
-    // rules when the profile had turned masking off (its own lists may be emptied).
-    redaction: isContentRedactionEnabled(profile.redaction)
+    // Masking off or without the built-in heuristics is extended capture: the Full preset's rules
+    // apply instead (the profile's own lists may have been emptied).
+    redaction: usesBuiltInHeuristics(profile.redaction)
       ? withoutRedactionUnmask(profile.redaction)
       : structuredClone(full.redaction),
     sampling: { ...profile.sampling },

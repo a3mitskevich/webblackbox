@@ -808,7 +808,7 @@ function looksLikePlaintextPrivateArchiveFile(path: string, bytes: Uint8Array): 
     return isPlainJsonBytes(bytes);
   }
 
-  if (path === "privacy/manifest.json") {
+  if (path === "privacy/manifest.json" || path === "meta/manifest.json") {
     return isPlainJsonBytes(bytes);
   }
 

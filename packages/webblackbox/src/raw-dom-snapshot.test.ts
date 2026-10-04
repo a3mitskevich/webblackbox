@@ -333,6 +333,7 @@ describe("serializeRawDom", () => {
     const html =
       serializeRawDom(document, {
         ...OPTIONS,
+        keepInputValues: true,
         blockedSelectors: [],
         redaction: { contentRedaction: false }
       })?.html ?? "";
@@ -350,6 +351,14 @@ describe("serializeRawDom", () => {
     }
 
     expect(html).not.toContain("REC");
+    // The inputs category still decides field values: masking off never widens it.
+    expect(
+      serializeRawDom(document, {
+        ...OPTIONS,
+        blockedSelectors: [],
+        redaction: { contentRedaction: false }
+      })?.html
+    ).not.toContain("PASSWORD-RAW");
     // Blocked selectors still apply when the profile keeps them.
     expect(
       serializeRawDom(document, { ...OPTIONS, redaction: { contentRedaction: false } })?.html

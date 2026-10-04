@@ -22,7 +22,7 @@ const MAX_COMPILE_STEPS = MAX_PROGRAM_SIZE * 4;
 export type LinearRegex = {
   /** Whether the pattern matches anywhere in `text`. */
   test(text: string): boolean;
-  /** `text` with every leftmost-longest, non-empty match replaced by `replacement`. */
+  /** `text` with every non-empty match replaced by `replacement` (overlapping matches merged). */
   replaceAll(text: string, replacement: string): string;
 };
 
@@ -327,43 +327,39 @@ function emitProgram(root: RegexNode): Instruction[] {
 }
 
 /** The compiled pattern (case-insensitive), or null when it is invalid or unsupported. */
-export function compileLinearRegex(source: string): LinearRegex | null {
+export function compileLinearRegex(
+  source: string,
+  options: { maxProgramSize?: number } = {}
+): LinearRegex | null {
   try {
     new RegExp(source, "i");
     const program = emitProgram(new RegexParser(source).parse());
 
+    if (program.length > (options.maxProgramSize ?? MAX_PROGRAM_SIZE)) {
+      return null;
+    }
+
     return {
-      test: (text) => findMatch(program, text, 0, true) !== null,
-      replaceAll: (text, replacement) => replaceMatches(program, text, replacement)
+      test: (text) => scan(program, text, true) !== null,
+      replaceAll: (text, replacement) =>
+        replaceSpans(text, scan(program, text, false) ?? [], replacement)
     };
   } catch {
     return null;
   }
 }
 
-function replaceMatches(
-  program: readonly Instruction[],
-  text: string,
-  replacement: string
-): string {
+function replaceSpans(text: string, spans: readonly Span[], replacement: string): string {
+  if (spans.length === 0) {
+    return text;
+  }
+
   const chunks: string[] = [];
   let copiedUpTo = 0;
-  let from = 0;
 
-  while (from <= text.length) {
-    const span = findMatch(program, text, from, false);
-
-    if (!span) {
-      break;
-    }
-
-    if (span.end > span.start) {
-      chunks.push(text.slice(copiedUpTo, span.start), replacement);
-      copiedUpTo = span.end;
-      from = span.end;
-    } else {
-      from = span.start + 1;
-    }
+  for (const span of spans) {
+    chunks.push(text.slice(copiedUpTo, span.start), replacement);
+    copiedUpTo = span.end;
   }
 
   chunks.push(text.slice(copiedUpTo));
@@ -371,21 +367,18 @@ function replaceMatches(
 }
 
 /**
- * Pike VM: every thread advances one character at a time, so no work is ever repeated. Threads
- * carry the position their attempt started at; the earliest start wins a shared state, so the
- * match found is the leftmost one, extended as long as any thread of that start survives.
- * `firstOnly` stops at the first match (enough for `test`).
+ * One Pike VM pass over the text: every thread advances one character at a time, so no work is
+ * ever repeated, whatever the pattern or the number of matches. Threads carry the position their
+ * attempt started at; when two reach the same state, the earlier start wins (their futures are
+ * identical). The longest end is kept for every start, and the result is the union of all
+ * non-empty matches: a superset of the leftmost-longest matches, the right bias for masking.
+ * `firstOnly` stops at the first match (enough for `test`) and returns an empty list.
  */
-function findMatch(
-  program: readonly Instruction[],
-  input: string,
-  from: number,
-  firstOnly: boolean
-): Span | null {
+function scan(program: readonly Instruction[], input: string, firstOnly: boolean): Span[] | null {
   const visited = new Int32Array(program.length).fill(-1);
+  const longestEnd = new Int32Array(input.length + 1).fill(-1);
   let generation = 0;
-  // A holder, not a `let`: the closure below updates it.
-  const found: { span: Span | null } = { span: null };
+  let matched = false;
 
   type Thread = { pc: number; start: number };
 
@@ -404,13 +397,8 @@ function findMatch(
 
       switch (instruction.op) {
         case "match":
-          if (
-            !found.span ||
-            start < found.span.start ||
-            (start === found.span.start && position > found.span.end)
-          ) {
-            found.span = { start, end: position };
-          }
+          matched = true;
+          longestEnd[start] = Math.max(longestEnd[start] ?? -1, position);
           break;
         case "jump":
           stack.push(instruction.next);
@@ -431,13 +419,11 @@ function findMatch(
   };
 
   let threads: Thread[] = [];
-  addThread(threads, 0, from, from);
+  addThread(threads, 0, 0, 0);
 
-  for (let position = from; position < input.length; position += 1) {
-    const best = found.span;
-
-    if (best && (firstOnly || threads.every((thread) => thread.start !== best.start))) {
-      break;
+  for (let position = 0; position < input.length; position += 1) {
+    if (firstOnly && matched) {
+      return [];
     }
 
     const char = input[position] ?? "";
@@ -447,25 +433,44 @@ function findMatch(
     for (const thread of threads) {
       const instruction = program[thread.pc];
 
-      // Once a match is known, only its own attempt may still extend it.
-      if (best && thread.start !== best.start) {
-        continue;
-      }
-
       if (instruction?.op === "char" && instruction.test(char)) {
         addThread(next, thread.pc + 1, thread.start, position + 1);
       }
     }
 
-    // Unanchored search: a new attempt starts at every position until a match is known.
-    if (!best) {
-      addThread(next, 0, position + 1, position + 1);
-    }
-
+    // Unanchored: a new attempt starts at every position.
+    addThread(next, 0, position + 1, position + 1);
     threads = next;
   }
 
-  return found.span;
+  if (firstOnly) {
+    return matched ? [] : null;
+  }
+
+  return mergeMatches(longestEnd);
+}
+
+/** Non-empty `[start, end)` matches merged into disjoint spans, in order. */
+function mergeMatches(longestEnd: Int32Array): Span[] {
+  const spans: Span[] = [];
+  let current: Span | null = null;
+
+  for (let start = 0; start < longestEnd.length; start += 1) {
+    const end = longestEnd[start] ?? -1;
+
+    if (end <= start) {
+      continue;
+    }
+
+    if (current && start <= current.end) {
+      current.end = Math.max(current.end, end);
+    } else {
+      current = { start, end };
+      spans.push(current);
+    }
+  }
+
+  return spans;
 }
 
 function holds(assertion: Assertion, input: string, position: number): boolean {

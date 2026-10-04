@@ -269,6 +269,26 @@ describe("WebBlackboxLiteSdk", () => {
     await sdk.dispose();
   });
 
+  it("gives the page agents and the recorder the same redaction rules", () => {
+    const sdk = new WebBlackboxLiteSdk({
+      sid: "S-sdk-rules",
+      injectHooks: false,
+      useDefaultPlugins: false,
+      config: {
+        capturePolicy: {
+          ...DEFAULT_CAPTURE_POLICY,
+          redaction: { ...DEFAULT_CAPTURE_POLICY.redaction, blockedSelectors: [".from-policy"] }
+        },
+        redaction: { contentRedaction: false }
+      }
+    });
+    const config = sdk.getRecorderConfig();
+
+    expect(config.redaction.contentRedaction).toBe(false);
+    expect(config.capturePolicy?.redaction).toEqual(config.redaction);
+    expect(config.redaction.blockedSelectors).toEqual([".from-policy"]);
+  });
+
   it("refuses every export without a passphrase of at least 8 characters", async () => {
     const sdk = new WebBlackboxLiteSdk({
       sid: "S-sdk-real-user-export",

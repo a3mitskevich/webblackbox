@@ -34,10 +34,21 @@ export const REDACTION_TARGETS: readonly RedactionTarget[] = [
 /** Any redaction profile shape, or none (masking then follows the defaults). */
 export type RedactionRules = Partial<RedactionProfile> | null | undefined;
 
+/**
+ * Largest compiled value pattern. Matching costs O(program × text) on bodies up to 1 MiB, so
+ * value patterns get a smaller program than title rules (which only read 256 characters).
+ */
+const VALUE_PATTERN_MAX_PROGRAM_SIZE = 256;
+
 const compiledPatterns = new WeakMap<
   readonly RedactionValuePattern[],
   Map<string, LinearRegex[]>
 >();
+
+/** A user value pattern in the linear-time engine, or null when it is invalid or too large. */
+export function compileValuePattern(pattern: string): LinearRegex | null {
+  return compileLinearRegex(pattern, { maxProgramSize: VALUE_PATTERN_MAX_PROGRAM_SIZE });
+}
 
 /** Master switch: false means captured content is recorded as-is. */
 export function isContentRedactionEnabled(rules: RedactionRules): boolean {
@@ -165,7 +176,7 @@ function patternsFor(
     // Invalid patterns never reach here through the schema; any that do are skipped.
     compiled = rules
       .filter((rule) => rule.targets.includes(target))
-      .map((rule) => compileLinearRegex(rule.pattern))
+      .map((rule) => compileValuePattern(rule.pattern))
       .filter((regex): regex is LinearRegex => regex !== null);
     byTarget.set(target, compiled);
   }

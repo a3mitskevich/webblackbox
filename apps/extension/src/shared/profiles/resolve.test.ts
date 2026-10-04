@@ -229,6 +229,12 @@ describe("buildProfileRecorderConfig — presets", () => {
 
     expect(isExtendedCaptureProfile(fullCopy)).toBe(false);
     expect(isExtendedCaptureProfile(raw)).toBe(true);
+    expect(
+      isExtendedCaptureProfile({
+        ...fullCopy,
+        redaction: { ...fullCopy.redaction, builtInHeuristics: false }
+      })
+    ).toBe(true);
 
     const state = v2State({ profiles: [createDefaultProfile(), raw] });
     const selection = selectRecordingProfile({

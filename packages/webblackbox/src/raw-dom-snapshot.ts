@@ -176,7 +176,7 @@ export function serializeRawDom(
   };
   // The single switch of the raw DOM: which rule set runs on the clone.
   const applied = !isContentRedactionEnabled(rules)
-    ? keepAsCaptured(clone, options.blockedSelectors)
+    ? keepAsCaptured(clone, context)
     : usesBuiltInHeuristics(rules)
       ? sanitizeTree(clone, context)
       : applyUserRules(clone, context);
@@ -185,12 +185,9 @@ export function serializeRawDom(
     return null;
   }
 
-  // `designMode` makes the whole page an editor without any attribute to find.
-  if (
-    document.designMode === "on" &&
-    !options.keepInputValues &&
-    isContentRedactionEnabled(rules)
-  ) {
+  // `designMode` makes the whole page an editor without any attribute to find. The inputs
+  // category decides this, whatever the masking rules.
+  if (document.designMode === "on" && !options.keepInputValues) {
     clone.querySelector("body")?.replaceChildren(document.createTextNode(MASKED_TEXT));
   }
 
@@ -239,13 +236,21 @@ function sanitizeTree(root: Element | DocumentFragment, context: SanitizeContext
   );
 }
 
-/** Masking off: only the extension's own UI and the blocked selectors the profile keeps. */
-function keepAsCaptured(root: Element, blockedSelectors: readonly string[]): boolean {
+/**
+ * Masking off: the extension's own UI and the blocked selectors the profile keeps are removed,
+ * and field values follow the inputs category (masking never widens a category).
+ */
+function keepAsCaptured(root: Element, context: SanitizeContext): boolean {
   for (const element of Array.from(root.querySelectorAll(OWN_UI_SELECTOR))) {
     element.remove();
   }
 
-  return maskBlockedElements(root, blockedSelectors);
+  if (!maskBlockedElements(root, context.options.blockedSelectors)) {
+    return false;
+  }
+
+  stripFieldValues(root, context);
+  return true;
 }
 
 /**

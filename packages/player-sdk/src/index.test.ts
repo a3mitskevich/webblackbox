@@ -295,6 +295,13 @@ describe("WebBlackboxPlayer", () => {
     expect((await WebBlackboxPlayer.open(fixture)).archive.manifest.protocolVersion).toBe(1);
   });
 
+  it("opens archives encrypted with an untrimmed passphrase (older exports)", async () => {
+    const bytes = await createEncryptedArchive(await createFixtureArchive(), " spaced-passphrase ");
+    const player = await WebBlackboxPlayer.open(bytes, { passphrase: " spaced-passphrase " });
+
+    expect(player.query({ types: ["network.request"] })).toHaveLength(1);
+  });
+
   it("opens encrypted archives when atob is unavailable (Buffer fallback)", async () => {
     const originalAtob = (globalThis as unknown as { atob?: typeof atob }).atob;
     const bytes = await createEncryptedArchive(await createFixtureArchive(), "test-passphrase");

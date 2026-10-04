@@ -9,7 +9,7 @@ import {
   WEBBLACKBOX_EVENT_TYPES,
   WEBBLACKBOX_PROTOCOL_VERSION
 } from "./constants.js";
-import { compileLinearRegex } from "./linear-regex.js";
+import { compileValuePattern } from "./redaction-rules.js";
 
 const recordStringUnknown = z.record(z.string(), z.unknown());
 
@@ -106,8 +106,9 @@ export const redactionValuePatternSchema = z
       .string()
       .min(1)
       .max(1_000)
-      .refine((pattern) => compileLinearRegex(pattern) !== null, {
-        message: "Unsupported or invalid pattern (backreferences and lookarounds are not allowed)"
+      .refine((pattern) => compileValuePattern(pattern) !== null, {
+        message:
+          "Unsupported, invalid or too large pattern (backreferences and lookarounds are not allowed)"
       }),
     targets: z.array(redactionTargetSchema).min(1)
   })

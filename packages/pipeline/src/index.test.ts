@@ -382,6 +382,10 @@ describe("pipeline", () => {
     const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(parsed.privacyManifest?.encryption.archive).toBe("encrypted");
+    // The passphrase as typed, spaces included, opens it too.
+    await expect(
+      readWebBlackboxArchive(exported.bytes, { passphrase: `  ${TEST_PASSPHRASE}  ` })
+    ).resolves.toBeDefined();
     expect(parsed.privacyManifest?.transfer).toMatchObject({
       archiveKeyEnvelope: "passphrase",
       encrypted: true,

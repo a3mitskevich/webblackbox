@@ -135,7 +135,7 @@ export async function readWebBlackboxArchive(
   await verifyArchiveIntegrity(zip, integrity);
 
   const envelope = await readJson<ExportManifest>(zip, "manifest.json");
-  const archiveKey = await resolveArchiveReadKey(envelope, options.passphrase);
+  const archiveKey = await resolveArchiveReadKey(zip, envelope, options.passphrase);
   const manifest = await readFullManifest(zip, envelope, archiveKey);
   const timeIndex = await readArchiveJson<ChunkTimeIndexEntry[]>(
     zip,
@@ -367,7 +367,12 @@ async function encryptForArchive(
   return encrypted;
 }
 
+/**
+ * The archive key. Writers encrypt with the trimmed passphrase; older archives may have used it
+ * untrimmed, so both are tried against one encrypted file before the key is used.
+ */
 async function resolveArchiveReadKey(
+  zip: JSZip,
   manifest: ExportManifest,
   passphrase?: string
 ): Promise<CryptoKey | null> {
@@ -381,12 +386,34 @@ async function resolveArchiveReadKey(
     throw new Error("Archive is encrypted. Provide a passphrase to read it.");
   }
 
-  return deriveArchiveKey(
-    passphrase,
-    fromBase64(encryption.kdf.saltBase64),
-    encryption.kdf.iterations,
-    "decrypt"
+  const candidates = [...new Set([passphrase.trim(), passphrase])].filter(
+    (candidate) => candidate.length > 0
   );
+  const probe = Object.entries(encryption.files).find(([path]) => zip.file(path));
+  let key: CryptoKey | null = null;
+
+  for (const candidate of candidates) {
+    key = await deriveArchiveKey(
+      candidate,
+      fromBase64(encryption.kdf.saltBase64),
+      encryption.kdf.iterations,
+      "decrypt"
+    );
+
+    if (!probe || candidates.length === 1) {
+      return key;
+    }
+
+    try {
+      const bytes = (await zip.file(probe[0])?.async("uint8array")) ?? new Uint8Array();
+      await decryptBytes(bytes, key, fromBase64(probe[1].ivBase64));
+      return key;
+    } catch {
+      // Wrong candidate: try the next one.
+    }
+  }
+
+  return key;
 }
 
 async function decryptArchiveFile(
