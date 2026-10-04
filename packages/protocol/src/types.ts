@@ -338,8 +338,12 @@ export type PrivacyManifest = {
   };
 };
 
+/**
+ * The full archive manifest. Format 1 archives store it as plaintext `manifest.json`; format 2
+ * archives encrypt it (`meta/manifest.json`) and readers merge it with the envelope.
+ */
 export type ExportManifest = {
-  protocolVersion: 1;
+  protocolVersion: 1 | 2;
   createdAt: string;
   mode: CaptureMode;
   site: {
@@ -350,6 +354,12 @@ export type ExportManifest = {
   redactionProfile: RedactionProfile;
   stats: ExportStats;
   encryption?: ExportEncryption;
+};
+
+/** Plaintext `manifest.json` of a format 2 archive: only what decryption needs. */
+export type ArchiveEnvelopeManifest = {
+  protocolVersion: 2;
+  encryption: ExportEncryption;
 };
 
 export type SessionStartMessage = {

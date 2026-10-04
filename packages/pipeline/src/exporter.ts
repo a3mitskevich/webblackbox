@@ -1,8 +1,15 @@
 import JSZip from "jszip";
 
-import { inferBlobFileExtension } from "@webblackbox/protocol";
+import {
+  ARCHIVE_FORMAT_VERSION,
+  assertExportPassphrase,
+  ENCRYPTED_MANIFEST_PATH,
+  inferBlobFileExtension,
+  normalizeExportPassphrase
+} from "@webblackbox/protocol";
 
 import type {
+  ArchiveEnvelopeManifest,
   ChunkCodec,
   ChunkTimeIndexEntry,
   ExportEncryption,
@@ -34,6 +41,7 @@ export type ExportBundleOutput = {
 };
 
 export type ArchiveExportOptions = {
+  /** Required: every archive is encrypted (at least 8 characters, trimmed). */
   passphrase?: string;
 };
 
@@ -43,21 +51,23 @@ export type ArchiveReadOptions = {
 
 const ENCRYPTION_KEY_DERIVATION_ITERATIONS = 120_000;
 const AES_GCM_IV_BYTES = 12;
-const LARGE_ARCHIVE_STORE_THRESHOLD_BYTES = 128 * 1024 * 1024;
 
 export async function createWebBlackboxArchive(
   input: ExportBundleInput,
   options: ArchiveExportOptions = {}
 ): Promise<ExportBundleOutput> {
+  // There is no plaintext export: the passphrase is checked here, below every caller.
+  assertExportPassphrase(options.passphrase);
+
   const zip = new JSZip();
   const fileHashes: Record<string, string> = {};
-  const encryption = options.passphrase
-    ? await createArchiveEncryptionState(options.passphrase)
-    : null;
+  const encryption = await createArchiveEncryptionState(
+    normalizeExportPassphrase(options.passphrase)
+  );
 
   for (const chunk of input.chunks) {
     const path = `events/${chunk.meta.chunkId}.ndjson`;
-    const bytes = encryption ? await encryptForArchive(path, chunk.bytes, encryption) : chunk.bytes;
+    const bytes = await encryptForArchive(path, chunk.bytes, encryption);
     zip.file(path, bytes);
     fileHashes[path] = await sha256Hex(bytes);
   }
@@ -70,19 +80,21 @@ export async function createWebBlackboxArchive(
   for (const blob of input.blobs) {
     const extension = inferBlobFileExtension(blob.mime);
     const path = `blobs/sha256-${blob.hash}.${extension}`;
-    const bytes = encryption ? await encryptForArchive(path, blob.bytes, encryption) : blob.bytes;
+    const bytes = await encryptForArchive(path, blob.bytes, encryption);
     zip.file(path, bytes);
     fileHashes[path] = await sha256Hex(bytes);
   }
 
-  const manifest: ExportManifest = encryption
-    ? {
-        ...input.manifest,
-        encryption: encryption.meta
-      }
-    : input.manifest;
+  // Everything derived from the recording (site, mode, stats, redaction rules) is encrypted; the
+  // plaintext envelope carries only what decryption needs. Written last: it lists every IV.
+  await addJsonFile(zip, ENCRYPTED_MANIFEST_PATH, input.manifest, fileHashes, encryption);
 
-  await addJsonFile(zip, "manifest.json", manifest, fileHashes);
+  const envelope: ArchiveEnvelopeManifest = {
+    protocolVersion: ARCHIVE_FORMAT_VERSION,
+    encryption: encryption.meta
+  };
+
+  await addJsonFile(zip, "manifest.json", envelope, fileHashes);
 
   const manifestHash = fileHashes["manifest.json"] ?? "";
   const integrity: HashesManifest = {
@@ -94,39 +106,13 @@ export async function createWebBlackboxArchive(
 
   zip.file("integrity/hashes.json", JSON.stringify(integrity, null, 2));
 
-  const estimatedPayloadBytes = estimateArchivePayloadBytes(input);
-  const preferStore =
-    Boolean(encryption) || estimatedPayloadBytes >= LARGE_ARCHIVE_STORE_THRESHOLD_BYTES;
-  const bytes = await zip.generateAsync({
-    type: "uint8array",
-    compression: preferStore ? "STORE" : "DEFLATE",
-    compressionOptions: preferStore ? undefined : { level: 6 }
-  });
+  // Ciphertext does not compress.
+  const bytes = await zip.generateAsync({ type: "uint8array", compression: "STORE" });
 
   return {
     bytes,
     integrity
   };
-}
-
-function estimateArchivePayloadBytes(input: ExportBundleInput): number {
-  let total = 0;
-
-  for (const chunk of input.chunks) {
-    total += chunk.bytes.byteLength;
-  }
-
-  for (const blob of input.blobs) {
-    total += blob.bytes.byteLength;
-  }
-
-  total += new TextEncoder().encode(JSON.stringify(input.manifest)).byteLength;
-  total += new TextEncoder().encode(JSON.stringify(input.timeIndex)).byteLength;
-  total += new TextEncoder().encode(JSON.stringify(input.requestIndex)).byteLength;
-  total += new TextEncoder().encode(JSON.stringify(input.invertedIndex)).byteLength;
-  total += new TextEncoder().encode(JSON.stringify(input.privacyManifest)).byteLength;
-
-  return total;
 }
 
 export type ParsedWebBlackboxArchive = {
@@ -148,8 +134,9 @@ export async function readWebBlackboxArchive(
 
   await verifyArchiveIntegrity(zip, integrity);
 
-  const manifest = await readJson<ExportManifest>(zip, "manifest.json");
-  const archiveKey = await resolveArchiveReadKey(manifest, options.passphrase);
+  const envelope = await readJson<ExportManifest>(zip, "manifest.json");
+  const archiveKey = await resolveArchiveReadKey(envelope, options.passphrase);
+  const manifest = await readFullManifest(zip, envelope, archiveKey);
   const timeIndex = await readArchiveJson<ChunkTimeIndexEntry[]>(
     zip,
     "index/time.json",
@@ -206,6 +193,28 @@ export async function readWebBlackboxArchive(
     privacyManifest,
     integrity
   };
+}
+
+/**
+ * The full manifest: format 2 archives keep it encrypted next to a plaintext envelope; format 1
+ * archives store it as `manifest.json` itself.
+ */
+async function readFullManifest(
+  zip: JSZip,
+  envelope: ExportManifest,
+  archiveKey: CryptoKey | null
+): Promise<ExportManifest> {
+  if (!zip.file(ENCRYPTED_MANIFEST_PATH)) {
+    return envelope;
+  }
+
+  const inner = await readArchiveJson<ExportManifest>(
+    zip,
+    ENCRYPTED_MANIFEST_PATH,
+    envelope,
+    archiveKey
+  );
+  return { ...inner, ...(envelope.encryption ? { encryption: envelope.encryption } : {}) };
 }
 
 async function addJsonFile(

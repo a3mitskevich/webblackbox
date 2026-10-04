@@ -12,7 +12,7 @@ import type {
   WebBlackboxEvent,
   WebBlackboxEventType
 } from "@webblackbox/protocol";
-import { extractRequestId, inferBlobMime } from "@webblackbox/protocol";
+import { ENCRYPTED_MANIFEST_PATH, extractRequestId, inferBlobMime } from "@webblackbox/protocol";
 
 /** Player lifecycle status. */
 export * from "./recording-profile.js";
@@ -560,9 +560,22 @@ export class WebBlackboxPlayer {
     const integrity = await readJson<HashesManifest>(zip, "integrity/hashes.json");
     assertArchiveFileSet(zip, integrity);
     await assertManifestIntegrity(zip, integrity);
-    const manifest = await readJson<ExportManifest>(zip, "manifest.json");
-    const archiveKey = await resolveArchiveReadKey(manifest, options.passphrase);
-    const encryptedFiles = manifest.encryption?.files ?? {};
+    const envelope = await readJson<ExportManifest>(zip, "manifest.json");
+    const archiveKey = await resolveArchiveReadKey(envelope, options.passphrase);
+    const encryptedFiles = envelope.encryption?.files ?? {};
+    // Format 2 keeps the full manifest encrypted; format 1 stores it as `manifest.json` itself.
+    const manifest = zip.file(ENCRYPTED_MANIFEST_PATH)
+      ? {
+          ...(await readIntegrityArchiveJson<ExportManifest>(
+            zip,
+            integrity,
+            ENCRYPTED_MANIFEST_PATH,
+            archiveKey,
+            encryptedFiles
+          )),
+          ...(envelope.encryption ? { encryption: envelope.encryption } : {})
+        }
+      : envelope;
     const timeIndex = await readIntegrityArchiveJson<ChunkTimeIndexEntry[]>(
       zip,
       integrity,

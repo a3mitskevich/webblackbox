@@ -118,16 +118,6 @@ async function flushPopupWithFakeTimers(): Promise<void> {
   await Promise.resolve();
 }
 
-function getSensitiveAlertCheckbox(): HTMLInputElement {
-  const checkbox = document.querySelector<HTMLInputElement>("#export-alert-sensitive-findings");
-
-  if (!checkbox) {
-    throw new Error("missing sensitive alert checkbox");
-  }
-
-  return checkbox;
-}
-
 function getMaxArchiveInput(): HTMLInputElement {
   const input = document.querySelector<HTMLInputElement>("#export-max-size-mb");
 
@@ -262,6 +252,17 @@ function getOptionsButton(): HTMLButtonElement {
   return button;
 }
 
+function enterPassphrase(value: string): void {
+  const input = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
+
+  if (!input) {
+    throw new Error("missing passphrase input");
+  }
+
+  input.value = value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 function getPassphraseSubmitButton(): HTMLButtonElement {
   const button = document.querySelector<HTMLButtonElement>("[data-passphrase-submit]");
 
@@ -304,22 +305,19 @@ describe("popup export policy form", () => {
 
     await importPopupModule();
 
-    const sensitiveAlert = getSensitiveAlertCheckbox();
     const maxArchiveMb = getMaxArchiveInput();
     const recentMinutes = getRecentMinutesInput();
 
     expect(document.querySelector("#export-include-screenshots")).toBeNull();
     expect(document.querySelector("#export-include-screen-recordings")).toBeNull();
-    expect(sensitiveAlert.checked).toBe(true);
+    // Scanner findings are always shown inline: there is no alert toggle.
+    expect(document.querySelector("#export-alert-sensitive-findings")).toBeNull();
 
     maxArchiveMb.value = "256";
     maxArchiveMb.dispatchEvent(new Event("input", { bubbles: true }));
 
     recentMinutes.value = "45";
     recentMinutes.dispatchEvent(new Event("input", { bubbles: true }));
-
-    sensitiveAlert.checked = false;
-    sensitiveAlert.dispatchEvent(new Event("change", { bubbles: true }));
 
     port.emit({
       kind: "sw.session-list",
@@ -329,11 +327,9 @@ describe("popup export policy form", () => {
 
     expect(document.querySelector("#export-include-screenshots")).toBeNull();
     expect(document.querySelector("#export-include-screen-recordings")).toBeNull();
-    expect(getSensitiveAlertCheckbox().checked).toBe(false);
     expect(getMaxArchiveInput().value).toBe("256");
     expect(getRecentMinutesInput().value).toBe("45");
     expect(JSON.parse(localStorage.getItem(POPUP_EXPORT_POLICY_STORAGE_KEY) ?? "null")).toEqual({
-      alertSensitiveFindings: false,
       maxArchiveMb: "256",
       recentMinutes: "45"
     });
@@ -344,7 +340,6 @@ describe("popup export policy form", () => {
 
     expect(document.querySelector("#export-include-screenshots")).toBeNull();
     expect(document.querySelector("#export-include-screen-recordings")).toBeNull();
-    expect(getSensitiveAlertCheckbox().checked).toBe(false);
     expect(getMaxArchiveInput().value).toBe("256");
     expect(getRecentMinutesInput().value).toBe("45");
   });
@@ -478,7 +473,7 @@ describe("popup export policy form", () => {
     expect(getExportButton().disabled).toBe(false);
   });
 
-  it("alerts and keeps the download success visible when export privacy findings are present", async () => {
+  it("shows export privacy findings inline with the download success, never in an alert", async () => {
     const port = new FakePort();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => undefined);
     const sendMessage = vi.fn(async () => ({
@@ -519,9 +514,6 @@ describe("popup export policy form", () => {
     await flushPopup();
 
     expect(getStatusLine().textContent).toBe("Exported: sid-export-warning.webblackbox");
-    expect(alertSpy).toHaveBeenCalledWith(
-      "Export completed, but the privacy scanner found 2 possible sensitive item(s): email in event:E-1, jwt in event:E-2. Review the archive before sharing."
-    );
     expect(document.querySelector(".wb-popup__privacy-warning")?.textContent).toContain(
       "email in event:E-1, jwt in event:E-2"
     );
@@ -535,7 +527,7 @@ describe("popup export policy form", () => {
     });
     await flushPopup();
 
-    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".wb-popup__privacy-warning[role='status']")).not.toBeNull();
 
     getExportButton().click();
     await flushPopup();
@@ -551,62 +543,7 @@ describe("popup export policy form", () => {
     getPassphraseSubmitButton().click();
     await flushPopup();
 
-    expect(alertSpy).toHaveBeenCalledTimes(2);
-  });
-
-  it("suppresses popup privacy alerts when sensitive finding alerts are disabled", async () => {
-    const port = new FakePort();
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => undefined);
-    const sendMessage = vi.fn(async () => ({
-      ok: true,
-      fileName: "sid-export-muted.webblackbox",
-      privacyWarning: EXPORT_PRIVACY_WARNING
-    }));
-    installChromeStub(port, { sendMessage });
-
-    await importPopupModule();
-
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-export-muted",
-          tabId: 17,
-          mode: "full",
-          startedAt: Date.now(),
-          active: false
-        }
-      ]
-    });
-    await flushPopup();
-
-    const sensitiveAlert = getSensitiveAlertCheckbox();
-    sensitiveAlert.checked = false;
-    sensitiveAlert.dispatchEvent(new Event("change", { bubbles: true }));
-    await flushPopup();
-
-    getExportButton().click();
-    await flushPopup();
-
-    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (!passphraseInput) {
-      throw new Error("missing passphrase input");
-    }
-
-    passphraseInput.value = "export-secret";
-    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
-    getPassphraseSubmitButton().click();
-    await flushPopup();
-
-    expect(getStatusLine().textContent).toBe("Exported: sid-export-muted.webblackbox");
     expect(alertSpy).not.toHaveBeenCalled();
-    expect(document.querySelector(".wb-popup__privacy-warning")).toBeNull();
-    expect(JSON.parse(localStorage.getItem(POPUP_EXPORT_POLICY_STORAGE_KEY) ?? "null")).toEqual(
-      expect.objectContaining({
-        alertSensitiveFindings: false
-      })
-    );
   });
 
   it("shows a retryable failure when the export acknowledgement stalls", async () => {
@@ -659,7 +596,7 @@ describe("popup export policy form", () => {
     expect(getExportButton().disabled).toBe(false);
   });
 
-  it("exports without encryption when the passphrase prompt is left empty", async () => {
+  it("exports only with a passphrase of at least 8 characters", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
@@ -669,7 +606,7 @@ describe("popup export policy form", () => {
       kind: "sw.session-list",
       sessions: [
         {
-          sid: "sid-empty-passphrase",
+          sid: "sid-passphrase",
           tabId: 17,
           mode: "lite",
           startedAt: Date.now(),
@@ -682,22 +619,37 @@ describe("popup export policy form", () => {
     getExportButton().click();
     await flushPopup();
 
+    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
+
+    if (!passphraseInput) {
+      throw new Error("missing passphrase input");
+    }
+
+    for (const value of ["", "       ", "short12"]) {
+      passphraseInput.value = value;
+      passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
+      getPassphraseSubmitButton().click();
+      await flushPopup();
+
+      expect(port.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "ui.export" })
+      );
+      expect(passphraseInput.validationMessage).toContain("at least 8 characters");
+    }
+
+    passphraseInput.value = "long-enough";
+    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
     getPassphraseSubmitButton().click();
     await flushPopup();
 
-    expect(port.postMessage).toHaveBeenCalledWith({
-      kind: "ui.export",
-      sid: "sid-empty-passphrase",
-      saveAs: false,
-      policy: {
-        includeScreenshots: false,
-        includeScreenRecordings: false,
-        maxArchiveBytes: 100 * 1024 * 1024,
-        recentWindowMs: 20 * 60 * 1000
-      }
-    });
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "ui.export",
+        sid: "sid-passphrase",
+        passphrase: "long-enough"
+      })
+    );
   });
-
   it("opens the sessions and options pages from the popup", async () => {
     const port = new FakePort();
     installChromeStub(port);
@@ -1021,12 +973,14 @@ describe("popup export policy form", () => {
 
     getExportButton().click();
     await flushPopup();
+    enterPassphrase("none-export-secret");
     getPassphraseSubmitButton().click();
     await flushPopup();
 
     expect(port.postMessage).toHaveBeenCalledWith({
       kind: "ui.export",
       sid: "sid-none-export",
+      passphrase: "none-export-secret",
       saveAs: false,
       policy: {
         includeScreenshots: false,
@@ -1190,16 +1144,9 @@ describe("popup recording profiles", () => {
     });
   });
 
-  it("re-sends the export after the user acknowledges blocking privacy findings", async () => {
+  it("shows export failures without asking to confirm anything", async () => {
     const port = new FakePort();
-    const sendMessage = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        error: "Privacy scanner blocked export: jwt in event:E-1",
-        privacyBlocked: true
-      })
-      .mockResolvedValueOnce({ ok: true, fileName: "sid-qa.webblackbox" });
+    const sendMessage = vi.fn().mockResolvedValue({ ok: false, error: "disk full" });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     installChromeStub(port, { sendMessage });
 
@@ -1212,56 +1159,15 @@ describe("popup recording profiles", () => {
 
     getExportButton().click();
     await flushPopup();
-
-    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (!passphraseInput) {
-      throw new Error("missing passphrase input");
-    }
-
-    passphraseInput.value = "qa-secret";
-    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
+    enterPassphrase("qa-secret-1");
     getPassphraseSubmitButton().click();
     await flushPopup();
     await flushPopup();
 
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("jwt in event:E-1"));
-    expect(sendMessage).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        kind: "ui.export",
-        sid: "sid-qa",
-        passphrase: "qa-secret",
-        acknowledgePrivacyFindings: true
-      })
-    );
-    expect(getStatusLine().textContent).toBe("Exported: sid-qa.webblackbox");
-  });
-
-  it("keeps the failure when the user declines the privacy confirmation", async () => {
-    const port = new FakePort();
-    const sendMessage = vi.fn().mockResolvedValue({
-      ok: false,
-      error: "Privacy scanner blocked export: jwt in event:E-1",
-      privacyBlocked: true
-    });
-    vi.spyOn(window, "confirm").mockReturnValue(false);
-    installChromeStub(port, { sendMessage });
-
-    await importPopupModule();
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [{ sid: "sid-qa", tabId: 17, mode: "full", startedAt: Date.now(), active: false }]
-    });
-    await flushPopup();
-
-    getExportButton().click();
-    await flushPopup();
-    getPassphraseSubmitButton().click();
-    await flushPopup();
-
+    expect(confirmSpy).not.toHaveBeenCalled();
     expect(
       sendMessage.mock.calls.filter(([message]) => message?.kind === "ui.export")
     ).toHaveLength(1);
-    expect(getStatusLine().textContent).toContain("Privacy scanner blocked export");
+    expect(getStatusLine().textContent).toContain("disk full");
   });
 });

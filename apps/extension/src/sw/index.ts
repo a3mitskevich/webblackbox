@@ -8,8 +8,11 @@ import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_EXPORT_POLICY,
   DEFAULT_RECORDER_CONFIG,
+  assertExportPassphrase,
+  isValidExportPassphrase,
   maskBodyBytes,
   maskBodyText,
+  normalizeExportPassphrase,
   sanitizeUrlForPrivacy,
   type CapturePolicy,
   type CaptureMode,
@@ -60,7 +63,6 @@ import {
   downgradeExtendedSelection,
   isHostAllowedForExtendedCapture,
   isSameProfileSelection,
-  resolveProfileExportRequirements,
   selectRecordingProfile,
   toArchivedProfileInfo,
   type ProfileSelection
@@ -266,8 +268,6 @@ type SessionPipelineClient = {
     includeScreenRecordings?: boolean;
     maxArchiveBytes?: number;
     recentWindowMs?: number;
-    allowPlaintextLocalExport?: boolean;
-    strictPrivacyScanner?: boolean;
   }) => Promise<PipelineExportDownloadResult>;
   close: (options?: { purge?: boolean }) => Promise<void>;
 };
@@ -298,8 +298,6 @@ type OffscreenPipelineRequest = {
   includeScreenRecordings?: boolean;
   maxArchiveBytes?: number;
   recentWindowMs?: number;
-  allowPlaintextLocalExport?: boolean;
-  strictPrivacyScanner?: boolean;
   purge?: boolean;
   recordingId?: string;
   streamId?: string;
@@ -475,10 +473,6 @@ const LITE_DOM_SNAPSHOT_MAX_BYTES = 1_500 * 1024;
 const CPU_PROFILE_SAMPLE_MS = 350;
 const HEAP_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024;
 const OPTIONS_STORAGE_KEY = "webblackbox.options";
-const PROFILE_ENCRYPTION_REQUIRED_MESSAGE =
-  "This recording profile requires an encrypted export: enter a passphrase.";
-// Matches the error thrown by assertPrivacyScannerPassed in @webblackbox/pipeline.
-const PRIVACY_SCANNER_BLOCKED_PREFIX = "Privacy scanner blocked export";
 const ACTIVE_SESSION_STORAGE_KEY = "webblackbox.runtime.sessions";
 const SESSION_ANNOTATIONS_STORAGE_KEY = "webblackbox.runtime.sessionAnnotations";
 const EXPORT_AUDIT_STORAGE_KEY = "webblackbox.audit.exports";
@@ -733,8 +727,7 @@ async function handleInboundMessage(
       message.sid,
       message.passphrase,
       message.saveAs,
-      resolveExportPolicy(message.policy),
-      { acknowledgePrivacyFindings: message.acknowledgePrivacyFindings === true }
+      resolveExportPolicy(message.policy)
     );
   }
 
@@ -1184,11 +1177,10 @@ async function exportSession(
   sid: string,
   passphrase: string | undefined,
   saveAs = true,
-  policy: ExportPolicy = DEFAULT_EXPORT_POLICY,
-  options: { acknowledgePrivacyFindings?: boolean } = {}
+  policy: ExportPolicy = DEFAULT_EXPORT_POLICY
 ): Promise<
   | { ok: true; fileName: string; privacyWarning?: ExportPrivacyWarning }
-  | { ok: false; error: string; privacyBlocked?: boolean }
+  | { ok: false; error: string }
 > {
   const runtime = sessionsBySid.get(sid);
 
@@ -1208,14 +1200,12 @@ async function exportSession(
   }
 
   const effectivePolicy = resolveSessionExportPolicy(runtime, policy);
-  const requirements = resolveProfileExportRequirements(runtime.profile.history);
+  // Every archive is encrypted, whatever the profile; whitespace around it is not part of it.
+  const encryptionPassphrase = normalizeExportPassphrase(passphrase);
 
   try {
-    const encrypted = hasExportPassphrase(passphrase);
-
-    if (requirements.requireEncryption && !encrypted) {
-      throw new Error(PROFILE_ENCRYPTION_REQUIRED_MESSAGE);
-    }
+    // Before stopping the session: a refused export leaves the recording running.
+    assertExportPassphrase(encryptionPassphrase);
 
     if (!runtime.stoppedAt) {
       await stopSession(runtime.tabId);
@@ -1225,14 +1215,11 @@ async function exportSession(
 
     const exported = await enqueueWithResult(runtime, async () => {
       return runtime.pipeline.exportAndDownload({
-        passphrase: encrypted ? passphrase : undefined,
+        passphrase: encryptionPassphrase,
         includeScreenshots: effectivePolicy.includeScreenshots,
         includeScreenRecordings: effectivePolicy.includeScreenRecordings,
         maxArchiveBytes: effectivePolicy.maxArchiveBytes,
-        recentWindowMs: effectivePolicy.recentWindowMs,
-        allowPlaintextLocalExport: !encrypted && !requirements.requireEncryption,
-        strictPrivacyScanner:
-          requirements.blockOnPrivacyFindings && options.acknowledgePrivacyFindings !== true
+        recentWindowMs: effectivePolicy.recentWindowMs
       });
     });
 
@@ -1244,7 +1231,7 @@ async function exportSession(
       sid,
       mode: runtime.mode,
       outcome: "ok",
-      encrypted,
+      encrypted: true,
       includeScreenshots: effectivePolicy.includeScreenshots,
       includeScreenRecordings: effectivePolicy.includeScreenRecordings,
       maxArchiveBytes: effectivePolicy.maxArchiveBytes,
@@ -1277,26 +1264,23 @@ async function exportSession(
       sid,
       mode: runtime.mode,
       outcome: "error",
-      encrypted: hasExportPassphrase(passphrase),
+      encrypted: isValidExportPassphrase(encryptionPassphrase),
       includeScreenshots: effectivePolicy.includeScreenshots,
       includeScreenRecordings: effectivePolicy.includeScreenRecordings,
       maxArchiveBytes: effectivePolicy.maxArchiveBytes,
       recentWindowMs: effectivePolicy.recentWindowMs,
       error: redactOperationalMessage(message)
     });
-    const privacyBlocked = message.includes(PRIVACY_SCANNER_BLOCKED_PREFIX);
     console.warn("[WebBlackbox] export failed", error);
     broadcast({
       kind: "sw.export-status",
       sid,
       ok: false,
-      error: message,
-      ...(privacyBlocked ? { privacyBlocked } : {})
+      error: message
     });
     return {
       ok: false,
-      error: message,
-      ...(privacyBlocked ? { privacyBlocked } : {})
+      error: message
     };
   }
 }
@@ -1573,10 +1557,6 @@ function resolveSessionExportPolicy(runtime: SessionRuntime, policy: ExportPolic
     includeScreenshots: visualsCaptured.screenshots,
     includeScreenRecordings: visualsCaptured.screenRecordings
   };
-}
-
-function hasExportPassphrase(passphrase: string | undefined): passphrase is string {
-  return typeof passphrase === "string" && passphrase.length > 0;
 }
 
 function ingestRawEvent(rawEvent: RawRecorderEvent): void {
@@ -2226,9 +2206,7 @@ function createOffscreenPipelineClient(sid: string): SessionPipelineClient {
         includeScreenshots: options.includeScreenshots,
         includeScreenRecordings: options.includeScreenRecordings,
         maxArchiveBytes: options.maxArchiveBytes,
-        recentWindowMs: options.recentWindowMs,
-        allowPlaintextLocalExport: options.allowPlaintextLocalExport,
-        strictPrivacyScanner: options.strictPrivacyScanner
+        recentWindowMs: options.recentWindowMs
       });
 
       return normalizePipelineExportDownloadResult(exported);

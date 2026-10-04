@@ -401,7 +401,7 @@ export const privacyManifestSchema = z
 
 export const exportManifestSchema = z
   .object({
-    protocolVersion: z.literal(WEBBLACKBOX_PROTOCOL_VERSION),
+    protocolVersion: z.union([z.literal(WEBBLACKBOX_PROTOCOL_VERSION), z.literal(2)]),
     createdAt: z.string().datetime(),
     mode: captureModeSchema,
     site: z

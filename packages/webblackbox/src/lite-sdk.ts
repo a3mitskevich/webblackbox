@@ -89,8 +89,7 @@ export class WebBlackboxLiteSdk {
       storage: this.storage,
       maxChunkBytes: options.maxChunkBytes,
       redactionProfile: this.config.redaction,
-      capturePolicy: this.config.capturePolicy,
-      trustedPlaintextExemptionEvidenceRefs: options.trustedPlaintextExemptionEvidenceRefs
+      capturePolicy: this.config.capturePolicy
     });
 
     const recorderHooks = options.recorderHooks;

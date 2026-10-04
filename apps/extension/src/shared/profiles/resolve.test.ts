@@ -25,7 +25,6 @@ import {
   AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
   isExtendedCaptureProfile,
-  resolveProfileExportRequirements,
   selectRecordingProfile,
   toArchivedProfileInfo
 } from "./resolve.js";
@@ -507,36 +506,5 @@ describe("selectRecordingProfile", () => {
 
     expect(selection).toMatchObject({ source: "default" });
     expect(selection.profile.id).toBe(DEFAULT_PROFILE_ID);
-  });
-});
-
-describe("resolveProfileExportRequirements", () => {
-  it("is permissive for the Default profile and strict once any extended profile ran", () => {
-    const standard = { profile: createDefaultProfile(), extended: false };
-    const qa = { profile: preset(BUILT_IN_PROFILE_IDS.qa), extended: true };
-
-    expect(resolveProfileExportRequirements([standard])).toEqual({
-      requireEncryption: false,
-      blockOnPrivacyFindings: false
-    });
-    expect(resolveProfileExportRequirements([standard, qa])).toEqual({
-      requireEncryption: true,
-      blockOnPrivacyFindings: true
-    });
-  });
-
-  it("honours per-profile export settings", () => {
-    const strict = {
-      profile: {
-        ...createDefaultProfile(),
-        export: { encryption: "required" as const, privacyScanner: "warn" as const }
-      },
-      extended: false
-    };
-
-    expect(resolveProfileExportRequirements([strict])).toEqual({
-      requireEncryption: true,
-      blockOnPrivacyFindings: false
-    });
   });
 });

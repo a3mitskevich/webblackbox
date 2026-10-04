@@ -47,11 +47,6 @@ export type ArchivedProfileInfo = {
   downgradedFrom?: { id: string; name: string; reason: string };
 };
 
-export type ProfileExportRequirements = {
-  requireEncryption: boolean;
-  blockOnPrivacyFindings: boolean;
-};
-
 /**
  * Picks the profile for a page: an explicit choice wins, then the best matching site rule,
  * then the store default. Extended profiles only run on hosts their rules (or the allowlists)
@@ -220,25 +215,6 @@ export function toLegacyOptionsRecord(profile: RecordingProfile): Record<string,
       redaction
     }
   };
-}
-
-/** Export rules for a session: the strictest of every profile it recorded under. */
-export function resolveProfileExportRequirements(
-  selections: readonly Pick<ProfileSelection, "profile" | "extended">[]
-): ProfileExportRequirements {
-  return selections.reduce<ProfileExportRequirements>(
-    (acc, selection) => ({
-      requireEncryption:
-        acc.requireEncryption ||
-        selection.extended ||
-        selection.profile.export.encryption === "required",
-      blockOnPrivacyFindings:
-        acc.blockOnPrivacyFindings ||
-        selection.extended ||
-        selection.profile.export.privacyScanner === "block"
-    }),
-    { requireEncryption: false, blockOnPrivacyFindings: false }
-  );
 }
 
 export function toArchivedProfileInfo(selection: ProfileSelection): ArchivedProfileInfo {

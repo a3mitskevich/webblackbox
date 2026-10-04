@@ -1,3 +1,5 @@
+import { isValidExportPassphrase } from "@webblackbox/protocol/archive-encryption";
+
 import { getChromeApi } from "../shared/chrome-api.js";
 import { createExtensionI18n } from "../shared/i18n.js";
 import {
@@ -17,8 +19,10 @@ const { locale, t, formatMode, formatRelativeTime, formatDuration, formatByteSiz
 const root = document.getElementById("sessions-root");
 
 let sessions: SessionListItem[] = [];
-/** Exports started on this page, by sid, so a blocked one can be confirmed and re-sent. */
-const pendingExports = new Map<string, { passphrase: string; acknowledged: boolean }>();
+/** Exports started on this page, by sid: their failures are reported here. */
+const pendingExports = new Set<string>();
+/** Privacy scanner findings of the last export: shown on the page, never blocking. */
+let exportNotice: string | null = null;
 
 if (root) {
   render(root);
@@ -41,13 +45,14 @@ if (root) {
 function handleExportStatus(
   status: Extract<ExtensionOutboundMessage, { kind: "sw.export-status" }>
 ) {
-  const pending = pendingExports.get(status.sid);
+  const pending = pendingExports.has(status.sid);
 
   if (status.ok) {
     pendingExports.delete(status.sid);
 
-    if (status.privacyWarning) {
-      window.alert(formatExportPrivacyWarning(status.privacyWarning));
+    if (status.privacyWarning && root) {
+      exportNotice = formatExportPrivacyWarning(status.privacyWarning);
+      render(root);
     }
 
     return;
@@ -59,29 +64,12 @@ function handleExportStatus(
   }
 
   pendingExports.delete(status.sid);
-  const error = status.error || t("unknownError");
-
-  if (
-    status.privacyBlocked === true &&
-    !pending.acknowledged &&
-    window.confirm(t("popupPrivacyBlockedConfirm", { error }))
-  ) {
-    requestExport(status.sid, pending.passphrase, true);
-    return;
-  }
-
-  window.alert(t("popupExportFailed", { error }));
+  window.alert(t("popupExportFailed", { error: status.error || t("unknownError") }));
 }
 
-function requestExport(sid: string, passphrase: string, acknowledgePrivacyFindings: boolean): void {
-  pendingExports.set(sid, { passphrase, acknowledged: acknowledgePrivacyFindings });
-  postUiMessage({
-    kind: "ui.export",
-    sid,
-    ...(hasDialogPassphrase(passphrase) ? { passphrase } : {}),
-    saveAs: false,
-    ...(acknowledgePrivacyFindings ? { acknowledgePrivacyFindings: true } : {})
-  });
+function requestExport(sid: string, passphrase: string): void {
+  pendingExports.add(sid);
+  postUiMessage({ kind: "ui.export", sid, passphrase, saveAs: false });
 }
 
 function postUiMessage(message: ExtensionInboundMessage): void {
@@ -130,6 +118,14 @@ function render(container: HTMLElement): void {
   subtitle.className = "wb-sessions-subtitle";
   subtitle.textContent = t("sessionsSubtitle");
   section.append(subtitle);
+
+  if (exportNotice) {
+    const notice = document.createElement("p");
+    notice.className = "wb-sessions-notice";
+    notice.setAttribute("role", "status");
+    notice.textContent = exportNotice;
+    section.append(notice);
+  }
 
   const list = document.createElement("div");
   list.className = "wb-sessions-list";
@@ -383,7 +379,7 @@ function bindActions(container: HTMLElement): void {
         return;
       }
 
-      requestExport(sid, passphrase, false);
+      requestExport(sid, passphrase);
     });
   });
 
@@ -515,9 +511,14 @@ function openPassphraseDialog(sid: string): Promise<string | null> {
     };
 
     const submitPassphrase = (): void => {
-      const passphrase = input.value;
+      // Archives are always encrypted: no export without a passphrase of the minimum length.
+      if (!isValidExportPassphrase(input.value)) {
+        input.setCustomValidity(t("popupPassphraseRequired"));
+        input.reportValidity();
+        return;
+      }
 
-      finish(passphrase.trim().length > 0 ? passphrase : "");
+      finish(input.value);
     };
 
     const onKeydown = (event: KeyboardEvent): void => {
@@ -552,10 +553,6 @@ function openPassphraseDialog(sid: string): Promise<string | null> {
     document.body.append(overlay);
     input.focus();
   });
-}
-
-function hasDialogPassphrase(passphrase: string): boolean {
-  return passphrase.length > 0;
 }
 
 function openConfirmDialog(message: string): Promise<boolean> {
