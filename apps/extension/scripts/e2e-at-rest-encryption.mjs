@@ -3,7 +3,8 @@
 // E2E: local recordings are encrypted at rest and do not outlive the browser session.
 // 1. Full capture (raw content) records planted fake secrets; the extension's IndexedDB is read
 //    directly over CDP (IndexedDB.requestData): no secret, URL or title is readable, every chunk
-//    and blob carries the AES-GCM frame, session rows hold only ids and timestamps.
+//    and blob carries the AES-GCM frame, session rows hold only ids and timestamps. The key's
+//    chrome.storage.session area is out of reach of the content script.
 // 2. The export still decrypts to the raw secrets, and the recording is deleted after it.
 // 3. A second, unexported recording survives in IndexedDB until Chrome is restarted on the same
 //    user data dir: then the database is gone and the Sessions page is empty.
@@ -134,6 +135,13 @@ async function main() {
     rawText.includes(marker)
   );
   assert(leaks.length === 0, "Plaintext found in the extension's IndexedDB", leaks);
+
+  const contentScriptAccess = await readSessionStorageFromContentScript(first.page, origin);
+  assert(
+    contentScriptAccess.startsWith("denied"),
+    "A content script can read chrome.storage.session",
+    contentScriptAccess
+  );
 
   const localStorageArea = JSON.stringify(await popup.evaluate("chrome.storage.local.get(null)"));
   assert(
@@ -286,6 +294,35 @@ async function recordSession({ page, popup }, tabId, secrets) {
   );
   await sleep(1_000);
   return sid;
+}
+
+/** Tries to read `chrome.storage.session` from the extension's content script world. */
+async function readSessionStorageFromContentScript(page, origin) {
+  const contexts = [];
+  page.on("Runtime.executionContextCreated", ({ context }) => contexts.push(context));
+  // Re-enabling reports every live execution context, the isolated worlds included.
+  await page.send("Runtime.disable");
+  await page.send("Runtime.enable");
+  const contentWorld = await waitFor(
+    () =>
+      contexts.find(
+        (context) => context.origin === origin && context.auxData?.type === "isolated"
+      ) ?? null,
+    5_000,
+    "Content script world not found"
+  );
+  const result = await page.send("Runtime.evaluate", {
+    contextId: contentWorld.id,
+    expression: `Promise.resolve()
+      .then(() => chrome.storage.session.get(null))
+      .then((values) => "readable:" + Object.keys(values).join(","), (error) => "denied:" + error.message)`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+
+  return result?.exceptionDetails
+    ? `denied:${result.exceptionDetails.text}`
+    : String(result?.result?.value);
 }
 
 async function findTabId(popup, pageUrl) {
