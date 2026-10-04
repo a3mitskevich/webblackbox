@@ -127,6 +127,12 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   optionsProfileExcludeUrls: "从不采集这些 URL 模式的响应体",
   optionsProfileMousemoveHz: "指针频率",
   optionsProfileVisual: "视觉采集",
+  optionsProfileSourceMaps: "Source map（堆栈符号化）",
+  optionsProfileSourceMapsAuto: "自动：Full 模式记录引用，Lite 模式不记录",
+  optionsProfileSourceMapsOff: "关闭",
+  optionsProfileSourceMapsMetadata: "记录脚本 → source map 引用",
+  optionsProfileSourceMapsEmbed: "将 source map 嵌入归档",
+  optionsProfileSourceMapMaxBytes: "嵌入的 source map 最大字节数（默认 8 MiB）",
   optionsProfileVisualPopup: "在弹窗中选择",
   optionsRedactionDisclaimer:
     "遮盖按尽力而为的方式应用你的规则；WebBlackbox 不保证移除所有敏感数据。归档始终加密。",
