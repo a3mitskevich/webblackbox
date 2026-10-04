@@ -348,9 +348,13 @@ const CREDENTIAL_VALUE_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
   /\bBearer\s+[A-Za-z0-9._~+/=_-]{16,}/i,
   // Base64 credentials: a digit, `+`, `/`, `=` or a lower-to-upper change ("basic plan" is text).
-  /\b[Bb]asic\s+(?=[A-Za-z0-9+/]{0,64}(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{12,}={0,2}(?![A-Za-z0-9+/=])/,
+  /\b(?:[Bb]asic|BASIC)\s+(?=[A-Za-z0-9+/]{0,64}(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{8,}={0,2}(?![A-Za-z0-9+/=])/,
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
 ];
+
+/** `author…` is not `auth`, but `authorization` is. */
+const AUTHOR_WORD_PATTERN = /^author(?!i[sz]ation)/;
+const AUTHOR_TEXT_PATTERN = /author(?!i[sz]ation)/g;
 
 /** Names matched only as a whole word (`sid` is inside `sidebar`, `inside`…). */
 const WORD_ONLY_SECRET_NAMES = new Set(["sid"]);
@@ -379,11 +383,11 @@ function nameMentions(field: string, secretName: string): boolean {
 
   // `authOrigin` is `auth` + `origin` even though its letters spell `author…`.
   return (
-    words.some((word) => word.startsWith(normalized) && !word.startsWith("author")) ||
+    words.some((word) => word.startsWith(normalized) && !AUTHOR_WORD_PATTERN.test(word)) ||
     field
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "")
-      .replaceAll("author", "")
+      .replace(AUTHOR_TEXT_PATTERN, "")
       .includes(normalized)
   );
 }

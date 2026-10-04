@@ -186,6 +186,8 @@ describe("readCapturableInputValue", () => {
       '<input data-field id="shotput" />',
       '<input data-field name="donation_onetime_amount" />',
       '<input data-field id="field-a12fa3" />',
+      '<input data-field id="field-9c2fa1" />',
+      '<input data-field id="a7f2fa3b" />',
       '<input data-field name="author" />'
     ]) {
       expect(readCapturableInputValue(field(html), policy("allow")), html).toBe("typed value");
@@ -202,6 +204,9 @@ describe("readCapturableInputValue", () => {
       '<input data-field type="text" id="otp0" />',
       '<input data-field type="text" name="verify2FA" />',
       '<input data-field type="text" name="code2fa" />',
+      '<input data-field type="text" name="oneTimeToken" />',
+      '<input data-field type="text" name="twoFa" />',
+      '<input data-field type="text" name="2fa_code" />',
       '<input data-field type="text" name="otpcode" />',
       '<input data-field autocomplete="billing cc-number" />',
       '<input data-field autocomplete="cc-csc" />',

@@ -56,13 +56,14 @@ const WORD_ONLY_NAME_PARTS = new Set(["otp", "auth", "sid", "jwt", "pwd"]);
  * A URL query inside CSS (`?` up to a delimiter): one character class, so stripping stays
  * linear. Only used where the scanner cannot tell the URL bounds (comments, unterminated text).
  */
-const CSS_QUERY_PATTERN = /\?[^\s"'()<>;,]*/g;
+// `#…` only with `=` (a token fragment, not a colour or id); each class stops at the next `#`/`=`.
+const CSS_QUERY_PATTERN = /\?[^\s"'()<>;,]*|#[^\s"'()<>;,#=]*=[^\s"'()<>;,]*/g;
 /** Values that are credentials whatever the attribute: JWTs, bearer/basic tokens, keys. */
 const CREDENTIAL_VALUE_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
   /\bBearer\s+[A-Za-z0-9._~+/=_-]{16,}/i,
   // Base64 credentials: a digit, `+`, `/`, `=` or a lower-to-upper change ("Basic settings" is text).
-  /\b[Bb]asic\s+(?=[A-Za-z0-9+/]{0,64}(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{12,}={0,2}(?![A-Za-z0-9+/=])/,
+  /\b(?:[Bb]asic|BASIC)\s+(?=[A-Za-z0-9+/]{0,64}(?:[0-9+/=]|[a-z][A-Z]))[A-Za-z0-9+/]{8,}={0,2}(?![A-Za-z0-9+/=])/,
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/
 ];
 /** Serialized page state (`data-page='{"auth":{"sid":…}}'`) naming a secret field. */
@@ -72,7 +73,7 @@ const JSON_SECRET_KEY_PATTERN =
 const URL_SHAPED_VALUE_PATTERN = /^(?:[a-z][a-z0-9+.-]*:\/\/|\/\/|\/[^\s/]|\.\.?\/)\S*$/i;
 /** A CSS string that is a URL (`@import "/x.css"`, `image-set("a.png" 1x)`). */
 const CSS_URL_STRING_PATTERN =
-  /^(?:[a-z][a-z0-9+.-]*:|\/|\.\.?\/)\S*$|^[^\s/]+\.[a-z0-9]{2,5}(?:[?#]\S*)?$/i;
+  /^(?:[a-z][a-z0-9+.-]*:|\/|\.\.?\/)\S*$|^[^\s"']+\.[a-z0-9]{2,5}(?:[?#]\S*)?$|^[^\s"']*[?#][^\s"']*=/i;
 /** Elements whose `value` attribute is form data (inputs are handled field by field). */
 const VALUE_ATTRIBUTE_ELEMENTS = new Set(["BUTTON", "OPTION", "PARAM", "DATA", "METER"]);
 
@@ -348,6 +349,9 @@ function sanitizeCssUrls(css: string): string {
         copiedUpTo = url.end;
         index = url.end;
       }
+    } else if (char === "\\") {
+      // An escape outside strings (`.content-\[\'\'\]`) is never a string delimiter.
+      index += 2;
     } else if (char === '"' || char === "'") {
       const end = findQuoteEnd(css, index + 1, char);
 
@@ -428,7 +432,12 @@ function stripCssQueries(css: string): string {
 }
 
 function sanitizeCssUrl(url: string): string {
-  return /^\s*data:/i.test(url) ? url : stripCssQueries(sanitizeUrlForPrivacy(url.trim()));
+  if (/^\s*(?:data:|#)/i.test(url)) {
+    return url;
+  }
+
+  // A trailing backslash would escape the closing quote or paren once the query is gone.
+  return stripCssQueries(sanitizeUrlForPrivacy(url.trim())).replace(/\\+$/, "");
 }
 
 function sanitizeSrcset(value: string): string {

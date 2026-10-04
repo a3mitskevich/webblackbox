@@ -19,7 +19,13 @@ const PASSWORD_LIKE_NAME_PATTERN = /passw(?:or)?d|pwd|passcode/i;
 /** Whole words of a field name or id that mark a one-time code (`otpCode`, `sms_otp`). */
 const ONE_TIME_CODE_WORDS = new Set(["otp", "totp", "hotp", "mfa"]);
 /** One-time-code markers inside a name with its separators removed (`otpcode`). */
-const ONE_TIME_CODE_COMPACT_PATTERN = /otpcode|onetime(?:code|password|pin|pass)/;
+const ONE_TIME_CODE_COMPACT_PATTERN = /otpcode|onetime(?:code|password|pin|pass|token)|twofa/;
+/**
+ * `2fa` as its own token: after a separator or the start (`2fa_code`), as `…2FA` after a word
+ * (`verify2FA`), or ending a word (`code2fa`); not inside hex ids (`a7f2fa3b`, `9c2fa1`).
+ */
+const TWO_FACTOR_PATTERN =
+  /(?:^|[^A-Za-z0-9])2[Ff][Aa](?![A-Za-z0-9])|[a-z]2FA(?![a-z])|[A-Za-z]{3,}2[Ff][Aa](?![A-Za-z0-9])/;
 
 type PasswordFieldRegistry = {
   /**
@@ -229,9 +235,8 @@ function isOneTimeCodeName(value: string): boolean {
 
   return (
     ONE_TIME_CODE_COMPACT_PATTERN.test(compact) ||
-    words.some(
-      (word, index) => ONE_TIME_CODE_WORDS.has(word) || (word === "2" && words[index + 1] === "fa")
-    )
+    TWO_FACTOR_PATTERN.test(value) ||
+    words.some((word) => ONE_TIME_CODE_WORDS.has(word))
   );
 }
 

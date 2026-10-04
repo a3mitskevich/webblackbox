@@ -206,6 +206,29 @@ describe("redactPayload URL fields", () => {
     ]);
   });
 
+  it("treats authorization keys and short basic credentials as secrets", () => {
+    const redacted = redactPayload(
+      {
+        entries: [
+          { key: "authorization", value: "opaque-1" },
+          { key: "authorizationHeader", value: "opaque-2" },
+          { key: "header", value: "Basic YWRtaW46cHc=" },
+          { key: "header2", value: "BASIC dXNlcjpwYXNz" },
+          { key: "authorName", value: "Ann" }
+        ]
+      },
+      PLAIN_PROFILE
+    ) as { entries: Array<{ value: string }> };
+
+    expect(redacted.entries.map((entry) => entry.value)).toEqual([
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "Ann"
+    ]);
+  });
+
   it("sanitizes referrer and src payload fields", () => {
     const redacted = redactPayload(
       {

@@ -257,6 +257,40 @@ describe("serializeRawDom", () => {
     expect(kept).toContain('url("a.png" x) red');
   });
 
+  it("survives escapes outside strings and sanitizes relative and unterminated URLs", () => {
+    const sanitizeStyle = (css: string): string => {
+      document.body.innerHTML = "";
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.body.append(style);
+      return serializeRawDom(document, OPTIONS)?.html ?? "";
+    };
+
+    const tailwind = sanitizeStyle(
+      ".content-\\[\\'\\'\\]{--tw-content:''}" +
+        ".hero{background:url(https://cdn.x.com/u/12345/a.png?sig=TAILWIND-SIG)}.x{content:'y'}"
+    );
+    expect(tailwind).not.toContain("TAILWIND-SIG");
+    expect(tailwind).toContain(".x{content:'y'}");
+
+    expect(sanitizeStyle('@import "css/site.css?token=RELATIVE-IMPORT";')).not.toContain(
+      "RELATIVE-IMPORT"
+    );
+    expect(sanitizeStyle('.a{background:image-set("x?token=BARE-QUERY" 1x)}')).not.toContain(
+      "BARE-QUERY"
+    );
+    expect(sanitizeStyle('.a{background:url("/u/x.png#access_token=OPEN-FRAGMENT')).not.toContain(
+      "OPEN-FRAGMENT"
+    );
+    expect(sanitizeStyle('.a{background:url("/a\\?t=1")} .b{color:red}')).toContain(
+      'url("/a")} .b{color:red}'
+    );
+
+    const svg = sanitizeStyle(".g{fill:url(#gradient)} .h{color:#fff}");
+    expect(svg).toContain("url(#gradient)");
+    expect(svg).toContain("#fff");
+  });
+
   it("does not mistake ordinary text for credentials and masks whole-page editors", () => {
     document.body.innerHTML =
       '<div class="ui basic inverted segment" title="Basic settings panel">PAGE-TEXT</div>';
