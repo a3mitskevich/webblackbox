@@ -1436,11 +1436,20 @@ describe("LiteCaptureAgent", () => {
 
     // The page can post injected-channel messages itself; a forged script record would make
     // the extension fetch an attacker-chosen "source map".
-    dispatchInjectedEvents("script", 1);
-    dispatchInjectedEvents("mutation", 1);
+    const now = Date.now();
+    const mono = performance.timeOrigin + now;
+
+    dispatchInjectedMessage({
+      kind: "capture-events",
+      events: [
+        { rawType: "script", payload: { index: 0 }, t: now, mono },
+        { rawType: "console", payload: { index: 1 }, t: now, mono }
+      ]
+    });
     agent.flush();
 
-    expect(emittedRawTypes(emitBatch)).toContain("mutation");
+    // "console" is a raw type the hooks do emit; the bridge allowlist rejects the rest.
+    expect(emittedRawTypes(emitBatch)).toContain("console");
     expect(emittedRawTypes(emitBatch)).not.toContain("script");
 
     agent.dispose();
