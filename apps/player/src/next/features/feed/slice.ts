@@ -1,3 +1,4 @@
+import type { ScopeFilter } from "../../../lib/scope.js";
 import { defineFeatureSlice } from "../slice.js";
 
 /** The Activity feed's filters and the repeat groups the user opened. */
@@ -5,6 +6,8 @@ export type FeedSlice = {
   errorsOnly: boolean;
   /** Third-party rows are hidden by default (PROPOSAL §4, owner decision). */
   hideThirdParty: boolean;
+  /** Frame scope (classic "scope filter"): all, the main frame or iframes. */
+  scope: ScopeFilter;
   /** Event ids of the first items of the expanded "×N" rows. */
   expanded: readonly string[];
 };
@@ -18,6 +21,7 @@ declare module "../../state.js" {
 export const feedSlice = defineFeatureSlice("feed", {
   errorsOnly: false,
   hideThirdParty: true,
+  scope: "all",
   expanded: []
 });
 

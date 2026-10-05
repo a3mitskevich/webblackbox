@@ -184,6 +184,57 @@ describe("selectActivityItems", () => {
     expect(byId.get("ws")).toMatchObject({ kind: "realtime", thirdParty: false });
   });
 
+  it("puts unlinked events inside an action span under that action", () => {
+    const [click, request] = selectActivityItems({
+      events: [
+        event("c", "user.click", 100),
+        event("q", "network.request", 120, { reqId: "u" }),
+        event("late", "nav.hash", 900, { url: "https://app.example.test/#/x" })
+      ],
+      actions: [{ actId: "A9", triggerEventId: "c", startMono: 100, endMono: 400 }],
+      requests: [
+        {
+          reqId: "u",
+          url: "https://app.example.test/u",
+          startMono: 120,
+          status: 401,
+          failed: false,
+          eventIds: ["q"]
+        }
+      ],
+      firstPartyUrl: ORIGIN
+    });
+    expect(click).toMatchObject({ actId: "A9", parentActId: null });
+    expect(request).toMatchObject({ eventId: "q", parentActId: "A9" });
+    const late = selectActivityItems({
+      events: [event("late", "nav.hash", 900, { url: "https://app.example.test/#/x" })],
+      actions: [{ actId: "A9", triggerEventId: "c", startMono: 100, endMono: 400 }],
+      requests: [],
+      firstPartyUrl: ORIGIN
+    });
+    expect(late[0]?.parentActId).toBeNull();
+  });
+
+  it("links a request through the action id of any of its events", () => {
+    const [item] = selectActivityItems({
+      events: [event("q", "network.request", 50, { reqId: "v" })],
+      actions: [{ actId: "A1", triggerEventId: "x" }],
+      requests: [
+        {
+          reqId: "v",
+          url: "https://app.example.test/v",
+          startMono: 50,
+          status: 500,
+          failed: false,
+          eventIds: ["q"],
+          actionId: "A1"
+        }
+      ],
+      firstPartyUrl: ORIGIN
+    });
+    expect(item?.parentActId).toBe("A1");
+  });
+
   it("adds every request and console line for the search scope", () => {
     const all = ids(selectActivityItems(input, "all"));
     expect(all).toContain("q-ok");

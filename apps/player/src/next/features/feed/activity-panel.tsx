@@ -1,9 +1,11 @@
 import { Toggle } from "@base-ui/react/toggle";
+import { ToggleGroup } from "@base-ui/react/toggle-group";
 import { Toolbar } from "@base-ui/react/toolbar";
 import { useMemo } from "react";
 
 import "./feed.css";
 
+import type { ScopeFilter } from "../../../lib/scope.js";
 import { Hint } from "../../components/hint.js";
 import { Icon } from "../../components/icon.js";
 import { ListDetailsSplit } from "../../components/split-layout.js";
@@ -13,9 +15,51 @@ import { resolveSelectedEventId } from "../../controller.js";
 import { useFeatureI18n } from "../messages.js";
 import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
 import { ActivityFeed } from "./activity-feed.js";
-import { feedViewOf } from "./feed-view.js";
+import { feedDataOf, feedViewOf } from "./feed-view.js";
 import { feedMessages } from "./messages.js";
 import { feedSlice, type FeedSlice } from "./slice.js";
+
+const SCOPES: readonly ScopeFilter[] = ["all", "main", "iframe"];
+
+function isScope(value: unknown): value is ScopeFilter {
+  return typeof value === "string" && (SCOPES as readonly string[]).includes(value);
+}
+
+/** All / Main / Iframe (classic scope filter), shown only for recordings with iframe activity. */
+function ScopeToggle() {
+  const t = useFeatureI18n(feedMessages);
+  const archive = usePlayerState((state) => state.archive);
+  const scope = useFeatureSlice(feedSlice, (slice) => slice.scope);
+  const update = useFeatureSliceUpdate(feedSlice);
+  const counts = archive ? feedDataOf(archive).scopeCounts : null;
+
+  if (!counts || counts.iframe === 0) {
+    return null;
+  }
+
+  return (
+    <ToggleGroup
+      className="scope-toggle"
+      aria-label={t("scopeLabel")}
+      value={[scope]}
+      onValueChange={(value) => {
+        const next = value[0];
+        update((current) => ({ ...current, scope: isScope(next) ? next : "all" }));
+      }}
+      data-testid="feed-scope"
+    >
+      <Toggle className="fchip" value="all">
+        {t("scopeAll")}
+      </Toggle>
+      <Toggle className="fchip" value="main">
+        {t("scopeMain", { count: counts.main })}
+      </Toggle>
+      <Toggle className="fchip" value="iframe">
+        {t("scopeIframe", { count: counts.iframe })}
+      </Toggle>
+    </ToggleGroup>
+  );
+}
 
 function DetailsPanel() {
   const controller = useController();
@@ -157,6 +201,7 @@ export function ActivityPanel() {
           />
         </label>
         <FeedFilters />
+        <ScopeToggle />
       </div>
       <ListDetailsSplit
         name="details"

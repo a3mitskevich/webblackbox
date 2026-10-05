@@ -49,7 +49,15 @@ export function problemTitle(group: ProblemGroup, t: FeedTranslator): string {
 
 /** The problem as a phrase inside a sentence ("First auth failure after this click"). */
 export function problemPhrase(group: ProblemGroup, t: FeedTranslator): string {
-  return group.category === "auth" ? t("authFailure") : problemTitle(group, t);
+  if (group.category === "auth") {
+    return t("authFailure");
+  }
+
+  const title = problemTitle(group, t);
+  // "Connection reset" reads "connection reset" mid-sentence; messages stay as recorded.
+  return group.category === "network"
+    ? `${title.charAt(0).toLocaleLowerCase()}${title.slice(1)}`
+    : title;
 }
 
 /** "4 problems" with the plural form of the locale. */

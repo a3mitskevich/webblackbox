@@ -197,6 +197,7 @@ export function ActivityFeed() {
             query,
             errorsOnly: slice.errorsOnly,
             hideThirdParty: slice.hideThirdParty,
+            scope: slice.scope,
             expanded: slice.expanded,
             selectedEventId,
             locale

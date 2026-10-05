@@ -12,7 +12,9 @@ import {
   type RouteChapterKind
 } from "@webblackbox/player-sdk";
 
+import { resolveRequestScope, resolveScopeByEventId } from "../../../core/filters.js";
 import type { PlayerLocale } from "../../../lib/i18n.js";
+import { matchesScopeFilter, type EventScope, type ScopeFilter } from "../../../lib/scope.js";
 import { asFiniteNumber, asRecord, asString } from "../../../lib/parsing.js";
 import { compactText, shortUrl } from "../../../lib/text.js";
 import type { IconName } from "../../components/icon.js";
@@ -66,6 +68,7 @@ export type FeedParams = {
   query: string;
   errorsOnly: boolean;
   hideThirdParty: boolean;
+  scope: ScopeFilter;
   expanded: readonly string[];
   selectedEventId: string | null;
   locale: PlayerLocale;
@@ -84,6 +87,9 @@ type FeedData = {
   navigationKinds: ReadonlyMap<string, RouteChapterKind>;
   /** Flagged rows: the first problem after each action, the first of each first-party group. */
   flags: ReadonlyMap<string, ProblemFlag>;
+  /** Frame of each curated item, and how many items each frame has (the scope toggle). */
+  scopeOf: (item: ActivityItem) => EventScope;
+  scopeCounts: Readonly<Record<EventScope, number>>;
 };
 
 export type DescribeContext = {
@@ -142,6 +148,14 @@ function buildFeedData(archive: LoadedArchive): FeedData {
   });
   const curated = selectActivityItems(input);
   let all: ActivityItem[] | null = null;
+  const scopeOf = (item: ActivityItem): EventScope =>
+    item.reqId
+      ? resolveRequestScope(model, item.reqId)
+      : resolveScopeByEventId(model, item.eventId);
+  const scopeCounts = { main: 0, iframe: 0 };
+  curated.forEach((item) => {
+    scopeCounts[scopeOf(item)] += 1;
+  });
 
   return {
     curated,
@@ -151,13 +165,16 @@ function buildFeedData(archive: LoadedArchive): FeedData {
     navigationKinds: new Map(
       chapters.flatMap((chapter) => (chapter.eventId ? [[chapter.eventId, chapter.kind]] : []))
     ),
-    flags: problemFlags(curated, view.problems)
+    flags: problemFlags(curated, view.problems),
+    scopeOf,
+    scopeCounts
   };
 }
 
 /**
  * "First auth failure after this click": the first first-party problem among each action's
- * consequences, and the first occurrence of each first-party problem group outside any action.
+ * consequences, and the session's first first-party problem when no action caused it. One flag
+ * per action keeps the feed readable on noisy recordings.
  */
 function problemFlags(
   items: readonly ActivityItem[],
@@ -173,7 +190,7 @@ function problemFlags(
 
   const flags = new Map<string, ProblemFlag>();
   const flaggedActions = new Set<string>();
-  const seenGroups = new Set<string>();
+  let seenProblem = false;
 
   for (const item of items) {
     const group = groupByEvent.get(item.eventId);
@@ -185,11 +202,11 @@ function problemFlags(
     if (item.parentActId && !flaggedActions.has(item.parentActId)) {
       flaggedActions.add(item.parentActId);
       flags.set(item.eventId, { group, afterAction: true });
-    } else if (!item.parentActId && !seenGroups.has(group.key)) {
+    } else if (!item.parentActId && !seenProblem) {
       flags.set(item.eventId, { group, afterAction: false });
     }
 
-    seenGroups.add(group.key);
+    seenProblem = true;
   }
 
   return flags;
@@ -227,7 +244,9 @@ function actionSummary(actId: string | null, data: FeedData, t: FeedTranslator):
   const failed = action.requests.filter(
     (request) => request.failed || (request.status ?? 0) >= 400
   ).length;
-  const requests = t("requestsN", { count: action.requestCount });
+  const requests = t(action.requestCount === 1 ? "requestsOne" : "requestsN", {
+    count: action.requestCount
+  });
   return failed > 0 ? `${requests} · ${t("failedN", { count: failed })}` : requests;
 }
 
@@ -275,13 +294,17 @@ function describeStart({ archive, t }: DescribeContext): Described {
   const media = meta.hasVideo
     ? t("tabVideo")
     : meta.screenshotCount > 0
-      ? t("screenshotsN", { count: meta.screenshotCount })
+      ? t(meta.screenshotCount === 1 ? "screenshotsOne" : "screenshotsN", {
+          count: meta.screenshotCount
+        })
       : "";
 
   return line(t("recordingStarted"), "", [
     mode ? t("captureMode", { mode }) : "",
     media,
-    meta.otherTabs > 0 ? t("otherTabsOpen", { count: meta.otherTabs }) : ""
+    meta.otherTabs > 0
+      ? t(meta.otherTabs === 1 ? "otherTabsOpenOne" : "otherTabsOpen", { count: meta.otherTabs })
+      : ""
   ]);
 }
 
@@ -371,7 +394,9 @@ function describeRealtime(
     t(opened ? "wsOpened" : "wsClosed"),
     pathOf(url),
     [
-      opened && stats ? t("framesN", { count: stats.frames }) : "",
+      opened && stats
+        ? t(stats.frames === 1 ? "framesOne" : "framesN", { count: stats.frames })
+        : "",
       opened && stats?.signalR ? "SignalR" : ""
     ],
     { glyph: "ws", tone: "realtime" }
@@ -576,10 +601,16 @@ export function computeFeedView(archive: LoadedArchive, params: FeedParams): Fee
   const matches = searching
     ? matchFeedItems(haystackOf(items, describeContext(archive, params.locale)), params.query)
     : null;
+  const filtering = matches !== null || params.scope !== "all";
   const { rows, hiddenThirdParty } = buildActivityRows(items, {
     errorsOnly: params.errorsOnly,
     hideThirdParty: params.hideThirdParty,
-    ...(matches ? { matches: (_item: ActivityItem, index: number) => matches.has(index) } : {}),
+    ...(filtering
+      ? {
+          matches: (item: ActivityItem, index: number) =>
+            (!matches || matches.has(index)) && matchesScopeFilter(data.scopeOf(item), params.scope)
+        }
+      : {}),
     pinned: (item) => item.eventId === params.selectedEventId
   });
 
@@ -593,6 +624,7 @@ export function feedParamsOf(state: PlayerState): FeedParams {
     query: state.query,
     errorsOnly: slice.errorsOnly,
     hideThirdParty: slice.hideThirdParty,
+    scope: slice.scope,
     expanded: slice.expanded,
     selectedEventId: state.archive ? resolveSelectedEventId(state.archive, state.selection) : null,
     locale: state.locale
@@ -604,6 +636,7 @@ function sameParams(left: FeedParams, right: FeedParams): boolean {
     left.query === right.query &&
     left.errorsOnly === right.errorsOnly &&
     left.hideThirdParty === right.hideThirdParty &&
+    left.scope === right.scope &&
     left.expanded === right.expanded &&
     left.selectedEventId === right.selectedEventId &&
     left.locale === right.locale

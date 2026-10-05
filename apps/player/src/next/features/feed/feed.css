@@ -28,7 +28,9 @@
   padding: 0;
   list-style: none;
   overflow-x: auto;
-  scrollbar-width: thin;
+  /* Scrolls (wheel, focus) without a scrollbar, like the mockup's clipped strip. */
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
 }
 .problems-list > li {
   flex: 0 0 auto;
@@ -247,4 +249,84 @@
     grid-template-columns: 44px 20px minmax(0, 1fr);
     padding-right: 12px;
   }
+}
+
+/* Timeline hover card (scrub-hover.tsx). */
+.hover-layer {
+  z-index: 40;
+}
+.hover-card {
+  width: 280px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 18%);
+  font-size: 12.5px;
+}
+.hover-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--ink-2);
+}
+.hover-route {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hover-thumb {
+  display: block;
+  width: 100%;
+  max-height: 150px;
+  object-fit: contain;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  background: var(--theater);
+}
+.hover-tags {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hover-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hover-tag:hover {
+  background: var(--surface-2);
+}
+.hover-tag span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hover-tag.tone-error .ic {
+  color: var(--bad);
+}
+.hover-tag.tone-navigation .ic {
+  color: var(--nav);
+}
+.hover-tag.tone-realtime .ic {
+  color: var(--ws);
+}
+
+.scope-toggle {
+  display: flex;
+  gap: 4px;
 }

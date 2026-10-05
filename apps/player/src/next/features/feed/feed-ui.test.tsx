@@ -74,6 +74,29 @@ describe("problems strip", () => {
   });
 });
 
+describe("timeline hover card", () => {
+  it("shows the time and nearby items, and a tag selects its event", async () => {
+    const { store } = await renderLoaded();
+    const scrubber = screen.getByTestId("scrubber");
+
+    act(() => {
+      fireEvent.pointerMove(scrubber, { clientX: 0, clientY: 0, pointerType: "mouse" });
+    });
+    const card = await screen.findByTestId("scrub-hover");
+    expect(card).toHaveTextContent("0.00 s");
+    const [tag] = within(card).getAllByTestId("scrub-hover-tag");
+
+    act(() => {
+      fireEvent.click(tag as HTMLElement);
+    });
+    expect(store.getState().selection?.kind).toBe("event");
+
+    act(() => {
+      fireEvent.pointerDown(scrubber, { clientX: 0, button: 0, pointerId: 1 });
+    });
+  });
+});
+
 describe("activity feed filters", () => {
   it("hides third-party rows by default and brings them back from the hidden chip", async () => {
     await renderLoaded();

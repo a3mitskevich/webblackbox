@@ -59,6 +59,9 @@ describe("problem text", () => {
     expect(problemPhrase(group({ category: "client", status: 404, reason: "Not Found" }), t)).toBe(
       "404 Not Found"
     );
+    expect(
+      problemPhrase(group({ category: "network", errorCode: "ERR_CONNECTION_RESET" }), t)
+    ).toBe("connection reset");
   });
 
   it("uses the plural forms of the locale", () => {

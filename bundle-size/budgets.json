@@ -14,9 +14,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 147200,
-      "maxGzipBytes": 36500,
-      "note": "Combined integration of the 8 open PRs on main, measured 142,877 / 35,369 B (+3%): #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, and #16's tabs context."
+      "maxBytes": 172000,
+      "maxGzipBytes": 42700,
+      "note": "Combined integration of the 8 open PRs on main, measured 142,877 / 35,369 B (+3%): #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, and #16's tabs context. Player rewrite R2 (#20): third-party marking, problem grouping and Activity feed items (third-party.ts, problems.ts, activity-feed.ts), measured 166,946 / 41,433 B (+3%)."
     },
     {
       "path": "apps/player/build/main.js",

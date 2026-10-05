@@ -45,10 +45,17 @@ export type ActivityItem = {
 export type ActivityAction = {
   actId: string;
   triggerEventId: string;
+  /** Span bounds: an event without `ref.act` inside them is a consequence of the action. */
+  startMono?: number;
+  endMono?: number;
 };
 
 /** The request fields the feed reads (`NetworkWaterfallEntry` fits). */
-export type ActivityRequest = ProblemRequest & { method?: string };
+export type ActivityRequest = ProblemRequest & {
+  method?: string;
+  /** The action span any of the request's events belongs to (`ref.act`). */
+  actionId?: string;
+};
 
 export type ActivityFeedInput = {
   /** Events in timeline order. */
@@ -157,6 +164,8 @@ type FeedContext = {
   scope: ActivityScope;
   triggerToAct: ReadonlyMap<string, string>;
   actIds: ReadonlySet<string>;
+  /** Actions with span bounds, by start time. */
+  spans: readonly Required<ActivityAction>[];
   requestById: ReadonlyMap<string, ActivityRequest>;
   /** The event that stands for each request (its `network.request`, else its first event). */
   requestByEventId: ReadonlyMap<string, ActivityRequest>;
@@ -281,9 +290,46 @@ function buildContext(input: ActivityFeedInput, scope: ActivityScope): FeedConte
     scope,
     triggerToAct: new Map(input.actions.map((action) => [action.triggerEventId, action.actId])),
     actIds: new Set(input.actions.map((action) => action.actId)),
+    spans: input.actions
+      .filter(
+        (action): action is Required<ActivityAction> =>
+          typeof action.startMono === "number" && typeof action.endMono === "number"
+      )
+      .sort((left, right) => left.startMono - right.startMono),
     requestById: new Map(input.requests.map((request) => [request.reqId, request])),
     requestByEventId
   };
+}
+
+/**
+ * The action an event is a consequence of: its `ref.act` (for a request, the `ref.act` of any of
+ * its events), else the latest action span whose bounds contain it. A trigger is not its own
+ * consequence.
+ */
+function parentActionOf(
+  event: WebBlackboxEvent,
+  actId: string | null,
+  context: FeedContext
+): string | null {
+  const linked = asText(event.ref?.act) ?? context.requestByEventId.get(event.id)?.actionId ?? null;
+
+  if (linked && context.actIds.has(linked)) {
+    return linked === actId ? null : linked;
+  }
+
+  for (let index = context.spans.length - 1; index >= 0; index -= 1) {
+    const span = context.spans[index];
+
+    if (!span || span.startMono > event.mono) {
+      continue;
+    }
+
+    if (span.actId !== actId && event.mono <= span.endMono) {
+      return span.actId;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -307,12 +353,11 @@ export function selectActivityItems(
 
   for (const event of input.events) {
     const actId = context.triggerToAct.get(event.id) ?? null;
-    const refAct = asText(event.ref?.act);
     const base = {
       eventId: event.id,
       mono: event.mono,
       actId,
-      parentActId: refAct && refAct !== actId && context.actIds.has(refAct) ? refAct : null
+      parentActId: parentActionOf(event, actId, context)
     };
 
     if (!started && event.type.startsWith("meta.")) {

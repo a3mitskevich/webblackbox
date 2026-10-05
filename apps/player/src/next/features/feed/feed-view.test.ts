@@ -24,6 +24,7 @@ const PARAMS: FeedParams = {
   query: "",
   errorsOnly: false,
   hideThirdParty: true,
+  scope: "all",
   expanded: [],
   selectedEventId: null,
   locale: "en"
@@ -70,8 +71,8 @@ describe("feed view", () => {
     );
     // The lobby click's first failure: 401 on tournaments group 2 (10.87 s), not the later ones.
     expect(afterClick?.line).toBe("401 GET /gw/bff/tournaments/api/v1/group/2/active");
-    // The session's first 401, outside any action, is flagged on its own.
-    expect(flagged.map((row) => row.row.flag)).toContain("First auth failure");
+    // The session's first first-party problem, outside any action, is flagged on its own.
+    expect(flagged.filter((row) => !row.row.flag?.endsWith("after this click"))).toHaveLength(1);
     // One flag per click at most: each retry click failed again and is flagged once.
     const parents = flagged
       .filter((row) => row.row.flag?.endsWith("after this click"))
@@ -135,6 +136,16 @@ describe("feed view", () => {
     expect(matchFeedItems(["GET /api/users", "POST /login"], "users get")).toEqual(new Set([0]));
     expect(matchFeedItems(["Ошибка авторизации"], "автор")).toEqual(new Set([0]));
     expect(matchFeedItems(["GET /api/users"], "nothing")).toEqual(new Set());
+  });
+
+  it("filters by frame scope", () => {
+    const counts = feedDataOf(archive).scopeCounts;
+    expect(counts.main).toBe(feedDataOf(archive).curated.length);
+    expect(counts.iframe).toBe(0);
+    expect(computeFeedView(archive, { ...PARAMS, scope: "main" }).entries).toEqual(
+      computeFeedView(archive, PARAMS).entries
+    );
+    expect(computeFeedView(archive, { ...PARAMS, scope: "iframe" }).entries).toHaveLength(0);
   });
 
   it("counts every event, or the matches of the filter", () => {

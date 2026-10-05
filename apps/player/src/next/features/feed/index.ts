@@ -23,3 +23,4 @@ export const feedFeature: PlayerFeature = {
 };
 
 export { ProblemsStrip } from "./problems-strip.js";
+export { useScrubHover } from "./scrub-hover.js";
