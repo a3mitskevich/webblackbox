@@ -84,6 +84,28 @@ describe("injected-hooks", () => {
     sessionStorage.clear();
   });
 
+  it("posts captured events without waiting for a timer (hidden tabs throttle timers)", async () => {
+    vi.useFakeTimers();
+
+    try {
+      installInjectedLiteCaptureHooks({
+        flag: "__WB_TEST_INJECTED_NO_TIMER_FLUSH__",
+        capturePolicy: DETAILED_TEST_CAPTURE_POLICY
+      });
+      console.log("first");
+      console.log("second");
+      await Promise.resolve();
+
+      const texts = captured
+        .filter((message) => message.rawType === "console")
+        .map((message) => (message.payload as { text?: unknown }).text);
+      expect(texts).toEqual(["first", "second"]);
+      expect(window.postMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("is idempotent for the same flag and emits ready + console events", async () => {
     const flag = "__WB_TEST_INJECTED_CONSOLE__";
 
