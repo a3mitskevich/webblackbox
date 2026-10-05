@@ -1309,10 +1309,9 @@ async function exportSession(
  */
 async function resolveTabProfileSelection(
   tabId: number,
-  request: string,
-  profilesState?: ProfilesState
+  request: string
 ): Promise<ProfileSelection | null> {
-  const state = profilesState ?? (await loadSessionProfilesState());
+  const state = await loadSessionProfilesState();
   const page = (await readTabPageContext(chromeApi, tabId, state.rules)) ?? {
     url: `tab:${tabId}`
   };
@@ -1428,11 +1427,18 @@ async function reevaluateSessionProfile(
     loadSessionProfilesState(),
     loadEnterprisePolicy()
   ]);
-  const nextSelection = await resolveTabProfileSelection(
-    runtime.tabId,
-    runtime.profile.request,
-    state
-  );
+  const page = await readTabPageContext(chromeApi, runtime.tabId, state.rules);
+
+  // A tab that cannot be read right now says nothing about the profile: never cancel on it.
+  if (!page) {
+    return;
+  }
+
+  const nextSelection = selectRecordingProfile({
+    state,
+    page,
+    requestedProfileId: runtime.profile.request
+  });
   const next = nextSelection
     ? await buildSessionProfileSnapshot(runtime, nextSelection, enterprisePolicy)
     : null;
