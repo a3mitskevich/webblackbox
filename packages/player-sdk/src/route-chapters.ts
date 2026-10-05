@@ -122,7 +122,7 @@ function isSameDocument(left: string, right: string): boolean {
 
 function readNavigationPoints(events: readonly WebBlackboxEvent[]): NavigationPoint[] {
   const points: NavigationPoint[] = [];
-  let mainFrameId: string | null = null;
+  const frames = readCommittedFrames(events);
 
   for (const event of events) {
     if (!event.type.startsWith("nav.")) {
@@ -139,7 +139,6 @@ function readNavigationPoints(events: readonly WebBlackboxEvent[]): NavigationPo
         continue;
       }
 
-      mainFrameId = asString(frame?.id) ?? mainFrameId;
       const url = asString(frame?.url) ?? asString(data?.url);
 
       if (url) {
@@ -150,9 +149,7 @@ function readNavigationPoints(events: readonly WebBlackboxEvent[]): NavigationPo
       continue;
     }
 
-    const frameId = asString(data?.frameId);
-
-    if (mainFrameId && frameId && frameId !== mainFrameId) {
+    if (!isTopLevelFrame(asString(data?.frameId), frames)) {
       continue;
     }
 
@@ -170,6 +167,45 @@ function readNavigationPoints(events: readonly WebBlackboxEvent[]): NavigationPo
   }
 
   return points;
+}
+
+type CommittedFrames = { main: ReadonlySet<string>; child: ReadonlySet<string> };
+
+/**
+ * Frame ids of every recorded document commit. Read up front, so iframe route changes recorded
+ * before the first top-level commit (a session started on an open page) are recognised too.
+ */
+function readCommittedFrames(events: readonly WebBlackboxEvent[]): CommittedFrames {
+  const main = new Set<string>();
+  const child = new Set<string>();
+
+  for (const event of events) {
+    if (event.type !== "nav.commit") {
+      continue;
+    }
+
+    const frame = asRecord(asRecord(event.data)?.frame);
+    const id = asString(frame?.id);
+
+    if (id) {
+      (asString(frame?.parentId) ? child : main).add(id);
+    }
+  }
+
+  return { main, child };
+}
+
+/** Events without a frame id, or from a frame never seen committing, count as top-level. */
+function isTopLevelFrame(frameId: string | undefined, frames: CommittedFrames): boolean {
+  if (!frameId) {
+    return true;
+  }
+
+  if (frames.child.has(frameId)) {
+    return false;
+  }
+
+  return frames.main.size === 0 || frames.main.has(frameId);
 }
 
 /** The page URL before the first navigation: a session start URL or an early route context. */

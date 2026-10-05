@@ -115,6 +115,36 @@ describe("buildRouteChapters", () => {
     ]);
   });
 
+  it("ignores iframe routes recorded before the first top-level document commit", () => {
+    const shop = "https://shop.test/";
+    const chapters = buildRouteChapters([
+      event("meta.session.start", 0, { url: `${shop}#/lobby` }),
+      event("nav.history.push", 200, { frameId: "GAME", url: "https://game.test/round/1" }),
+      event("nav.commit", 500, {
+        frame: { id: "WIDGET", parentId: "MAIN", url: "https://widget.test/" }
+      }),
+      event("nav.hash", 800, { frameId: "WIDGET", url: "https://widget.test/#/step-2" }),
+      event("nav.hash", 1_000, { frameId: "MAIN", url: `${shop}#/cart` }),
+      event("nav.commit", 2_000, { frame: { id: "MAIN", url: `${shop}checkout` } }),
+      event("nav.hash", 2_500, { frameId: "GAME", url: "https://game.test/#/round/2" })
+    ]);
+
+    expect(chapters.map((chapter) => [chapter.kind, chapter.label])).toEqual([
+      ["load", "#/lobby"],
+      ["route", "#/cart"],
+      ["document", "/checkout"]
+    ]);
+  });
+
+  it("keeps route events of an unknown frame while no top-level document is recorded", () => {
+    const chapters = buildRouteChapters([
+      event("meta.session.start", 0, { url: "https://shop.test/#/lobby" }),
+      event("nav.hash", 1_000, { frameId: "TOP", url: "https://shop.test/#/cart" })
+    ]);
+
+    expect(chapters.map((chapter) => chapter.label)).toEqual(["#/lobby", "#/cart"]);
+  });
+
   it("skips the load chapter when the first event is a navigation or no URL is known", () => {
     const chapters = buildRouteChapters([
       event("nav.commit", 0, { frame: { id: "MAIN", url: "https://shop.test/a" } }),
