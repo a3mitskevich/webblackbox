@@ -13,9 +13,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 103500,
-      "maxGzipBytes": 24900,
-      "note": "Measured 100,424 / 24,105 B (+3%): #7's bounded, validated archive loading and #9's event ordering plus archive format 2 with the encrypted manifest (#10)."
+      "maxBytes": 108100,
+      "maxGzipBytes": 26300,
+      "note": "Measured 104,922 / 25,450 B (+3%): #7's archive loading, #9's event ordering and archive format 2 (#10) plus the tabs context of the bug report (#16)."
     },
     {
       "path": "apps/player/build/main.js",
@@ -30,9 +30,9 @@
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 919600,
-      "maxGzipBytes": 164800,
-      "note": "Measured 892,782 / 159,934 B (+3%): the service worker recovery (#8) and the CDP Network allowlist (#9) plus recording profiles, redaction rules and the linear regex engine (#10)."
+      "maxBytes": 942100,
+      "maxGzipBytes": 170600,
+      "note": "Measured 914,610 / 165,540 B (+3%): the service worker recovery (#8), the CDP Network allowlist (#9), recording profiles (#10) and the parallel-tabs tracking (#16)."
     }
   ]
 }
