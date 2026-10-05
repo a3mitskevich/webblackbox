@@ -1654,6 +1654,82 @@ describe("profile-driven page capture", () => {
     document.cookie = "theme=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   });
 
+  it("follows DOM changes in full mode under dom: allow (summaries and new snapshots)", async () => {
+    vi.useFakeTimers();
+
+    try {
+      document.body.innerHTML = "<ul id='rows'><li>first</li></ul>";
+      const { agent, emitBatch } = createAgent({
+        mode: "full",
+        capturePolicy: withCategories({ dom: "allow" })
+      });
+
+      agent.emitMarker("start");
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      for (let index = 0; index < 3; index += 1) {
+        const row = document.createElement("li");
+        row.textContent = `row ${index}`;
+        document.getElementById("rows")?.append(row);
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      agent.flush();
+      const events = emittedEvents(emitBatch);
+      agent.dispose();
+
+      expect(events.some((event) => event.rawType === "mutation")).toBe(true);
+      const changed = events.filter(
+        (event) => event.rawType === "snapshot" && event.payload.reason === "mutation"
+      );
+      expect(changed.length).toBeGreaterThan(0);
+      expect(changed.at(-1)?.payload.html).toContain("row 2");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("records no DOM changes in full mode without dom: allow", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const { agent, emitBatch } = createAgent({ mode: "full" });
+
+      document.body.append(document.createElement("div"));
+      await vi.advanceTimersByTimeAsync(5_000);
+      agent.flush();
+      const events = emittedEvents(emitBatch);
+      agent.dispose();
+
+      expect(events.some((event) => event.rawType === "mutation")).toBe(false);
+      expect(events.some((event) => event.rawType === "snapshot")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("records cookie values under cookies: allow, and leaves full mode to CDP", () => {
+    document.cookie = "theme=dark";
+    document.cookie = "NAMELESS-VALUE";
+
+    const lite = markerEvents("lite", withCategories({ cookies: "allow" })).find(
+      (event) => event.rawType === "cookieSnapshot"
+    )?.payload;
+    const full = markerEvents("full", withCategories({ cookies: "allow" })).find(
+      (event) => event.rawType === "cookieSnapshot"
+    );
+
+    expect(lite).toMatchObject({
+      mode: "allow",
+      redacted: false,
+      cookies: [{ name: "theme", value: "dark" }]
+    });
+    expect(JSON.stringify(lite)).not.toContain("NAMELESS-VALUE");
+    expect(full).toBeUndefined();
+    document.cookie = "theme=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
+
   it("lists localStorage per profile level, in full mode too", () => {
     localStorage.setItem("theme", "dark");
 
