@@ -101,20 +101,29 @@ The `DefaultEventNormalizer` handles mapping from raw source events to `WebBlack
 
 ### CDP Events
 
-| CDP Method                                                      | WebBlackbox Event  |
-| --------------------------------------------------------------- | ------------------ |
-| `Network.requestWillBeSent`                                     | `network.request`  |
-| `Network.responseReceived`                                      | `network.response` |
-| `Network.loadingFinished`                                       | `network.finished` |
-| `Network.loadingFailed`                                         | `network.failed`   |
-| `Network.webSocketCreated`                                      | `network.ws.open`  |
-| `Network.webSocketFrameReceived` / `Network.webSocketFrameSent` | `network.ws.frame` |
-| `Network.webSocketClosed`                                       | `network.ws.close` |
-| `Runtime.exceptionThrown`                                       | `error.exception`  |
-| `Runtime.consoleAPICalled`                                      | `console.entry`    |
-| `Log.entryAdded`                                                | `console.entry`    |
-| `Page.frameNavigated`                                           | `nav.commit`       |
-| `Page.navigatedWithinDocument`                                  | `nav.hash`         |
+| CDP Method                                                      | WebBlackbox Event     |
+| --------------------------------------------------------------- | --------------------- |
+| `Network.requestWillBeSent`                                     | `network.request`     |
+| `Network.responseReceived`                                      | `network.response`    |
+| `Network.loadingFinished`                                       | `network.finished`    |
+| `Network.loadingFailed`                                         | `network.failed`      |
+| `Network.webSocketCreated`                                      | `network.ws.open`     |
+| `Network.webSocketFrameReceived` / `Network.webSocketFrameSent` | `network.ws.frame`    |
+| `Network.webSocketClosed`                                       | `network.ws.close`    |
+| `Network.eventSourceMessageReceived`                            | `network.sse.message` |
+| `Runtime.exceptionThrown`                                       | `error.exception`     |
+| `Runtime.consoleAPICalled`                                      | `console.entry`       |
+| `Log.entryAdded`                                                | `console.entry`       |
+| `Page.frameNavigated`                                           | `nav.commit`          |
+| `Page.navigatedWithinDocument`                                  | `nav.hash`            |
+
+CDP `Network.*` payloads pass through a field allowlist: ids, timing, sanitized URLs, method, status, MIME type, sizes, normalized headers and the initiator type. Everything else — raw header text, security details, initiator stacks, base64 `postDataEntries`, WebSocket `payloadData` — is dropped.
+
+`Network.requestServedFromCache` has no event of its own. The normalizer remembers it per CDP session (at most 2048 open requests) and marks the request's response (`response.fromMemoryCache: true`, unless it is a disk-cache hit) and its finish (`fromMemoryCache: true`), so a memory-cache hit — also one Chrome finishes without `responseReceived` — closes as "from cache". Chrome sends it for memory-cache and `data:` URL hits; the `-1` `encodedDataLength` it reports for `blob:` URLs is dropped.
+
+Under `capturePolicy.categories.console === "allow"` console entries keep their text in full: up to 64 KiB per entry for the text and for all arguments together, with `truncated: true` when that ceiling is hit. `console.error` / `warn` / `assert` / `trace` and `Log.entryAdded` errors and warnings also carry the whole call stack as V8 `Error.stack` text in `stack` (`    at fn (url:line:col)`, 1-based, up to 200 frames), which stack parsers and source-map symbolication read like a page error stack; `stackTop` (`fn @ url:line:col`, 0-based) stays. Other console policies keep the short previews (260/320/600 characters, top frame only).
+
+`Runtime.exceptionThrown` is projected onto the page-hook `pageError` shape: `message`, `name`, `stack`, sanitized `filename`, 1-based `lineno`/`colno`, `rejection: true` for unhandled promise rejections, `exceptionId` and `timestamp`; remote object handles and previews are dropped. Messages are capped at 2,000 characters and stacks at 32 frames / 8,000 characters; under `console: "allow"` the whole message is kept and, when CDP reports more call frames than `Error.stack` (V8 cuts it at 10), the stack is rebuilt from every CDP frame (up to 200). Under `capturePolicy.categories.console === "metadata"` every `error.exception` / `error.unhandledrejection` keeps only that metadata, marked `messageRedacted`/`stackRedacted` (or `reasonRedacted`), exactly like lite mode.
 
 ### Content Script Events
 
@@ -219,6 +228,8 @@ Redaction is applied recursively through nested objects and supports:
 - Optional HMAC-SHA-256 hashing (per-session key) for value correlation within a session
 
 Network body blobs are redacted separately with `redactBodyText` / `redactBodyBytes` from `@webblackbox/protocol`, which mask the values of sensitive keys in JSON, form, query, XML and `key: value` text.
+
+Inline bodies — textual request bodies (`network.request` → `request.postData`), WebSocket text frames (`network.ws.frame` → `frame.payloadPreview`) and SSE messages (`network.sse.message` → `data`) — follow the same rule as `network.body`. They are kept only when `capturePolicy.categories.network` is `"body-allowlist"`, value-masked with `redactBodyText` and size-capped: request bodies at 64 KiB; WebSocket frames and SSE messages at the profile body size (`sampling.bodyCaptureMaxBytes`, in UTF-8 bytes, cut on a character boundary), or at the old 512 / 800-character previews when it is 0. A cut sets `postDataTruncated`, `frame.payloadTruncated` or `dataTruncated`. The pipeline later moves frame and message text over 16 KiB into a blob (`frame.payloadHash` / `dataHash`, with a 512-character head left inline). Otherwise only sizes survive (`postDataSize`, `frame.payloadLength`/`opcode`, SSE `dataSize`). A host can add its own gate through the `shouldKeepInlineNetworkBody` recorder hook (it gets the event type, the unsanitized request URL and the request MIME type); the extension uses it to apply its site body-capture rules to request bodies, the same rules response bodies follow.
 
 ## Plugins
 

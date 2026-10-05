@@ -2,12 +2,12 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 55000,
-      "maxGzipBytes": 15000
+      "maxBytes": 76000,
+      "maxGzipBytes": 17600
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 76000,
+      "maxBytes": 79000,
       "maxGzipBytes": 18000
     },
     {
@@ -22,8 +22,9 @@
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 800000,
-      "maxGzipBytes": 150000
+      "maxBytes": 825000,
+      "maxGzipBytes": 150000,
+      "note": "808,875 B raw with the CDP Network allowlist and inline body gate (#9) on top of the service worker recovery (#8); original budget 800,000."
     }
   ]
 }

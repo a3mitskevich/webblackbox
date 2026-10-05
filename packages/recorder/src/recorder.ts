@@ -10,8 +10,15 @@ import {
 } from "@webblackbox/protocol";
 
 import { ActionSpanTracker } from "./action-span.js";
+import { applyErrorTextPolicy } from "./error-text-policy.js";
 import { FreezePolicy } from "./freeze.js";
 import { sanitizeKeydownPayload } from "./keydown-privacy.js";
+import {
+  attachInlineNetworkBody,
+  detachInlineNetworkBody,
+  readInlineNetworkBodyContext,
+  type InlineNetworkBodyContext
+} from "./network-body-policy.js";
 import { DefaultEventNormalizer } from "./normalizer.js";
 import type { RecorderPlugin, RecorderPluginContext } from "./plugins.js";
 import { createRedactionHashKey, redactPayload } from "./redaction.js";
@@ -21,6 +28,11 @@ import type { EventNormalizer, RawRecorderEvent, RecorderIngestResult } from "./
 export type RecorderHooks = {
   onEvent?: (event: WebBlackboxEvent) => void;
   onFreeze?: (reason: FreezeReason, event: WebBlackboxEvent) => void;
+  /**
+   * Extra gate for inline body text the `body-allowlist` policy would keep (request `postData`,
+   * WebSocket preview, SSE `data`), e.g. site policies. Returning false keeps only sizes.
+   */
+  shouldKeepInlineNetworkBody?: (context: InlineNetworkBodyContext) => boolean;
 };
 
 export class WebBlackboxRecorder {
@@ -40,7 +52,9 @@ export class WebBlackboxRecorder {
   public constructor(
     private readonly config: RecorderConfig,
     private readonly hooks: RecorderHooks = {},
-    private readonly normalizer: EventNormalizer = new DefaultEventNormalizer(),
+    private readonly normalizer: EventNormalizer = new DefaultEventNormalizer({
+      consoleDetail: config.capturePolicy?.categories.console === "allow" ? "full" : "compact"
+    }),
     private readonly plugins: RecorderPlugin[] = []
   ) {
     this.ringBuffer = new EventRingBuffer(config.ringBufferMinutes);
@@ -64,11 +78,37 @@ export class WebBlackboxRecorder {
       return {};
     }
 
-    const redactedPayload = redactEventPayload(
+    const policyPayload = applyErrorTextPolicy(
       normalized.eventType,
       normalized.payload,
-      this.config,
-      this.redactionHashKey
+      this.config.capturePolicy
+    );
+    // Inline bodies skip key/value redaction: they get value masking under the body policy instead.
+    const detached = detachInlineNetworkBody(normalized.eventType, policyPayload);
+    const shouldKeepBody = this.hooks.shouldKeepInlineNetworkBody;
+    const redactedPayload = attachInlineNetworkBody(
+      redactEventPayload(
+        normalized.eventType,
+        detached.payload,
+        this.config,
+        this.redactionHashKey
+      ),
+      detached.body,
+      {
+        capturePolicy: this.config.capturePolicy,
+        redactBodyPatterns: this.config.redaction.redactBodyPatterns,
+        maxBodyBytes: this.config.sampling.bodyCaptureMaxBytes,
+        isBodyAllowed: shouldKeepBody
+          ? () =>
+              shouldKeepBody(
+                readInlineNetworkBodyContext(
+                  normalized.eventType,
+                  nextRawEvent.payload,
+                  detached.payload
+                )
+              )
+          : undefined
+      }
     );
     const privacy = classifyPrivacy(
       normalized.eventType,
