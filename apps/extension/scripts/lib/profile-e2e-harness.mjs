@@ -6,6 +6,8 @@ import { constants, createWriteStream } from "node:fs";
 import { access, mkdir, readdir, rm } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
+import { buildChromeArgs, CHROME_LAUNCH_PROFILES } from "./chrome-launcher.mjs";
+
 /** Upper bound for any single CDP command, so a blocked page fails the run instead of hanging. */
 const CDP_COMMAND_TIMEOUT_MS = 60_000;
 
@@ -103,23 +105,13 @@ export function createProfileE2eHarness({ name, appRoot, defaultPort }) {
   }
 
   function startChrome(binary) {
-    const args = [
-      `--remote-debugging-port=${remotePort}`,
-      `--user-data-dir=${profileDir}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-background-networking",
-      "--disable-sync",
-      "--disable-component-update",
-      `--disable-extensions-except=${extensionDir}`,
-      `--load-extension=${extensionDir}`,
-      "--enable-logging=stderr",
-      "about:blank"
-    ];
-
-    if (headless) {
-      args.unshift("--headless=new");
-    }
+    const args = buildChromeArgs({
+      ...CHROME_LAUNCH_PROFILES.profileHarness,
+      remotePort,
+      profileDir,
+      extensionDir,
+      headless
+    });
 
     state.chrome = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
     state.logStream = createWriteStream(chromeLogPath, { flags: "a" });
