@@ -81,7 +81,10 @@ import { formatTabsContextReport, readTabsContext } from "./tabs-context.js";
 /** Player lifecycle status. */
 export * from "./playwright-actions.js";
 export * from "./pointer-insights.js";
+export * from "./realtime-messages.js";
+export * from "./realtime-streams.js";
 export * from "./recording-profile.js";
+export * from "./request-details.js";
 export * from "./route-chapters.js";
 export * from "./source-map.js";
 export * from "./stack-trace.js";
