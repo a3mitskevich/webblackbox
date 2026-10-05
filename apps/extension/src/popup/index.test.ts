@@ -2,796 +2,293 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const POPUP_EXPORT_POLICY_STORAGE_KEY = "webblackbox.popup.export-policy";
+import {
+  activeSession,
+  chooseRadio,
+  FakePort,
+  flushPopup,
+  getButton,
+  getStatusLine,
+  importPopupModule,
+  installChromeStub,
+  query,
+  resetPopupDom,
+  stoppedSession
+} from "./popup-test-harness.js";
+
 const POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY = "webblackbox.popup.full-visual-capture";
-const EXPORT_PRIVACY_WARNING = {
-  findingCount: 2,
-  summary: "email in event:E-1, jwt in event:E-2",
-  findings: [
-    {
-      kind: "email",
-      path: "event:E-1",
-      matchCount: 1
-    },
-    {
-      kind: "jwt",
-      path: "event:E-2",
-      matchCount: 1
-    }
-  ]
+
+const PREVIEW = {
+  kind: "sw.profile-preview",
+  catalog: [
+    { id: "default", name: "Default", base: "lite", extended: false, readOnly: false },
+    { id: "builtin:qa", name: "QA", base: "full", extended: true, readOnly: true }
+  ],
+  selection: {
+    id: "builtin:qa",
+    name: "QA",
+    base: "full",
+    source: "rule",
+    ruleName: "Stage",
+    extended: true
+  }
 };
 
-type PortMessageHandler = (message: unknown) => void;
-type PortPostMessageHandler = (message: unknown, port: FakePort) => void;
+const has = (selector: string): boolean => document.querySelector(selector) !== null;
+const radio = (name: string, value: string): HTMLInputElement =>
+  query<HTMLInputElement>(`input[name='${name}'][value='${value}']`);
 
-class FakePort {
-  name = "webblackbox:popup";
-  readonly postMessage: ReturnType<typeof vi.fn>;
-  private readonly messageHandlers = new Set<PortMessageHandler>();
-
-  constructor(onPostMessage?: PortPostMessageHandler) {
-    this.postMessage = vi.fn((message: unknown) => {
-      onPostMessage?.(message, this);
-    });
-  }
-
-  readonly onMessage = {
-    addListener: (handler: PortMessageHandler): void => {
-      this.messageHandlers.add(handler);
-    },
-    removeListener: (handler: PortMessageHandler): void => {
-      this.messageHandlers.delete(handler);
-    }
-  };
-
-  readonly onDisconnect = {
-    addListener: (): void => {
-      void 0;
-    },
-    removeListener: (): void => {
-      void 0;
-    }
-  };
-
-  emit(message: unknown): void {
-    for (const handler of this.messageHandlers) {
-      handler(message);
-    }
-  }
-}
-
-function installChromeStub(
-  port: FakePort,
-  options: {
-    sendMessage?: ReturnType<typeof vi.fn>;
-    onQuery?: () => void | Promise<void>;
-  } = {}
-): void {
-  const query = vi.fn(async () => {
-    await options.onQuery?.();
-    return [
-      {
-        id: 17,
-        active: true,
-        url: "https://example.com",
-        lastAccessed: Date.now()
-      }
-    ];
-  });
-  const create = vi.fn(async (details: { url?: string; active?: boolean }) => ({
-    id: 99,
-    active: details.active ?? true,
-    url: details.url
-  }));
-  const getURL = vi.fn((path: string) => `chrome-extension://test-extension/${path}`);
-
-  Object.defineProperty(globalThis, "chrome", {
-    configurable: true,
-    writable: true,
-    value: {
-      runtime: {
-        connect: vi.fn(() => port),
-        getURL,
-        getManifest: vi.fn(() => ({
-          version: "0.1.1"
-        })),
-        ...(options.sendMessage ? { sendMessage: options.sendMessage } : {})
-      },
-      tabs: {
-        create,
-        query
-      }
-    }
-  });
-}
-
-async function flushPopup(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-async function flushPopupWithFakeTimers(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await vi.advanceTimersByTimeAsync(0);
-  await Promise.resolve();
-}
-
-function getMaxArchiveInput(): HTMLInputElement {
-  const input = document.querySelector<HTMLInputElement>("#export-max-size-mb");
-
-  if (!input) {
-    throw new Error("missing max archive input");
-  }
-
-  return input;
-}
-
-function getRecentMinutesInput(): HTMLInputElement {
-  const input = document.querySelector<HTMLInputElement>("#export-recent-minutes");
-
-  if (!input) {
-    throw new Error("missing recent minutes input");
-  }
-
-  return input;
-}
-
-function getExportButton(): HTMLButtonElement {
-  const button = document.querySelector<HTMLButtonElement>("[data-action='export']");
-
-  if (!button) {
-    throw new Error("missing export button");
-  }
-
-  return button;
-}
-
-function getStatusLine(): HTMLElement {
-  const status = document.querySelector<HTMLElement>(".wb-popup__status");
-
-  if (!status) {
-    throw new Error("missing status line");
-  }
-
-  return status;
-}
-
-function getStartLiteButton(): HTMLButtonElement {
-  const button = document.querySelector<HTMLButtonElement>("[data-action='start-lite']");
-
-  if (!button) {
-    throw new Error("missing start lite button");
-  }
-
-  return button;
-}
-
-function getStartFullButton(): HTMLButtonElement {
-  const button = document.querySelector<HTMLButtonElement>("[data-action='start-full']");
-
-  if (!button) {
-    throw new Error("missing start full button");
-  }
-
-  return button;
-}
-
-function getStopButton(): HTMLButtonElement {
-  const button = document.querySelector<HTMLButtonElement>("[data-action='stop']");
-
-  if (!button) {
-    throw new Error("missing stop button");
-  }
-
-  return button;
-}
-
-function getFullVisualCaptureRadio(
-  value: "screenshots" | "recording" | "both" | "none"
-): HTMLInputElement {
-  const radio = document.querySelector<HTMLInputElement>(
-    `input[name='full-visual-capture'][value='${value}']`
-  );
-
-  if (!radio) {
-    throw new Error(`missing full visual capture radio: ${value}`);
-  }
-
-  return radio;
-}
-
-function getLiteReloadStartButton(): HTMLButtonElement {
-  const button = document.querySelector<HTMLButtonElement>("[data-action='start-lite-reload']");
-
-  if (!button) {
-    throw new Error("missing lite reload start button");
-  }
-
-  return button;
-}
-
-function getLiteDirectStartButton(): HTMLButtonElement {
-  const button = document.querySelector<HTMLButtonElement>("[data-action='start-lite-direct']");
-
-  if (!button) {
-    throw new Error("missing lite direct start button");
-  }
-
-  return button;
-}
-
-function getLiteStartCancelButton(): HTMLButtonElement {
-  const button = document.querySelector<HTMLButtonElement>("[data-action='start-lite-cancel']");
-
-  if (!button) {
-    throw new Error("missing lite start cancel button");
-  }
-
-  return button;
-}
-
-function getSessionsButton(): HTMLButtonElement {
-  const button = document.querySelector<HTMLButtonElement>("[data-action='open-sessions']");
-
-  if (!button) {
-    throw new Error("missing sessions button");
-  }
-
-  return button;
-}
-
-function getOptionsButton(): HTMLButtonElement {
-  const button = document.querySelector<HTMLButtonElement>("[data-action='open-options']");
-
-  if (!button) {
-    throw new Error("missing options button");
-  }
-
-  return button;
-}
-
-function enterPassphrase(value: string): void {
-  const input = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-  if (!input) {
-    throw new Error("missing passphrase input");
-  }
-
-  input.value = value;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-}
-
-function getPassphraseSubmitButton(): HTMLButtonElement {
-  const button = document.querySelector<HTMLButtonElement>("[data-passphrase-submit]");
-
-  if (!button) {
-    throw new Error("missing passphrase submit button");
-  }
-
-  return button;
-}
-
-async function importPopupModule(): Promise<void> {
-  vi.resetModules();
-  await import("./index.js");
+async function emitSessions(port: FakePort, sessions: unknown[]): Promise<void> {
+  port.emit({ kind: "sw.session-list", sessions });
   await flushPopup();
 }
 
-async function importPopupModuleWithFakeTimers(): Promise<void> {
-  vi.resetModules();
-  await import("./index.js");
-  await flushPopupWithFakeTimers();
+async function chooseFullEngine(): Promise<void> {
+  chooseRadio("capture-mode", "full");
+  await flushPopup();
 }
 
-describe("popup export policy form", () => {
-  beforeEach(() => {
-    document.body.innerHTML = `<main id="popup-root"></main>`;
-    localStorage.clear();
-  });
+function cleanUp(): void {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+  Reflect.deleteProperty(globalThis, "chrome");
+  document.body.innerHTML = "";
+  localStorage.clear();
+}
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.useRealTimers();
-    Reflect.deleteProperty(globalThis, "chrome");
-    document.body.innerHTML = "";
-    localStorage.clear();
-  });
+describe("popup states", () => {
+  beforeEach(resetPopupDom);
+  afterEach(cleanUp);
 
-  it("preserves archive policy draft fields across popup rerenders and reopen", async () => {
+  it("shows one Start button and hides actions that do not apply while idle", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
 
-    const maxArchiveMb = getMaxArchiveInput();
-    const recentMinutes = getRecentMinutesInput();
-
-    expect(document.querySelector("#export-include-screenshots")).toBeNull();
-    expect(document.querySelector("#export-include-screen-recordings")).toBeNull();
-    // Scanner findings are always shown inline: there is no alert toggle.
-    expect(document.querySelector("#export-alert-sensitive-findings")).toBeNull();
-
-    maxArchiveMb.value = "256";
-    maxArchiveMb.dispatchEvent(new Event("input", { bubbles: true }));
-
-    recentMinutes.value = "45";
-    recentMinutes.dispatchEvent(new Event("input", { bubbles: true }));
-
-    port.emit({
-      kind: "sw.session-list",
-      sessions: []
-    });
-    await flushPopup();
-
-    expect(document.querySelector("#export-include-screenshots")).toBeNull();
-    expect(document.querySelector("#export-include-screen-recordings")).toBeNull();
-    expect(getMaxArchiveInput().value).toBe("256");
-    expect(getRecentMinutesInput().value).toBe("45");
-    expect(JSON.parse(localStorage.getItem(POPUP_EXPORT_POLICY_STORAGE_KEY) ?? "null")).toEqual({
-      maxArchiveMb: "256",
-      recentMinutes: "45"
-    });
-
-    document.body.innerHTML = `<main id="popup-root"></main>`;
-    installChromeStub(new FakePort());
-    await importPopupModule();
-
-    expect(document.querySelector("#export-include-screenshots")).toBeNull();
-    expect(document.querySelector("#export-include-screen-recordings")).toBeNull();
-    expect(getMaxArchiveInput().value).toBe("256");
-    expect(getRecentMinutesInput().value).toBe("45");
+    expect(has("[data-action='start']")).toBe(true);
+    expect(has("[data-action='stop']")).toBe(false);
+    expect(has("[data-action='marker']")).toBe(false);
+    expect(has("[data-action='export']")).toBe(false);
+    expect(radio("capture-mode", "lite").checked).toBe(true);
+    expect(has("input[name='full-visual-capture']")).toBe(false);
+    expect(query(".wb-popup__title").textContent).toBe("WebBlackbox");
+    expect(document.body.textContent).toContain("Idle");
   });
 
-  it("exports archive limits with visual policy from the full capture selection", async () => {
+  it("swaps Start for Stop, Marker and counters while the current tab records", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
+    await emitSessions(port, [
+      { ...activeSession("sid-current", "lite"), eventCount: 42, errorCount: 2, sizeBytes: 2048 }
+    ]);
 
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-1",
-          tabId: 17,
-          mode: "full",
-          startedAt: Date.now(),
-          active: false
-        }
-      ]
-    });
-    await flushPopup();
+    expect(has("[data-action='start']")).toBe(false);
+    expect(has("[data-action='export']")).toBe(false);
+    expect(getButton("stop").disabled).toBe(false);
+    expect(has("[data-action='marker']")).toBe(true);
+    expect(query(".wb-popup__live .wb-stats").textContent).toContain("42");
+    expect(query(".wb-badge").textContent).toBe("REC");
 
-    const recording = getFullVisualCaptureRadio("recording");
-    recording.checked = true;
-    recording.dispatchEvent(new Event("change", { bubbles: true }));
+    await emitSessions(port, [activeSession("sid-other", "full", 42)]);
 
-    const maxArchiveMb = getMaxArchiveInput();
-    maxArchiveMb.value = "256";
-    maxArchiveMb.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(getButton("start").disabled).toBe(false);
+    expect(query(".wb-popup__live").textContent).toContain("Recording on tab 42");
+    // The other tab's recording is one row so Start and the last session still fit.
+    expect(has(".wb-popup__live .wb-stats")).toBe(false);
+    expect(has("[data-action='marker']")).toBe(false);
+    expect(getButton("stop").disabled).toBe(false);
+  });
 
-    const recentMinutes = getRecentMinutesInput();
-    recentMinutes.value = "45";
-    recentMinutes.dispatchEvent(new Event("input", { bubbles: true }));
-
-    getExportButton().click();
-    await flushPopup();
-
-    const promptForm = document.querySelector<HTMLFormElement>("form.wb-prompt-card");
-
-    if (!promptForm) {
-      throw new Error("missing export prompt");
-    }
-
-    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (!passphraseInput) {
-      throw new Error("missing passphrase input");
-    }
-
-    passphraseInput.value = " export-secret ";
-    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
-    getPassphraseSubmitButton().click();
-    await flushPopup();
-
-    expect(port.postMessage).toHaveBeenCalledWith({
-      kind: "ui.export",
-      sid: "sid-1",
-      passphrase: " export-secret ",
-      saveAs: false,
-      policy: {
-        includeScreenshots: false,
-        includeScreenRecordings: true,
-        maxArchiveBytes: 256 * 1024 * 1024,
-        recentWindowMs: 45 * 60 * 1000
+  it("refreshes active session state when reopening after the initial connect push was missed", async () => {
+    const sessions = [activeSession("sid-full-active", "full")];
+    const port = new FakePort((message, currentPort) => {
+      if ((message as { kind?: unknown }).kind === "ui.request-session-list") {
+        currentPort.emit({ kind: "sw.session-list", sessions });
       }
     });
-  });
-
-  it("shows export progress and uses runtime acknowledgement when available", async () => {
-    const port = new FakePort();
-    let resolveExport: (value: unknown) => void = () => undefined;
-    const sendMessage = vi.fn(
-      () =>
-        new Promise((resolve) => {
-          resolveExport = resolve;
-        })
-    );
-    installChromeStub(port, { sendMessage });
+    installChromeStub(port, {
+      onQuery: () => port.emit({ kind: "sw.session-list", sessions })
+    });
 
     await importPopupModule();
 
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-export-runtime",
-          tabId: 17,
-          mode: "full",
-          startedAt: Date.now(),
-          active: false
-        }
-      ]
-    });
-    await flushPopup();
-
-    getExportButton().click();
-    await flushPopup();
-
-    const promptForm = document.querySelector<HTMLFormElement>("form.wb-prompt-card");
-    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (!promptForm || !passphraseInput) {
-      throw new Error("missing export prompt");
-    }
-
-    passphraseInput.value = "export-secret";
-    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
-    getPassphraseSubmitButton().click();
-    await flushPopup();
-
-    expect(getStatusLine().textContent).toBe("Exporting...");
-    expect(getExportButton().disabled).toBe(true);
-    expect(sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "ui.export",
-        sid: "sid-export-runtime",
-        passphrase: "export-secret",
-        saveAs: false
-      })
-    );
-
-    resolveExport({
-      ok: true,
-      fileName: "sid-export-runtime.webblackbox"
-    });
-    await flushPopup();
-
-    expect(getStatusLine().textContent).toBe("Exported: sid-export-runtime.webblackbox");
-    expect(getExportButton().disabled).toBe(false);
+    expect(port.postMessage).toHaveBeenCalledWith({ kind: "ui.request-session-list" });
+    expect(has("[data-action='start']")).toBe(false);
+    expect(getButton("stop").disabled).toBe(false);
+    expect(document.body.textContent).toContain("Recording (Full)");
   });
 
-  it("shows export privacy findings inline with the download success, never in an alert", async () => {
-    const port = new FakePort();
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => undefined);
-    const sendMessage = vi.fn(async () => ({
-      ok: true,
-      fileName: "sid-export-warning.webblackbox",
-      privacyWarning: EXPORT_PRIVACY_WARNING
-    }));
-    installChromeStub(port, { sendMessage });
-
-    await importPopupModule();
-
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-export-warning",
-          tabId: 17,
-          mode: "full",
-          startedAt: Date.now(),
-          active: false
-        }
-      ]
-    });
-    await flushPopup();
-
-    getExportButton().click();
-    await flushPopup();
-
-    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (!passphraseInput) {
-      throw new Error("missing passphrase input");
-    }
-
-    passphraseInput.value = "export-secret";
-    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
-    getPassphraseSubmitButton().click();
-    await flushPopup();
-
-    expect(getStatusLine().textContent).toBe("Exported: sid-export-warning.webblackbox");
-    expect(document.querySelector(".wb-popup__privacy-warning")?.textContent).toContain(
-      "email in event:E-1, jwt in event:E-2"
-    );
-
-    port.emit({
-      kind: "sw.export-status",
-      sid: "sid-export-warning",
-      ok: true,
-      fileName: "sid-export-warning.webblackbox",
-      privacyWarning: EXPORT_PRIVACY_WARNING
-    });
-    await flushPopup();
-
-    expect(document.querySelector(".wb-popup__privacy-warning[role='status']")).not.toBeNull();
-
-    getExportButton().click();
-    await flushPopup();
-
-    const repeatPassphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (!repeatPassphraseInput) {
-      throw new Error("missing repeat passphrase input");
-    }
-
-    repeatPassphraseInput.value = "export-secret";
-    repeatPassphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
-    getPassphraseSubmitButton().click();
-    await flushPopup();
-
-    expect(alertSpy).not.toHaveBeenCalled();
-  });
-
-  it("shows a retryable failure when the export acknowledgement stalls", async () => {
-    vi.useFakeTimers();
-
-    const port = new FakePort();
-    const sendMessage = vi.fn(() => new Promise(() => undefined));
-    installChromeStub(port, { sendMessage });
-
-    await importPopupModuleWithFakeTimers();
-
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-export-stalled",
-          tabId: 17,
-          mode: "full",
-          startedAt: Date.now(),
-          active: false
-        }
-      ]
-    });
-    await flushPopupWithFakeTimers();
-
-    getExportButton().click();
-    await flushPopupWithFakeTimers();
-
-    const promptForm = document.querySelector<HTMLFormElement>("form.wb-prompt-card");
-    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (!promptForm || !passphraseInput) {
-      throw new Error("missing export prompt");
-    }
-
-    passphraseInput.value = "export-secret";
-    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
-    getPassphraseSubmitButton().click();
-    await flushPopupWithFakeTimers();
-
-    expect(getStatusLine().textContent).toBe("Exporting...");
-    expect(getExportButton().disabled).toBe(true);
-
-    await vi.advanceTimersByTimeAsync(120_000);
-    await flushPopupWithFakeTimers();
-
-    expect(getStatusLine().textContent).toBe(
-      "Export failed: Export did not finish within 2 minutes. Check Chrome downloads or reload the extension and retry."
-    );
-    expect(getExportButton().disabled).toBe(false);
-  });
-
-  it("exports only with a passphrase of at least 8 characters", async () => {
+  it("stops the recording session from the popup", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
+    await emitSessions(port, [activeSession("sid-stop", "full", 17)]);
+    getButton("stop").click();
 
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-passphrase",
-          tabId: 17,
-          mode: "lite",
-          startedAt: Date.now(),
-          active: false
-        }
-      ]
-    });
-    await flushPopup();
-
-    getExportButton().click();
-    await flushPopup();
-
-    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (!passphraseInput) {
-      throw new Error("missing passphrase input");
-    }
-
-    for (const value of ["", "       ", "short12"]) {
-      passphraseInput.value = value;
-      passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
-      getPassphraseSubmitButton().click();
-      await flushPopup();
-
-      expect(port.postMessage).not.toHaveBeenCalledWith(
-        expect.objectContaining({ kind: "ui.export" })
-      );
-      expect(passphraseInput.validationMessage).toContain("at least 8 characters");
-    }
-
-    passphraseInput.value = "long-enough";
-    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
-    getPassphraseSubmitButton().click();
-    await flushPopup();
-
-    expect(port.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "ui.export",
-        sid: "sid-passphrase",
-        passphrase: "long-enough"
-      })
-    );
+    expect(port.postMessage).toHaveBeenCalledWith({ kind: "ui.stop", tabId: 17 });
   });
-  it("opens the sessions and options pages from the popup", async () => {
+
+  it("reports a lost service worker connection instead of a silent Stop", async () => {
     const port = new FakePort();
     installChromeStub(port);
+
+    await importPopupModule();
+    await emitSessions(port, [activeSession("sid-stop", "full", 17)]);
+    port.disconnect();
+    await flushPopup();
+    port.postMessage.mockClear();
+    getButton("stop").click();
+    await flushPopup();
+
+    expect(port.postMessage).not.toHaveBeenCalled();
+    expect(getStatusLine().textContent).toContain("Lost the connection");
+    expect(getStatusLine().classList.contains("wb-popup__status--error")).toBe(true);
+  });
+
+  it("keeps keyboard focus on the engine switch across the re-render it causes", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    radio("capture-mode", "full").focus();
+    await chooseFullEngine();
+
+    expect(document.activeElement).toBe(radio("capture-mode", "full"));
+    expect(radio("capture-mode", "full").checked).toBe(true);
+
+    await emitSessions(port, [stoppedSession("sid-last")]);
+
+    expect(document.activeElement).toBe(radio("capture-mode", "full"));
+  });
+
+  it("announces status changes through one persistent live region", async () => {
+    const port = new FakePort();
+    installChromeStub(port, { tabsSendMessage: vi.fn(async () => undefined) });
+
+    await importPopupModule();
+    const live = query<HTMLElement>("[data-popup-live]");
+    await emitSessions(port, [activeSession("sid-marker", "full", 17)]);
+    getButton("marker").click();
+    await flushPopup();
+
+    expect(query<HTMLElement>("[data-popup-live]")).toBe(live);
+    expect(live.getAttribute("aria-live")).toBe("polite");
+    expect(live.textContent).toBe(getStatusLine().textContent);
+    expect(live.textContent).not.toBe("");
+    expect(document.querySelectorAll("[role='status']")).toHaveLength(1);
+  });
+
+  it("adds a marker through the tab's content script", async () => {
+    const port = new FakePort();
+    const stub = installChromeStub(port);
+
+    await importPopupModule();
+    await emitSessions(port, [activeSession("sid-marker", "full", 17)]);
+    getButton("marker").click();
+    await flushPopup();
+
+    expect(stub.tabsSendMessage).toHaveBeenCalledWith(17, { kind: "sw.marker-command" });
+    expect(getStatusLine().textContent).toBe("Marker added.");
+  });
+
+  it("reports a marker failure", async () => {
+    const port = new FakePort();
+    installChromeStub(port, {
+      tabsSendMessage: vi.fn(async () => {
+        throw new Error("Receiving end does not exist.");
+      })
+    });
+
+    await importPopupModule();
+    await emitSessions(port, [activeSession("sid-marker", "full", 17)]);
+    getButton("marker").click();
+    await flushPopup();
+
+    expect(getStatusLine().textContent).toBe("Marker failed: Receiving end does not exist.");
+    expect(getStatusLine().classList.contains("wb-popup__status--error")).toBe(true);
+  });
+
+  it("offers Export for the last stopped session", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    await emitSessions(port, [
+      { ...stoppedSession("sid-last", "full"), eventCount: 1843, profileName: "QA" }
+    ]);
+
+    expect(getButton("export").disabled).toBe(false);
+    expect(query(".wb-popup__last").textContent).toContain("QA");
+    expect(query(".wb-popup__last").textContent).toContain("1843");
+  });
+
+  it("opens the sessions and options pages from the header icons", async () => {
+    const port = new FakePort();
+    const stub = installChromeStub(port);
     const windowClose = vi.spyOn(window, "close").mockImplementation(() => undefined);
 
     await importPopupModule();
 
-    getSessionsButton().click();
-    getOptionsButton().click();
+    expect(getButton("open-sessions").getAttribute("aria-label")).toBe("Sessions");
+    expect(getButton("open-options").getAttribute("aria-label")).toBe("Options");
+    getButton("open-sessions").click();
+    getButton("open-options").click();
     await flushPopup();
 
-    const tabsCreate = (
-      globalThis as typeof globalThis & {
-        chrome?: {
-          tabs?: {
-            create?: ReturnType<typeof vi.fn>;
-          };
-        };
-      }
-    ).chrome?.tabs?.create;
-
-    expect(tabsCreate).toHaveBeenNthCalledWith(1, {
+    expect(stub.tabsCreate).toHaveBeenNthCalledWith(1, {
       url: "chrome-extension://test-extension/sessions.html",
       active: true
     });
-    expect(tabsCreate).toHaveBeenNthCalledWith(2, {
+    expect(stub.tabsCreate).toHaveBeenNthCalledWith(2, {
       url: "chrome-extension://test-extension/options.html",
       active: true
     });
     expect(windowClose).toHaveBeenCalledTimes(2);
   });
 
-  it("disables start buttons only when the current tab is already recording", async () => {
+  it("renders the ring buffer meter without inline styles", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
-
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-current",
-          tabId: 17,
-          mode: "lite",
-          startedAt: Date.now(),
-          active: true
-        }
-      ]
-    });
-    await flushPopup();
-
-    expect(getStartLiteButton().disabled).toBe(true);
-    expect(getStartFullButton().disabled).toBe(true);
-    expect(getFullVisualCaptureRadio("screenshots").disabled).toBe(true);
-    expect(getFullVisualCaptureRadio("recording").disabled).toBe(true);
-    expect(getFullVisualCaptureRadio("both").disabled).toBe(true);
-    expect(getFullVisualCaptureRadio("none").disabled).toBe(true);
-
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-other",
-          tabId: 42,
-          mode: "full",
-          startedAt: Date.now(),
-          active: true
-        }
-      ]
-    });
-    await flushPopup();
-
-    expect(getStartLiteButton().disabled).toBe(false);
-    expect(getStartFullButton().disabled).toBe(false);
-    expect(getFullVisualCaptureRadio("screenshots").disabled).toBe(false);
-    expect(getFullVisualCaptureRadio("recording").disabled).toBe(false);
-    expect(getFullVisualCaptureRadio("both").disabled).toBe(false);
-    expect(getFullVisualCaptureRadio("none").disabled).toBe(false);
-  });
-
-  it("refreshes active session state when reopening after the initial connect push was missed", async () => {
-    const activeSessions = [
+    await emitSessions(port, [
       {
-        sid: "sid-full-active",
-        tabId: 17,
-        mode: "full",
-        startedAt: Date.now(),
-        active: true
+        ...activeSession("sid-current", "lite"),
+        startedAt: Date.now() - 3 * 60 * 1000,
+        ringBufferMinutes: 10
       }
-    ];
-    const port = new FakePort((message, currentPort) => {
-      if ((message as { kind?: unknown }).kind === "ui.request-session-list") {
-        currentPort.emit({
-          kind: "sw.session-list",
-          sessions: activeSessions
-        });
-      }
-    });
-    installChromeStub(port, {
-      onQuery: () => {
-        port.emit({
-          kind: "sw.session-list",
-          sessions: activeSessions
-        });
-      }
-    });
+    ]);
 
-    await importPopupModule();
+    const meter = document.querySelector<HTMLProgressElement>("progress.wb-popup__buffer-meter");
 
-    expect(port.postMessage).toHaveBeenCalledWith({
-      kind: "ui.request-session-list"
-    });
-    expect(getStartFullButton().disabled).toBe(true);
-    expect(getStartLiteButton().disabled).toBe(true);
-    expect(getFullVisualCaptureRadio("screenshots").disabled).toBe(true);
-    expect(getFullVisualCaptureRadio("recording").disabled).toBe(true);
-    expect(getFullVisualCaptureRadio("both").disabled).toBe(true);
-    expect(getFullVisualCaptureRadio("none").disabled).toBe(true);
-    expect(getStopButton().disabled).toBe(false);
-    expect(document.body.textContent).toContain("Recording (Full)");
+    expect(meter?.value).toBeGreaterThan(0);
+    expect(document.querySelector("[style]")).toBeNull();
   });
+});
+
+describe("popup start", () => {
+  beforeEach(resetPopupDom);
+  afterEach(cleanUp);
 
   it("asks before starting lite with a page reload", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
-
-    getStartLiteButton().click();
+    getButton("start").click();
     await flushPopup();
 
-    expect(document.querySelector(".wb-confirm-overlay")).not.toBeNull();
-    expect(getLiteReloadStartButton().textContent).toBe("Reload and Start Lite");
+    expect(has(".wb-confirm-overlay")).toBe(true);
+    expect(getButton("start-lite-reload").textContent).toBe("Reload and Start Lite");
     expect(port.postMessage).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "ui.start",
-        mode: "lite"
-      })
+      expect.objectContaining({ kind: "ui.start" })
     );
 
-    getLiteReloadStartButton().click();
+    getButton("start-lite-reload").click();
     await flushPopup();
 
     expect(port.postMessage).toHaveBeenCalledWith({
@@ -800,25 +297,20 @@ describe("popup export policy form", () => {
       mode: "lite",
       reloadPage: true
     });
-    expect(document.querySelector(".wb-confirm-overlay")).toBeNull();
+    expect(has(".wb-confirm-overlay")).toBe(false);
   });
 
-  it("can start lite without reloading when the user chooses the non-refresh path", async () => {
+  it("can start lite without reloading", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
-
-    getStartLiteButton().click();
+    getButton("start").click();
     await flushPopup();
-    getLiteDirectStartButton().click();
+    getButton("start-lite-direct").click();
     await flushPopup();
 
-    expect(port.postMessage).toHaveBeenCalledWith({
-      kind: "ui.start",
-      tabId: 17,
-      mode: "lite"
-    });
+    expect(port.postMessage).toHaveBeenCalledWith({ kind: "ui.start", tabId: 17, mode: "lite" });
   });
 
   it("does not start lite when the reload confirmation is cancelled", async () => {
@@ -826,28 +318,24 @@ describe("popup export policy form", () => {
     installChromeStub(port);
 
     await importPopupModule();
-
-    getStartLiteButton().click();
+    getButton("start").click();
     await flushPopup();
-    getLiteStartCancelButton().click();
+    getButton("start-lite-cancel").click();
     await flushPopup();
 
     expect(port.postMessage).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "ui.start",
-        mode: "lite"
-      })
+      expect.objectContaining({ kind: "ui.start" })
     );
-    expect(document.querySelector(".wb-confirm-overlay")).toBeNull();
+    expect(has(".wb-confirm-overlay")).toBe(false);
   });
 
-  it("keeps start buttons disabled while a full start request is pending", async () => {
+  it("keeps Start disabled while a full start request is pending", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
-
-    getStartFullButton().click();
+    await chooseFullEngine();
+    getButton("start").click();
     await flushPopup();
 
     expect(port.postMessage).toHaveBeenCalledWith({
@@ -856,236 +344,83 @@ describe("popup export policy form", () => {
       mode: "full",
       visualCapture: "screenshots"
     });
-    expect(getStartLiteButton().disabled).toBe(true);
-    expect(getStartFullButton().disabled).toBe(true);
+    expect(getButton("start").disabled).toBe(true);
+    expect(getButton("start").textContent).toBe("Starting…");
 
-    port.emit({
-      kind: "sw.session-list",
-      sessions: []
-    });
-    await flushPopup();
+    await emitSessions(port, []);
 
-    expect(getStartLiteButton().disabled).toBe(true);
-    expect(getStartFullButton().disabled).toBe(true);
+    expect(getButton("start").disabled).toBe(true);
 
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-started",
-          tabId: 17,
-          mode: "full",
-          startedAt: Date.now(),
-          active: true
-        }
-      ]
-    });
-    await flushPopup();
+    await emitSessions(port, [activeSession("sid-started", "full")]);
+
+    expect(has("[data-action='start']")).toBe(false);
   });
 
-  it("starts full mode with recording-only visual capture when explicitly selected", async () => {
+  it.each([
+    ["recording", "recording"],
+    ["both", "both"],
+    ["none", "none"]
+  ] as const)("starts full mode with %s visual capture", async (choice, expected) => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
+    await chooseFullEngine();
 
-    const screenshots = getFullVisualCaptureRadio("screenshots");
-    const recording = getFullVisualCaptureRadio("recording");
-    expect(screenshots.checked).toBe(true);
-    expect(recording.checked).toBe(false);
+    expect(radio("full-visual-capture", "screenshots").checked).toBe(true);
 
-    recording.checked = true;
-    recording.dispatchEvent(new Event("change", { bubbles: true }));
-    getStartFullButton().click();
+    chooseRadio("full-visual-capture", choice);
+    getButton("start").click();
     await flushPopup();
 
     expect(port.postMessage).toHaveBeenCalledWith({
       kind: "ui.start",
       tabId: 17,
       mode: "full",
-      visualCapture: "recording"
+      visualCapture: expected
     });
   });
 
-  it("starts full mode with screenshots and recording when both is selected", async () => {
+  it("preserves the full visual capture choice across popup reopen", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
-
-    const both = getFullVisualCaptureRadio("both");
-    both.checked = true;
-    both.dispatchEvent(new Event("change", { bubbles: true }));
-    getStartFullButton().click();
-    await flushPopup();
-
-    expect(port.postMessage).toHaveBeenCalledWith({
-      kind: "ui.start",
-      tabId: 17,
-      mode: "full",
-      visualCapture: "both"
-    });
-  });
-
-  it("starts full mode without visual capture when none is selected", async () => {
-    const port = new FakePort();
-    installChromeStub(port);
-
-    await importPopupModule();
-
-    const none = getFullVisualCaptureRadio("none");
-    none.checked = true;
-    none.dispatchEvent(new Event("change", { bubbles: true }));
-    getStartFullButton().click();
-    await flushPopup();
-
-    expect(port.postMessage).toHaveBeenCalledWith({
-      kind: "ui.start",
-      tabId: 17,
-      mode: "full",
-      visualCapture: "none"
-    });
-  });
-
-  it("exports no visual artifacts when none is selected", async () => {
-    const port = new FakePort();
-    installChromeStub(port);
-
-    await importPopupModule();
-
-    const none = getFullVisualCaptureRadio("none");
-    none.checked = true;
-    none.dispatchEvent(new Event("change", { bubbles: true }));
-
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-none-export",
-          tabId: 17,
-          mode: "full",
-          startedAt: Date.now(),
-          active: false
-        }
-      ]
-    });
-    await flushPopup();
-
-    getExportButton().click();
-    await flushPopup();
-    enterPassphrase("none-export-secret");
-    getPassphraseSubmitButton().click();
-    await flushPopup();
-
-    expect(port.postMessage).toHaveBeenCalledWith({
-      kind: "ui.export",
-      sid: "sid-none-export",
-      passphrase: "none-export-secret",
-      saveAs: false,
-      policy: {
-        includeScreenshots: false,
-        includeScreenRecordings: false,
-        maxArchiveBytes: 100 * 1024 * 1024,
-        recentWindowMs: 20 * 60 * 1000
-      }
-    });
-  });
-
-  it("preserves the full visual capture mode across popup reopen", async () => {
-    const port = new FakePort();
-    installChromeStub(port);
-
-    await importPopupModule();
-
-    const recording = getFullVisualCaptureRadio("recording");
-    recording.checked = true;
-    recording.dispatchEvent(new Event("change", { bubbles: true }));
+    await chooseFullEngine();
+    chooseRadio("full-visual-capture", "recording");
 
     expect(localStorage.getItem(POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY)).toBe("recording");
 
     document.body.innerHTML = `<main id="popup-root"></main>`;
-    const reopenedPort = new FakePort();
-    installChromeStub(reopenedPort);
+    installChromeStub(new FakePort());
     await importPopupModule();
+    await chooseFullEngine();
 
-    expect(getFullVisualCaptureRadio("screenshots").checked).toBe(false);
-    expect(getFullVisualCaptureRadio("recording").checked).toBe(true);
-
-    getStartFullButton().click();
-    await flushPopup();
-
-    expect(reopenedPort.postMessage).toHaveBeenCalledWith({
-      kind: "ui.start",
-      tabId: 17,
-      mode: "full",
-      visualCapture: "recording"
-    });
+    expect(radio("full-visual-capture", "recording").checked).toBe(true);
   });
 
-  it("renders the ring buffer meter without inline styles", async () => {
+  it("reports a start failure", async () => {
     const port = new FakePort();
-    installChromeStub(port);
+    installChromeStub(port, {
+      sendMessage: vi.fn(async () => ({ ok: false, error: "Debugger is already attached" }))
+    });
 
     await importPopupModule();
-
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [
-        {
-          sid: "sid-current",
-          tabId: 17,
-          mode: "lite",
-          startedAt: Date.now() - 3 * 60 * 1000,
-          ringBufferMinutes: 10,
-          active: true
-        }
-      ]
-    });
+    await chooseFullEngine();
+    getButton("start").click();
     await flushPopup();
 
-    const meter = document.querySelector<HTMLProgressElement>("progress.wb-popup__buffer-meter");
-
-    expect(meter).not.toBeNull();
-    expect(meter?.value).toBeGreaterThan(0);
-    expect(document.querySelector("[style]")).toBeNull();
+    expect(getStatusLine().textContent).toBe("Start failed: Debugger is already attached");
+    expect(getButton("start").disabled).toBe(false);
   });
 });
 
 describe("popup recording profiles", () => {
-  const PREVIEW = {
-    kind: "sw.profile-preview",
-    catalog: [
-      { id: "default", name: "Default", base: "lite", extended: false, readOnly: false },
-      { id: "builtin:qa", name: "QA", base: "full", extended: true, readOnly: true }
-    ],
-    selection: {
-      id: "builtin:qa",
-      name: "QA",
-      base: "full",
-      source: "rule",
-      ruleName: "Stage",
-      extended: true
-    }
-  };
+  beforeEach(resetPopupDom);
+  afterEach(cleanUp);
 
-  beforeEach(() => {
-    document.body.innerHTML = `<main id="popup-root"></main>`;
-    localStorage.clear();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  function getProfileSelect(): HTMLSelectElement {
-    const select = document.querySelector<HTMLSelectElement>("[data-profile-select]");
-
-    if (!select) {
-      throw new Error("missing profile select");
-    }
-
-    return select;
-  }
+  const getProfileSelect = (): HTMLSelectElement =>
+    query<HTMLSelectElement>("[data-profile-select]");
 
   it("asks the service worker for the rule-selected profile and explains it", async () => {
     const port = new FakePort();
@@ -1107,9 +442,47 @@ describe("popup recording profiles", () => {
       "Default",
       "QA · extended"
     ]);
-    expect(document.querySelector("[data-profile-hint]")?.textContent).toBe(
+    expect(query("[data-profile-hint]").textContent).toBe(
       "Records with QA (rule: Stage). Recommended start: Full."
     );
+  });
+
+  it("defaults the engine to the profile's recommendation until the user picks one", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    port.emit(PREVIEW);
+    await flushPopup();
+
+    expect(radio("capture-mode", "full").checked).toBe(true);
+
+    chooseRadio("capture-mode", "lite");
+    await flushPopup();
+    port.emit(PREVIEW);
+    await flushPopup();
+
+    expect(radio("capture-mode", "lite").checked).toBe(true);
+
+    const select = getProfileSelect();
+    select.value = "builtin:qa";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    port.emit(PREVIEW);
+    await flushPopup();
+
+    expect(radio("capture-mode", "full").checked).toBe(true);
+  });
+
+  it("shows the visual capture a profile pins instead of the choice", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    port.emit({ ...PREVIEW, selection: { ...PREVIEW.selection, visual: "both" } });
+    await flushPopup();
+
+    expect(has("input[name='full-visual-capture']")).toBe(false);
+    expect(document.body.textContent).toContain("Visual capture: Both (set by the profile).");
   });
 
   it("starts with an explicitly chosen profile and remembers the choice", async () => {
@@ -1132,7 +505,9 @@ describe("popup recording profiles", () => {
     });
     expect(localStorage.getItem("webblackbox.popup.profile-choice")).toBe("builtin:qa");
 
-    getStartFullButton().click();
+    port.emit(PREVIEW);
+    await flushPopup();
+    getButton("start").click();
     await flushPopup();
 
     expect(port.postMessage).toHaveBeenCalledWith({
@@ -1142,33 +517,6 @@ describe("popup recording profiles", () => {
       profileId: "builtin:qa",
       visualCapture: "screenshots"
     });
-  });
-
-  it("shows export failures without asking to confirm anything", async () => {
-    const port = new FakePort();
-    const sendMessage = vi.fn().mockResolvedValue({ ok: false, error: "disk full" });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    installChromeStub(port, { sendMessage });
-
-    await importPopupModule();
-    port.emit({
-      kind: "sw.session-list",
-      sessions: [{ sid: "sid-qa", tabId: 17, mode: "full", startedAt: Date.now(), active: false }]
-    });
-    await flushPopup();
-
-    getExportButton().click();
-    await flushPopup();
-    enterPassphrase("qa-secret-1");
-    getPassphraseSubmitButton().click();
-    await flushPopup();
-    await flushPopup();
-
-    expect(confirmSpy).not.toHaveBeenCalled();
-    expect(
-      sendMessage.mock.calls.filter(([message]) => message?.kind === "ui.export")
-    ).toHaveLength(1);
-    expect(getStatusLine().textContent).toContain("disk full");
   });
 
   it("names the categories the enterprise policy caps", async () => {
@@ -1182,40 +530,41 @@ describe("popup recording profiles", () => {
     });
     await flushPopup();
 
-    expect(document.querySelector("[data-profile-hint]")?.textContent).toBe(
+    expect(query("[data-profile-hint]").textContent).toBe(
       "Records with QA (rule: Stage). Your organization's policy limits: console, network. Recommended start: Full."
     );
   });
 
   it("requires a profile when every profile was deleted and links to the profiles page", async () => {
     const port = new FakePort();
-    installChromeStub(port);
+    const chrome = installChromeStub(port);
     vi.spyOn(window, "close").mockImplementation(() => undefined);
 
     await importPopupModule();
 
-    expect(document.querySelector("[data-profile-required]")).toBeNull();
+    expect(has("[data-profile-required]")).toBe(false);
 
     port.emit({ kind: "sw.profile-preview", catalog: [], selection: null });
     await flushPopup();
 
-    expect(document.querySelector("[data-profile-required]")?.textContent).toBe(
+    expect(query("[data-profile-required]").textContent).toBe(
       "No recording profile" +
-        "Recording needs at least one profile. Create one or restore the recommended profiles." +
+        "Recording needs at least one profile. Restore the recommended profiles or import yours in Options." +
         "Open profiles"
     );
-    expect(getStartLiteButton().disabled).toBe(true);
-    expect(getStartFullButton().disabled).toBe(true);
+    expect(has("[data-action='start']")).toBe(false);
+    // It takes the Start panel's place and look: a panel with one primary action.
+    expect(query("[data-profile-required]").classList.contains("wb-panel")).toBe(true);
+    expect(
+      query("[data-profile-required] [data-action='open-profiles']").classList.contains(
+        "wb-btn--brand"
+      )
+    ).toBe(true);
 
-    document
-      .querySelector<HTMLButtonElement>("[data-profile-required] [data-action='open-profiles']")
-      ?.click();
+    query<HTMLButtonElement>("[data-profile-required] [data-action='open-profiles']").click();
     await flushPopup();
 
-    expect(
-      (globalThis as typeof globalThis & { chrome: { tabs: { create: ReturnType<typeof vi.fn> } } })
-        .chrome.tabs.create
-    ).toHaveBeenCalledWith({
+    expect(chrome.tabsCreate).toHaveBeenCalledWith({
       url: "chrome-extension://test-extension/options.html#profiles",
       active: true
     });
@@ -1231,12 +580,9 @@ describe("popup recording profiles", () => {
       kind: "sw.session-list",
       sessions: [
         {
-          sid: "sid-cancelled",
-          tabId: 17,
-          mode: "full",
+          ...stoppedSession("sid-cancelled"),
           startedAt: Date.now() - 5_000,
           stoppedAt: Date.now(),
-          active: false,
           profileName: "QA",
           profileCancel: {
             reason: "rule-changed",
@@ -1249,20 +595,19 @@ describe("popup recording profiles", () => {
     });
     await flushPopup();
 
-    const notice = document.querySelector<HTMLElement>("[data-profile-cancel]");
+    const notice = query<HTMLElement>("[data-profile-cancel]");
 
-    expect(notice?.getAttribute("role")).toBe("alert");
-    expect(
-      [...(notice?.querySelectorAll("strong, p") ?? [])].map((node) => node.textContent)
-    ).toEqual([
+    expect(notice.getAttribute("role")).toBe("alert");
+    expect([...notice.querySelectorAll("strong, p")].map((node) => node.textContent)).toEqual([
       "Recording stopped: the profile changed",
       "It recorded with QA, but the site rules pick Default for this page.",
       "To keep recording here with QA, choose it in the profile list instead of Auto, or add a site rule for this site in Options → Profiles.",
       "What was recorded before the change is kept: export or delete it."
     ]);
-    expect(getExportButton().disabled).toBe(false);
+    expect(getButton("export").disabled).toBe(false);
+    expect(getButton("start").disabled).toBe(false);
 
-    notice?.querySelector<HTMLButtonElement>("[data-action='ack-profile-cancel']")?.click();
+    notice.querySelector<HTMLButtonElement>("[data-action='ack-profile-cancel']")?.click();
     await flushPopup();
 
     expect(port.postMessage).toHaveBeenCalledWith({

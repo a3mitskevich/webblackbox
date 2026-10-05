@@ -1,6 +1,5 @@
-import { isValidExportPassphrase } from "@webblackbox/protocol/archive-encryption";
-
 import { getChromeApi } from "../shared/chrome-api.js";
+import { loadExportPolicyPrefs, toExportPolicy } from "../shared/export-policy-prefs.js";
 import { createExtensionI18n } from "../shared/i18n.js";
 import {
   PORT_NAMES,
@@ -9,50 +8,472 @@ import {
   type ExtensionOutboundMessage,
   type SessionListItem
 } from "../shared/messages.js";
+import { openConfirmDialog, openPassphraseDialog } from "../shared/ui/dialogs.js";
+import { el } from "../shared/ui/dom.js";
+import { preserveFocus } from "../shared/ui/focus.js";
+import { icon } from "../shared/ui/icons.js";
+import {
+  EMPTY_FILTERS,
+  filterSessions,
+  listProfileNames,
+  normalizeNoteInput,
+  parseTagInput,
+  shortenSessionId,
+  type SessionFilters,
+  type SessionStatusFilter
+} from "./model.js";
+import {
+  createBulkBar,
+  createSessionsTable,
+  createToolbar,
+  fillProfileOptions,
+  type SessionFormatters
+} from "./table.js";
+
+/** Hosted Player; archives are opened there locally and never uploaded. */
+const PLAYER_URL = "https://webllm.github.io/webblackbox/";
 
 const chromeApi = getChromeApi();
 const port = chromeApi?.runtime?.connect({ name: PORT_NAMES.sessions });
-const i18n = createExtensionI18n({
-  pageTitleKey: "pageTitleSessions"
-});
-const { locale, t, formatMode, formatRelativeTime, formatDuration, formatByteSize } = i18n;
+const i18n = createExtensionI18n({ pageTitleKey: "pageTitleSessions" });
+const { locale, t } = i18n;
+const format: SessionFormatters = {
+  t,
+  formatMode: i18n.formatMode,
+  formatRelativeTime: i18n.formatRelativeTime,
+  formatDuration: i18n.formatDuration,
+  formatByteSize: i18n.formatByteSize,
+  formatAbsoluteTime: (timestamp) => new Date(timestamp).toLocaleString(locale)
+};
 const root = document.getElementById("sessions-root");
 
-let sessions: SessionListItem[] = [];
+type PendingExport = { openPlayer: boolean };
+
+type Page = {
+  root: HTMLElement;
+  count: HTMLElement;
+  /** Privacy scanner findings of the last export: shown on the page, never blocking. */
+  notice: HTMLElement;
+  profileFilter: HTMLSelectElement;
+  bulk: HTMLElement;
+  list: HTMLElement;
+};
+
+const state: {
+  sessions: SessionListItem[];
+  filters: SessionFilters;
+  selected: Set<string>;
+  expandedSid?: string;
+} = {
+  sessions: [],
+  filters: { ...EMPTY_FILTERS },
+  selected: new Set()
+};
 /** Exports started on this page, by sid: their failures are reported here. */
-const pendingExports = new Set<string>();
-/** Privacy scanner findings of the last export: shown on the page, never blocking. */
-let exportNotice: string | null = null;
+const pendingExports = new Map<string, PendingExport>();
 
 if (root) {
-  render(root);
+  const page = createPage();
+  root.replaceChildren(page.root);
+  renderList(page);
+  bindPage(page);
 
   port?.onMessage.addListener((message) => {
     const typed = message as ExtensionOutboundMessage;
 
     if (typed.kind === "sw.session-list") {
-      sessions = typed.sessions;
-      render(root);
+      state.sessions = typed.sessions;
+      const known = new Set(typed.sessions.map((session) => session.sid));
+      state.selected = new Set([...state.selected].filter((sid) => known.has(sid)));
+      renderList(page);
       return;
     }
 
     if (typed.kind === "sw.export-status") {
-      handleExportStatus(typed);
+      handleExportStatus(page, typed);
     }
   });
 }
 
+function createTopBar(count: HTMLElement): HTMLElement {
+  return el("header", { className: "wb-page-topbar" }, [
+    el("div", { className: "wb-brand-lockup" }, [
+      el("img", {
+        className: "wb-brand-lockup__icon",
+        attrs: { src: "./icon/32.png", alt: "", width: "28", height: "28" }
+      }),
+      el("div", { className: "wb-brand-lockup__copy" }, [
+        el("p", { className: "wb-brand-lockup__eyebrow", text: t("brandEyebrowChromeExtension") }),
+        el("h1", {
+          className: "wb-brand-lockup__title wb-sessions-title",
+          text: t("sessionsTitle")
+        })
+      ])
+    ]),
+    el("div", { className: "wb-page-topbar__aside" }, [
+      count,
+      el(
+        "a",
+        { className: "wb-btn wb-btn--ghost wb-btn--small", attrs: { href: "./options.html" } },
+        [icon("settings"), t("popupOptions")]
+      )
+    ])
+  ]);
+}
+
+function createPage(): Page {
+  const count = el("span", { className: "wb-sessions__count", dataset: { sessionsCount: "" } });
+  const notice = el("p", { className: "wb-sessions-notice", attrs: { role: "status" } });
+  notice.hidden = true;
+  const toolbar = createToolbar({ t, filters: state.filters, profiles: [] });
+  const bulk = el("div");
+  const list = el("div", { className: "wb-sessions__list" });
+
+  return {
+    root: el("div", { className: "wb-sessions" }, [
+      createTopBar(count),
+      el("div", { className: "wb-sessions__body" }, [
+        el("p", { className: "wb-sessions__subtitle", text: t("sessionsSubtitle") }),
+        notice,
+        el("div", { className: "wb-sessions__controls" }, [toolbar, bulk]),
+        list
+      ])
+    ]),
+    count,
+    notice,
+    profileFilter:
+      toolbar.querySelector<HTMLSelectElement>("[data-profile-filter]") ?? el("select"),
+    bulk,
+    list
+  };
+}
+
+function showNotice(page: Page, text: string): void {
+  page.notice.textContent = text;
+  page.notice.hidden = false;
+}
+
+function visibleSessions(): SessionListItem[] {
+  return filterSessions(state.sessions, state.filters);
+}
+
+/** Bulk actions only ever act on rows the user can see. */
+function selectedVisibleSessions(): SessionListItem[] {
+  return visibleSessions().filter((session) => state.selected.has(session.sid));
+}
+
+type AnnotationDraft = { sid: string; tags: string; note: string };
+
+function findAnnotationForm(list: HTMLElement, sid: string): HTMLFormElement | undefined {
+  return Array.from(list.querySelectorAll<HTMLFormElement>("form[data-annotate]")).find(
+    (form) => form.dataset.annotate === sid
+  );
+}
+
+/** Typed tags/note of the open detail panel, so a list push does not wipe them. */
+function readAnnotationDraft(list: HTMLElement, sid: string): AnnotationDraft | undefined {
+  const form = findAnnotationForm(list, sid);
+
+  if (!form) {
+    return undefined;
+  }
+
+  return {
+    sid,
+    tags: form.querySelector<HTMLInputElement>("[data-annotate-tags]")?.value ?? "",
+    note: form.querySelector<HTMLTextAreaElement>("[data-annotate-note]")?.value ?? ""
+  };
+}
+
+function restoreAnnotationDraft(list: HTMLElement, draft: AnnotationDraft | undefined): void {
+  const form = draft ? findAnnotationForm(list, draft.sid) : undefined;
+
+  if (!draft || !form) {
+    return;
+  }
+
+  const tags = form.querySelector<HTMLInputElement>("[data-annotate-tags]");
+  const note = form.querySelector<HTMLTextAreaElement>("[data-annotate-note]");
+
+  if (tags) {
+    tags.value = draft.tags;
+  }
+
+  if (note) {
+    note.value = draft.note;
+  }
+}
+
+function renderList(page: Page): void {
+  const draft = state.expandedSid ? readAnnotationDraft(page.list, state.expandedSid) : undefined;
+
+  // The draft goes back before focus does, so the restored caret lands in the typed text.
+  preserveFocus(page.root, () => {
+    renderListContent(page);
+    restoreAnnotationDraft(page.list, draft);
+  });
+}
+
+function renderListContent(page: Page): void {
+  const visible = visibleSessions();
+
+  page.count.textContent = t("sessionsCountSummary", {
+    total: state.sessions.length,
+    active: state.sessions.filter((session) => session.active).length
+  });
+  fillProfileOptions(
+    page.profileFilter,
+    listProfileNames(state.sessions),
+    state.filters.profile,
+    t
+  );
+  page.bulk.replaceChildren(createBulkBar(t, selectedVisibleSessions().length));
+
+  if (visible.length === 0) {
+    page.list.replaceChildren(
+      el("p", {
+        className: "wb-empty wb-sessions-empty",
+        text: state.sessions.length === 0 ? t("sessionsEmpty") : t("sessionsNoMatches")
+      })
+    );
+    return;
+  }
+
+  page.list.replaceChildren(
+    createSessionsTable({
+      sessions: visible,
+      selected: state.selected,
+      ...(state.expandedSid ? { expandedSid: state.expandedSid } : {}),
+      now: Date.now(),
+      format
+    })
+  );
+}
+
+function onSelectionChange(page: Page, target: HTMLInputElement): boolean {
+  if (target.dataset.selectAll !== undefined) {
+    const visible = visibleSessions().map((session) => session.sid);
+    state.selected = target.checked
+      ? new Set([...state.selected, ...visible])
+      : new Set([...state.selected].filter((sid) => !visible.includes(sid)));
+    renderList(page);
+    return true;
+  }
+
+  const sid = target.dataset.selectSid;
+
+  if (!sid) {
+    return false;
+  }
+
+  const next = new Set(state.selected);
+
+  if (target.checked) {
+    next.add(sid);
+  } else {
+    next.delete(sid);
+  }
+
+  state.selected = next;
+  renderList(page);
+  return true;
+}
+
+function bindPage(page: Page): void {
+  page.root.addEventListener("input", (event) => onFilterChange(page, event.target));
+  page.root.addEventListener("change", (event) => {
+    const target = event.target;
+
+    if (target instanceof HTMLInputElement && onSelectionChange(page, target)) {
+      return;
+    }
+
+    onFilterChange(page, target);
+  });
+  page.root.addEventListener("click", (event) => {
+    const button = (event.target as Element | null)?.closest<HTMLButtonElement>("button");
+
+    if (button) {
+      void handleButton(page, button);
+    }
+  });
+  page.root.addEventListener("submit", (event) => {
+    const form = (event.target as Element | null)?.closest<HTMLFormElement>("form[data-annotate]");
+    const sid = form?.dataset.annotate;
+
+    if (!form || !sid) {
+      return;
+    }
+
+    event.preventDefault();
+    postUiMessage({
+      kind: "ui.annotate",
+      sid,
+      tags: parseTagInput(
+        form.querySelector<HTMLInputElement>("[data-annotate-tags]")?.value ?? ""
+      ),
+      note: normalizeNoteInput(
+        form.querySelector<HTMLTextAreaElement>("[data-annotate-note]")?.value ?? ""
+      )
+    });
+  });
+}
+
+function onFilterChange(page: Page, target: EventTarget | null): void {
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const filters = state.filters;
+
+  switch (target.name) {
+    case "sessionSearch":
+      state.filters = { ...filters, query: target.value };
+      break;
+    case "sessionStatus":
+      state.filters = { ...filters, status: toStatusFilter(target.value) };
+      break;
+    case "sessionProfile":
+      state.filters = { ...filters, profile: target.value };
+      break;
+    case "sessionErrorsOnly":
+      state.filters = {
+        ...filters,
+        errorsOnly: target instanceof HTMLInputElement && target.checked
+      };
+      break;
+    default:
+      return;
+  }
+
+  // Rows a filter hides are deselected, so a bulk action never reaches rows out of sight.
+  const visible = new Set(visibleSessions().map((session) => session.sid));
+  state.selected = new Set([...state.selected].filter((sid) => visible.has(sid)));
+  renderList(page);
+}
+
+function toStatusFilter(value: string): SessionStatusFilter {
+  return value === "live" || value === "stopped" ? value : "all";
+}
+
+async function handleButton(page: Page, button: HTMLButtonElement): Promise<void> {
+  const data = button.dataset;
+  const exportSid = data.export ?? data.player;
+
+  if (exportSid) {
+    const passphrase = await askPassphrase(shortenSessionId(exportSid));
+
+    if (passphrase !== null) {
+      requestExport(exportSid, passphrase, { openPlayer: Boolean(data.player) });
+    }
+
+    return;
+  }
+
+  if (data.stop) {
+    const tabId = Number(data.stop);
+
+    if (Number.isFinite(tabId)) {
+      postUiMessage({ kind: "ui.stop", tabId });
+    }
+
+    return;
+  }
+
+  if (data.notes) {
+    state.expandedSid = state.expandedSid === data.notes ? undefined : data.notes;
+    renderList(page);
+    return;
+  }
+
+  if (data.delete) {
+    const live = state.sessions.some((session) => session.sid === data.delete && session.active);
+    const prompt = live ? "sessionsDeleteLivePrompt" : "sessionsDeletePrompt";
+
+    if (await confirmDelete(t(prompt, { sid: data.delete }))) {
+      postUiMessage({ kind: "ui.delete", sid: data.delete });
+    }
+
+    return;
+  }
+
+  if (data.bulk === "export") {
+    await exportSelected();
+  } else if (data.bulk === "delete") {
+    await deleteSelected(page);
+  }
+}
+
+async function exportSelected(): Promise<void> {
+  const sids = selectedVisibleSessions().map((session) => session.sid);
+
+  if (sids.length === 0) {
+    return;
+  }
+
+  const passphrase = await askPassphrase(t("sessionsSelectedCount", { count: sids.length }));
+
+  if (passphrase !== null) {
+    sids.forEach((sid) => requestExport(sid, passphrase, { openPlayer: false }));
+  }
+}
+
+async function deleteSelected(page: Page): Promise<void> {
+  const targets = selectedVisibleSessions();
+  const live = targets.filter((session) => session.active).length;
+  const prompt =
+    live > 0
+      ? t("sessionsBulkDeleteLivePrompt", { count: targets.length, live })
+      : t("sessionsBulkDeletePrompt", { count: targets.length });
+
+  if (targets.length === 0 || !(await confirmDelete(prompt))) {
+    return;
+  }
+
+  const deleted = new Set(targets.map((session) => session.sid));
+  deleted.forEach((sid) => postUiMessage({ kind: "ui.delete", sid }));
+  state.selected = new Set([...state.selected].filter((sid) => !deleted.has(sid)));
+  renderList(page);
+}
+
+function askPassphrase(detail: string): Promise<string | null> {
+  return openPassphraseDialog({
+    title: t("sessionsExportDialogTitle"),
+    body: t("sessionsExportDialogBody"),
+    label: t("popupPassphraseLabel"),
+    submitLabel: t("sessionsActionExport"),
+    cancelLabel: t("popupCancel"),
+    requiredMessage: t("popupPassphraseRequired"),
+    detail
+  });
+}
+
+function confirmDelete(body: string): Promise<boolean> {
+  return openConfirmDialog({
+    title: t("sessionsConfirmDeleteTitle"),
+    body,
+    acceptLabel: t("sessionsActionDelete"),
+    cancelLabel: t("popupCancel"),
+    acceptVariant: "danger"
+  });
+}
+
 function handleExportStatus(
+  page: Page,
   status: Extract<ExtensionOutboundMessage, { kind: "sw.export-status" }>
-) {
-  const pending = pendingExports.has(status.sid);
+): void {
+  const pending = pendingExports.get(status.sid);
 
   if (status.ok) {
     pendingExports.delete(status.sid);
 
-    if (status.privacyWarning && root) {
-      exportNotice = formatExportPrivacyWarning(status.privacyWarning);
-      render(root);
+    // Findings are reported on the page, never blocking: the archive is encrypted either way.
+    if (status.privacyWarning) {
+      showNotice(page, formatExportPrivacyWarning(status.privacyWarning));
+    }
+
+    if (pending?.openPlayer && typeof chromeApi?.tabs?.create === "function") {
+      void chromeApi.tabs.create({ url: PLAYER_URL, active: true });
     }
 
     return;
@@ -67,9 +488,16 @@ function handleExportStatus(
   window.alert(t("popupExportFailed", { error: status.error || t("unknownError") }));
 }
 
-function requestExport(sid: string, passphrase: string): void {
-  pendingExports.add(sid);
-  postUiMessage({ kind: "ui.export", sid, passphrase, saveAs: false });
+function requestExport(sid: string, passphrase: string, options: PendingExport): void {
+  pendingExports.set(sid, options);
+  postUiMessage({
+    kind: "ui.export",
+    sid,
+    passphrase,
+    saveAs: false,
+    // Archive limits from Options, as in the popup; screenshots stay out as before.
+    policy: toExportPolicy(loadExportPolicyPrefs(), "none")
+  });
 }
 
 function postUiMessage(message: ExtensionInboundMessage): void {
@@ -85,597 +513,4 @@ function formatExportPrivacyWarning(warning: ExportPrivacyWarning): string {
     count: warning.findingCount,
     summary: warning.summary || t("unknownError")
   });
-}
-
-function render(container: HTMLElement): void {
-  const ordered = [...sessions].sort((left, right) => {
-    const activeDiff = Number(right.active) - Number(left.active);
-    if (activeDiff !== 0) {
-      return activeDiff;
-    }
-    return right.startedAt - left.startedAt;
-  });
-  const now = Date.now();
-  const activeCount = ordered.filter((session) => session.active).length;
-
-  const section = document.createElement("section");
-  section.className = "card wb-sessions-card";
-
-  const header = document.createElement("header");
-  header.className = "wb-sessions-header";
-  header.append(createBrandLockup());
-
-  const count = document.createElement("span");
-  count.className = "wb-sessions-count";
-  count.textContent = t("sessionsCountSummary", {
-    total: ordered.length,
-    active: activeCount
-  });
-  header.append(count);
-  section.append(header);
-
-  const subtitle = document.createElement("p");
-  subtitle.className = "wb-sessions-subtitle";
-  subtitle.textContent = t("sessionsSubtitle");
-  section.append(subtitle);
-
-  const localDataNotice = document.createElement("p");
-  localDataNotice.className = "wb-sessions-subtitle";
-  localDataNotice.textContent = t("localDataRestartNotice");
-  section.append(localDataNotice);
-
-  if (exportNotice) {
-    const notice = document.createElement("p");
-    notice.className = "wb-sessions-notice";
-    notice.setAttribute("role", "status");
-    notice.textContent = exportNotice;
-    section.append(notice);
-  }
-
-  const list = document.createElement("div");
-  list.className = "wb-sessions-list";
-
-  if (ordered.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "wb-sessions-empty";
-    empty.textContent = t("sessionsEmpty");
-    list.append(empty);
-  } else {
-    list.append(...ordered.map((session) => renderSessionCard(session, now)));
-  }
-
-  section.append(list);
-  container.replaceChildren(section);
-  bindActions(container);
-}
-
-function renderSessionCard(session: SessionListItem, now: number): HTMLElement {
-  const page = describeSessionPage(session);
-  const startedAt = formatAbsoluteTime(session.startedAt);
-  const startedRelative = formatRelativeTime(session.startedAt, now);
-  const endedAt =
-    typeof session.stoppedAt === "number" ? formatAbsoluteTime(session.stoppedAt) : null;
-  const elapsed = formatDuration(session.startedAt, session.stoppedAt ?? now);
-  const eventCount = session.eventCount ?? 0;
-  const errorCount = session.errorCount ?? 0;
-  const budgetAlertCount = session.budgetAlertCount ?? 0;
-  const sizeBytes = session.sizeBytes ?? 0;
-  const tags = session.tags ?? [];
-  const note = typeof session.note === "string" ? session.note : "";
-  const tagsValue = formatTagInputValue(tags);
-  const sidShort = shortenSessionId(session.sid);
-  const statusLabel = session.active ? t("sessionsStatusLive") : t("sessionsStatusStopped");
-  const statusClass = session.active ? "wb-session-status--live" : "wb-session-status--stopped";
-
-  const article = document.createElement("article");
-  article.className = "wb-session-card";
-
-  const header = document.createElement("header");
-  header.className = "wb-session-card__header";
-
-  const titleWrap = document.createElement("div");
-  titleWrap.className = "wb-session-card__title-wrap";
-
-  const title = document.createElement("h2");
-  title.className = "wb-session-card__title";
-  title.title = page.secondary;
-  title.textContent = page.primary;
-
-  const url = document.createElement("p");
-  url.className = "wb-session-card__url mono";
-  url.title = page.secondary;
-  url.textContent = page.secondary;
-
-  titleWrap.append(title, url);
-
-  const status = document.createElement("span");
-  status.className = `wb-session-status ${statusClass}`;
-  status.textContent = statusLabel;
-
-  header.append(titleWrap, status);
-  article.append(header);
-
-  const meta = document.createElement("div");
-  meta.className = "wb-session-card__meta";
-  meta.append(
-    createChip(t("sessionsChipMode", { mode: formatMode(session.mode) })),
-    createChip(t("sessionsChipTab", { tabId: session.tabId })),
-    createChip(t("sessionsChipStarted", { timeAgo: startedRelative }), startedAt),
-    createChip(t("sessionsChipEvents", { count: eventCount })),
-    createChip(t("sessionsChipErrors", { count: errorCount })),
-    createChip(t("sessionsChipBudgetAlerts", { count: budgetAlertCount })),
-    createChip(t("sessionsChipSize", { size: formatByteSize(sizeBytes) })),
-    createChip(t("sessionsChipDuration", { duration: elapsed }))
-  );
-
-  if (endedAt) {
-    meta.append(createChip(t("sessionsChipEnded"), endedAt));
-  }
-
-  article.append(meta);
-
-  const sid = document.createElement("p");
-  sid.className = "wb-session-card__sid mono";
-  sid.title = session.sid;
-  sid.textContent = t("sessionsSid", {
-    sid: sidShort
-  });
-  article.append(sid);
-
-  if (note) {
-    const noteText = document.createElement("p");
-    noteText.className = "wb-session-card__note";
-    noteText.title = note;
-    noteText.textContent = note;
-    article.append(noteText);
-  }
-
-  if (tags.length > 0) {
-    const tagsContainer = document.createElement("div");
-    tagsContainer.className = "wb-session-card__tags";
-    tagsContainer.append(
-      ...tags.map((tag) => createChip(`#${tag}`, undefined, "wb-chip wb-chip--tag"))
-    );
-    article.append(tagsContainer);
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "wb-session-card__actions";
-  actions.append(
-    createActionButton(t("sessionsActionExport"), "wb-btn wb-btn--brand", { export: session.sid }),
-    createActionButton(
-      t("sessionsActionStop"),
-      "wb-btn wb-btn--muted",
-      { stop: String(session.tabId) },
-      !session.active
-    ),
-    createActionButton(t("sessionsActionDelete"), "wb-btn wb-btn--muted", { delete: session.sid })
-  );
-  article.append(actions);
-
-  const form = document.createElement("form");
-  form.className = "wb-session-annotation";
-  form.dataset.annotate = session.sid;
-
-  const tagsLabel = document.createElement("label");
-  tagsLabel.className = "wb-field-label";
-  tagsLabel.append(t("sessionsTagsLabel"));
-
-  const tagsInput = document.createElement("input");
-  tagsInput.className = "wb-input";
-  tagsInput.dataset.annotateTags = "";
-  tagsInput.value = tagsValue;
-  tagsLabel.append(tagsInput);
-
-  const noteLabel = document.createElement("label");
-  noteLabel.className = "wb-field-label";
-  noteLabel.append(t("sessionsNotesLabel"));
-
-  const noteInput = document.createElement("textarea");
-  noteInput.className = "wb-session-note-input";
-  noteInput.dataset.annotateNote = "";
-  noteInput.rows = 2;
-  noteInput.value = note;
-  noteLabel.append(noteInput);
-
-  const saveButton = document.createElement("button");
-  saveButton.className = "wb-btn wb-btn--muted";
-  saveButton.type = "submit";
-  saveButton.textContent = t("sessionsSaveContext");
-
-  form.append(tagsLabel, noteLabel, saveButton);
-  article.append(form);
-
-  return article;
-}
-
-function describeSessionPage(session: SessionListItem): { primary: string; secondary: string } {
-  const title = typeof session.title === "string" ? session.title.trim() : "";
-  const rawUrl =
-    typeof session.url === "string" && session.url.trim().length > 0 ? session.url : "";
-
-  if (rawUrl.length === 0) {
-    return {
-      primary:
-        title ||
-        t("sessionsFallbackTab", {
-          tabId: session.tabId
-        }),
-      secondary: `tab:${session.tabId}`
-    };
-  }
-
-  try {
-    const parsed = new URL(rawUrl);
-    const compactPath = parsed.pathname.length > 1 ? parsed.pathname : "/";
-    const summary = `${parsed.host}${compactPath}`;
-    return {
-      primary: title || summary,
-      secondary: rawUrl
-    };
-  } catch {
-    return {
-      primary: title || rawUrl,
-      secondary: rawUrl
-    };
-  }
-}
-
-function shortenSessionId(sid: string): string {
-  if (sid.length <= 18) {
-    return sid;
-  }
-
-  return `${sid.slice(0, 9)}...${sid.slice(-6)}`;
-}
-
-function formatAbsoluteTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString(locale);
-}
-
-function parseTagInput(value: string): string[] {
-  const tags: string[] = [];
-  const seen = new Set<string>();
-
-  for (const fragment of value.split(",")) {
-    const tag = fragment.trim();
-
-    if (tag.length === 0 || seen.has(tag)) {
-      continue;
-    }
-
-    seen.add(tag);
-    tags.push(tag);
-
-    if (tags.length >= 12) {
-      break;
-    }
-  }
-
-  return tags;
-}
-
-function normalizeNoteInput(value: string): string | undefined {
-  const normalized = value.trim();
-
-  if (normalized.length === 0) {
-    return undefined;
-  }
-
-  return normalized.slice(0, 500);
-}
-
-function formatTagInputValue(tags: string[]): string {
-  return tags.join(", ");
-}
-
-function bindActions(container: HTMLElement): void {
-  container.querySelectorAll<HTMLButtonElement>("button[data-export]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const sid = button.dataset.export;
-
-      if (!sid) {
-        return;
-      }
-
-      const passphrase = await openPassphraseDialog(sid);
-
-      if (passphrase === null) {
-        return;
-      }
-
-      requestExport(sid, passphrase);
-    });
-  });
-
-  container.querySelectorAll<HTMLButtonElement>("button[data-stop]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const tabId = Number(button.dataset.stop);
-
-      if (!Number.isFinite(tabId)) {
-        return;
-      }
-
-      postUiMessage({
-        kind: "ui.stop",
-        tabId
-      });
-    });
-  });
-
-  container.querySelectorAll<HTMLButtonElement>("button[data-delete]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const sid = button.dataset.delete;
-
-      if (!sid) {
-        return;
-      }
-
-      const confirmed = await openConfirmDialog(
-        t("sessionsDeletePrompt", {
-          sid
-        })
-      );
-
-      if (!confirmed) {
-        return;
-      }
-
-      postUiMessage({
-        kind: "ui.delete",
-        sid
-      });
-    });
-  });
-
-  container.querySelectorAll<HTMLFormElement>("form[data-annotate]").forEach((form) => {
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const sid = form.dataset.annotate;
-
-      if (!sid) {
-        return;
-      }
-
-      const tagsInput = form.querySelector<HTMLInputElement>("[data-annotate-tags]");
-      const noteInput = form.querySelector<HTMLTextAreaElement>("[data-annotate-note]");
-
-      postUiMessage({
-        kind: "ui.annotate",
-        sid,
-        tags: parseTagInput(tagsInput?.value ?? ""),
-        note: normalizeNoteInput(noteInput?.value ?? "")
-      });
-    });
-  });
-}
-
-function openPassphraseDialog(sid: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.className = "wb-confirm-overlay";
-
-    const form = document.createElement("form");
-    form.className = "wb-confirm-card wb-prompt-card";
-    form.setAttribute("aria-labelledby", "wb-passphrase-title");
-
-    const title = document.createElement("h2");
-    title.id = "wb-passphrase-title";
-    title.className = "wb-confirm-title";
-    title.textContent = t("sessionsExportDialogTitle");
-
-    const sidText = document.createElement("p");
-    sidText.className = "wb-confirm-body mono";
-    sidText.textContent = shortenSessionId(sid);
-
-    const body = document.createElement("p");
-    body.className = "wb-confirm-body";
-    body.textContent = t("sessionsExportDialogBody");
-
-    const label = document.createElement("label");
-    label.className = "wb-field-label";
-    label.htmlFor = "wb-passphrase-input";
-    label.textContent = t("popupPassphraseLabel");
-
-    const input = document.createElement("input");
-    input.id = "wb-passphrase-input";
-    input.type = "password";
-    input.className = "wb-input wb-prompt-field";
-    input.autocomplete = "off";
-
-    const actions = document.createElement("div");
-    actions.className = "wb-confirm-actions";
-
-    const cancelButton = document.createElement("button");
-    cancelButton.type = "button";
-    cancelButton.className = "wb-btn wb-btn--muted";
-    cancelButton.dataset.passphraseCancel = "";
-    cancelButton.textContent = t("popupCancel");
-
-    const submitButton = document.createElement("button");
-    submitButton.type = "button";
-    submitButton.className = "wb-btn wb-btn--accent";
-    submitButton.dataset.passphraseSubmit = "";
-    submitButton.textContent = t("sessionsActionExport");
-
-    actions.append(cancelButton, submitButton);
-    form.append(title, sidText, body, label, input, actions);
-    overlay.append(form);
-
-    let finished = false;
-
-    const finish = (value: string | null): void => {
-      if (finished) {
-        return;
-      }
-
-      finished = true;
-      overlay.remove();
-      document.removeEventListener("keydown", onKeydown);
-      resolve(value);
-    };
-
-    const submitPassphrase = (): void => {
-      // Archives are always encrypted: no export without a passphrase of the minimum length.
-      if (!isValidExportPassphrase(input.value)) {
-        input.setCustomValidity(t("popupPassphraseRequired"));
-        input.reportValidity();
-        return;
-      }
-
-      finish(input.value);
-    };
-
-    const onKeydown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        finish(null);
-      }
-    };
-
-    cancelButton.addEventListener("click", () => finish(null));
-    input.addEventListener("input", () => {
-      input.setCustomValidity("");
-    });
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        submitPassphrase();
-      }
-    });
-    submitButton.addEventListener("click", submitPassphrase);
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      submitPassphrase();
-    });
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) {
-        finish(null);
-      }
-    });
-
-    document.addEventListener("keydown", onKeydown);
-    document.body.append(overlay);
-    input.focus();
-  });
-}
-
-function openConfirmDialog(message: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.className = "wb-confirm-overlay";
-
-    const dialog = document.createElement("section");
-    dialog.className = "wb-confirm-card";
-    dialog.setAttribute("role", "dialog");
-    dialog.setAttribute("aria-modal", "true");
-    dialog.setAttribute("aria-labelledby", "wb-confirm-title");
-
-    const title = document.createElement("h2");
-    title.id = "wb-confirm-title";
-    title.className = "wb-confirm-title";
-    title.textContent = t("sessionsConfirmDeleteTitle");
-
-    const body = document.createElement("p");
-    body.className = "wb-confirm-body";
-    body.textContent = message;
-
-    const actions = document.createElement("div");
-    actions.className = "wb-confirm-actions";
-
-    const cancelButton = document.createElement("button");
-    cancelButton.type = "button";
-    cancelButton.className = "wb-btn wb-btn--muted";
-    cancelButton.dataset.confirmCancel = "";
-    cancelButton.textContent = t("popupCancel");
-
-    const acceptButton = document.createElement("button");
-    acceptButton.type = "button";
-    acceptButton.className = "wb-btn wb-btn--brand";
-    acceptButton.dataset.confirmAccept = "";
-    acceptButton.textContent = t("sessionsActionDelete");
-
-    actions.append(cancelButton, acceptButton);
-    dialog.append(title, body, actions);
-    overlay.append(dialog);
-
-    const finish = (accepted: boolean): void => {
-      overlay.remove();
-      document.removeEventListener("keydown", onKeydown);
-      resolve(accepted);
-    };
-
-    const onKeydown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        finish(false);
-      }
-    };
-
-    cancelButton.addEventListener("click", () => finish(false));
-    acceptButton.addEventListener("click", () => finish(true));
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay) {
-        finish(false);
-      }
-    });
-
-    document.addEventListener("keydown", onKeydown);
-    document.body.append(overlay);
-    cancelButton.focus();
-  });
-}
-
-function createBrandLockup(): HTMLElement {
-  const lockup = document.createElement("div");
-  lockup.className = "wb-brand-lockup";
-
-  const icon = document.createElement("img");
-  icon.className = "wb-brand-lockup__icon";
-  icon.src = "./icon/32.png";
-  icon.alt = "";
-  icon.width = 32;
-  icon.height = 32;
-
-  const copy = document.createElement("div");
-  copy.className = "wb-brand-lockup__copy";
-
-  const eyebrow = document.createElement("p");
-  eyebrow.className = "wb-brand-lockup__eyebrow";
-  eyebrow.textContent = t("brandEyebrowChromeExtension");
-
-  const title = document.createElement("h1");
-  title.className = "wb-sessions-title";
-  title.textContent = t("sessionsTitle");
-
-  copy.append(eyebrow, title);
-  lockup.append(icon, copy);
-  return lockup;
-}
-
-function createChip(text: string, title?: string, className = "wb-chip"): HTMLElement {
-  const chip = document.createElement("span");
-  chip.className = className;
-  chip.textContent = text;
-
-  if (title) {
-    chip.title = title;
-  }
-
-  return chip;
-}
-
-function createActionButton(
-  label: string,
-  className: string,
-  dataset: Record<string, string>,
-  disabled = false
-): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = className;
-  button.disabled = disabled;
-  button.textContent = label;
-  Object.assign(button.dataset, dataset);
-  return button;
 }

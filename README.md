@@ -66,8 +66,8 @@ https://github.com/user-attachments/assets/46273fc0-36f2-4aeb-9dfa-9c60cfcba98c
 3. Open `chrome://extensions/`.
 4. Enable `Developer mode`.
 5. Click `Load unpacked` and select the extracted extension directory.
-6. Click the WebBlackbox toolbar icon, pick a recording profile (or leave `Auto` so site rules choose one), and choose `Start Lite` or `Start Full`.
-7. Reproduce the issue, then export a `.webblackbox` archive.
+6. Click the WebBlackbox toolbar icon, pick a recording profile (or leave `Auto` so site rules choose one), check the `Lite` / `Full` engine the profile preselects, and press `Start recording`.
+7. Reproduce the issue (`Marker` or Ctrl/Cmd + Shift + M flags the moment), press `Stop`, then `Export` the `.webblackbox` archive with a passphrase of at least 8 characters (every archive is encrypted). Archive limits live in the options page under `Export & encryption`, and privacy scanner findings are shown inline after an export, never blocking it; the Sessions page lists, filters and bulk-exports past recordings.
 8. Open the archive in the hosted Player.
 
 ### Embed Lite Capture in Your App

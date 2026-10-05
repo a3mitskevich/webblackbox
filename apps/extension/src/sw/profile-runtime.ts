@@ -123,6 +123,7 @@ export function buildProfilePreview(
           source: selection.source,
           ...(selection.rule?.name ? { ruleName: selection.rule.name } : {}),
           extended: selection.extended,
+          ...(selection.profile.visual ? { visual: selection.profile.visual } : {}),
           ...(enterpriseCapped.length > 0 ? { enterpriseCapped: [...enterpriseCapped] } : {})
         }
       : null

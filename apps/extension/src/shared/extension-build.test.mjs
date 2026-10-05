@@ -192,6 +192,8 @@ async function writeBuildFixture(outputDir, manifest) {
     "sessions.html": "<!doctype html><title>sessions</title>\n",
     "sessions.js": "export {};\n",
     "styles.css": "body{margin:0;}\n",
+    "options.css": "main{margin:0;}\n",
+    "sessions.css": "main{margin:0;}\n",
     "sw.js": "export {};\n",
     "icon/16.png": "icon",
     "icon/32.png": "icon",

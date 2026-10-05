@@ -1,55 +1,69 @@
 import type { ChromeApi } from "../shared/chrome-api.js";
 import type { ExtensionMessageKey } from "../shared/i18n.js";
-import { PROFILES_SECTION_ID } from "../shared/messages.js";
-import { readManagedEnterprisePolicy } from "../shared/options-storage.js";
-import { previewRedaction, type RedactionSandboxKind } from "../shared/redaction-sandbox.js";
-import { CAPTURE_CATEGORY_KEYS, CAPTURE_CATEGORY_LEVELS } from "../shared/profiles/categories.js";
-import { resolveLocalDataSettings } from "../shared/profiles/local-data.js";
 import {
   isBuiltInProfileId,
   isManagedProfileId,
-  isReadOnlyProfileId,
   PROFILES_STORAGE_KEY,
   type ProfileRule,
   type RecordingProfile,
   type RecordingProfilesStore
 } from "../shared/profiles/model.js";
-import { isExtendedCaptureProfile } from "../shared/profiles/resolve.js";
 import {
-  describeIssues,
   listStoreProfiles,
-  parseManagedProfilesPolicy,
   removeProfileFromStore,
-  resolveProfilesState,
   restoreRecommendedProfiles,
   serializeProfilesStore,
   syncDefaultProfileWithLegacyOptions,
   type ProfilesState
 } from "../shared/profiles/storage.js";
+import { previewProfilesImport, type ProfilesDiff } from "../shared/profiles/transfer.js";
+import { preserveFocus } from "../shared/ui/focus.js";
+import { el, readField } from "./dom.js";
 import {
-  createProfilesExportFile,
-  previewProfilesImport,
-  type ProfilesDiff
-} from "../shared/profiles/transfer.js";
+  changedItemIds,
+  comparableStoreJson,
+  diffEditorSections,
+  guardEditorClose,
+  markUnsavedItems,
+  revertRule,
+  type EditorChanges,
+  type EditorCloseHost
+} from "./editor-close-guard.js";
+import { readProfileForm, readRulesFromDom } from "./editor-dom-read.js";
+import { downloadProfilesExport, loadProfilesState } from "./editor-storage.js";
 import {
-  button,
-  el,
-  labeledCheckbox,
-  labeledInput,
-  labeledSelect,
-  labeledTextarea,
-  readCheckbox,
-  readField
-} from "./dom.js";
+  blocksLeavingProfileForm,
+  captureInvalidRangeInputs,
+  restoreInvalidRangeInputs,
+  validateRangeInput,
+  validateRuleTextFields,
+  validateRuleTextInput
+} from "./editor-validation.js";
+import { bindRuleDragging, shownRuleIds } from "./rules-drag.js";
+import { readSandboxInputs, runRedactionSandbox, type SandboxState } from "./sandbox-model.js";
 import {
-  applyProfileFormValues,
+  canDeleteProfile,
+  confirmProfileDeletion,
+  describeProfileDeletion,
+  hasRecommendedProfilesToRestore
+} from "./profile-delete.js";
+import { createProfileForm } from "./profile-form.js";
+import {
   createUniqueId,
-  formatValuePatternLines,
   duplicateIntoStore,
-  formatQueryLines,
-  joinLines,
-  ruleFromFormValues
+  reorderRules,
+  sortRulesForDisplay,
+  stableJson
 } from "./profile-form-model.js";
+import {
+  createProfileCard,
+  createProfileListActions,
+  createProfilesNotices,
+  createSandboxPanel,
+  createTransferPanel
+} from "./profiles-view.js";
+import { testRulesForUrl } from "./rule-tester.js";
+import { createRuleTester, createRulesList, describeTestResult } from "./rules-editor.js";
 
 type Translate = (key: ExtensionMessageKey, vars?: Record<string, string | number>) => string;
 
@@ -59,11 +73,43 @@ export type ProfilesEditorDeps = {
   locale: string;
   legacyOptionsKey: string;
   enterprisePolicyKey: string;
+  /** Called after any change of the draft (typing included) so the page can show dirty state. */
+  onChange?: () => void;
+  /**
+   * Saves everything unsaved on the page (a close prompt's "Save changes"); resolves true when
+   * nothing is left unsaved. Without it the prompt saves the editor alone.
+   */
+  requestSave?: () => Promise<boolean>;
+  /** False while the page blocks Save (an invalid field): close prompts then offer no Save. */
+  canSave?: () => boolean;
 };
+
+/** Where each part of the editor renders; the settings page puts them in different sections. */
+export type ProfilesEditorSlots = {
+  profiles: HTMLElement;
+  rules: HTMLElement;
+  sandbox: HTMLElement;
+  transfer: HTMLElement;
+};
+
+export type ProfilesSaveResult = { ok: true } | { ok: false; error: string };
 
 export type ProfilesEditorHandle = {
   /** Folds a general settings save (the fields changed from `shown`) into the draft's Default. */
   applyGeneralOptions(payload: unknown, shown?: unknown): void;
+  /** The draft (including open forms and rule rows) differs from what was loaded or saved. */
+  isDirty(): boolean;
+  /** Which settings sections (profiles, rules) hold the unsaved changes. */
+  changedSections(): EditorChanges;
+  /** A v2 profiles store exists in storage (otherwise Default mirrors the general options). */
+  hasStoredStore(): boolean;
+  /** Checks that the draft can be saved, without writing anything. */
+  validate(): ProfilesSaveResult;
+  save(): Promise<ProfilesSaveResult>;
+  /** Reloads from storage, dropping the draft. */
+  reload(): Promise<void>;
+  /** Drops the draft and returns to the saved state. */
+  cancel(): void;
 };
 
 type EditorState = {
@@ -72,799 +118,672 @@ type EditorState = {
   editingId?: string;
   /** The edited profile as it was when its form opened; Cancel restores it. */
   editingSnapshot?: RecordingProfile;
-  importPreview?: { next: RecordingProfilesStore; diff: ProfilesDiff };
+  /** The file replaces the draft; `diff` is kept against the current draft (see `update`). */
+  importPreview?: { text: string; next: RecordingProfilesStore; diff: ProfilesDiff };
   status?: { text: string; error: boolean };
-  sandbox: { profileId: string; kind: RedactionSandboxKind; text: string; output?: string };
+  sandbox: SandboxState;
+  openRuleIds: Set<string>;
+  test: { url: string; title: string; incognito: boolean };
+  /** The draft as last loaded/saved, after one DOM round trip: what "unsaved" compares with. */
+  savedStore: RecordingProfilesStore;
+  /** Stable JSON of the open profile as its form first rendered; later edits differ from it. */
+  formBaseline?: string;
 };
 
-const SANDBOX_KINDS: Array<{ value: RedactionSandboxKind; key: ExtensionMessageKey }> = [
-  { value: "body", key: "optionsSandboxKindBody" },
-  { value: "event", key: "optionsSandboxKindEvent" },
-  { value: "headers", key: "optionsSandboxKindHeaders" },
-  { value: "url", key: "optionsSandboxKindUrl" }
-];
+type Editor = {
+  state: EditorState;
+  root: HTMLElement;
+  slots: ProfilesEditorSlots;
+  deps: ProfilesEditorDeps;
+};
+
+type Update = (mutate: () => void, options?: { discardFormEdits?: boolean }) => void;
 
 /**
- * Minimal profiles & rules editor for the options page. All logic lives in pure helpers
- * (profile-form-model, shared/profiles/*) so the planned settings redesign can replace this view.
+ * Profiles & rules editor. Rendering lives in profile-form / rules-editor / profiles-view; the
+ * logic in profile-form-model and shared/profiles. Inputs are read back from the DOM before every
+ * action, so typed values are never lost between renders.
  */
 export async function mountProfilesEditor(
-  container: HTMLElement,
-  deps: ProfilesEditorDeps
+  root: HTMLElement,
+  deps: ProfilesEditorDeps,
+  providedSlots?: ProfilesEditorSlots
 ): Promise<ProfilesEditorHandle> {
-  const profilesState = await loadState(deps);
-  const editor: EditorState = {
-    profilesState,
-    draft: structuredClone(profilesState.store),
-    sandbox: { profileId: profilesState.store.defaultProfileId, kind: "body", text: "" }
+  const slots = providedSlots ?? createDefaultSlots(root);
+  const profilesState = await loadProfilesState(deps);
+  const editor: Editor = {
+    root,
+    slots,
+    deps,
+    state: {
+      profilesState,
+      draft: structuredClone(profilesState.store),
+      sandbox: { profileId: profilesState.store.defaultProfileId, kind: "body", text: "" },
+      openRuleIds: new Set(),
+      test: { url: "", title: "", incognito: false },
+      savedStore: structuredClone(profilesState.store)
+    }
   };
-  const rerender = (): void => render(container, editor, deps, rerender);
 
-  rerender();
+  render(editor);
+  resetBaseline(editor);
+  bindEditor(editor);
 
   return {
     applyGeneralOptions: (payload, shown) => {
-      const card = container.querySelector<HTMLElement>(".wb-profiles");
-
-      if (card) {
-        syncDraftFromDom(card, editor);
-      }
-
-      editor.draft = syncDefaultProfileWithLegacyOptions(editor.draft, payload, shown);
+      syncDraftFromDom(editor);
+      const { state } = editor;
+      state.draft = syncDefaultProfileWithLegacyOptions(state.draft, payload, shown);
       // The general save is already stored; Cancel must not roll it back.
-      const snapshot = editor.editingSnapshot;
-      editor.editingSnapshot = snapshot
+      const snapshot = state.editingSnapshot;
+      state.editingSnapshot = snapshot
         ? syncDefaultProfileWithLegacyOptions(
-            { ...editor.draft, profiles: [snapshot] },
+            { ...state.draft, profiles: [snapshot] },
             payload,
             shown
           ).profiles[0]
         : undefined;
-      rerender();
-    }
+      // Not an edit made in the form: it must not make closing the form ask.
+      state.formBaseline = undefined;
+      render(editor);
+    },
+    isDirty: () => isDirty(editor),
+    changedSections: () => {
+      syncDraftFromDom(editor);
+      return diffEditorSections(editor.state.draft, editor.state.savedStore);
+    },
+    hasStoredStore: () => !editor.state.profilesState.legacy,
+    validate: () => {
+      syncDraftFromDom(editor);
+
+      try {
+        serializeProfilesStore(editor.state.draft);
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          error: deps.t("optionsProfilesError", {
+            error: error instanceof Error ? error.message : String(error)
+          })
+        };
+      }
+    },
+    save: () => saveEditor(editor),
+    reload: async () => {
+      editor.state.profilesState = await loadProfilesState(deps);
+      discardDraft(editor);
+    },
+    cancel: () => discardDraft(editor)
   };
 }
 
-async function loadState(deps: ProfilesEditorDeps): Promise<ProfilesState> {
-  const local = await deps.chromeApi?.storage?.local
-    ?.get([PROFILES_STORAGE_KEY, deps.legacyOptionsKey])
-    .catch(() => undefined);
-  const managedPolicy = await readManagedEnterprisePolicy(
-    deps.chromeApi?.storage?.managed,
-    deps.enterprisePolicyKey
-  );
+async function saveEditor(editor: Editor): Promise<ProfilesSaveResult> {
+  syncDraftFromDom(editor);
+  await saveDraft(editor);
+  const { state } = editor;
 
-  return resolveProfilesState({
-    rawProfilesStore: local?.[PROFILES_STORAGE_KEY],
-    rawLegacyOptions: local?.[deps.legacyOptionsKey],
-    managed: parseManagedProfilesPolicy(managedPolicy)
-  });
+  // What was just saved is the new baseline for Cancel.
+  if (state.editingId && !state.status?.error) {
+    openProfileForm(state, state.editingId);
+  }
+
+  render(editor);
+
+  if (state.status?.error) {
+    return { ok: false, error: state.status.text };
+  }
+
+  resetBaseline(editor);
+  return { ok: true };
 }
 
-function render(
-  container: HTMLElement,
-  editor: EditorState,
-  deps: ProfilesEditorDeps,
-  rerender: () => void
-): void {
-  const { t } = deps;
-  const catalog = buildCatalog(editor);
-  const card = el("section", {
-    className: "card wb-options-card wb-profiles",
-    attrs: { id: PROFILES_SECTION_ID }
-  });
+function createDefaultSlots(root: HTMLElement): ProfilesEditorSlots {
+  const slots = { profiles: el("div"), rules: el("div"), sandbox: el("div"), transfer: el("div") };
+  root.append(slots.profiles, slots.rules, slots.sandbox, slots.transfer);
+  return slots;
+}
 
-  card.append(
-    el("h2", { className: "wb-options-section-title", text: t("optionsProfilesTitle") }),
-    el("p", { className: "wb-options-help", text: t("optionsProfilesHint") })
-  );
+function discardDraft(editor: Editor): void {
+  const { state } = editor;
+  state.draft = structuredClone(state.profilesState.store);
+  state.importPreview = undefined;
+  state.status = undefined;
+  closeProfileForm(state);
+  render(editor);
+  resetBaseline(editor);
+  editor.deps.onChange?.();
+}
 
-  if (catalog.some((profile) => profile.id.startsWith("managed:"))) {
-    card.append(el("p", { className: "wb-options-help", text: t("optionsProfilesManagedNotice") }));
-  }
+/** The baseline goes through the same DOM read-back as later edits, so it compares equal. */
+function resetBaseline(editor: Editor): void {
+  syncDraftFromDom(editor);
+  editor.state.savedStore = structuredClone(editor.state.draft);
+  refreshUnsavedMarks(editor);
+}
 
-  if (editor.profilesState.issues.length > 0) {
-    card.append(
-      el("p", {
-        className: "wb-options-help",
-        text: t("optionsProfilesIssues", { issues: describeIssues(editor.profilesState.issues) })
-      })
-    );
-  }
+function isDirty(editor: Editor): boolean {
+  syncDraftFromDom(editor);
+  return comparableStoreJson(editor.state.draft) !== comparableStoreJson(editor.state.savedStore);
+}
 
-  card.append(createProfileList(editor, catalog, t));
-
-  if (catalog.length === 0) {
-    card.append(
-      el("p", {
-        className: "wb-options-status wb-options-status--error",
-        text: t("optionsProfilesEmpty"),
-        dataset: { profilesEmpty: "" }
-      })
-    );
-  }
-
-  card.append(
-    el("div", { className: "wb-options-actions" }, [
-      button(t("optionsProfilesRestore"), "profiles-restore")
-    ])
-  );
-
-  const editing = editor.draft.profiles.find((profile) => profile.id === editor.editingId);
-
-  if (editing) {
-    card.append(createProfileForm(editing, t));
-  }
-
-  card.append(createRulesSection(editor, catalog, t), createTransferSection(editor, t));
-
-  if (editor.status) {
-    card.append(
-      el("p", {
-        className: editor.status.error
-          ? "wb-options-status wb-options-status--error"
-          : "wb-options-status",
-        text: editor.status.text,
-        dataset: { profilesStatus: "" }
-      })
-    );
-  }
-
-  card.append(createSandboxSection(editor, catalog, t));
-  container.replaceChildren(card);
-  bindEditor(card, editor, deps, rerender);
+/** "Unsaved" badges on the profile cards and rule rows, from what is typed in the page. */
+function refreshUnsavedMarks(editor: Editor): void {
+  syncDraftFromDom(editor);
+  markUnsavedItems(editor.root, changedItemIds(editor.state.draft, editor.state.savedStore));
 }
 
 /** The draft's own profiles, then managed ones, then the presets the draft has not deleted. */
-function buildCatalog(editor: EditorState): RecordingProfile[] {
+function buildCatalog(state: EditorState): RecordingProfile[] {
   return [
-    ...editor.draft.profiles,
-    ...editor.profilesState.catalog.filter((profile) => isManagedProfileId(profile.id)),
-    ...listStoreProfiles(editor.draft).filter((profile) => isBuiltInProfileId(profile.id))
+    ...state.draft.profiles,
+    ...state.profilesState.catalog.filter((profile) => isManagedProfileId(profile.id)),
+    ...listStoreProfiles(state.draft).filter((profile) => isBuiltInProfileId(profile.id))
   ];
 }
 
-function createProfileList(
-  editor: EditorState,
-  catalog: RecordingProfile[],
-  t: Translate
-): HTMLElement {
-  const list = el("ul", { className: "wb-profiles__list" });
+function render(editor: Editor): void {
+  const { state, slots, deps } = editor;
+  const { t } = deps;
+  const catalog = buildCatalog(state);
+  const editing = state.draft.profiles.find((profile) => profile.id === state.editingId);
 
-  for (const profile of catalog) {
-    const readOnly = isReadOnlyProfileId(profile.id);
-    const badges = [
-      profile.id === editor.draft.defaultProfileId ? t("optionsProfileDefaultBadge") : "",
-      readOnly ? t("optionsProfileReadOnlyBadge") : "",
-      isExtendedCaptureProfile(profile) ? t("optionsProfileExtendedBadge") : ""
-    ].filter(Boolean);
-    const actions = el("span", { className: "wb-profiles__actions" });
-
-    if (!readOnly) {
-      actions.append(button(t("optionsProfileEdit"), "profile-edit"));
-    }
-
-    actions.append(button(t("optionsProfileDuplicate"), "profile-duplicate"));
-
-    if (profile.id !== editor.draft.defaultProfileId) {
-      actions.append(button(t("optionsProfileMakeDefault"), "profile-default"));
-    }
-
-    // Any profile can be deleted, presets and Default included; policy profiles cannot.
-    if (!isManagedProfileId(profile.id)) {
-      actions.append(button(t("optionsProfileDelete"), "profile-delete", "muted"));
-    }
-
-    list.append(
-      el("li", { className: "wb-profiles__row", dataset: { profileId: profile.id } }, [
-        el("strong", { text: profile.name }),
-        el("span", { className: "wb-profiles__badges", text: badges.join(" · ") }),
-        el("span", { className: "wb-options-help", text: profile.description ?? "" }),
-        actions
-      ])
-    );
-  }
-
-  return list;
-}
-
-function createProfileForm(profile: RecordingProfile, t: Translate): HTMLElement {
-  const form = el("form", { className: "wb-options-inset wb-profiles__form" });
-  const localData = resolveLocalDataSettings(profile);
-  const matrix = el("fieldset", { className: "wb-profiles__matrix" }, [
-    el("legend", { text: t("optionsProfileCategories") })
-  ]);
-
-  for (const key of CAPTURE_CATEGORY_KEYS) {
-    matrix.append(
-      labeledSelect(
-        key,
-        `category-${key}`,
-        profile.categories[key],
-        (CAPTURE_CATEGORY_LEVELS[key] as readonly string[]).map((level) => ({
-          value: level,
-          label: level
-        }))
+  slots.profiles.replaceChildren(
+    el("div", { className: "wb-profiles wb-profiles-layout" }, [
+      el("div", { className: "wb-profiles__list-col" }, [
+        ...createProfilesNotices({
+          catalog,
+          issues: state.profilesState.issues,
+          ...(state.status ? { status: state.status } : {}),
+          t
+        }),
+        el(
+          "ul",
+          { className: "wb-profiles__list" },
+          catalog.map((profile) =>
+            createProfileCard({
+              profile,
+              defaultProfileId: state.draft.defaultProfileId,
+              editing: profile.id === state.editingId,
+              deletable: canDeleteProfile(catalog),
+              t
+            })
+          )
+        ),
+        ...(catalog.length > 0
+          ? [
+              createProfileListActions({
+                canRestore: hasRecommendedProfilesToRestore(state.draft),
+                lastProfile: !canDeleteProfile(catalog),
+                t
+              })
+            ]
+          : [])
+      ]),
+      el(
+        "div",
+        { className: "wb-profiles__editor-col" },
+        editing
+          ? [createProfileForm(editing, t)]
+          : // With no profile left there is nothing to edit or duplicate; the notice says what to do.
+            catalog.length > 0
+            ? [el("p", { className: "wb-empty", text: t("optionsProfileEditorEmpty") })]
+            : []
       )
-    );
-  }
-
-  form.append(
-    labeledInput(t("optionsProfileName"), "name", profile.name),
-    labeledSelect(t("optionsProfileBase"), "base", profile.base, [
-      { value: "lite", label: "Lite" },
-      { value: "full", label: "Full" }
-    ]),
-    matrix,
-    el("p", { className: "wb-options-help", text: t("optionsRedactionDisclaimer") }),
-    labeledCheckbox(
-      t("optionsProfileContentRedaction"),
-      "contentRedaction",
-      profile.redaction.contentRedaction !== false
-    ),
-    labeledCheckbox(
-      t("optionsProfileBuiltInHeuristics"),
-      "builtInHeuristics",
-      profile.redaction.builtInHeuristics !== false
-    ),
-    labeledTextarea(
-      t("optionsBlockedSelectors"),
-      "blockedSelectors",
-      joinLines(profile.redaction.blockedSelectors)
-    ),
-    labeledTextarea(
-      t("optionsProfileUnmaskSelectors"),
-      "unmaskSelectors",
-      joinLines(profile.unmaskSelectors)
-    ),
-    labeledTextarea(
-      t("optionsRedactedHeaders"),
-      "redactHeaders",
-      joinLines(profile.redaction.redactHeaders)
-    ),
-    labeledTextarea(
-      t("optionsProfileRedactCookieNames"),
-      "redactCookieNames",
-      joinLines(profile.redaction.redactCookieNames)
-    ),
-    labeledTextarea(
-      t("optionsBodySensitivePatterns"),
-      "redactBodyPatterns",
-      joinLines(profile.redaction.redactBodyPatterns)
-    ),
-    labeledTextarea(
-      t("optionsProfileRedactQueryParams"),
-      "redactQueryParams",
-      joinLines(profile.redaction.redactQueryParams ?? [])
-    ),
-    labeledTextarea(
-      t("optionsProfileRedactStorageKeys"),
-      "redactStorageKeys",
-      joinLines(profile.redaction.redactStorageKeys ?? [])
-    ),
-    labeledTextarea(
-      t("optionsProfileValuePatterns"),
-      "valuePatterns",
-      formatValuePatternLines(profile.redaction.valuePatterns)
-    ),
-    labeledTextarea(
-      t("optionsProfileBodyMimeAllowlist"),
-      "bodyMimeAllowlist",
-      joinLines(profile.network.bodyMimeAllowlist)
-    ),
-    labeledInput(
-      t("optionsProfileBodyMaxBytes"),
-      "bodyMaxBytes",
-      profile.network.bodyMaxBytes?.toString() ?? "",
-      "number"
-    ),
-    labeledTextarea(
-      t("optionsProfileIncludeUrls"),
-      "includeUrls",
-      joinLines(profile.network.includeUrls)
-    ),
-    labeledTextarea(
-      t("optionsProfileExcludeUrls"),
-      "excludeUrls",
-      joinLines(profile.network.excludeUrls)
-    ),
-    labeledInput(
-      t("optionsProfileMousemoveHz"),
-      "mousemoveHz",
-      profile.pointer.mousemoveHz?.toString() ?? "",
-      "number"
-    ),
-    labeledSelect(t("optionsProfileVisual"), "visual", profile.visual ?? "", [
-      { value: "", label: t("optionsProfileVisualPopup") },
-      { value: "screenshots", label: t("popupFullVisualScreenshots") },
-      { value: "recording", label: t("popupFullVisualRecording") },
-      { value: "both", label: t("popupFullVisualBoth") },
-      { value: "none", label: t("popupFullVisualNone") }
-    ]),
-    el("p", { className: "wb-options-help", text: t("localDataRestartNotice") }),
-    labeledCheckbox(
-      t("optionsProfileDeleteAfterExport"),
-      "deleteAfterExport",
-      localData.deleteAfterExport
-    ),
-    labeledInput(
-      t("optionsProfileUnexportedRetention"),
-      "unexportedRetentionMinutes",
-      String(localData.unexportedRetentionMinutes),
-      "number"
-    ),
-    el("div", { className: "wb-options-actions" }, [
-      button(t("optionsProfileSave"), "profile-apply", "brand"),
-      button(t("optionsProfileCancel"), "profile-cancel", "muted")
     ])
   );
 
-  return form;
-}
-
-function createRulesSection(
-  editor: EditorState,
-  catalog: RecordingProfile[],
-  t: Translate
-): HTMLElement {
-  const section = el("section", { className: "wb-options-inset wb-profiles__rules" }, [
-    el("h3", { className: "wb-options-section-title", text: t("optionsRulesTitle") }),
-    el("p", { className: "wb-options-help", text: t("optionsRulesHint") })
-  ]);
-  const profileOptions = catalog.map((profile) => ({ value: profile.id, label: profile.name }));
-
-  for (const rule of editor.draft.rules) {
-    // A rule may target a profile that was deleted or dropped from managed policy; keep its id
-    // selectable so the next sync does not blank it and block saving.
-    const profileExists = catalog.some((profile) => profile.id === rule.profileId);
-    const ruleProfileOptions = profileExists
-      ? profileOptions
-      : [
-          ...profileOptions,
-          { value: rule.profileId, label: t("optionsRuleProfileMissing", { id: rule.profileId }) }
-        ];
-
-    section.append(
-      el("fieldset", { className: "wb-profiles__rule", dataset: { ruleId: rule.id } }, [
-        labeledInput(t("optionsRuleName"), "ruleName", rule.name ?? ""),
-        labeledSelect(t("optionsRuleProfile"), "ruleProfile", rule.profileId, ruleProfileOptions),
-        labeledInput(t("optionsRulePriority"), "rulePriority", String(rule.priority), "number"),
-        labeledCheckbox(t("optionsRuleEnabled"), "ruleEnabled", rule.enabled),
-        labeledTextarea(t("optionsRuleHosts"), "ruleHosts", joinLines(rule.match.hosts ?? [])),
-        labeledTextarea(t("optionsRulePaths"), "rulePaths", joinLines(rule.match.paths ?? [])),
-        labeledTextarea(t("optionsRuleQuery"), "ruleQuery", formatQueryLines(rule.match.query)),
-        labeledInput(t("optionsRuleTitleRegex"), "ruleTitleRegex", rule.match.titleRegex ?? ""),
-        labeledInput(t("optionsRuleSelector"), "ruleSelector", rule.match.selectorPresent ?? ""),
-        labeledInput(t("optionsRuleMetaName"), "ruleMetaName", rule.match.metaTag?.name ?? ""),
-        labeledInput(t("optionsRuleMetaValue"), "ruleMetaValue", rule.match.metaTag?.value ?? ""),
-        labeledSelect(
-          t("optionsRuleIncognito"),
-          "ruleIncognito",
-          rule.match.incognito === undefined ? "any" : rule.match.incognito ? "only" : "never",
-          [
-            { value: "any", label: t("optionsRuleIncognitoAny") },
-            { value: "only", label: t("optionsRuleIncognitoOnly") },
-            { value: "never", label: t("optionsRuleIncognitoNever") }
-          ]
-        ),
-        ...(profileExists
-          ? []
-          : [
-              el("p", {
-                className: "wb-options-status wb-options-status--error",
-                text: t("optionsRuleProfileMissingHint"),
-                dataset: { ruleMissing: "" }
-              })
-            ]),
-        button(t("optionsProfileDelete"), "rule-delete", "muted")
-      ])
-    );
-  }
-
-  section.append(button(t("optionsRuleAdd"), "rule-add"));
-
-  return section;
-}
-
-function createTransferSection(editor: EditorState, t: Translate): HTMLElement {
-  const fileInput = el("input", {
-    attrs: { type: "file", accept: "application/json,.json", name: "profilesImport" }
-  });
-  const section = el("div", { className: "wb-options-actions wb-profiles__transfer" }, [
-    button(t("optionsProfilesSave"), "profiles-save", "brand"),
-    button(t("optionsProfilesExport"), "profiles-export"),
-    el("label", { className: "wb-btn wb-btn--surface" }, [t("optionsProfilesImport"), fileInput])
-  ]);
-
-  if (editor.importPreview) {
-    const { diff } = editor.importPreview;
-    section.append(
-      el("p", {
-        className: "wb-options-help",
-        dataset: { importSummary: "" },
-        text: diff.hasChanges
-          ? t("optionsProfilesImportSummary", {
-              added: diff.profiles.added.length,
-              removed: diff.profiles.removed.length,
-              changed: diff.profiles.changed.length,
-              rulesAdded: diff.rules.added.length,
-              rulesRemoved: diff.rules.removed.length,
-              rulesChanged: diff.rules.changed.length
-            })
-          : t("optionsProfilesImportNoChanges")
-      }),
-      ...describeImportDetails(diff, t).map((text) =>
-        el("p", { className: "wb-options-help", dataset: { importDetail: "" }, text })
-      ),
-      button(t("optionsProfilesImportApply"), "profiles-import-apply", "accent")
-    );
-  }
-
-  return section;
-}
-
-/** Lines a reviewer needs before applying an import: what changes beyond the counts. */
-function describeImportDetails(diff: ProfilesDiff, t: Translate): string[] {
-  const changed = [...diff.profiles.changed, ...diff.rules.changed].map(
-    (entry) => `${entry.name} (${entry.fields.join(", ")})`
-  );
-
-  return [
-    ...(diff.defaultProfileId ? [t("optionsProfilesImportDefault", diff.defaultProfileId)] : []),
-    ...(diff.removedRecommendedProfileIds
-      ? [
-          t("optionsProfilesImportRemovedRecommended", {
-            ids: diff.removedRecommendedProfileIds.to.join(", ") || "—"
-          })
-        ]
-      : []),
-    ...(changed.length > 0
-      ? [t("optionsProfilesImportChanged", { items: changed.join("; ") })]
-      : [])
-  ];
-}
-
-function createSandboxSection(
-  editor: EditorState,
-  catalog: RecordingProfile[],
-  t: Translate
-): HTMLElement {
-  const input = el("textarea", {
-    className: "wb-options-textarea",
-    attrs: { name: "sandboxInput", rows: "5" }
-  });
-  input.value = editor.sandbox.text;
-
-  return el("section", { className: "wb-options-inset wb-profiles__sandbox" }, [
-    el("h3", { className: "wb-options-section-title", text: t("optionsSandboxTitle") }),
-    el("p", { className: "wb-options-help", text: t("optionsSandboxHint") }),
-    labeledSelect(
-      t("optionsRuleProfile"),
-      "sandboxProfile",
-      editor.sandbox.profileId,
-      catalog.map((profile) => ({ value: profile.id, label: profile.name }))
-    ),
-    labeledSelect(
-      t("optionsSandboxTitle"),
-      "sandboxKind",
-      editor.sandbox.kind,
-      SANDBOX_KINDS.map((kind) => ({ value: kind.value, label: t(kind.key) }))
-    ),
-    input,
-    button(t("optionsSandboxRun"), "sandbox-run"),
-    el("pre", {
-      className: "wb-profiles__sandbox-output",
-      text: editor.sandbox.output ?? "",
-      dataset: { sandboxOutput: "" }
-    })
-  ]);
-}
-
-function bindEditor(
-  card: HTMLElement,
-  editor: EditorState,
-  deps: ProfilesEditorDeps,
-  rerender: () => void
-): void {
-  const { t } = deps;
-  const profileIdOf = (target: Element): string =>
-    target.closest<HTMLElement>("[data-profile-id]")?.dataset.profileId ?? "";
-  const findProfile = (id: string): RecordingProfile | undefined =>
-    buildCatalog(editor).find((profile) => profile.id === id);
-  // Every action first keeps what is typed in the page (rules, hosts, the open profile form).
-  const update = (mutate: () => void, options: { discardFormEdits?: boolean } = {}): void => {
-    syncRulesFromDom(card, editor);
-
-    if (!options.discardFormEdits) {
-      syncOpenProfileForm(card, editor);
-    }
-
-    mutate();
-    rerender();
+  const rulesView = {
+    rules: sortRulesForDisplay(state.draft.rules),
+    catalog,
+    openRuleIds: state.openRuleIds,
+    test: { ...state.test, result: runTester(editor, catalog) },
+    t
   };
-
-  card.addEventListener("click", (event) => {
-    const target = (event.target as Element | null)?.closest<HTMLElement>("[data-action]");
-    const action = target?.dataset.action;
-
-    if (!target || !action) {
-      return;
-    }
-
-    switch (action) {
-      case "profile-edit":
-        return update(() => openProfileForm(editor, profileIdOf(target)));
-      case "profile-duplicate":
-        return update(() => {
-          const source = findProfile(profileIdOf(target));
-
-          if (source) {
-            const result = duplicateIntoStore(editor.draft, source);
-            editor.draft = result.store;
-            openProfileForm(editor, result.id);
-          }
-        });
-      case "profile-default":
-        return update(() => {
-          editor.draft = { ...editor.draft, defaultProfileId: profileIdOf(target) };
-        });
-      case "profile-delete":
-        return update(() => {
-          editor.draft = removeProfileFromStore(editor.draft, profileIdOf(target));
-          closeProfileForm(editor);
-        });
-      case "profiles-restore":
-        return update(() => {
-          editor.draft = restoreRecommendedProfiles(editor.draft);
-        });
-      case "profile-apply":
-        return update(() => closeProfileForm(editor));
-      case "profile-cancel":
-        return update(() => cancelProfileForm(editor), { discardFormEdits: true });
-      case "rule-add":
-        return update(() => {
-          editor.draft = { ...editor.draft, rules: [...editor.draft.rules, newRule(editor)] };
-        });
-      case "rule-delete":
-        return update(() => {
-          const ruleId = target.closest<HTMLElement>("[data-rule-id]")?.dataset.ruleId;
-          editor.draft = {
-            ...editor.draft,
-            rules: editor.draft.rules.filter((rule) => rule.id !== ruleId)
-          };
-        });
-      case "profiles-save":
-        syncDraftFromDom(card, editor);
-        void saveDraft(editor, deps).then(() => {
-          // What was just saved is the new baseline for Cancel.
-          if (editor.editingId && !editor.status?.error) {
-            openProfileForm(editor, editor.editingId);
-          }
-
-          rerender();
-        });
-        return;
-      case "profiles-export":
-        syncDraftFromDom(card, editor);
-        downloadExport(editor.draft);
-        return;
-      case "profiles-import-apply":
-        return update(() => {
-          if (editor.importPreview) {
-            editor.draft = editor.importPreview.next;
-            editor.importPreview = undefined;
-            closeProfileForm(editor);
-          }
-        });
-      case "sandbox-run":
-        return update(() => runSandbox(card, editor, t));
-    }
-  });
-
-  card
+  slots.rules.replaceChildren(
+    el("div", { className: "wb-rules-layout" }, [
+      createRulesList(rulesView),
+      createRuleTester(rulesView)
+    ])
+  );
+  slots.sandbox.replaceChildren(createSandboxPanel({ catalog, sandbox: state.sandbox, t }));
+  slots.transfer.replaceChildren(
+    createTransferPanel({
+      ...(state.importPreview ? { importPreview: state.importPreview } : {}),
+      t
+    })
+  );
+  slots.transfer
     .querySelector<HTMLInputElement>('input[name="profilesImport"]')
     ?.addEventListener("change", (event) => {
-      const file = (event.currentTarget as HTMLInputElement).files?.[0];
-
-      if (!file) {
-        return;
-      }
-
-      void file
-        .text()
-        .then((text) => {
-          syncDraftFromDom(card, editor);
-          const preview = previewProfilesImport(text, editor.draft);
-          editor.importPreview = preview.ok
-            ? { next: preview.next, diff: preview.diff }
-            : undefined;
-          editor.status = preview.ok
-            ? undefined
-            : { text: t("optionsProfilesError", { error: preview.error }), error: true };
-        })
-        .catch((error: unknown) => {
-          editor.importPreview = undefined;
-          editor.status = {
-            text: t("optionsProfilesError", {
-              error: error instanceof Error ? error.message : String(error)
-            }),
-            error: true
-          };
-        })
-        .finally(rerender);
+      void importFile(editor, event.currentTarget as HTMLInputElement);
     });
-}
+  validateRuleTextFields(slots.rules, t);
 
-function openProfileForm(editor: EditorState, id: string): void {
-  const profile = editor.draft.profiles.find((entry) => entry.id === id);
-
-  editor.editingId = id;
-  editor.editingSnapshot = profile ? structuredClone(profile) : undefined;
-}
-
-function closeProfileForm(editor: EditorState): void {
-  editor.editingId = undefined;
-  editor.editingSnapshot = undefined;
-}
-
-/** Edits kept by other actions while the form was open are rolled back too. */
-function cancelProfileForm(editor: EditorState): void {
-  const snapshot = editor.editingSnapshot;
-
-  if (snapshot) {
-    editor.draft = {
-      ...editor.draft,
-      profiles: editor.draft.profiles.map((entry) => (entry.id === snapshot.id ? snapshot : entry))
-    };
+  if (editing && state.formBaseline === undefined) {
+    syncOpenProfileForm(editor);
+    const shown = state.draft.profiles.find((profile) => profile.id === state.editingId);
+    state.formBaseline = shown ? stableJson(shown) : undefined;
   }
 
-  closeProfileForm(editor);
+  markUnsavedItems(editor.root, changedItemIds(state.draft, state.savedStore));
 }
 
-function syncDraftFromDom(card: HTMLElement, editor: EditorState): void {
-  syncRulesFromDom(card, editor);
-  syncOpenProfileForm(card, editor);
+function runTester(editor: Editor, catalog = buildCatalog(editor.state)) {
+  const { state } = editor;
+
+  return state.test.url.trim()
+    ? testRulesForUrl({
+        state: state.profilesState,
+        draft: state.draft,
+        catalog,
+        url: state.test.url,
+        incognito: state.test.incognito,
+        ...(state.test.title.trim() ? { title: state.test.title } : {})
+      })
+    : undefined;
 }
 
-/** Folds the open profile form into the draft; the form stays open. */
-function syncOpenProfileForm(card: HTMLElement, editor: EditorState): void {
-  const form = card.querySelector<HTMLFormElement>(".wb-profiles__form");
-  const profile = editor.draft.profiles.find((entry) => entry.id === editor.editingId);
+function refreshTester(editor: Editor): void {
+  const { state, root, deps } = editor;
+  state.test = {
+    url: readField(root, "testUrl"),
+    title: readField(root, "testTitle"),
+    incognito: root.querySelector<HTMLInputElement>("input[name='testIncognito']")?.checked === true
+  };
+  syncRulesFromDom(editor);
+  root
+    .querySelector<HTMLElement>("[data-rule-test-result]")
+    ?.replaceChildren(...describeTestResult(runTester(editor), deps.t));
+}
 
-  if (!form || !profile) {
+function handleAction(
+  editor: Editor,
+  target: HTMLElement,
+  action: string,
+  update: Update,
+  confirmed = false
+): void {
+  const { state } = editor;
+  const profileId = target.closest<HTMLElement>("[data-profile-id]")?.dataset.profileId ?? "";
+  const ruleIndex = Number(target.closest<HTMLElement>("[data-rule-index]")?.dataset.ruleIndex);
+
+  if (blocksLeavingProfileForm(action, editor.root)) {
     return;
   }
 
-  const next = applyProfileFormValues(profile, {
-    name: readField(form, "name"),
-    base: readField(form, "base"),
-    categories: Object.fromEntries(
-      CAPTURE_CATEGORY_KEYS.map((key) => [key, readField(form, `category-${key}`)])
-    ),
-    contentRedaction: readCheckbox(form, "contentRedaction"),
-    builtInHeuristics: readCheckbox(form, "builtInHeuristics"),
-    blockedSelectors: readField(form, "blockedSelectors"),
-    unmaskSelectors: readField(form, "unmaskSelectors"),
-    redactHeaders: readField(form, "redactHeaders"),
-    redactCookieNames: readField(form, "redactCookieNames"),
-    redactBodyPatterns: readField(form, "redactBodyPatterns"),
-    redactQueryParams: readField(form, "redactQueryParams"),
-    redactStorageKeys: readField(form, "redactStorageKeys"),
-    valuePatterns: readField(form, "valuePatterns"),
-    bodyMimeAllowlist: readField(form, "bodyMimeAllowlist"),
-    bodyMaxBytes: readField(form, "bodyMaxBytes"),
-    includeUrls: readField(form, "includeUrls"),
-    excludeUrls: readField(form, "excludeUrls"),
-    mousemoveHz: readField(form, "mousemoveHz"),
-    visual: readField(form, "visual"),
-    deleteAfterExport: readCheckbox(form, "deleteAfterExport"),
-    unexportedRetentionMinutes: readField(form, "unexportedRetentionMinutes")
-  });
+  // Closing a profile form or a rule row with unsaved edits waits for the user's answer.
+  if (
+    !confirmed &&
+    guardEditorClose(closeGuardHost(editor, update), target, action, () =>
+      handleAction(editor, target, action, update, true)
+    )
+  ) {
+    return;
+  }
 
-  editor.draft = {
-    ...editor.draft,
-    profiles: editor.draft.profiles.map((entry) => (entry.id === profile.id ? next : entry))
-  };
+  switch (action) {
+    case "profile-edit":
+      // Re-opening the open form would make its edits the new snapshot: Cancel would keep them.
+      return profileId === state.editingId
+        ? undefined
+        : update(() => openProfileForm(state, profileId));
+    case "profile-duplicate":
+      return update(() => {
+        const source = buildCatalog(state).find((entry) => entry.id === profileId);
+
+        if (source) {
+          const result = duplicateIntoStore(state.draft, source);
+          state.draft = result.store;
+          openProfileForm(state, result.id);
+        }
+      });
+    case "profile-default":
+      return update(() => {
+        state.draft = { ...state.draft, defaultProfileId: profileId };
+      });
+    case "profile-delete":
+      return deleteProfile(editor, profileId, update);
+    case "profiles-restore":
+      return update(() => {
+        state.draft = restoreRecommendedProfiles(state.draft);
+      });
+    case "profile-apply":
+      return update(() => closeProfileForm(state));
+    case "profile-cancel":
+      return update(() => cancelProfileForm(state), { discardFormEdits: true });
+    case "rule-add":
+      return update(() => {
+        const rule = newRule(state);
+        state.draft = { ...state.draft, rules: [...state.draft.rules, rule] };
+        state.openRuleIds.add(rule.id);
+      });
+    case "rule-delete":
+      return update(() => {
+        const ruleId = target.closest<HTMLElement>("[data-rule-id]")?.dataset.ruleId;
+        state.draft = {
+          ...state.draft,
+          rules: state.draft.rules.filter((rule) => rule.id !== ruleId)
+        };
+      });
+    case "rule-up":
+    case "rule-down":
+      return update(() => {
+        const to = ruleIndex + (action === "rule-up" ? -1 : 1);
+        state.draft = {
+          ...state.draft,
+          rules: reorderRules(state.draft.rules, ruleIndex, to, shownRuleIds(editor.root))
+        };
+      });
+    case "rule-toggle":
+      return toggleRule(state, target);
+    case "profiles-export":
+      syncDraftFromDom(editor);
+      return downloadProfilesExport(state.draft);
+    case "profiles-import-apply":
+      return update(() => {
+        if (state.importPreview) {
+          state.draft = state.importPreview.next;
+          state.importPreview = undefined;
+          closeProfileForm(state);
+        }
+      });
+    case "sandbox-run":
+      return update(() => {
+        state.sandbox = runRedactionSandbox(state.sandbox, buildCatalog(state), editor.deps.t);
+      });
+  }
 }
 
-/** Rule rows are plain inputs; fold them into the draft. */
-function syncRulesFromDom(card: HTMLElement, editor: EditorState): void {
-  const rules: ProfileRule[] = [
-    ...card.querySelectorAll<HTMLElement>(".wb-profiles__rule")
-  ].flatMap((row) => {
-    const id = row.dataset.ruleId;
+function bindEditor(editor: Editor): void {
+  const { root, deps } = editor;
+  // Every action first keeps what is typed in the page (rules, hosts, the open profile form).
+  const update: Update = (mutate, options = {}) => {
+    const invalidRanges = captureInvalidRangeInputs(root, {
+      includeProfileForm: !options.discardFormEdits
+    });
+    syncRulesFromDom(editor);
+    editor.state.sandbox = readSandboxInputs(root, editor.state.sandbox);
 
-    return id
-      ? [
-          ruleFromFormValues({
-            id,
-            name: readField(row, "ruleName"),
-            profileId: readField(row, "ruleProfile"),
-            priority: readField(row, "rulePriority"),
-            enabled: readCheckbox(row, "ruleEnabled"),
-            hosts: readField(row, "ruleHosts"),
-            paths: readField(row, "rulePaths"),
-            query: readField(row, "ruleQuery"),
-            titleRegex: readField(row, "ruleTitleRegex"),
-            selectorPresent: readField(row, "ruleSelector"),
-            metaName: readField(row, "ruleMetaName"),
-            metaValue: readField(row, "ruleMetaValue"),
-            incognito: readField(row, "ruleIncognito")
-          })
-        ]
-      : [];
-  });
-  editor.draft = { ...editor.draft, rules };
-}
+    if (!options.discardFormEdits) {
+      syncOpenProfileForm(editor);
+    }
 
-function newRule(editor: EditorState): ProfileRule {
-  return {
-    id: createUniqueId(
-      "rule",
-      editor.draft.rules.map((rule) => rule.id)
-    ),
-    profileId: editor.draft.defaultProfileId,
-    priority: 0,
-    enabled: true,
-    match: {}
-  };
-}
-
-async function saveDraft(editor: EditorState, deps: ProfilesEditorDeps): Promise<void> {
-  try {
-    const serialized = serializeProfilesStore(editor.draft);
-    await deps.chromeApi?.storage?.local.set({ [PROFILES_STORAGE_KEY]: serialized });
-    editor.profilesState = await loadState(deps);
-    editor.draft = structuredClone(editor.profilesState.store);
-    editor.status = {
-      text: deps.t("optionsProfilesSaved", {
-        time: new Date().toLocaleTimeString(deps.locale)
-      }),
-      error: false
+    mutate();
+    // Edits made after picking the file are part of what the import replaces: list them too.
+    refreshImportPreview(editor.state, deps.t);
+    const rerender = (): void => {
+      render(editor);
+      restoreInvalidRangeInputs(root, invalidRanges, deps.t);
     };
+    preserveFocus(root, rerender, { scopeAttributes: FOCUS_SCOPES });
+    refreshUnsavedMarks(editor);
+    deps.onChange?.();
+  };
+
+  root.addEventListener("click", (event) => {
+    const target = (event.target as Element | null)?.closest<HTMLElement>("[data-action]");
+    const action = target?.dataset.action;
+
+    if (target && action && root.contains(target)) {
+      handleAction(editor, target, action, update);
+    }
+  });
+  root.addEventListener("input", (event) => {
+    const target = event.target as HTMLInputElement | null;
+
+    if (!target) {
+      return;
+    }
+
+    if (TESTER_FIELDS.has(target.name)) {
+      refreshTester(editor);
+      return;
+    }
+
+    if (target.type === "number" && target.closest(".wb-profiles__form, .wb-profiles__rule")) {
+      validateRangeInput(target, deps.t);
+    }
+
+    validateRuleTextInput(target, deps.t);
+    refreshUnsavedMarks(editor);
+    deps.onChange?.();
+  });
+  root.addEventListener("change", (event) => {
+    const target = event.target as HTMLInputElement | null;
+
+    if (target && TESTER_FIELDS.has(target.name)) {
+      refreshTester(editor);
+      return;
+    }
+
+    if (
+      target?.name !== "profilesImport" &&
+      target?.closest("[data-profile-form], .wb-rules-panel")
+    ) {
+      refreshUnsavedMarks(editor);
+      deps.onChange?.();
+    }
+  });
+  bindRuleDragging(root, (from, to, shownIds) =>
+    update(() => {
+      editor.state.draft = {
+        ...editor.state.draft,
+        rules: reorderRules(editor.state.draft.rules, from, to, shownIds)
+      };
+    })
+  );
+}
+
+/** What the close prompts need from the editor, read when the action happens. */
+function closeGuardHost(editor: Editor, update: Update): EditorCloseHost {
+  const { state, deps } = editor;
+
+  return {
+    t: deps.t,
+    canSave: deps.canSave?.() ?? true,
+    save: deps.requestSave ?? (async () => (await saveEditor(editor)).ok),
+    readDraft: () => {
+      syncDraftFromDom(editor);
+      return state.draft;
+    },
+    saved: state.savedStore,
+    editingId: state.editingId,
+    formBaseline: state.formBaseline,
+    revertRule: (ruleId) =>
+      update(() => {
+        state.draft = revertRule(state.draft, state.savedStore, ruleId);
+      }),
+    collapseRule: (ruleId) => update(() => state.openRuleIds.delete(ruleId)),
+    discardFormEdits: () => update(() => cancelProfileForm(state), { discardFormEdits: true })
+  };
+}
+
+/** Rows that tell apart equal buttons ("Move up" of each rule) when focus is restored. */
+const FOCUS_SCOPES = ["data-rule-id", "data-profile-id"];
+
+/**
+ * Asks first, naming the rules that use the profile (they stay, skipped, in another section). The
+ * last profile stays: recording needs one. Another profile's open form stays open.
+ */
+function deleteProfile(editor: Editor, profileId: string, update: Update): void {
+  syncRulesFromDom(editor);
+  const { state, deps } = editor;
+  const catalog = buildCatalog(state);
+
+  if (!canDeleteProfile(catalog)) {
+    return;
+  }
+
+  void confirmProfileDeletion(
+    deps.t,
+    describeProfileDeletion(state.draft, catalog, profileId)
+  ).then((confirmed) => {
+    if (confirmed) {
+      update(() => {
+        state.draft = removeProfileFromStore(state.draft, profileId);
+
+        if (state.editingId === profileId) {
+          closeProfileForm(state);
+        }
+      });
+    }
+  });
+}
+
+/** Inputs of the Test URL panel: they re-run the test and are not part of the draft. */
+const TESTER_FIELDS = new Set(["testUrl", "testTitle", "testIncognito"]);
+
+function toggleRule(state: EditorState, toggle: HTMLElement): void {
+  const row = toggle.closest<HTMLElement>("[data-rule-id]");
+  const ruleId = row?.dataset.ruleId;
+  const body = row?.querySelector<HTMLElement>(".wb-rule__body");
+
+  if (!ruleId || !body) {
+    return;
+  }
+
+  const open = body.hidden;
+  body.hidden = !open;
+  toggle.setAttribute("aria-expanded", String(open));
+
+  if (open) {
+    state.openRuleIds.add(ruleId);
+  } else {
+    state.openRuleIds.delete(ruleId);
+  }
+}
+
+async function importFile(editor: Editor, input: HTMLInputElement): Promise<void> {
+  const { state, deps } = editor;
+  const file = input.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    syncDraftFromDom(editor);
+    const preview = previewProfilesImport(text, state.draft);
+    state.importPreview = preview.ok ? { text, next: preview.next, diff: preview.diff } : undefined;
+    state.status = preview.ok
+      ? undefined
+      : { text: deps.t("optionsProfilesError", { error: preview.error }), error: true };
   } catch (error) {
-    editor.status = {
+    state.importPreview = undefined;
+    state.status = {
       text: deps.t("optionsProfilesError", {
         error: error instanceof Error ? error.message : String(error)
       }),
       error: true
     };
   }
+
+  render(editor);
 }
 
-function downloadExport(store: RecordingProfilesStore): void {
-  const blob = new Blob([JSON.stringify(createProfilesExportFile(store), null, 2)], {
-    type: "application/json"
-  });
-  const url = URL.createObjectURL(blob);
-  const anchor = el("a", { attrs: { href: url, download: "webblackbox-profiles.json" } });
-
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
-function runSandbox(card: HTMLElement, editor: EditorState, t: Translate): void {
-  const profileId = readField(card, "sandboxProfile");
-  const kind = (SANDBOX_KINDS.find((entry) => entry.value === readField(card, "sandboxKind"))
-    ?.value ?? "body") as RedactionSandboxKind;
-  const text = readField(card, "sandboxInput");
-  const profile = buildCatalog(editor).find((entry) => entry.id === profileId);
-
-  editor.sandbox = { profileId, kind, text };
-
-  if (!profile) {
+function refreshImportPreview(state: EditorState, t: Translate): void {
+  if (!state.importPreview) {
     return;
   }
 
-  const result = previewRedaction(
-    { kind, text },
-    { ...profile.redaction, unmaskSelectors: profile.unmaskSelectors }
-  );
+  const result = previewProfilesImport(state.importPreview.text, state.draft);
 
-  editor.sandbox.output =
-    result.error === "invalid-json"
-      ? t("optionsSandboxInvalidJson")
-      : result.changed
-        ? result.output
-        : t("optionsSandboxUnchanged");
+  if (result.ok) {
+    state.importPreview = { ...state.importPreview, diff: result.diff };
+  } else {
+    state.importPreview = undefined;
+    state.status = { text: t("optionsProfilesError", { error: result.error }), error: true };
+  }
+}
+
+function openProfileForm(state: EditorState, id: string): void {
+  const profile = state.draft.profiles.find((entry) => entry.id === id);
+
+  state.editingId = id;
+  state.editingSnapshot = profile ? structuredClone(profile) : undefined;
+  state.formBaseline = undefined;
+}
+
+function closeProfileForm(state: EditorState): void {
+  state.editingId = undefined;
+  state.editingSnapshot = undefined;
+  state.formBaseline = undefined;
+}
+
+/** Edits kept by other actions while the form was open are rolled back too. */
+function cancelProfileForm(state: EditorState): void {
+  const snapshot = state.editingSnapshot;
+
+  if (snapshot) {
+    state.draft = {
+      ...state.draft,
+      profiles: state.draft.profiles.map((entry) => (entry.id === snapshot.id ? snapshot : entry))
+    };
+  }
+
+  closeProfileForm(state);
+}
+
+function syncDraftFromDom(editor: Editor): void {
+  syncRulesFromDom(editor);
+  syncOpenProfileForm(editor);
+}
+
+/** Folds the open profile form into the draft; the form stays open. */
+function syncOpenProfileForm(editor: Editor): void {
+  const { state } = editor;
+  const form = editor.root.querySelector<HTMLFormElement>(".wb-profiles__form");
+  const profile = state.draft.profiles.find((entry) => entry.id === state.editingId);
+
+  if (!form || !profile) {
+    return;
+  }
+
+  const next = readProfileForm(form, profile);
+  state.draft = {
+    ...state.draft,
+    profiles: state.draft.profiles.map((entry) => (entry.id === profile.id ? next : entry))
+  };
+}
+
+/** Rule rows are plain inputs; fold them into the draft. */
+function syncRulesFromDom(editor: Editor): void {
+  const { state, root } = editor;
+  state.draft = { ...state.draft, rules: readRulesFromDom(root) };
+}
+
+function newRule(state: EditorState): ProfileRule {
+  return {
+    id: createUniqueId(
+      "rule",
+      state.draft.rules.map((rule) => rule.id)
+    ),
+    profileId: state.draft.defaultProfileId,
+    priority: 0,
+    enabled: true,
+    match: {}
+  };
+}
+
+async function saveDraft(editor: Editor): Promise<void> {
+  const { state, deps } = editor;
+
+  try {
+    const serialized = serializeProfilesStore(state.draft);
+    await deps.chromeApi?.storage?.local.set({ [PROFILES_STORAGE_KEY]: serialized });
+    state.profilesState = await loadProfilesState(deps);
+    state.draft = structuredClone(state.profilesState.store);
+    state.status = {
+      text: deps.t("optionsProfilesSaved", { time: new Date().toLocaleTimeString(deps.locale) }),
+      error: false
+    };
+  } catch (error) {
+    state.status = {
+      text: deps.t("optionsProfilesError", {
+        error: error instanceof Error ? error.message : String(error)
+      }),
+      error: true
+    };
+  }
 }
