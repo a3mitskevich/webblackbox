@@ -31,6 +31,7 @@ import {
 import {
   evaluateCountBudget,
   evaluateRatioBudget,
+  evaluateSeriesBudget,
   mergeBudgetAttempts
 } from "./lib/perf-budgets.mjs";
 
@@ -2361,52 +2362,51 @@ function compareSummaries(baselineSuite, recordedSuite) {
       ratioLimit: durationRatioLimit,
       deltaLimit: durationDeltaLimitMs
     }),
-    evaluateRatioBudget(
+    evaluateSeriesBudget(
       "requests.p95Ms",
-      baselineSummary.requests.p95Ms,
-      recordedSummary.requests.p95Ms,
+      baselineSummary.requests,
+      recordedSummary.requests,
+      "p95Ms",
       {
         ratioLimit: requestP95RatioLimit,
         deltaLimit: requestP95DeltaLimitMs
       }
     ),
-    evaluateRatioBudget(
+    evaluateSeriesBudget(
       "hoverLag.p95Ms",
-      baselineSummary.hoverLag.p95Ms,
-      recordedSummary.hoverLag.p95Ms,
+      baselineSummary.hoverLag,
+      recordedSummary.hoverLag,
+      "p95Ms",
       {
         ratioLimit: hoverP95RatioLimit,
         deltaLimit: hoverP95DeltaLimitMs
       }
     ),
-    evaluateRatioBudget(
-      "rafGap.p95Ms",
-      baselineSummary.rafGap.p95Ms,
-      recordedSummary.rafGap.p95Ms,
-      {
-        ratioLimit: rafP95RatioLimit,
-        deltaLimit: rafP95DeltaLimitMs
-      }
-    ),
+    evaluateSeriesBudget("rafGap.p95Ms", baselineSummary.rafGap, recordedSummary.rafGap, "p95Ms", {
+      ratioLimit: rafP95RatioLimit,
+      deltaLimit: rafP95DeltaLimitMs
+    }),
     evaluateCountBudget(
       "hoverLag.over32Ms",
       baselineSummary.hoverLag.over32Ms,
       recordedSummary.hoverLag.over32Ms,
       hoverOver32DeltaLimit
     ),
-    evaluateRatioBudget(
+    evaluateSeriesBudget(
       "clickCall.p95Ms",
-      baselineInteractionSummary.clickCall.p95Ms,
-      recordedInteractionSummary.clickCall.p95Ms,
+      baselineInteractionSummary.clickCall,
+      recordedInteractionSummary.clickCall,
+      "p95Ms",
       {
         ratioLimit: clickCallP95RatioLimit,
         deltaLimit: clickCallP95DeltaLimitMs
       }
     ),
-    evaluateRatioBudget(
+    evaluateSeriesBudget(
       "clickHandlerLag.p95Ms",
-      baselineInteractionSummary.clickHandlerLag.p95Ms,
-      recordedInteractionSummary.clickHandlerLag.p95Ms,
+      baselineInteractionSummary.clickHandlerLag,
+      recordedInteractionSummary.clickHandlerLag,
+      "p95Ms",
       {
         ratioLimit: clickLagP95RatioLimit,
         deltaLimit: clickLagP95DeltaLimitMs
@@ -2418,46 +2418,51 @@ function compareSummaries(baselineSuite, recordedSuite) {
       recordedInteractionSummary.clickCall.over16Ms,
       clickOver16DeltaLimit
     ),
-    evaluateRatioBudget(
+    evaluateSeriesBudget(
       "iframe.clickCall.p95Ms",
-      baselineIframeSummary.clickCall.p95Ms,
-      recordedIframeSummary.clickCall.p95Ms,
+      baselineIframeSummary.clickCall,
+      recordedIframeSummary.clickCall,
+      "p95Ms",
       {
         ratioLimit: clickCallP95RatioLimit,
         deltaLimit: clickCallP95DeltaLimitMs
       }
     ),
-    evaluateRatioBudget(
+    evaluateSeriesBudget(
       "iframe.clickHandlerLag.p95Ms",
-      baselineIframeSummary.clickHandlerLag.p95Ms,
-      recordedIframeSummary.clickHandlerLag.p95Ms,
+      baselineIframeSummary.clickHandlerLag,
+      recordedIframeSummary.clickHandlerLag,
+      "p95Ms",
       {
         ratioLimit: clickLagP95RatioLimit,
         deltaLimit: clickLagP95DeltaLimitMs
       }
     ),
-    evaluateRatioBudget(
+    evaluateSeriesBudget(
       "editor.inputCall.p95Ms",
-      baselineEditorSummary.inputCall.p95Ms,
-      recordedEditorSummary.inputCall.p95Ms,
+      baselineEditorSummary.inputCall,
+      recordedEditorSummary.inputCall,
+      "p95Ms",
       {
         ratioLimit: editorInputP95RatioLimit,
         deltaLimit: editorInputP95DeltaLimitMs
       }
     ),
-    evaluateRatioBudget(
+    evaluateSeriesBudget(
       "editor.rafGap.p95Ms",
-      baselineEditorSummary.rafGap.p95Ms,
-      recordedEditorSummary.rafGap.p95Ms,
+      baselineEditorSummary.rafGap,
+      recordedEditorSummary.rafGap,
+      "p95Ms",
       {
         ratioLimit: editorRafP95RatioLimit,
         deltaLimit: editorRafP95DeltaLimitMs
       }
     ),
-    evaluateRatioBudget(
+    evaluateSeriesBudget(
       "navigation.mouse.p50Ms",
-      normalizedBaselineNavigationSummary.mouseNavigationLatency.p50Ms,
-      normalizedRecordedNavigationSummary.mouseNavigationLatency.p50Ms,
+      normalizedBaselineNavigationSummary.mouseNavigationLatency,
+      normalizedRecordedNavigationSummary.mouseNavigationLatency,
+      "p50Ms",
       {
         ratioLimit: navigationP50RatioLimit,
         deltaLimit: navigationP50DeltaLimitMs

@@ -29,6 +29,22 @@ export function evaluateRatioBudget(metric, baseline, recorded, { ratioLimit, de
   };
 }
 
+/**
+ * Ratio budget on one statistic (e.g. `p95Ms`) of two summarized series. A series without
+ * samples (e.g. no animation frame landed in a short window) has no value rather than 0, so
+ * the budget is skipped instead of comparing against 0.
+ */
+export function evaluateSeriesBudget(metric, baselineSeries, recordedSeries, statistic, limits) {
+  const baselineCount = baselineSeries?.count ?? 0;
+  const recordedCount = recordedSeries?.count ?? 0;
+
+  if (baselineCount === 0 || recordedCount === 0) {
+    return { metric, skipped: "no-samples", baselineCount, recordedCount, ok: true };
+  }
+
+  return evaluateRatioBudget(metric, baselineSeries[statistic], recordedSeries[statistic], limits);
+}
+
 /** recorded <= baseline + delta */
 export function evaluateCountBudget(metric, baseline, recorded, deltaLimit) {
   assertFiniteMetric(metric, baseline, recorded);
@@ -61,7 +77,14 @@ export function mergeBudgetAttempts(attempts) {
     }
   }
 
-  const budgets = [...byMetric.values()].map((candidates) => {
+  const budgets = [...byMetric.values()].map((allCandidates) => {
+    // Skipped comparisons carry no information, so they can neither pass nor fail a metric.
+    const candidates = allCandidates.filter((candidate) => !candidate.skipped);
+
+    if (candidates.length === 0) {
+      return { ...allCandidates[0], recordedAttempts: [] };
+    }
+
     const passing = candidates.filter((candidate) => candidate.ok);
     const pool = passing.length > 0 ? passing : candidates;
     const best = pool.reduce((left, right) => (right.recorded < left.recorded ? right : left));

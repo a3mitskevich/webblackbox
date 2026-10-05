@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateCountBudget, evaluateRatioBudget, mergeBudgetAttempts } from "./perf-budgets.mjs";
+import {
+  evaluateCountBudget,
+  evaluateRatioBudget,
+  evaluateSeriesBudget,
+  mergeBudgetAttempts
+} from "./perf-budgets.mjs";
 
 const NAV_LIMITS = { ratioLimit: 1.7, deltaLimit: 80 };
 
@@ -24,6 +29,34 @@ describe("evaluateRatioBudget", () => {
     expect(() => evaluateRatioBudget("nav", 1, undefined, NAV_LIMITS)).toThrow(
       "Recorded metric is unavailable: nav"
     );
+  });
+});
+
+describe("evaluateSeriesBudget", () => {
+  const RAF_LIMITS = { ratioLimit: 1.35, deltaLimit: 8 };
+  const series = (count, p95Ms) => ({ count, p50Ms: p95Ms, p95Ms });
+
+  it("compares the chosen statistic of two series", () => {
+    expect(
+      evaluateSeriesBudget("rafGap.p95Ms", series(9, 16.7), series(8, 16.7), "p95Ms", RAF_LIMITS)
+    ).toMatchObject({ baseline: 16.7, recorded: 16.7, ok: true });
+    expect(
+      evaluateSeriesBudget("rafGap.p95Ms", series(9, 16.7), series(8, 50), "p95Ms", RAF_LIMITS).ok
+    ).toBe(false);
+  });
+
+  it("skips a comparison when a side has no samples instead of treating it as 0 ms", () => {
+    // Local run: no animation frame landed in an 840 ms baseline window, so "p95" was 0 and a
+    // single normal 16.7 ms frame while recording exceeded the 8 ms threshold.
+    expect(
+      evaluateSeriesBudget("rafGap.p95Ms", series(0, 0), series(8, 16.7), "p95Ms", RAF_LIMITS)
+    ).toEqual({
+      metric: "rafGap.p95Ms",
+      skipped: "no-samples",
+      baselineCount: 0,
+      recordedCount: 8,
+      ok: true
+    });
   });
 });
 
@@ -59,6 +92,22 @@ describe("mergeBudgetAttempts", () => {
     ]);
 
     expect(merged.failures).toEqual([]);
+  });
+
+  it("does not let a skipped comparison mask a failing one", () => {
+    const skipped = { metric: "rafGap.p95Ms", skipped: "no-samples", ok: true };
+    const failing = evaluateRatioBudget("rafGap.p95Ms", 16.7, 50, {
+      ratioLimit: 1.35,
+      deltaLimit: 8
+    });
+
+    expect(mergeBudgetAttempts([[skipped], [failing]]).failures).toEqual([
+      expect.objectContaining({ metric: "rafGap.p95Ms", recorded: 50, ok: false })
+    ]);
+    expect(mergeBudgetAttempts([[skipped], [skipped]])).toMatchObject({
+      failures: [],
+      budgets: [{ metric: "rafGap.p95Ms", skipped: "no-samples" }]
+    });
   });
 
   it("fails a regression that exceeds the budget on every attempt", () => {
