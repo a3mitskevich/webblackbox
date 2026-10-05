@@ -13,6 +13,8 @@ export type PrivacyViolationSubject =
   | "tab-recording"
   | "storage"
   | "storage-details"
+  | "tabs"
+  | "tab-details"
   | "profile"
   | "unknown";
 
@@ -48,6 +50,8 @@ const SUBJECT_BY_REASON: Record<string, PrivacyViolationSubject> = {
   "screen-recordings-disabled": "tab-recording",
   "storage-disabled": "storage",
   "storage-detail-disabled": "storage-details",
+  "tabs-context-disabled": "tabs",
+  "tabs-context-detail-disabled": "tab-details",
   "heap-profile-disabled": "profile",
   "cdp-profile-disabled": "profile"
 };
