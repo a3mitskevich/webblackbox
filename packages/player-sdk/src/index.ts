@@ -1224,7 +1224,8 @@ export class WebBlackboxPlayer {
 
   /**
    * Full text of a WebSocket frame or SSE message: the inline payload, or the blob the pipeline moved
-   * a large one into. Null for unknown events and events without a payload.
+   * a large one into. Null for unknown events and events without a payload. Rejects when the event
+   * references a blob the archive does not hold, rather than returning the inline head as the frame.
    */
   public async getRealtimePayloadText(eventId: string): Promise<string | null> {
     const entry = this.getRealtimeNetworkTimeline().find((item) => item.eventId === eventId);
@@ -1238,7 +1239,12 @@ export class WebBlackboxPlayer {
     }
 
     const blob = await this.getBlob(entry.payloadHash);
-    return blob ? new TextDecoder().decode(blob.bytes) : (entry.payloadPreview ?? null);
+
+    if (!blob) {
+      throw new Error(`Realtime payload blob ${entry.payloadHash} is missing from the archive.`);
+    }
+
+    return new TextDecoder().decode(blob.bytes);
   }
 
   /** Returns storage timeline entries (cookie/local/session/idb/cache/sw). */

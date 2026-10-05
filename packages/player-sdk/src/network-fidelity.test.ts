@@ -242,4 +242,29 @@ describe("realtime payloads", () => {
     expect(await player.getRealtimePayloadText(sse!.eventId)).toBe(bigFrame);
     expect(await player.getRealtimePayloadText("E-missing")).toBeNull();
   });
+
+  it("rejects instead of passing the inline head off as the full frame when the blob is missing", async () => {
+    const missingHash = "a".repeat(64);
+    const player = await WebBlackboxPlayer.open(
+      await buildArchive([
+        {
+          type: "network.ws.frame",
+          mono: 1,
+          data: {
+            requestId: "ws-1",
+            direction: "received",
+            frame: {
+              opcode: 1,
+              payloadLength: 40_000,
+              payloadPreview: SIGNALR_FRAME.slice(0, 512),
+              payloadHash: missingHash
+            }
+          }
+        }
+      ])
+    );
+    const [entry] = player.getRealtimeNetworkTimeline();
+
+    await expect(player.getRealtimePayloadText(entry!.eventId)).rejects.toThrow(missingHash);
+  });
 });
