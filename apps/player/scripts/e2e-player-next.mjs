@@ -130,6 +130,13 @@ async function navigate(client, url) {
   );
 }
 
+/** A full page load even when the URL differs from the current one only in its hash. */
+async function navigateFresh(client, url) {
+  await client.send("Page.navigate", { url: "about:blank" });
+  await sleep(200);
+  await navigate(client, url);
+}
+
 async function setViewport(client, width, height) {
   await client.send("Emulation.setDeviceMetricsOverride", {
     width,
@@ -574,10 +581,8 @@ async function verifyTheme(client) {
 }
 
 async function verifyHashRestore(client, origin, archivePath) {
-  // A URL that differs only in its hash would be a same-document navigation: leave the page first.
-  await client.send("Page.navigate", { url: "about:blank" });
-  await sleep(200);
-  await navigate(client, `${origin}/?ui=next&lang=en#t=10.89&sel=req:90080.1706&tab=network`);
+  // A URL that differs only in its hash would be a same-document navigation.
+  await navigateFresh(client, `${origin}/?ui=next&lang=en#t=10.89&sel=req:90080.1706&tab=network`);
   await openEncrypted(client, archivePath, SYNTHETIC_PASSPHRASE);
   const restored = await waitForSnapshot(
     client,
@@ -652,16 +657,17 @@ async function captureScreenshots(client, origin, archivePath, outDir) {
       shots.push(await screenshot(client, outDir, `before-classic-${width}-light-${lang}.png`));
 
       for (const theme of ["light", "dark"]) {
+        // The shot is taken at the first 401 (t=10.89); waitForSnapshot below checks the clock.
         await client.evaluate("localStorage.removeItem('webblackbox.player.theme')");
         await client.send("Emulation.setEmulatedMedia", {
           features: [{ name: "prefers-color-scheme", value: theme }]
         });
-        await navigate(client, `${origin}/?ui=next&lang=${lang}#t=10.89&sel=req:90080.1706`);
+        await navigateFresh(client, `${origin}/?ui=next&lang=${lang}#t=10.89&sel=req:90080.1706`);
         await openEncrypted(client, archivePath, SYNTHETIC_PASSPHRASE);
         await waitForSnapshot(
           client,
-          (value) => value.media === "screenshot",
-          "Stage did not show the screenshot"
+          (value) => value.media === "screenshot" && /0:10[.,]89/.test(value.clock),
+          "Stage did not show the screenshot at 10.89 s"
         );
         await client.evaluate("document.fonts.ready");
         await sleep(400);
@@ -674,7 +680,7 @@ async function captureScreenshots(client, origin, archivePath, outDir) {
   await client.send("Emulation.setEmulatedMedia", {
     features: [{ name: "prefers-color-scheme", value: "light" }]
   });
-  await navigate(client, `${origin}/?ui=next&lang=en#t=10.89&sel=req:90080.1706`);
+  await navigateFresh(client, `${origin}/?ui=next&lang=en#t=10.89&sel=req:90080.1706`);
   await openEncrypted(client, archivePath, SYNTHETIC_PASSPHRASE);
   await sleep(400);
   shots.push(await screenshot(client, outDir, "after-next-390-light-en.png"));
@@ -703,9 +709,7 @@ async function verifyRealArchive(client, origin, archivePath, passphrase) {
   await setViewport(client, 1440, 900);
   // Mid-session (the real recording has no frame at 0 s); the classic error rule finds no errors
   // in it (console errors carry data.level — R2), so the check seeks by the URL hash.
-  await client.send("Page.navigate", { url: "about:blank" });
-  await sleep(200);
-  await navigate(client, `${origin}/?ui=next&lang=en#t=10.89`);
+  await navigateFresh(client, `${origin}/?ui=next&lang=en#t=10.89`);
   await openEncrypted(client, archivePath, passphrase);
   const snapshot = await waitForSnapshot(
     client,
