@@ -239,9 +239,10 @@ export function restoreRecommendedProfiles(store: RecordingProfilesStore): Recor
     ...withoutRemovedRecommendedIds(store),
     profiles: ensureDefaultProfile(store.profiles, [])
   };
-  const hasDefault = listStoreProfiles(restored).some(
-    (profile) => profile.id === restored.defaultProfileId
-  );
+  // Enterprise profiles are not in the store; the profiles state resolves a missing one.
+  const hasDefault =
+    isManagedProfileId(restored.defaultProfileId) ||
+    listStoreProfiles(restored).some((profile) => profile.id === restored.defaultProfileId);
 
   return hasDefault ? restored : { ...restored, defaultProfileId: DEFAULT_PROFILE_ID };
 }

@@ -103,6 +103,7 @@ import {
   buildProfileCancellation,
   detectProfileChange,
   isProfileSettingsChange,
+  reselectStartedProfile,
   shouldDeferProfileCheck,
   toProfileCancelNotice,
   toSessionProfileRequest,
@@ -1453,16 +1454,12 @@ async function reevaluateSessionProfile(
     requireSignals: true
   });
 
-  // A tab or page that cannot be read right now says nothing about the profile: never cancel on it.
-  if (!page) {
-    return;
-  }
-
-  const nextSelection = selectRecordingProfile({
-    state,
-    page,
-    requestedProfileId: runtime.profile.request
-  });
+  const started = runtime.profile.selection;
+  // A tab or page that cannot be read right now says nothing about the rules: only the started
+  // profile itself is checked (deleted, edited or capped by the policy).
+  const nextSelection = page
+    ? selectRecordingProfile({ state, page, requestedProfileId: runtime.profile.request })
+    : reselectStartedProfile(started, state);
   const next = nextSelection
     ? await buildSessionProfileSnapshot(runtime, nextSelection, enterprisePolicy)
     : null;
@@ -1472,7 +1469,6 @@ async function reevaluateSessionProfile(
     return;
   }
 
-  const started = runtime.profile.selection;
   const reason = detectProfileChange({
     started: {
       selection: started,

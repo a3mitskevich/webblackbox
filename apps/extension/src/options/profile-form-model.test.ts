@@ -4,6 +4,7 @@ import { BUILT_IN_PROFILE_IDS, createDefaultProfile } from "../shared/profiles/p
 import {
   applyProfileFormValues,
   createUniqueId,
+  duplicateIntoStore,
   formatQueryLines,
   formatValuePatternLines,
   parseValuePatternLines,
@@ -128,5 +129,27 @@ describe("profile form model", () => {
 
   it("creates unique ids", () => {
     expect(createUniqueId("rule", ["rule-2", "rule-3"])).toBe("rule-4");
+  });
+
+  it("never gives a copy the id a rule or the default still points to", () => {
+    // A rule left behind by a deleted profile must not silently start using a new copy.
+    const store = {
+      schemaVersion: 2 as const,
+      defaultProfileId: "profile-3",
+      profiles: [createDefaultProfile()],
+      rules: [
+        {
+          id: "bank",
+          profileId: "profile-2",
+          priority: 1,
+          enabled: true,
+          match: { hosts: ["*.bank.example"] }
+        }
+      ],
+      extendedCaptureHosts: []
+    };
+    const { id } = duplicateIntoStore(store, createDefaultProfile());
+
+    expect(id).toBe("profile-4");
   });
 });

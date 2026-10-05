@@ -431,4 +431,10 @@ describe("deleting and restoring recommended profiles", () => {
     expect(empty.defaultProfileId).toBe("mine");
     expect(restoreRecommendedProfiles(empty).defaultProfileId).toBe(DEFAULT_PROFILE_ID);
   });
+
+  it("keeps an enterprise profile as the default on restore", () => {
+    const managedDefault = storeWith({ defaultProfileId: "managed:corp" });
+
+    expect(restoreRecommendedProfiles(managedDefault).defaultProfileId).toBe("managed:corp");
+  });
 });

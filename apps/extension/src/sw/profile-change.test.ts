@@ -27,6 +27,7 @@ import {
   buildProfileCancellation,
   detectProfileChange,
   isProfileSettingsChange,
+  reselectStartedProfile,
   shouldDeferProfileCheck,
   toProfileCancelNotice,
   toSessionProfileRequest,
@@ -160,6 +161,25 @@ describe("detectProfileChange", () => {
         startedProfileExists: true
       })
     ).toBe("profile-edited");
+  });
+
+  it("reports an edit of settings the service worker reads from the profile itself", () => {
+    const mine = qaCopy();
+    const started = snapshot(select(state({ profiles: [createDefaultProfile(), mine] }), "mine"));
+    const editedNetwork = {
+      ...mine,
+      network: { ...mine.network, excludeUrls: [...mine.network.excludeUrls, "*/health*"] }
+    };
+    const renamed = { ...mine, name: "Mine (renamed)", description: "Other words" };
+    const next = (profile: typeof mine) =>
+      snapshot(select(state({ profiles: [createDefaultProfile(), profile] }), "mine"));
+
+    expect(
+      detectProfileChange({ started, next: next(editedNetwork), startedProfileExists: true })
+    ).toBe("profile-edited");
+    expect(
+      detectProfileChange({ started, next: next(renamed), startedProfileExists: true })
+    ).toBeNull();
   });
 
   it("keeps recording when another rule picks the same profile", () => {
@@ -363,5 +383,21 @@ describe("toSessionProfileRequest", () => {
     expect(toSessionProfileRequest(AUTO_PROFILE_ID, select(profilesState, AUTO_PROFILE_ID))).toBe(
       AUTO_PROFILE_ID
     );
+  });
+});
+
+describe("reselectStartedProfile", () => {
+  it("finds the started profile as it is stored now, whatever the rules would pick", () => {
+    const mine = qaCopy();
+    const started = select(state({ profiles: [createDefaultProfile(), mine] }), "mine");
+    const edited = { ...mine, categories: { ...mine.categories, console: "metadata" as const } };
+    const again = reselectStartedProfile(
+      started,
+      state({ profiles: [createDefaultProfile(), edited] })
+    );
+
+    expect(again?.profile).toEqual(edited);
+    expect(again?.source).toBe(started.source);
+    expect(reselectStartedProfile(started, state())).toBeNull();
   });
 });

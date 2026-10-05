@@ -1,14 +1,21 @@
 import { DEFAULT_RECORDER_CONFIG, type RecorderConfig } from "@webblackbox/protocol";
 
 import type { ProfileCancelNotice, ProfileCancelReason } from "../shared/messages.js";
-import { PROFILES_STORAGE_KEY, type ProfileRule } from "../shared/profiles/model.js";
+import {
+  DEFAULT_PROFILE_ID,
+  PROFILES_STORAGE_KEY,
+  type ProfileRule,
+  type RecordingProfile
+} from "../shared/profiles/model.js";
 import {
   AUTO_PROFILE_ID,
+  isExtendedCaptureProfile,
   toArchivedProfileInfo,
   type ArchivedProfileInfo,
   type ProfileSelection
 } from "../shared/profiles/resolve.js";
 import { collectPageSignalRequest } from "../shared/profiles/rules.js";
+import type { ProfilesState } from "../shared/profiles/storage.js";
 
 /** A recording profile as a session runs it. */
 export type SessionProfileSnapshot = {
@@ -57,7 +64,16 @@ export function detectProfileChange(input: {
     return "rule-changed";
   }
 
-  if (!isSameRunningConfig(next.profileConfig, started.profileConfig)) {
+  if (
+    !isSameRunningConfig(next.profileConfig, started.profileConfig) ||
+    // The service worker also reads body filters and other settings from the profile itself. The
+    // legacy Default is derived from v1 options, which the config comparison already covers.
+    (!started.selection.legacy &&
+      !isSameValue(
+        toProfileSettings(next.selection.profile),
+        toProfileSettings(started.selection.profile)
+      ))
+  ) {
     return "profile-edited";
   }
 
@@ -104,6 +120,24 @@ export function isProfileSettingsChange(
 }
 
 /**
+ * The started profile as the store holds it now, for a check that cannot match the rules (the page
+ * could not be read): deleting, editing or capping it still cancels. Null when it was deleted.
+ */
+export function reselectStartedProfile(
+  started: ProfileSelection,
+  state: ProfilesState
+): ProfileSelection | null {
+  const profile = state.catalog.find((entry) => entry.id === started.profile.id);
+
+  if (!profile) {
+    return null;
+  }
+
+  const legacy = state.legacy && profile.id === DEFAULT_PROFILE_ID;
+  return { ...started, profile, legacy, extended: !legacy && isExtendedCaptureProfile(profile) };
+}
+
+/**
  * What later checks re-run for a session: the chosen profile id, or `auto` when that id did not
  * exist at Start (a stale popup choice) and the rules picked the profile instead.
  */
@@ -134,6 +168,17 @@ export function toProfileCancelNotice(cancellation: ProfileCancellation): Profil
     startedName: cancellation.started.name,
     ...(cancellation.next ? { nextName: cancellation.next.name } : {})
   };
+}
+
+function isSameValue(left: unknown, right: unknown): boolean {
+  return stableStringify(left) === stableStringify(right);
+}
+
+/** A profile's settings: renaming it or rewording its description changes nothing recorded. */
+function toProfileSettings(profile: RecordingProfile): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(profile).filter(([key]) => key !== "name" && key !== "description")
+  );
 }
 
 function isSameRunningConfig(left: RecorderConfig, right: RecorderConfig): boolean {
