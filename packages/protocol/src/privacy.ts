@@ -1,4 +1,5 @@
 const ABSOLUTE_URL_PATTERN = /^[a-z][a-z\d+.-]*:/i;
+const ORIGIN_URL_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
 const UUID_SEGMENT_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HEX_SEGMENT_PATTERN = /^[0-9a-f]{8,}$/i;
@@ -65,7 +66,8 @@ function sanitizeAbsoluteUrl(value: string): string {
     return sanitizeRelativeUrl(value);
   }
 
-  if (url.protocol === "http:" || url.protocol === "https:") {
+  // `origin` drops userinfo; WebSocket endpoints are kept like http(s) so they stay identifiable.
+  if (ORIGIN_URL_PROTOCOLS.has(url.protocol)) {
     return `${url.origin}${routeTemplatePath(url.pathname)}`;
   }
 

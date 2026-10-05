@@ -11,6 +11,42 @@ export type FinalizedChunk = {
   events: WebBlackboxEvent[];
 };
 
+export type ChunkTimeBounds = Pick<
+  ChunkTimeIndexEntry,
+  "tStart" | "tEnd" | "monoStart" | "monoEnd"
+>;
+
+const EMPTY_CHUNK_TIME_BOUNDS: ChunkTimeBounds = { tStart: 0, tEnd: 0, monoStart: 0, monoEnd: 0 };
+
+/**
+ * Min/max wall-clock and monotonic time of a chunk's events. Chunks keep events in arrival order,
+ * which is not time order (page-side events arrive late), so the first and last event would
+ * understate the span and make readers skip the chunk for ranges it does cover.
+ */
+export function computeChunkTimeBounds(
+  events: WebBlackboxEvent[],
+  fallback: ChunkTimeBounds = EMPTY_CHUNK_TIME_BOUNDS
+): ChunkTimeBounds {
+  if (events.length === 0) {
+    const { tStart, tEnd, monoStart, monoEnd } = fallback;
+    return { tStart, tEnd, monoStart, monoEnd };
+  }
+
+  let tStart = Number.POSITIVE_INFINITY;
+  let tEnd = Number.NEGATIVE_INFINITY;
+  let monoStart = Number.POSITIVE_INFINITY;
+  let monoEnd = Number.NEGATIVE_INFINITY;
+
+  for (const event of events) {
+    tStart = Math.min(tStart, event.t);
+    tEnd = Math.max(tEnd, event.t);
+    monoStart = Math.min(monoStart, event.mono);
+    monoEnd = Math.max(monoEnd, event.mono);
+  }
+
+  return { tStart, tEnd, monoStart, monoEnd };
+}
+
 export class EventChunker {
   private readonly pending: WebBlackboxEvent[] = [];
 
@@ -56,8 +92,6 @@ export class EventChunker {
     const events = [...this.pending];
     const encoded = await encodeChunkEvents(events, this.codec);
     const bytes = encoded.bytes;
-    const first = events[0];
-    const last = events[events.length - 1];
     const hash = await sha256Hex(bytes);
 
     this.pending.length = 0;
@@ -67,10 +101,7 @@ export class EventChunker {
       meta: {
         chunkId: createChunkId(this.sequence),
         seq: this.sequence,
-        tStart: first?.t ?? 0,
-        tEnd: last?.t ?? 0,
-        monoStart: first?.mono ?? 0,
-        monoEnd: last?.mono ?? 0,
+        ...computeChunkTimeBounds(events),
         eventCount: events.length,
         byteLength: bytes.byteLength,
         codec: encoded.codec,
