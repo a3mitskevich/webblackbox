@@ -1876,8 +1876,9 @@ async function configureE2eRecorderOptions(control, mode) {
             console: 'allow',
             network: 'body-allowlist',
             storage: 'allow',
-            indexedDb: 'names-only',
-            cookies: 'names-only',
+            // Full capture records values; the other runs keep names only.
+            indexedDb: ${JSON.stringify(completenessMode)} ? 'allow' : 'names-only',
+            cookies: ${JSON.stringify(completenessMode)} ? 'allow' : 'names-only',
             cdp: ${JSON.stringify(mode)} === 'full' ? 'full' : 'safe-subset',
             heapProfiles: 'off'
           },
@@ -2689,7 +2690,14 @@ function realisticCompletenessExpectations(scenario) {
     maxCutWsFrames: 0,
     minConsoleEntries: 3,
     minWithStack: 1,
-    minVitals: 1
+    minVitals: 1,
+    // Full capture with recording profiles (#10): the DOM follows the session (change-driven
+    // snapshots) and cookie, localStorage and IndexedDB values are recorded.
+    minDomCoveragePercent: 60,
+    maxDomGapMs: 10_000,
+    minCookieValues: 2,
+    minLocalValues: 2,
+    minIdbRecords: 5
   };
 }
 
