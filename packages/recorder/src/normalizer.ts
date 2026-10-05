@@ -4,7 +4,7 @@ import {
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
-import { normalizeCdpNetworkPayload } from "./cdp-network.js";
+import { CdpCacheTracker, normalizeCdpNetworkPayload } from "./cdp-network.js";
 import { normalizeCdpExceptionPayload } from "./cdp-runtime.js";
 import {
   normalizeCdpConsolePayload,
@@ -81,6 +81,8 @@ export type DefaultEventNormalizerOptions = {
 export class DefaultEventNormalizer implements EventNormalizer {
   private readonly consoleDetail: ConsoleDetail;
 
+  private readonly cacheTracker = new CdpCacheTracker();
+
   public constructor(options: DefaultEventNormalizerOptions = {}) {
     this.consoleDetail = options.consoleDetail ?? "compact";
   }
@@ -89,16 +91,7 @@ export class DefaultEventNormalizer implements EventNormalizer {
     input: RawRecorderEvent
   ): { eventType: WebBlackboxEventType; payload: unknown } | null {
     if (input.source === "cdp") {
-      const eventType = CDP_EVENT_MAP[input.rawType];
-
-      if (!eventType) {
-        return null;
-      }
-
-      return {
-        eventType,
-        payload: normalizeCdpPayload(eventType, input.rawType, input.payload, this.consoleDetail)
-      };
+      return this.normalizeCdp(input);
     }
 
     if (input.source === "content") {
@@ -163,6 +156,37 @@ export class DefaultEventNormalizer implements EventNormalizer {
       payload: input.payload
     };
   }
+
+  private normalizeCdp(
+    input: RawRecorderEvent
+  ): { eventType: WebBlackboxEventType; payload: unknown } | null {
+    if (input.rawType === "Network.requestServedFromCache") {
+      this.cacheTracker.remember(input.cdpSessionId, input.payload);
+      return null;
+    }
+
+    const eventType = CDP_EVENT_MAP[input.rawType];
+
+    if (!eventType) {
+      return null;
+    }
+
+    if (eventType.startsWith("network.")) {
+      return {
+        eventType,
+        payload: this.cacheTracker.annotate(
+          input.rawType,
+          input.cdpSessionId,
+          normalizeCdpNetworkPayload(input.rawType, input.payload)
+        )
+      };
+    }
+
+    return {
+      eventType,
+      payload: normalizeCdpPayload(eventType, input.rawType, input.payload, this.consoleDetail)
+    };
+  }
 }
 
 function normalizeCdpPayload(
@@ -177,10 +201,6 @@ function normalizeCdpPayload(
 
   if (eventType === "error.exception") {
     return normalizeCdpExceptionPayload(payload, consoleDetail);
-  }
-
-  if (eventType.startsWith("network.")) {
-    return normalizeCdpNetworkPayload(rawType, payload);
   }
 
   return payload;
