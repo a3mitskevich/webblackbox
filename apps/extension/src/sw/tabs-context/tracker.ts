@@ -62,6 +62,8 @@ type TrackedSession = {
   known: Map<number, RelatedTabInfo>;
   /** Tabs created while the session recorded: their first appearance is `opened`. */
   created: Set<number>;
+  /** Set once the snapshot is taken; changes are diffed against it, never before it. */
+  snapshotTaken: boolean;
 };
 
 /** Collapses the burst of `onUpdated` calls one navigation fires (loading, url, title, complete). */
@@ -115,7 +117,8 @@ export class TabsContextTracker {
       level: input.level,
       recorded,
       known: new Map(),
-      created: this.sessions.get(recordedTabId)?.created ?? new Set()
+      created: this.sessions.get(recordedTabId)?.created ?? new Set(),
+      snapshotTaken: false
     };
     this.sessions.set(recordedTabId, session);
     this.ensureListening();
@@ -144,14 +147,15 @@ export class TabsContextTracker {
     }
 
     const level = input.level ?? session.level;
-    const recorded = input.url ? parseTabLocation(input.url) : session.recorded;
+    // A non-http page (about:blank, an error page) keeps the relations of the last site.
+    const recorded = (input.url ? parseTabLocation(input.url) : null) ?? session.recorded;
 
-    if (level === session.level && recorded?.origin === session.recorded.origin) {
+    if (level === session.level && recorded.origin === session.recorded.origin) {
       return this.queue;
     }
 
     return this.startSession(recordedTabId, {
-      url: input.url ?? session.recorded.origin,
+      url: recorded.origin,
       level,
       reason: level !== session.level ? "profile-change" : "origin-change"
     });
@@ -270,6 +274,7 @@ export class TabsContextTracker {
       }
     }
 
+    session.snapshotTaken = true;
     this.options.emit(session.recordedTabId, {
       rawType: "tabs.snapshot",
       payload: buildTabsSnapshotPayload({
@@ -298,6 +303,11 @@ export class TabsContextTracker {
 
     tabIds.forEach((tabId, index) => {
       for (const session of this.sessions.values()) {
+        // A session started while this flush waited for Chrome: its snapshot sees the tab.
+        if (!session.snapshotTaken) {
+          continue;
+        }
+
         this.applyObservation(session, tabId, tabs[index] ?? null, removed.has(tabId), now);
       }
     });

@@ -107,3 +107,10 @@ export const RELATED_TAB_CHANGE_KINDS = [
 ] as const;
 
 export const TABS_SNAPSHOT_REASONS = ["start", "profile-change", "origin-change"] as const;
+
+/** Bounds of the `meta.tabs.*` payloads: related tabs per snapshot, path and title lengths. */
+export const TABS_CONTEXT_LIMITS = {
+  maxTabs: 500,
+  maxPathLength: 8_192,
+  maxTitleLength: 2_048
+} as const;

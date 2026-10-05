@@ -9,6 +9,7 @@ import {
   RELATED_TAB_RELATIONS,
   STORAGE_SNAPSHOT_MODES,
   TABS_CONTEXT_LEVELS,
+  TABS_CONTEXT_LIMITS,
   TABS_SNAPSHOT_REASONS,
   WEBBLACKBOX_EVENT_TYPES,
   WEBBLACKBOX_PROTOCOL_VERSION
@@ -457,7 +458,6 @@ const metaSessionStartSchema = z
   })
   .strict();
 
-const MAX_RELATED_TABS = 500;
 const recordedTabsLevelSchema = z.enum(["metadata", "allow"]);
 const chromeTabIdSchema = z.number().int().nonnegative();
 
@@ -467,8 +467,8 @@ const relatedTabSchema = z
     windowId: z.number().int(),
     relation: z.enum(RELATED_TAB_RELATIONS),
     origin: z.string().min(1).max(2_048),
-    path: z.string().max(8_192).optional(),
-    title: z.string().max(2_048).optional(),
+    path: z.string().max(TABS_CONTEXT_LIMITS.maxPathLength).optional(),
+    title: z.string().max(TABS_CONTEXT_LIMITS.maxTitleLength).optional(),
     active: z.boolean(),
     focused: z.boolean(),
     incognito: z.boolean(),
@@ -486,7 +486,7 @@ const metaTabsSnapshotSchema = z
     level: recordedTabsLevelSchema,
     origin: z.string().min(1).max(2_048),
     site: z.string().min(1).max(2_048),
-    tabs: z.array(relatedTabSchema).max(MAX_RELATED_TABS)
+    tabs: z.array(relatedTabSchema).max(TABS_CONTEXT_LIMITS.maxTabs)
   })
   .strict();
 

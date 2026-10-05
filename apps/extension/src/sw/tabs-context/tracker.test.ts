@@ -1,3 +1,4 @@
+import { TABS_CONTEXT_LIMITS, validateEventData } from "@webblackbox/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChromeTabLike } from "./related-tabs.js";
@@ -334,6 +335,67 @@ describe("TabsContextTracker", () => {
     chrome.remove(2);
     await vi.advanceTimersByTimeAsync(60);
     expect(emitted).toHaveLength(3);
+  });
+
+  it("keeps tracking while the recorded tab is on a non-http page", async () => {
+    const { chrome, tracker, emitted } = setup();
+    await tracker.startSession(RECORDED_TAB, { url: RECORDED_URL, level: "metadata" });
+
+    await tracker.updateSession(RECORDED_TAB, { url: "about:blank" });
+    await tracker.updateSession(RECORDED_TAB, { url: RECORDED_URL });
+    chrome.create({ id: 12, windowId: 1, url: "https://app.example.com/help" });
+    await vi.advanceTimersByTimeAsync(60);
+
+    expect(tracker.isListening()).toBe(true);
+    expect(emitted.map((entry) => entry.rawType)).toEqual(["tabs.snapshot", "tabs.change"]);
+    expect(changes(emitted).map((change) => [change?.change, change?.tab.tabId])).toEqual([
+      ["opened", 12]
+    ]);
+  });
+
+  it("reports nothing for a session whose snapshot is still pending", async () => {
+    const { chrome, tracker, emitted } = setup();
+    await tracker.startSession(RECORDED_TAB, { url: RECORDED_URL, level: "metadata" });
+
+    chrome.update(4, { url: "https://example.com/login" }, { url: "https://example.com/login" });
+    // The flush is queued; the profile switch replaces the session before it runs.
+    vi.advanceTimersByTime(60);
+    await tracker.updateSession(RECORDED_TAB, { level: "allow" });
+
+    expect(
+      emitted.map((entry) =>
+        entry.rawType === "tabs.snapshot"
+          ? [entry.payload.reason, entry.payload.tabs.map((tab) => tab.tabId)]
+          : [entry.payload.change, entry.payload.tab.tabId]
+      )
+    ).toEqual([
+      ["start", [2, 3]],
+      ["profile-change", [2, 3, 4]]
+    ]);
+  });
+
+  it("cuts long paths and titles so the snapshot still passes the protocol schema", async () => {
+    const longQuery = "x".repeat(TABS_CONTEXT_LIMITS.maxPathLength + 100);
+    const { tracker, emitted } = setup([
+      ...INITIAL_TABS,
+      {
+        id: 6,
+        windowId: 1,
+        url: `https://app.example.com/sso?SAMLRequest=${longQuery}`,
+        title: "t".repeat(TABS_CONTEXT_LIMITS.maxTitleLength + 100),
+        active: false
+      }
+    ]);
+
+    await tracker.startSession(RECORDED_TAB, { url: RECORDED_URL, level: "allow" });
+
+    const snapshot = emitted[0];
+    expect(snapshot?.rawType).toBe("tabs.snapshot");
+    expect(validateEventData("meta.tabs.snapshot", snapshot?.payload).success).toBe(true);
+    const long = snapshot?.rawType === "tabs.snapshot" ? snapshot.payload.tabs[2] : undefined;
+    expect(long?.tabId).toBe(6);
+    expect(long?.path).toHaveLength(TABS_CONTEXT_LIMITS.maxPathLength);
+    expect(long?.title).toHaveLength(TABS_CONTEXT_LIMITS.maxTitleLength);
   });
 
   it("flushes pending changes on settle", async () => {

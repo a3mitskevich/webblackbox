@@ -2,7 +2,8 @@
 
 // E2E: other tabs of the recorded site land in the archive. A same-origin tab open before Start
 // is in the start snapshot; during the session a same-site tab (other port) is opened, navigated
-// and closed, the pre-existing tab navigates to another site and back, and a tab of another site
+// and closed, a second same-origin tab is opened and closed, the pre-existing tab navigates to
+// another site and back, and a tab of another site
 // (localhost vs 127.0.0.1) is opened and closed. The QA profile (picked by a site rule) records
 // paths and titles; the other site never appears anywhere in the archive.
 
@@ -88,6 +89,10 @@ async function main() {
   await updateTab(tabs, sameSiteTabId, `http://127.0.0.1:${otherPort}/reports/weekly/`);
   await sleep(STEP_MS);
 
+  // A third tab of the site, same origin as the recorded one.
+  const sameOriginTabId = await createTab(tabs, `http://127.0.0.1:${appPort}/settings/`);
+  await sleep(STEP_MS);
+
   // Another site: must never show up.
   const foreignTabId = await createTab(tabs, `http://localhost:${appPort}/${FOREIGN_MARKER}/`);
   await sleep(STEP_MS);
@@ -99,6 +104,7 @@ async function main() {
   await sleep(STEP_MS);
 
   await tabs(`chrome.tabs.remove(${sameSiteTabId}).then(() => true)`);
+  await tabs(`chrome.tabs.remove(${sameOriginTabId}).then(() => true)`);
   await tabs(`chrome.tabs.remove(${foreignTabId}).then(() => true)`);
   await sleep(STEP_MS);
 
@@ -166,6 +172,13 @@ async function main() {
     path: "/reports/weekly/"
   });
   expectChange(changes, { change: "closed", tabId: sameSiteTabId });
+  expectChange(changes, {
+    change: "opened",
+    tabId: sameOriginTabId,
+    relation: "same-origin",
+    path: "/settings/"
+  });
+  expectChange(changes, { change: "closed", tabId: sameOriginTabId });
   expectChange(changes, { change: "left", tabId: existingTabId, path: "/inbox/" });
   expectChange(changes, { change: "entered", tabId: existingTabId, path: "/inbox/archived/" });
   assert(
@@ -179,7 +192,7 @@ async function main() {
   );
   assert(blocked.length === 0, "Tab events were blocked by the profile", blocked);
   assert(
-    context.summary.maxConcurrent >= 2 && context.summary.distinctTabs === 2,
+    context.summary.maxConcurrent >= 3 && context.summary.distinctTabs === 3,
     "player-sdk summary does not count the related tabs",
     context.summary
   );

@@ -1,9 +1,10 @@
-import type {
-  RelatedTabChangeKind,
-  RelatedTabInfo,
-  TabsChangePayload,
-  TabsSnapshotPayload,
-  TabsSnapshotReason
+import {
+  TABS_CONTEXT_LIMITS,
+  type RelatedTabChangeKind,
+  type RelatedTabInfo,
+  type TabsChangePayload,
+  type TabsSnapshotPayload,
+  type TabsSnapshotReason
 } from "@webblackbox/protocol";
 
 import { parseTabLocation, relateTabLocation, type TabLocation } from "./site.js";
@@ -25,8 +26,8 @@ export type ChromeTabLike = {
 
 export type RecordedTabsLevel = TabsSnapshotPayload["level"];
 
-/** Upper bound of related tabs in one snapshot (the protocol schema allows 500). */
-export const MAX_RELATED_TABS = 500;
+/** Upper bound of related tabs in one snapshot (the protocol schema limit). */
+export const MAX_RELATED_TABS = TABS_CONTEXT_LIMITS.maxTabs;
 
 export type RelatedTabContext = {
   recordedTabId: number;
@@ -59,14 +60,15 @@ export function buildRelatedTab(
 
   const active = tab.active === true;
   const windowId = typeof tab.windowId === "number" ? tab.windowId : -1;
-  const title = tab.title?.trim();
+  const title = tab.title?.trim().slice(0, TABS_CONTEXT_LIMITS.maxTitleLength);
 
   return {
     tabId: tab.id,
     windowId,
     relation,
     origin: location.origin,
-    path: location.path,
+    // The strict schema drops a whole payload over its bounds, so long URLs are cut here.
+    path: location.path.slice(0, TABS_CONTEXT_LIMITS.maxPathLength),
     ...(title ? { title } : {}),
     active,
     focused: active && context.focusedWindowId !== null && windowId === context.focusedWindowId,
