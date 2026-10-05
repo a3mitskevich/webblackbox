@@ -100,6 +100,7 @@ jobs:
             needsChrome: true
           - surface: ui
             command: WB_UI_SHOTS_OUT=/tmp/wb-ui-shots pnpm --filter @webblackbox/extension e2e:ui
+            needsChrome: true
           - surface: tabs-context
             command: pnpm --filter @webblackbox/extension e2e:tabs-context
             needsChrome: true
