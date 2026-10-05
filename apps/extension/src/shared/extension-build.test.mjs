@@ -63,6 +63,32 @@ describe("extension build manifest", () => {
     expect(validateExtensionManifest(manifest, { version: "1.2.3" })).toEqual([]);
   });
 
+  it("leaves the content script to runtime registration in the development manifest", () => {
+    const manifest = createExtensionManifest({ version: "1.2.3" });
+
+    expect(manifest).not.toHaveProperty("content_scripts");
+    expect(manifest.permissions).toEqual(expect.arrayContaining(["scripting", "webNavigation"]));
+    expect(manifest.host_permissions).toEqual(["<all_urls>"]);
+
+    const withStaticScript = {
+      ...manifest,
+      content_scripts: [{ matches: ["<all_urls>"], js: ["content.js"], all_frames: true }]
+    };
+
+    expect(validateExtensionManifest(withStaticScript, { version: "1.2.3" })).toContain(
+      "Dev manifest must not declare static content_scripts; the service worker registers the content script at runtime."
+    );
+
+    const withoutNavigation = {
+      ...manifest,
+      permissions: manifest.permissions.filter((permission) => permission !== "webNavigation")
+    };
+
+    expect(validateExtensionManifest(withoutNavigation, { version: "1.2.3" })).toContain(
+      "Dev manifest must include 'webNavigation' permission."
+    );
+  });
+
   it("creates a store-safe manifest without broad capture permissions", () => {
     const manifest = createExtensionManifest({
       version: "1.2.3",
@@ -76,6 +102,7 @@ describe("extension build manifest", () => {
     expect(manifest.permissions).not.toContain("debugger");
     expect(manifest.permissions).not.toContain("tabs");
     expect(manifest.permissions).not.toContain("webRequest");
+    expect(manifest.permissions).not.toContain("webNavigation");
     expect(manifest).not.toHaveProperty("host_permissions");
     expect(manifest).not.toHaveProperty("content_scripts");
     expect(
