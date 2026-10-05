@@ -6,6 +6,7 @@ import {
   type FreezeReason,
   type PrivacyClassification,
   type RecorderConfig,
+  type TabsContextLevel,
   type WebBlackboxEvent,
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
@@ -383,6 +384,18 @@ function findPolicyViolationReason(
     }
   }
 
+  if (eventType.startsWith("meta.tabs.")) {
+    const level = tabsContextLevel(policy);
+
+    if (level === "off") {
+      return "tabs-context-disabled";
+    }
+
+    if (level === "metadata" && hasRelatedTabDetail(payload)) {
+      return "tabs-context-detail-disabled";
+    }
+  }
+
   if (
     eventType === "perf.heap.snapshot" &&
     (policy.categories.heapProfiles !== "lab-only" || policy.mode !== "lab")
@@ -503,9 +516,26 @@ function isRedactedByPolicy(
 
       return policy.categories.storage !== "allow";
     case "performance":
-    case "system":
       return false;
+    case "system":
+      return eventType.startsWith("meta.tabs.") && tabsContextLevel(policy) !== "allow";
   }
+}
+
+/** Policies written before the category existed record the metadata level. */
+function tabsContextLevel(policy: CapturePolicy): TabsContextLevel {
+  return policy.categories.tabsContext ?? "metadata";
+}
+
+/** Paths or titles of other tabs (the `allow` level) in a tabs snapshot or change. */
+function hasRelatedTabDetail(payload: unknown): boolean {
+  const record = asRecord(payload);
+  const tabs = Array.isArray(record?.tabs) ? record.tabs : [record?.tab];
+
+  return tabs.some((tab) => {
+    const row = asRecord(tab);
+    return row !== null && (row.path !== undefined || row.title !== undefined);
+  });
 }
 
 function isStorageDisabledByPolicy(

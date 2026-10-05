@@ -13,6 +13,7 @@ import {
   sanitizeOptionalUrl,
   stripUndefined
 } from "./normalizer-utils.js";
+import { normalizeTabsChangePayload, normalizeTabsSnapshotPayload } from "./tabs-context.js";
 import { recordedUrl } from "./url-recording.js";
 import type { EventNormalizer, RawRecorderEvent } from "./types.js";
 
@@ -134,6 +135,10 @@ export class DefaultEventNormalizer implements EventNormalizer {
       };
     }
 
+    if (input.rawType === "tabs.snapshot" || input.rawType === "tabs.change") {
+      return normalizeTabsContextEvent(input.rawType, input.payload);
+    }
+
     const normalized = tryNormalizeSystemEvent(input.rawType);
 
     if (!normalized) {
@@ -148,6 +153,26 @@ export class DefaultEventNormalizer implements EventNormalizer {
 }
 
 type ConsoleLevel = "log" | "info" | "warn" | "error" | "debug";
+
+/** Parallel-tabs context from the extension; malformed payloads are dropped. */
+function normalizeTabsContextEvent(
+  rawType: "tabs.snapshot" | "tabs.change",
+  payload: unknown
+): { eventType: WebBlackboxEventType; payload: unknown } | null {
+  const normalized =
+    rawType === "tabs.snapshot"
+      ? normalizeTabsSnapshotPayload(payload)
+      : normalizeTabsChangePayload(payload);
+
+  if (!normalized) {
+    return null;
+  }
+
+  return {
+    eventType: rawType === "tabs.snapshot" ? "meta.tabs.snapshot" : "meta.tabs.change",
+    payload: normalized
+  };
+}
 
 function normalizeCdpPayload(
   eventType: WebBlackboxEventType,
