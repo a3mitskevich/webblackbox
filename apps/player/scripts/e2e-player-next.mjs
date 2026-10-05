@@ -371,15 +371,14 @@ async function waitForSnapshot(client, predicate, message, timeoutMs = 8_000) {
 async function verifyKeyboard(client) {
   await client.evaluate("document.activeElement?.blur()");
   await press(client, "e");
+  // The virtual list renders the selected row only after it has scrolled to it (a frame later).
   const error = await waitForSnapshot(
     client,
-    (value) => value.live.startsWith("Error 1 of"),
-    "E did not jump to the first error"
-  );
-  assert(
-    error.selectedRow !== null && error.clock !== "0:00.00 / 0:17.80",
-    "E did not select and seek",
-    error
+    (value) =>
+      value.live.startsWith("Error 1 of") &&
+      value.selectedRow !== null &&
+      value.clock !== "0:00.00 / 0:17.80",
+    "E did not jump to, select and seek to the first error"
   );
 
   await press(client, "l");
