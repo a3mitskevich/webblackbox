@@ -141,6 +141,7 @@ type PlayerMessages = {
   sharePrivacyPreviewSample: string;
   loadSharedArchiveTitle: string;
   loadSharedArchiveDescription: string;
+  loadSharedArchiveUntrustedOrigin: string;
   shareReference: string;
   shareReferencePlaceholder: string;
   encryptedArchiveTitle: string;
@@ -433,6 +434,8 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     sharePrivacyPreviewSample: "{reason}: {snippet}",
     loadSharedArchiveTitle: "Load Shared Archive",
     loadSharedArchiveDescription: "Paste a share URL, archive API URL, or share ID.",
+    loadSharedArchiveUntrustedOrigin:
+      "This link loads an archive from {origin}, which is not this Player or your share server. Continue only if you trust that server.",
     shareReference: "Share reference",
     shareReferencePlaceholder: "https://host/share/abc123 or abc123",
     encryptedArchiveTitle: "Encrypted Archive",
@@ -765,6 +768,8 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     sharePrivacyPreviewSample: "{reason}: {snippet}",
     loadSharedArchiveTitle: "加载分享归档",
     loadSharedArchiveDescription: "粘贴分享链接、archive API URL 或 share ID。",
+    loadSharedArchiveUntrustedOrigin:
+      "此链接将从 {origin} 加载归档，该地址既不是当前播放器，也不是你配置的分享服务器。仅在信任该服务器时继续。",
     shareReference: "分享引用",
     shareReferencePlaceholder: "https://host/share/abc123 或 abc123",
     encryptedArchiveTitle: "加密归档",
