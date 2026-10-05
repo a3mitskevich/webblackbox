@@ -5,6 +5,7 @@ import { loadExportPolicyPrefs, toExportPolicy } from "../shared/export-policy-p
 import { createExtensionI18n, loadExtensionLocale } from "../shared/i18n.js";
 import {
   PORT_NAMES,
+  PROFILES_SECTION_ID,
   type ExportPrivacyWarning,
   type ExtensionInboundMessage,
   type ExtensionOutboundMessage,
@@ -16,7 +17,10 @@ import { openChoiceDialog, openPassphraseDialog } from "../shared/ui/dialogs.js"
 import { el } from "../shared/ui/dom.js";
 import { preserveFocus } from "../shared/ui/focus.js";
 import {
+  createProfileCancelSection,
   createProfilePickerSection,
+  createProfileRequirementSection,
+  hasNoRecordingProfiles,
   loadProfileChoice,
   PROFILE_CHOICE_AUTO,
   saveProfileChoice,
@@ -191,6 +195,8 @@ type PopupSessions = {
   recordingHere: boolean;
   /** Stopped session the Export button exports (the current tab's latest first). */
   exportSession?: SessionListItem;
+  /** Session the service worker stopped because its profile changed (the current tab's first). */
+  cancelledSession?: SessionListItem;
 };
 
 function selectSessions(): PopupSessions {
@@ -201,8 +207,10 @@ function selectSessions(): PopupSessions {
   const exportSession = recordingHere
     ? undefined
     : (onTab.find((item) => !item.active) ?? byRecency.find((item) => !item.active));
+  const cancelledSession =
+    onTab.find((item) => item.profileCancel) ?? byRecency.find((item) => item.profileCancel);
 
-  return { activeSession, recordingHere, exportSession };
+  return { activeSession, recordingHere, exportSession, cancelledSession };
 }
 
 /** The engine Start uses: the popup's pick, else the profile's recommendation, else Lite. */
@@ -213,7 +221,7 @@ function resolveEngine(): CaptureMode {
 function render(container: HTMLElement): void {
   const now = Date.now();
   const pendingStart = getFreshPendingStart(now);
-  const { activeSession, recordingHere, exportSession } = selectSessions();
+  const { activeSession, recordingHere, exportSession, cancelledSession } = selectSessions();
   const recentFreeze =
     state.lastFreeze && now - state.lastFreeze.at <= RECENT_FREEZE_WINDOW_MS
       ? state.lastFreeze
@@ -232,6 +240,15 @@ function render(container: HTMLElement): void {
     )
   ]);
 
+  if (cancelledSession?.profileCancel) {
+    section.append(
+      createProfileCancelSection(
+        { sid: cancelledSession.sid, profileCancel: cancelledSession.profileCancel },
+        t
+      )
+    );
+  }
+
   if (activeSession) {
     section.append(
       createRecordingPanel({ session: activeSession, onCurrentTab: recordingHere, now, format })
@@ -239,7 +256,11 @@ function render(container: HTMLElement): void {
   }
 
   if (!recordingHere) {
-    section.append(createStartArea(Boolean(pendingStart && pendingStart.tabId === state.tabId)));
+    section.append(
+      hasNoRecordingProfiles(state.profilePreview)
+        ? createProfileRequirementSection(t)
+        : createStartArea(Boolean(pendingStart && pendingStart.tabId === state.tabId))
+    );
   }
 
   if (exportSession) {
@@ -369,6 +390,24 @@ function bindActions(
   );
   on("open-sessions", () => openExtensionPage("sessions.html"));
   on("open-options", () => openExtensionPage("options.html"));
+
+  // The cancel notice and the "no profile" block can both show a button to the profiles section.
+  container.querySelectorAll("[data-action='open-profiles']").forEach((button) => {
+    button.addEventListener("click", () => {
+      void openExtensionPage(`options.html#${PROFILES_SECTION_ID}`);
+    });
+  });
+
+  container
+    .querySelector<HTMLElement>("[data-action='ack-profile-cancel']")
+    ?.addEventListener("click", (event) => {
+      const sid = (event.currentTarget as HTMLElement).dataset.sid;
+
+      if (sid && !postUiMessage({ kind: "ui.ack-profile-cancel", sid })) {
+        setStatus(t("popupDisconnected"), true);
+        render(container);
+      }
+    });
 
   container
     .querySelector<HTMLSelectElement>("[data-profile-select]")

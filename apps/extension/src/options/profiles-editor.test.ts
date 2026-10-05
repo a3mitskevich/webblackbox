@@ -12,10 +12,11 @@ import { mountProfilesEditor } from "./profiles-editor.js";
 const t = (key: ExtensionMessageKey, vars?: Record<string, string | number>): string =>
   translateExtensionMessage("en", key, vars);
 
-function createStorage(initial: Record<string, unknown> = {}) {
+function createStorage(initial: Record<string, unknown> = {}, managed?: Record<string, unknown>) {
   const data: Record<string, unknown> = { ...initial };
   const chromeApi = {
     storage: {
+      ...(managed ? { managed: { get: vi.fn(async () => structuredClone(managed)) } } : {}),
       local: {
         get: vi.fn(async (keys: string[]) =>
           Object.fromEntries(keys.filter((key) => key in data).map((key) => [key, data[key]]))
@@ -81,6 +82,13 @@ function setField(root: ParentNode, name: string, value: string): void {
 
 let lastHandle: Awaited<ReturnType<typeof mountProfilesEditor>> | undefined;
 
+/** Closing a profile form with edits asks first (backlog item 1); picks an answer. */
+async function answerPrompt(selector: string): Promise<void> {
+  await flush();
+  click(document, selector);
+  await flush();
+}
+
 async function saveProfiles(): Promise<void> {
   await lastHandle?.save();
   await flush();
@@ -145,10 +153,10 @@ describe("profiles editor", () => {
     setField(container, "name", "Stage QA");
     setField(container, "category-inputs", "allow");
     click(container, "[data-action='profile-apply']");
+    await answerPrompt("[data-action='editor-close-save']");
     click(container, "[data-action='rule-add']");
     setField(container, "ruleProfile", "profile-2");
     setField(container, "ruleHosts", "*.stage.example.com");
-    setField(container, "extendedCaptureHosts", "localhost:*");
     await saveProfiles();
 
     const saved = storage.data[PROFILES_STORAGE_KEY] as {
@@ -168,7 +176,9 @@ describe("profiles editor", () => {
         match: { hosts: ["*.stage.example.com"] }
       })
     ]);
-    expect(saved.extendedCaptureHosts).toEqual(["localhost:*"]);
+    // Extended profiles are no longer limited to hosts: the old list is kept but not edited.
+    expect(saved.extendedCaptureHosts).toEqual([]);
+    expect(container.querySelector('[name="extendedCaptureHosts"]')).toBeNull();
     expect(container.querySelector("[data-profiles-status]")?.textContent).toContain(
       "Profiles saved"
     );
@@ -206,6 +216,7 @@ describe("profiles editor", () => {
     setField(container, "redactStorageKeys", "auth");
     setField(container, "valuePatterns", "[bodies, console] sk_live_\\w+\nacct-\\d+");
     click(container, "[data-action='profile-apply']");
+    await answerPrompt("[data-action='editor-close-save']");
     await saveProfiles();
 
     expect(savedStore(storage).profiles[1]?.redaction).toMatchObject({
@@ -307,6 +318,7 @@ describe("profiles editor", () => {
     click(rowOf(container, "default"), "[data-action='profile-edit']");
     setField(container, "name", "Discarded");
     click(container, "[data-action='profile-cancel']");
+    await answerPrompt("[data-confirm-accept]");
     await saveProfiles();
 
     expect(savedStore(storage).profiles.map((profile) => profile.name)).not.toContain("Discarded");
@@ -320,6 +332,7 @@ describe("profiles editor", () => {
     setField(container, "category-inputs", "allow");
     click(container, "[data-action='rule-add']");
     click(container, "[data-action='profile-cancel']");
+    await answerPrompt("[data-confirm-accept]");
     await saveProfiles();
 
     const saved = storage.data[PROFILES_STORAGE_KEY] as {
@@ -371,11 +384,11 @@ describe("profiles editor", () => {
     ]);
   });
 
-  it("shows host and default changes in the import preview", async () => {
+  it("shows default profile changes in the import preview", async () => {
     const container = await mount(createStorage());
     const file = createProfilesExportFile({
       schemaVersion: 2,
-      defaultProfileId: "default",
+      defaultProfileId: BUILT_IN_PROFILE_IDS.qa,
       profiles: [],
       rules: [],
       extendedCaptureHosts: ["*.corp.test"]
@@ -391,7 +404,7 @@ describe("profiles editor", () => {
 
     expect(
       [...container.querySelectorAll("[data-import-detail]")].map((node) => node.textContent)
-    ).toEqual(["Hosts allowed for extended profiles: added *.corp.test; removed —"]);
+    ).toEqual([`Default profile: default → ${BUILT_IN_PROFILE_IDS.qa}`]);
   });
 
   it("folds a general settings save into the unsaved draft", async () => {
@@ -423,5 +436,88 @@ describe("profiles editor", () => {
     expect(container.querySelector("[data-sandbox-output]")?.textContent).toBe(
       '{"password":"[REDACTED]","user":"ann"}'
     );
+  });
+
+  it("deletes presets and Default, keeps their rules flagged, and restores them", async () => {
+    const qaRule = {
+      id: "r-qa",
+      name: "Stage",
+      profileId: BUILT_IN_PROFILE_IDS.qa,
+      priority: 1,
+      enabled: true,
+      match: { hosts: ["*.stage.test"] }
+    };
+    const storage = createStorage({
+      [PROFILES_STORAGE_KEY]: {
+        schemaVersion: 2,
+        defaultProfileId: "default",
+        profiles: [],
+        rules: [qaRule],
+        extendedCaptureHosts: []
+      }
+    });
+    const container = await mount(storage);
+
+    // Every delete asks first (backlog item 4).
+    click(rowOf(container, BUILT_IN_PROFILE_IDS.qa), "[data-action='profile-delete']");
+    await answerPrompt("[data-confirm-accept]");
+    click(rowOf(container, "default"), "[data-action='profile-delete']");
+    await answerPrompt("[data-confirm-accept]");
+
+    expect(
+      [...container.querySelectorAll<HTMLElement>("[data-profile-id]")].map(
+        (row) => row.dataset.profileId
+      )
+    ).toEqual([
+      BUILT_IN_PROFILE_IDS.lite,
+      BUILT_IN_PROFILE_IDS.full,
+      BUILT_IN_PROFILE_IDS.fullCapture
+    ]);
+    expect(container.querySelector<HTMLSelectElement>('[name="ruleProfile"]')?.value).toBe(
+      BUILT_IN_PROFILE_IDS.qa
+    );
+    expect(container.querySelector("[data-rule-missing]")?.textContent).toContain(
+      t("optionsRuleProfileMissingHint")
+    );
+
+    await saveProfiles();
+
+    expect(storage.data[PROFILES_STORAGE_KEY]).toEqual(
+      expect.objectContaining({
+        defaultProfileId: BUILT_IN_PROFILE_IDS.lite,
+        profiles: [],
+        rules: [qaRule],
+        removedRecommendedProfileIds: ["default", BUILT_IN_PROFILE_IDS.qa]
+      })
+    );
+
+    click(container, "[data-action='profiles-restore']");
+    await saveProfiles();
+
+    const restored = storage.data[PROFILES_STORAGE_KEY] as Record<string, unknown>;
+    expect(restored.removedRecommendedProfileIds).toBeUndefined();
+    expect(savedStore(storage).profiles.map((profile) => profile.id)).toEqual(["default"]);
+    expect(container.querySelector("[data-rule-missing]")).toBeNull();
+    expect(container.querySelectorAll("[data-profile-id]")).toHaveLength(5);
+  });
+
+  it("never offers to delete a profile from the enterprise policy", async () => {
+    const container = await mount(
+      createStorage(
+        {},
+        {
+          enterprisePolicy: {
+            profiles: [{ id: "corp", name: "Corp", categories: { console: "allow" } }]
+          }
+        }
+      )
+    );
+    const row = rowOf(container, "managed:corp");
+
+    expect(row.querySelector("[data-action='profile-delete']")).toBeNull();
+    expect(row.querySelector("[data-action='profile-duplicate']")).not.toBeNull();
+    expect(
+      rowOf(container, BUILT_IN_PROFILE_IDS.lite).querySelector("[data-action='profile-delete']")
+    ).not.toBeNull();
   });
 });

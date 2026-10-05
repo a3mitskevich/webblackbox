@@ -24,6 +24,8 @@ export type RuleConditionKind =
 
 export type RuleTestResult =
   | { kind: "invalid-url" }
+  /** Every profile was deleted: Start has nothing to record with. */
+  | { kind: "no-profile" }
   | {
       kind: "selected";
       profileName: string;
@@ -33,8 +35,6 @@ export type RuleTestResult =
         priority: number;
         conditions: Array<{ kind: RuleConditionKind; value: string }>;
       };
-      /** Extended profile replaced by Full because the host is not allowed. */
-      downgradedFrom?: string;
       /** Enabled rules that need page signals and are assumed not to match here. */
       unchecked: string[];
     };
@@ -47,8 +47,6 @@ export type RuleTestInput = {
   title?: string;
   /** Test as an incognito window (rules can require or exclude one). */
   incognito?: boolean;
-  /** Managed policy hosts where extended profiles may run, as the service worker applies it. */
-  enterpriseSiteAllowlist?: readonly string[];
 };
 
 export function ruleLabel(rule: ProfileRule): string {
@@ -73,9 +71,13 @@ export function testRulesForUrl(input: RuleTestInput): RuleTestResult {
       url: url.href,
       incognito: input.incognito === true,
       ...(input.title ? { title: input.title } : {})
-    },
-    enterpriseSiteAllowlist: input.enterpriseSiteAllowlist ?? []
+    }
   });
+
+  if (!selection) {
+    return { kind: "no-profile" };
+  }
+
   const rule = selection.rule ? rules.find((entry) => entry.id === selection.rule?.id) : undefined;
 
   return {
@@ -91,7 +93,6 @@ export function testRulesForUrl(input: RuleTestInput): RuleTestResult {
           }
         }
       : {}),
-    ...(selection.downgradedFrom ? { downgradedFrom: selection.downgradedFrom.name } : {}),
     unchecked: rules
       .filter((entry) => entry.enabled && (entry.match.selectorPresent || entry.match.metaTag))
       .map(ruleLabel)

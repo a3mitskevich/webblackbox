@@ -1,4 +1,4 @@
-import type { PrivacyViolationSubject } from "@webblackbox/player-sdk";
+import type { NetworkCacheSource, PrivacyViolationSubject } from "@webblackbox/player-sdk";
 
 import EN_MESSAGES from "./locales/en.json" with { type: "json" };
 import RU_MESSAGES from "./locales/ru.json" with { type: "json" };
@@ -276,6 +276,10 @@ type PlayerMessages = {
   scopeSummaryMain: string;
   scopeSummaryIframe: string;
   realtimeNoPayload: string;
+  realtimePayloadLoading: string;
+  realtimePayloadTruncated: string;
+  realtimePayloadRecord: string;
+  realtimePayloadLoadFailed: string;
   noScreenshotEvents: string;
   screenshotBeforePlayhead: string;
   screenshotLoading: string;
@@ -333,6 +337,11 @@ type PlayerMessages = {
   networkInitiatorActionNumber: string;
   networkStatusPending: string;
   networkStatusPendingPlain: string;
+  networkStatusFromCache: string;
+  networkStatusFromCachePlain: string;
+  networkStatusNoResponse: string;
+  networkStatusNoResponsePlain: string;
+  networkCacheSources: Record<NetworkCacheSource, string>;
   networkSizeFailed: string;
   actionTriggerUnknown: string;
   markerKinds: Record<MarkerKind, string>;
@@ -343,6 +352,14 @@ type PlayerMessages = {
   summaryProfile: string;
   summaryProfileRule: string;
   summaryProfileDowngraded: string;
+  profileBannerCancelRuleChanged: string;
+  profileBannerCancelMissing: string;
+  profileBannerCancelEdited: string;
+  profileBannerCancelPolicy: string;
+  profileBannerCancelUnknown: string;
+  profileBannerDowngraded: string;
+  profileBannerCapped: string;
+  profileBannerUnknownProfile: string;
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;

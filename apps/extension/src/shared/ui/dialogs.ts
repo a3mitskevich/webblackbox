@@ -183,6 +183,10 @@ export function openPassphraseDialog(options: PassphraseDialogOptions): Promise<
 export type ConfirmDialogOptions = {
   title: string;
   body: string;
+  /** Listed under the body, e.g. the site rules a deletion affects. */
+  items?: readonly string[];
+  /** Paragraphs after the list. */
+  notes?: readonly string[];
   acceptLabel: string;
   cancelLabel: string;
   acceptVariant?: ButtonVariant;
@@ -199,6 +203,7 @@ export function openConfirmDialog(options: ConfirmDialogOptions): Promise<boolea
       { className: "wb-confirm-card", attrs: { "aria-labelledby": "wb-confirm-title" } },
       [
         ...dialogHeading("wb-confirm-title", options.title, options.body),
+        ...confirmDetails(options),
         el("div", { className: "wb-confirm-actions" }, [cancelButton, acceptButton])
       ]
     );
@@ -208,6 +213,25 @@ export function openConfirmDialog(options: ConfirmDialogOptions): Promise<boolea
 
     return { card, initialFocus: cancelButton };
   });
+}
+
+function confirmDetails(options: ConfirmDialogOptions): HTMLElement[] {
+  const items = options.items ?? [];
+
+  return [
+    ...(items.length > 0
+      ? [
+          el(
+            "ul",
+            { className: "wb-confirm-list" },
+            items.map((text) => el("li", { text, dataset: { confirmItem: "" } }))
+          )
+        ]
+      : []),
+    ...(options.notes ?? []).map((text) =>
+      el("p", { className: "wb-confirm-body", text, dataset: { confirmNote: "" } })
+    )
+  ];
 }
 
 export type DialogChoice<TValue extends string> = {

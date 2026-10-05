@@ -11,8 +11,14 @@ export function formatNetworkSize(
   entry: NetworkWaterfallEntry,
   locale: PlayerLocale = "en"
 ): string {
-  const size = resolveNetworkSizeBytes(entry);
   const i18n = createPlayerI18n(locale);
+
+  if (entry.fromCache) {
+    // Like DevTools: a cache hit transfers nothing, so name the cache instead of a byte count.
+    return i18n.messages.networkCacheSources[entry.fromCache];
+  }
+
+  const size = resolveNetworkSizeBytes(entry);
 
   if (!Number.isFinite(size) || size < 0) {
     return entry.failed ? i18n.messages.networkSizeFailed : "-";

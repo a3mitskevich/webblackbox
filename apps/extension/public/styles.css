@@ -33,6 +33,7 @@
   --wb-warn-soft: #fff4dc;
   --wb-warn-border: #e7c27a;
   --wb-warn-ink: #5c3b00;
+  --wb-warn: #b86e00;
   --wb-rec: #e0362b;
   --wb-focus: #1b86d9;
   --wb-focus-ring: 0 0 0 3px rgba(27, 134, 217, 0.32);
@@ -73,6 +74,7 @@
     --wb-warn-soft: #33270f;
     --wb-warn-border: #7a5d22;
     --wb-warn-ink: #f2d79e;
+    --wb-warn: #e9a63c;
     --wb-rec: #ff5a4e;
     --wb-focus: #5eaef0;
     --wb-focus-ring: 0 0 0 3px rgba(94, 174, 240, 0.38);
@@ -825,6 +827,32 @@ input[type="radio"] {
   font-size: 12px;
 }
 
+/* Profile notices: the recording stopped because its profile changed, or no profile exists. */
+.wb-popup__alert {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--wb-warn-border);
+  border-radius: var(--wb-radius-sm);
+  background: var(--wb-warn-soft);
+  color: var(--wb-warn-ink);
+  font-size: 12px;
+}
+
+.wb-popup__alert p {
+  margin: 0;
+}
+
+/* No profile to record with: the Start panel's place, marked as a warning. */
+.wb-popup__profile-required {
+  border-color: var(--wb-warn-border);
+  box-shadow: inset 3px 0 0 var(--wb-warn);
+}
+
+.wb-popup__profile-required .wb-popup__hint {
+  margin: 0;
+}
+
 .wb-popup__footer {
   font-size: 10.5px;
   color: var(--wb-text-subtle);
@@ -865,6 +893,20 @@ input[type="radio"] {
 .wb-confirm-body {
   font-size: 12.5px;
   color: var(--wb-text-muted);
+}
+
+.wb-confirm-list {
+  display: grid;
+  gap: 2px;
+  max-height: 160px;
+  margin: 0;
+  padding: 6px 10px 6px 26px;
+  overflow-y: auto;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-sm);
+  background: var(--wb-surface-2);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
 }
 
 .wb-confirm-actions {

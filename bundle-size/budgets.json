@@ -2,13 +2,13 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 70700,
-      "maxGzipBytes": 16450,
-      "note": "Measured 68,581 / 15,968 B (+3%): CDP allowlists and runtime error policy (#9) plus per-profile redaction rules (#10); no dead code or duplicated helpers left to cut."
+      "maxBytes": 78300,
+      "maxGzipBytes": 18400,
+      "note": "Measured 76,018 / 17,842 B (+3%): full console detail, the CDP cache tracker and byte-capped stream bodies (#9) plus per-profile redaction rules (#10)."
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 76000,
+      "maxBytes": 79000,
       "maxGzipBytes": 18000
     },
     {
