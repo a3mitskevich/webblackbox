@@ -4,7 +4,6 @@ import { useState, type ReactNode } from "react";
 import { maskSensitiveUrl, type RealtimeStream } from "@webblackbox/player-sdk";
 
 import { formatOffset } from "../../../core/format.js";
-import { resolveNetworkInitiator } from "../../../lib/network-labels.js";
 import { formatNetworkSize } from "../../../lib/network-size.js";
 import { describeNetworkStatus } from "../../../lib/network-view.js";
 import { Hint } from "../../components/hint.js";
@@ -30,7 +29,7 @@ import {
   useConnection,
   useModelEvents
 } from "./request-tabs.js";
-import type { NetworkRow } from "./rows.js";
+import { shortActionId, type NetworkRow } from "./rows.js";
 import { networkSlice, type NetworkDetailTab } from "./slice.js";
 
 type HttpRow = Extract<NetworkRow, { kind: "http" }>;
@@ -67,7 +66,7 @@ function DetailTabs({
 
   return (
     <Tabs.Root
-      className="dtabs"
+      className="ndtabs"
       value={tab}
       onValueChange={(value) => {
         if (isDetailTab(value)) {
@@ -75,9 +74,9 @@ function DetailTabs({
         }
       }}
     >
-      <Tabs.List className="subtabs" aria-label={t("detailTabsLabel")} activateOnFocus>
+      <Tabs.List className="nsubtabs" aria-label={t("detailTabsLabel")} activateOnFocus>
         {available.map((name) => (
-          <Tabs.Tab key={name} value={name} className="subtab" data-testid={`detail-tab-${name}`}>
+          <Tabs.Tab key={name} value={name} className="nsubtab" data-testid={`detail-tab-${name}`}>
             {t(`tab_${name}`)}
             {counts[name] !== undefined ? (
               <span className="c"> {i18n.formatNumber(counts[name] ?? 0)}</span>
@@ -86,7 +85,7 @@ function DetailTabs({
         ))}
       </Tabs.List>
       {available.map((name) => (
-        <Tabs.Panel key={name} value={name} className="dpanel" data-testid={`detail-panel-${name}`}>
+        <Tabs.Panel key={name} value={name} className="npanel" data-testid={`detail-panel-${name}`}>
           {name === tab ? panels[name] : null}
         </Tabs.Panel>
       ))}
@@ -180,7 +179,7 @@ function RequestActions({ row, archive }: { row: HttpRow; archive: LoadedArchive
 
   return (
     <>
-      <div className="dactions">
+      <div className="nactions">
         <CopyButton label={t("copyUrl")} getText={() => entry.url} testId="copy-url" />
         <CopyButton
           label={t("copyCurl")}
@@ -206,7 +205,7 @@ function RequestActions({ row, archive }: { row: HttpRow; archive: LoadedArchive
         </Hint>
       </div>
       {current?.outcome ? (
-        <p className="replay-line" role="status" data-testid="replay-result">
+        <p className="nreplay" role="status" data-testid="replay-result">
           <ReplayResult
             outcome={current.outcome}
             recordedStatus={describeNetworkStatus(entry, locale)}
@@ -229,17 +228,17 @@ function StreamMessages({ stream, archive }: { stream: RealtimeStream; archive: 
       : null;
 
   return (
-    <div className="two" data-testid="stream-messages">
+    <div className="ntwo" data-testid="stream-messages">
       <MessageList
         labels={labels}
         selectedId={selected?.eventId ?? null}
         minMono={archive.model.minMono}
       />
-      <div className="two-detail">
+      <div className="ntwo-detail">
         {selected ? (
           <MessageView entry={selected} stream={stream} minMono={archive.model.minMono} />
         ) : (
-          <p className="body-note">{t("messageSelectHint")}</p>
+          <p className="nbody-note">{t("messageSelectHint")}</p>
         )}
       </div>
     </div>
@@ -260,23 +259,23 @@ function RequestDetails({ row, archive }: { row: HttpRow; archive: LoadedArchive
 
   return (
     <section className="ndetails" aria-label={t("detailsLabel")} data-testid="request-details">
-      <header className="dh">
-        <div className="dh-top">
+      <header className="ndh">
+        <div className="ndh-top">
           <h2>
-            <span className={`st ${statusTone(row)}`}>{describeNetworkStatus(entry, locale)}</span>
+            <span className={`nst ${statusTone(row)}`}>{describeNetworkStatus(entry, locale)}</span>
             <span className="mono">{entry.method.toUpperCase()}</span>
-            <span className="u mono" data-testid="details-url">
+            <span className="nu mono" data-testid="details-url">
               {masked.url}
             </span>
           </h2>
           <CloseButton />
         </div>
-        <div className="sub">
+        <div className="nsub">
           <HiddenParamsChip params={masked.hiddenParams} />
           <span>{formatOffset(entry.startMono - archive.model.minMono, locale)}</span>
           <span>{i18n.formatMilliseconds(entry.durationMs, { fractionDigits: 0 })}</span>
           <span>{formatNetworkSize(entry, locale)}</span>
-          {entry.actionId ? <span>{resolveNetworkInitiator(entry, locale)}</span> : null}
+          {entry.actionId ? <span className="mono">{shortActionId(entry.actionId)}</span> : null}
           {entry.mimeType ? <span>{entry.mimeType}</span> : null}
         </div>
         <RequestActions row={row} archive={archive} />
@@ -323,20 +322,20 @@ function SocketDetails({ row, archive }: { row: SocketRow; archive: LoadedArchiv
 
   return (
     <section className="ndetails" aria-label={t("detailsLabel")} data-testid="socket-details">
-      <header className="dh">
-        <div className="dh-top">
+      <header className="ndh">
+        <div className="ndh-top">
           <h2>
-            <Icon name="ws" className="ic ws-glyph" />
-            <span className="u mono" data-testid="details-url">
+            <Icon name="ws" className="ic nws-glyph" />
+            <span className="nu mono" data-testid="details-url">
               {masked.url}
             </span>
           </h2>
           <CloseButton />
         </div>
-        <div className="sub">
+        <div className="nsub">
           <HiddenParamsChip params={masked.hiddenParams} />
           {stream.openMono !== undefined ? (
-            <span className="st ws">101 Switching Protocols</span>
+            <span className="nst ws">101 Switching Protocols</span>
           ) : null}
           <span>
             {t("socketOpened", {
@@ -355,7 +354,7 @@ function SocketDetails({ row, archive }: { row: SocketRow; archive: LoadedArchiv
             })}
           </span>
           {stream.truncated > 0 ? (
-            <span className="warn-text">{t("socketCut", { count: stream.truncated })}</span>
+            <span className="nwarn-text">{t("socketCut", { count: stream.truncated })}</span>
           ) : null}
           <span>{t(`format_${stream.format}`)}</span>
         </div>
@@ -366,12 +365,12 @@ function SocketDetails({ row, archive }: { row: SocketRow; archive: LoadedArchiv
         panels={{
           messages: <StreamMessages stream={stream} archive={archive} />,
           headers: (
-            <div className="dtab" data-testid="headers-tab">
+            <div className="ndtab" data-testid="headers-tab">
               <Section title={t("general")}>
                 <KeyValues pairs={general} />
               </Section>
               <Section title={t("requestHeaders")}>
-                <p className="body-note">{t("noHeaders")}</p>
+                <p className="nbody-note">{t("noHeaders")}</p>
               </Section>
             </div>
           ),

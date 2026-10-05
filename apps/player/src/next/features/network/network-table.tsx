@@ -1,7 +1,6 @@
 import { useCallback, type KeyboardEvent } from "react";
 
 import type { PlayerLocale } from "../../../lib/i18n.js";
-import { describeRequestName, resolveNetworkInitiator } from "../../../lib/network-labels.js";
 import { formatNetworkSize } from "../../../lib/network-size.js";
 import {
   describeNetworkStatusPlain,
@@ -17,10 +16,12 @@ import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
 import { notCapturedSummary } from "./availability.js";
 import { networkMessages, type NetworkTranslator } from "./messages.js";
 import {
+  displayName,
   followIndex,
   isRowCut,
   rowUrl,
   selectionOfRow,
+  shortActionId,
   type NetworkModel,
   type NetworkRow
 } from "./rows.js";
@@ -78,7 +79,7 @@ type RowCellsProps = {
 };
 
 function RowCells({ row, model, locale, t, formatBytes, formatDuration }: RowCellsProps) {
-  const name = describeRequestName(rowUrl(row));
+  const name = displayName(rowUrl(row));
   const tone = statusTone(row);
   const left = model.durationMono > 0 ? (row.startMono - model.minMono) / model.durationMono : 0;
   const width = model.durationMono > 0 ? row.durationMs / model.durationMono : 0;
@@ -91,20 +92,20 @@ function RowCells({ row, model, locale, t, formatBytes, formatDuration }: RowCel
 
   return (
     <>
-      <span role="gridcell" className={`c-status st ${tone}`}>
+      <span role="gridcell" className={`c-status nst ${tone}`}>
         {row.kind === "socket" ? "101" : describeNetworkStatusPlain(row.entry, locale)}
       </span>
       <span role="gridcell" className="c-method mono">
         {row.kind === "http" ? row.entry.method.toUpperCase() : "GET"}
       </span>
       <span role="gridcell" className="c-name">
-        {row.kind === "socket" ? <Icon name="ws" className="ic ws-glyph" /> : null}
-        <span className="path mono">{name.name}</span>
-        <span className="host">{name.host}</span>
+        {row.kind === "socket" ? <Icon name="ws" className="ic nws-glyph" /> : null}
+        <span className="npath-name mono">{name.name}</span>
+        <span className="nhost">{name.host}</span>
         {notCaptured ? (
           <Hint label={notCaptured}>
             <span
-              className="flag-nc"
+              className="nflag"
               role="img"
               aria-label={notCaptured}
               data-testid="row-not-captured"
@@ -115,7 +116,7 @@ function RowCells({ row, model, locale, t, formatBytes, formatDuration }: RowCel
         ) : null}
         {cutLabel ? (
           <Hint label={cutLabel}>
-            <span className="trunc" role="img" aria-label={cutLabel} data-testid="row-cut">
+            <span className="ncut" role="img" aria-label={cutLabel} data-testid="row-cut">
               cut
             </span>
           </Hint>
@@ -127,9 +128,7 @@ function RowCells({ row, model, locale, t, formatBytes, formatDuration }: RowCel
           : resolveNetworkTypeLabel(row.entry.mimeType, locale)}
       </span>
       <span role="gridcell" className="c-initiator mono">
-        {row.kind === "http" && row.entry.actionId
-          ? resolveNetworkInitiator(row.entry, locale)
-          : ""}
+        {row.kind === "http" && row.entry.actionId ? shortActionId(row.entry.actionId) : ""}
       </span>
       <span role="gridcell" className="c-size mono">
         {row.kind === "http"
@@ -138,12 +137,12 @@ function RowCells({ row, model, locale, t, formatBytes, formatDuration }: RowCel
       </span>
       <span
         role="gridcell"
-        className={row.durationMs >= SLOW_REQUEST_MS ? "c-time mono slow" : "c-time mono"}
+        className={row.durationMs >= SLOW_REQUEST_MS ? "c-time mono nslow" : "c-time mono"}
       >
         {formatDuration(row.durationMs)}
       </span>
       <span role="gridcell" className="c-wf" aria-hidden="true">
-        <span className="wf">
+        <span className="nwf">
           <i
             className={tone === "muted" ? "" : tone}
             style={{
@@ -168,7 +167,7 @@ function WaterfallPlayhead({ model }: { model: NetworkModel }) {
   return (
     <div className="net-grid net-overlay" aria-hidden="true">
       <span className="c-wf">
-        <span className="wf-ph" style={{ left: `${ratio * 100}%` }} />
+        <span className="nwf-ph" style={{ left: `${ratio * 100}%` }} />
       </span>
     </div>
   );
@@ -294,7 +293,11 @@ export function NetworkTable({ model, rows, selected }: NetworkTableProps) {
 
           const isSelected = row === selected;
           const isFuture = row.startMono > nowMono;
-          const className = ["net-grid net-row", isSelected ? "sel" : "", isFuture ? "future" : ""]
+          const className = [
+            "net-grid net-row",
+            isSelected ? "nsel" : "",
+            isFuture ? "nfuture" : ""
+          ]
             .filter(Boolean)
             .join(" ");
 

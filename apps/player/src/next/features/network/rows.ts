@@ -1,6 +1,7 @@
 import {
   buildRealtimeStreams,
   isThirdPartyUrl,
+  maskSensitiveUrl,
   type NetworkWaterfallEntry,
   type RealtimeStream
 } from "@webblackbox/player-sdk";
@@ -211,6 +212,23 @@ export function selectionOfRow(row: NetworkRow): Selection | null {
   return row.kind === "http"
     ? { kind: "request", id: row.entry.reqId }
     : socketSelection(row.stream);
+}
+
+/** `A-000003` → `A-3` (the mockups' Action column). */
+export function shortActionId(actionId: string): string {
+  const number = /(\d+)$/.exec(actionId)?.[1];
+  return number ? `A-${Number(number)}` : actionId;
+}
+
+/** Name and host for the table: secret query values hidden, the `…` mask kept readable. */
+export function displayName(url: string): { name: string; host: string } {
+  const name = describeRequestName(maskSensitiveUrl(url).url);
+
+  try {
+    return { ...name, name: decodeURIComponent(name.name) };
+  } catch {
+    return name;
+  }
 }
 
 export function rowUrl(row: NetworkRow): string {

@@ -33,7 +33,7 @@ function ImagePreview({ bytes, mime }: { bytes: Uint8Array; mime: string }) {
     return () => URL.revokeObjectURL(objectUrl);
   }, [bytes, mime]);
 
-  return url ? <img className="body-image" src={url} alt="" data-testid="body-image" /> : null;
+  return url ? <img className="nbody-image" src={url} alt="" data-testid="body-image" /> : null;
 }
 
 /**
@@ -55,15 +55,15 @@ export function BodyViewer({ content, testId }: BodyViewerProps) {
 
   if (shown.kind === "empty") {
     return (
-      <p className="body-note" data-testid={testId}>
+      <p className="nbody-note" data-testid={testId}>
         {t("bodyNone")}
       </p>
     );
   }
 
   return (
-    <div className="body-viewer" data-testid={testId} data-view={view}>
-      <div className="viewer-tools">
+    <div className="nbody-viewer" data-testid={testId} data-view={view}>
+      <div className="nviewer-tools">
         {views.length > 1 ? (
           <div className="seg seg-small" role="group" aria-label={t("bodyViewLabel")}>
             {views.map((name) => (
@@ -89,7 +89,7 @@ export function BodyViewer({ content, testId }: BodyViewerProps) {
         ) : null}
         <span className="grow" />
         {canMask ? (
-          <label className="check">
+          <label className="ncheck">
             <input
               type="checkbox"
               checked={maskSecrets}

@@ -25,6 +25,7 @@ import "./network.css";
 const BUBBLE_ESTIMATE = 54;
 const SERVICE_ESTIMATE = 30;
 const OVERSCAN = 6;
+const REALTIME_DETAILS_PERCENT = 55;
 
 const EMPTY_STREAM: RealtimeStream = {
   streamId: "",
@@ -144,9 +145,9 @@ function Conversation({
             const className = [
               "bubble",
               direction,
-              label.service ? "service" : "",
-              isSelected ? "sel" : "",
-              entry.mono > nowMono ? "future" : ""
+              label.service ? "nservice" : "",
+              isSelected ? "nsel" : "",
+              entry.mono > nowMono ? "nfuture" : ""
             ]
               .filter(Boolean)
               .join(" ");
@@ -171,7 +172,7 @@ function Conversation({
                   data-direction={direction}
                 >
                   <div className="bubble-head">
-                    <span className="dir" role="img" aria-label={t(`direction_${direction}`)}>
+                    <span className="ndir" role="img" aria-label={t(`direction_${direction}`)}>
                       <Icon name={direction} />
                     </span>
                     <b>{label.title ?? kindText(t, label.parsed.records[0])}</b>
@@ -179,7 +180,7 @@ function Conversation({
                       {formatOffset(entry.mono - minMono, locale)} ·{" "}
                       {i18n.formatByteSize(realtimeMessageBytes(entry))}
                     </span>
-                    {entry.payloadTruncated ? <span className="trunc">cut</span> : null}
+                    {entry.payloadTruncated ? <span className="ncut">cut</span> : null}
                   </div>
                   {label.service ? null : <div className="bubble-text mono">{label.preview}</div>}
                 </div>
@@ -239,8 +240,8 @@ export default function RealtimePanel() {
 
   return (
     <>
-      <div className="rail-tools">
-        <label className="field stream-pick">
+      <div className="rail-tools nrealtime-tools">
+        <label className="field nstream-pick">
           <Icon name="ws" />
           <span className="visually-hidden">{t("streamsLabel")}</span>
           <select
@@ -265,7 +266,7 @@ export default function RealtimePanel() {
             ))}
           </select>
         </label>
-        <label className="check">
+        <label className="ncheck">
           <input
             type="checkbox"
             checked={hideService}
@@ -288,12 +289,13 @@ export default function RealtimePanel() {
       </div>
       <ListDetailsSplit
         name="realtime"
+        detailsPercent={REALTIME_DETAILS_PERCENT}
         list={
           <Conversation labels={labels} selectedId={selected?.eventId ?? null} minMono={minMono} />
         }
         details={
           detailsOpen && selected ? (
-            <div className="realtime-detail">
+            <div className="nrealtime-detail">
               <MessageView entry={selected} stream={stream} minMono={minMono} />
             </div>
           ) : null

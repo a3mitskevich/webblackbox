@@ -44,12 +44,12 @@ describe("parseRealtimePayload", () => {
     expect(isServiceRealtimeRecord(parsed.records[2]!)).toBe(true);
   });
 
-  it("treats a completion without a result as plumbing and one with an error as content", () => {
+  it("treats a completion without a result as plumbing, one with a result or error as content", () => {
     const bare = parseRealtimePayload(`{"type":3,"invocationId":"0","result":null}${RS}`);
     const empty = parseRealtimePayload(`{"type":3,"invocationId":"0"}${RS}`);
     const failed = parseRealtimePayload(`{"type":3,"invocationId":"0","error":"boom"}${RS}`);
 
-    expect(isServiceRealtimeRecord(bare.records[0]!)).toBe(false);
+    expect(isServiceRealtimeRecord(bare.records[0]!)).toBe(true);
     expect(isServiceRealtimeRecord(empty.records[0]!)).toBe(true);
     expect(failed.records[0]).toMatchObject({ kind: "completion", error: "boom" });
     expect(isServiceRealtimeRecord(failed.records[0]!)).toBe(false);

@@ -66,7 +66,7 @@ function LineContent({ tokens, text }: { tokens: CodeToken[] | undefined; text: 
   return (
     <>
       {tokens.map((token, index) => (
-        <span key={index} className="tok" style={token.style}>
+        <span key={index} className="ntok" style={token.style}>
           {token.content}
         </span>
       ))}
@@ -89,11 +89,11 @@ export function CodeView({ text, language, testId, inline = false }: CodeViewPro
   const gutter = String(lines.length).length + 1;
 
   const renderLine = (index: number) => (
-    <div key={index} className="code-line">
-      <span className="ln" style={{ width: `${gutter}ch` }} aria-hidden="true">
+    <div key={index} className="ncode-line">
+      <span className="nln" style={{ width: `${gutter}ch` }} aria-hidden="true">
         {index + 1}
       </span>
-      <span className="lc">
+      <span className="nlc">
         <LineContent tokens={highlighted?.[index]} text={lines[index] ?? ""} />
       </span>
     </div>
@@ -101,12 +101,12 @@ export function CodeView({ text, language, testId, inline = false }: CodeViewPro
 
   return (
     <div
-      className={inline ? "code-view inline" : "code-view"}
+      className={inline ? "ncode-view ninline" : "ncode-view"}
       data-testid={testId}
       data-highlighted={highlighted !== null}
     >
       {isLarge && canHighlight && !forced ? (
-        <p className="code-note">
+        <p className="ncode-note">
           {t("largePlain", { size: i18n.formatByteSize(text.length) })}{" "}
           <button type="button" className="btn small" onClick={() => setForced(true)}>
             {t("highlightAnyway")}
@@ -114,10 +114,10 @@ export function CodeView({ text, language, testId, inline = false }: CodeViewPro
         </p>
       ) : null}
       {inline ? (
-        <div className="code">{lines.map((_, index) => renderLine(index))}</div>
+        <div className="ncode">{lines.map((_, index) => renderLine(index))}</div>
       ) : (
         <VirtualList
-          className="code"
+          className="ncode"
           itemCount={lines.length}
           rowHeight={LINE_HEIGHT}
           renderRow={renderLine}

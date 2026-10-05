@@ -72,7 +72,7 @@ export function CopyButton({
   const [status, copy] = useCopyStatus();
 
   return (
-    <span className="copy-wrap">
+    <span className="ncopy">
       <button
         type="button"
         className={compact ? "btn small icon-only" : "btn small"}
@@ -85,7 +85,7 @@ export function CopyButton({
         {compact ? null : <span>{label}</span>}
       </button>
       <span
-        className="copy-status"
+        className="ncopy-status"
         role="status"
         data-testid={testId ? `${testId}-status` : undefined}
       >

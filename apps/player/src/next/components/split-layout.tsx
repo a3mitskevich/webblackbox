@@ -103,6 +103,8 @@ type ListDetailsSplitProps = {
   list: ReactNode;
   /** The details pane, or `null` while nothing is open (the list takes the whole height). */
   details: ReactNode | null;
+  /** The details pane's default share of the height, in percent. */
+  detailsPercent?: number;
 };
 
 const LIST_PANEL = "layout-list";
@@ -116,7 +118,12 @@ const LIST_ONLY_LAYOUT: Layout = { [LIST_PANEL]: 100 };
  * the list panel stay mounted while the details open and close, so the list keeps its focus,
  * scroll position and virtualizer state; only the splitter and the details panel come and go.
  */
-export function ListDetailsSplit({ name, list, details }: ListDetailsSplitProps) {
+export function ListDetailsSplit({
+  name,
+  list,
+  details,
+  detailsPercent = DETAILS_DEFAULT_PERCENT
+}: ListDetailsSplitProps) {
   const i18n = useI18n();
   const groupRef = useGroupRef();
   const isOpen = details !== null;
@@ -126,7 +133,7 @@ export function ListDetailsSplit({ name, list, details }: ListDetailsSplitProps)
     storage: layoutStorage,
     onlySaveAfterUserInteractions: true
   });
-  const openLayout = defaultLayout ?? defaultDetailsLayout();
+  const openLayout = defaultLayout ?? defaultDetailsLayout(detailsPercent);
   const isOpenRef = useRef(isOpen);
   isOpenRef.current = isOpen;
   // The group keeps the last open sizes in memory while the pane is closed, and the details panel
@@ -135,7 +142,7 @@ export function ListDetailsSplit({ name, list, details }: ListDetailsSplitProps)
 
   useLayoutReset(() => {
     if (isOpenRef.current) {
-      groupRef.current?.setLayout(defaultDetailsLayout());
+      groupRef.current?.setLayout(defaultDetailsLayout(detailsPercent));
     } else {
       setGeneration((value) => value + 1);
     }
@@ -165,7 +172,7 @@ export function ListDetailsSplit({ name, list, details }: ListDetailsSplitProps)
           id={DETAILS_PANEL}
           className="split-panel"
           minSize="15%"
-          defaultSize={`${openLayout[DETAILS_PANEL] ?? DETAILS_DEFAULT_PERCENT}%`}
+          defaultSize={`${openLayout[DETAILS_PANEL] ?? detailsPercent}%`}
         >
           {details}
         </Panel>

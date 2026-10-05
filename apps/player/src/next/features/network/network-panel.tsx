@@ -20,6 +20,9 @@ import { networkSlice, type NetworkSlice } from "./slice.js";
 import { useNetworkModel, useNetworkView, useSelectedRow } from "./use-network.js";
 import "./network.css";
 
+/** The mockup gives the details more height than the table (0.8fr / 1.4fr). */
+const NETWORK_DETAILS_PERCENT = 60;
+
 type ToggleKey = "failedOnly" | "notCapturedOnly" | "hideThirdParty";
 
 function Chip({
@@ -36,7 +39,7 @@ function Chip({
   return (
     <button
       type="button"
-      className={pressed ? "fchip on" : "fchip"}
+      className={pressed ? "nchip on" : "nchip"}
       aria-pressed={pressed}
       onClick={onClick}
       data-testid={testId}
@@ -83,31 +86,63 @@ function NetworkTools({
 
   return (
     <div className="rail-tools net-tools">
-      <label className="field">
-        <Icon name="filter" />
-        <span className="visually-hidden">{t("filterLabel")}</span>
-        <input
-          type="search"
-          value={query}
-          placeholder={t("filterPlaceholder")}
-          onChange={(event) => controller.setQuery(event.target.value)}
-          data-testid="network-filter"
-        />
-      </label>
-      <div className="chips" role="group" aria-label={t("typeChipsLabel")}>
-        {NETWORK_TYPE_CHIPS.map((chip) => (
-          <Chip
-            key={chip}
-            pressed={slice.type === chip}
-            onClick={() => update((value) => ({ ...value, type: chip }))}
-            testId={`net-type-${chip}`}
+      <div className="net-tools-row">
+        <label className="field">
+          <Icon name="filter" />
+          <span className="visually-hidden">{t("filterLabel")}</span>
+          <input
+            type="search"
+            value={query}
+            placeholder={t("filterPlaceholder")}
+            onChange={(event) => controller.setQuery(event.target.value)}
+            data-testid="network-filter"
+          />
+        </label>
+        <span className="mono muted nsmall" data-testid="net-shown">
+          {t("rowsShown", {
+            shown: i18n.formatNumber(shown),
+            total: i18n.formatNumber(model.rows.length)
+          })}
+        </span>
+        <Hint label={t("slowestHint")}>
+          <button
+            type="button"
+            className="btn small icon-only"
+            aria-label={t("slowest")}
+            onClick={selectSlowest}
+            data-testid="net-slowest"
           >
-            {t(`type_${chip}`)}
-            {chip === "all" ? null : count(counts[chip])}
-          </Chip>
-        ))}
+            <Icon name="slowest" />
+          </button>
+        </Hint>
+        <Hint label={t("railWideHint")}>
+          <button
+            type="button"
+            className="btn small icon-only"
+            aria-label={railWide ? t("railWideOff") : t("railWide")}
+            aria-pressed={railWide}
+            onClick={() => controller.toggleRailWide()}
+            data-testid="rail-wide"
+          >
+            <Icon name={railWide ? "narrow" : "widen"} />
+          </button>
+        </Hint>
       </div>
-      <div className="chips">
+      <div className="net-tools-row">
+        <div className="nchips" role="group" aria-label={t("typeChipsLabel")}>
+          {NETWORK_TYPE_CHIPS.map((chip) => (
+            <Chip
+              key={chip}
+              pressed={slice.type === chip}
+              onClick={() => update((value) => ({ ...value, type: chip }))}
+              testId={`net-type-${chip}`}
+            >
+              {t(`type_${chip}`)}
+              {chip === "all" ? null : count(counts[chip])}
+            </Chip>
+          ))}
+        </div>
+        <span className="nchips-sep" aria-hidden="true" />
         <Chip pressed={slice.failedOnly} onClick={() => flip("failedOnly")} testId="net-failed">
           {t("failedOnly")} {count(counts.failed)}
         </Chip>
@@ -124,43 +159,13 @@ function NetworkTools({
           testId="net-hide-third-party"
         >
           {t("hideThirdParty")}
+          {hiddenThirdParty > 0 ? (
+            <span className="c mono" data-testid="net-hidden-count">
+              {t("hiddenThirdParty", { count: i18n.formatNumber(hiddenThirdParty) })}
+            </span>
+          ) : null}
         </Chip>
-        {hiddenThirdParty > 0 ? (
-          <span className="muted small" data-testid="net-hidden-count">
-            {t("hiddenThirdParty", { count: i18n.formatNumber(hiddenThirdParty) })}
-          </span>
-        ) : null}
       </div>
-      <span className="grow" />
-      <span className="mono muted small" data-testid="net-shown">
-        {t("rowsShown", {
-          shown: i18n.formatNumber(shown),
-          total: i18n.formatNumber(model.rows.length)
-        })}
-      </span>
-      <Hint label={t("slowestHint")}>
-        <button
-          type="button"
-          className="btn small icon-only"
-          aria-label={t("slowest")}
-          onClick={selectSlowest}
-          data-testid="net-slowest"
-        >
-          <Icon name="slowest" />
-        </button>
-      </Hint>
-      <Hint label={t("railWideHint")}>
-        <button
-          type="button"
-          className="btn small icon-only"
-          aria-label={railWide ? t("railWideOff") : t("railWide")}
-          aria-pressed={railWide}
-          onClick={() => controller.toggleRailWide()}
-          data-testid="rail-wide"
-        >
-          <Icon name={railWide ? "narrow" : "widen"} />
-        </button>
-      </Hint>
     </div>
   );
 }
@@ -199,6 +204,7 @@ export default function NetworkPanel() {
       />
       <ListDetailsSplit
         name="network"
+        detailsPercent={NETWORK_DETAILS_PERCENT}
         list={list}
         details={detailsOpen && selected ? <NetworkDetails row={selected} /> : null}
       />

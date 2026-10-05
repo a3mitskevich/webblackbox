@@ -90,7 +90,7 @@ export function JsonTree({ value, testId }: JsonTreeProps) {
 
   return (
     <div className="json-tree" data-testid={testId}>
-      <div className="viewer-tools">
+      <div className="nviewer-tools">
         <button
           type="button"
           className="btn small"
@@ -104,7 +104,7 @@ export function JsonTree({ value, testId }: JsonTreeProps) {
         <span className="grow" />
         {current ? (
           <>
-            <span className="mono muted path-readout" data-testid="json-path">
+            <span className="mono muted npath" data-testid="json-path">
               {current.path}
             </span>
             <CopyButton compact label={t("copyPath")} getText={() => current.path} />

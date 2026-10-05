@@ -38,9 +38,9 @@ type KeyValuesProps = {
 
 export function KeyValues({ pairs, testId }: KeyValuesProps) {
   return (
-    <dl className="kv" data-testid={testId}>
+    <dl className="nkv" data-testid={testId}>
       {pairs.map(([name, value], index) => (
-        <div key={`${name}-${index}`} className="kv-row">
+        <div key={`${name}-${index}`} className="nkv-row">
           <dt>{name}</dt>
           <dd>{value}</dd>
         </div>
@@ -51,7 +51,7 @@ export function KeyValues({ pairs, testId }: KeyValuesProps) {
 
 export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="dsec">
+    <section className="ndsec">
       <h3>{title}</h3>
       {children}
     </section>
@@ -114,7 +114,7 @@ export function HeadersTab({
   const request = sortedHeaders(entry.requestHeaders);
 
   return (
-    <div className="dtab" data-testid="headers-tab">
+    <div className="ndtab" data-testid="headers-tab">
       <Section title={t("general")}>
         <KeyValues pairs={general} />
       </Section>
@@ -122,14 +122,14 @@ export function HeadersTab({
         {response.length > 0 ? (
           <KeyValues pairs={response} testId="response-headers" />
         ) : (
-          <p className="body-note">{t("noHeaders")}</p>
+          <p className="nbody-note">{t("noHeaders")}</p>
         )}
       </Section>
       <Section title={t("requestHeaders")}>
         {request.length > 0 ? (
           <KeyValues pairs={request} testId="request-headers" />
         ) : (
-          <p className="body-note">{t("noHeaders")}</p>
+          <p className="nbody-note">{t("noHeaders")}</p>
         )}
       </Section>
     </div>
@@ -153,7 +153,7 @@ export function AvailabilityNote({
 
   if (availability.state === "skipped") {
     return (
-      <p className="notice warn" data-testid={testId} data-reason={availability.skip.reason}>
+      <p className="nnotice warn" data-testid={testId} data-reason={availability.skip.reason}>
         {t("notCapturedLine", {
           reason: skipReasonText(availability.skip, t, i18n.formatByteSize, mime)
         })}
@@ -162,7 +162,7 @@ export function AvailabilityNote({
   }
 
   return (
-    <p className="body-note" data-testid={testId} data-reason={availability.state}>
+    <p className="nbody-note" data-testid={testId} data-reason={availability.state}>
       {availability.state === "missing" ? t("bodyMissing") : noneText}
     </p>
   );
@@ -182,7 +182,7 @@ export function PayloadTab({ entry }: { entry: NetworkWaterfallEntry }) {
   const content = useMemo(() => decodeText(body), [body]);
 
   return (
-    <div className="dtab" data-testid="payload-tab">
+    <div className="ndtab" data-testid="payload-tab">
       {query.length > 0 ? (
         <Section title={t("queryParams")}>
           <KeyValues pairs={query} testId="query-params" />
@@ -192,7 +192,7 @@ export function PayloadTab({ entry }: { entry: NetworkWaterfallEntry }) {
         {availability.state === "captured" ? (
           <>
             {availability.truncated ? (
-              <p className="notice warn" data-testid="request-body-cut">
+              <p className="nnotice warn" data-testid="request-body-cut">
                 {t("requestBodyCut")}
               </p>
             ) : null}
@@ -226,7 +226,7 @@ export function ResponseTab({ entry }: { entry: NetworkWaterfallEntry }) {
 
   if (availability.state !== "captured") {
     return (
-      <div className="dtab" data-testid="response-tab">
+      <div className="ndtab" data-testid="response-tab">
         <AvailabilityNote
           availability={availability}
           mime={entry.mimeType}
@@ -240,23 +240,23 @@ export function ResponseTab({ entry }: { entry: NetworkWaterfallEntry }) {
   const keptSize = i18n.formatByteSize(entry.responseBodySize ?? 0);
 
   return (
-    <div className="dtab dtab-fill" data-testid="response-tab">
+    <div className="ndtab ndtab-fill" data-testid="response-tab">
       {availability.truncated ? (
-        <p className="notice warn" data-testid="response-body-cut">
-          <span className="trunc">{t("cutBadge", { size: keptSize })}</span>{" "}
+        <p className="nnotice warn" data-testid="response-body-cut">
+          <span className="ncut">{t("cutBadge", { size: keptSize })}</span>{" "}
           {t("cutNote", { size: keptSize })}
         </p>
       ) : null}
       {blob === null || blob.status === "loading" ? (
-        <p className="body-note">{t("bodyLoading")}</p>
+        <p className="nbody-note">{t("bodyLoading")}</p>
       ) : blob.status === "error" ? (
-        <p className="notice bad" data-testid="response-body-error">
+        <p className="nnotice bad" data-testid="response-body-error">
           {t("bodyLoadFailed", { error: blob.message })}
         </p>
       ) : content ? (
         <BodyViewer content={content} testId="response-body" />
       ) : (
-        <p className="body-note" data-testid="response-body-note" data-reason="missing">
+        <p className="nbody-note" data-testid="response-body-note" data-reason="missing">
           {t("bodyMissing")}
         </p>
       )}
@@ -286,16 +286,20 @@ export function TimingView({
   const ms = (value: number) => i18n.formatMilliseconds(value, { fractionDigits: 1 });
 
   return (
-    <div className="dtab" data-testid="timing-tab">
+    <div className="ndtab" data-testid="timing-tab">
       <p className="muted">{t("timingStarted", { time: formatOffset(startOffsetMs, locale) })}</p>
       {timing.phases.length === 0 ? (
-        <p className="body-note">{pending ? t("timingPending") : t("timingNone")}</p>
+        <p className="nbody-note">{pending ? t("timingPending") : t("timingNone")}</p>
       ) : (
-        <ul className="phases" aria-label={t("timingLabel")}>
+        <ul className="nphases" aria-label={t("timingLabel")}>
           {timing.phases.map((phase) => (
-            <li key={phase.name} className={`phase phase-${phase.name}`} data-testid="timing-phase">
-              <span className="phase-name">{t(`phase_${phase.name}`)}</span>
-              <span className="phase-track" aria-hidden="true">
+            <li
+              key={phase.name}
+              className={`nphase phase-${phase.name}`}
+              data-testid="timing-phase"
+            >
+              <span className="nphase-name">{t(`phase_${phase.name}`)}</span>
+              <span className="nphase-track" aria-hidden="true">
                 <i
                   style={{
                     left: `${(phase.startMs / span) * 100}%`,
@@ -303,18 +307,18 @@ export function TimingView({
                   }}
                 />
               </span>
-              <span className="phase-ms mono">{ms(phase.durationMs)}</span>
+              <span className="nphase-ms mono">{ms(phase.durationMs)}</span>
             </li>
           ))}
-          <li className="phase phase-total">
-            <span className="phase-name">{t("timingTotal")}</span>
-            <span className="phase-track" />
-            <span className="phase-ms mono">{ms(totalMs)}</span>
+          <li className="nphase nphase-total">
+            <span className="nphase-name">{t("timingTotal")}</span>
+            <span className="nphase-track" />
+            <span className="nphase-ms mono">{ms(totalMs)}</span>
           </li>
         </ul>
       )}
       {timing.source === "events" && timing.phases.length > 0 ? (
-        <p className="muted small">{t("timingFromEvents")}</p>
+        <p className="muted nsmall">{t("timingFromEvents")}</p>
       ) : null}
     </div>
   );
@@ -367,10 +371,10 @@ export function InitiatorTab({
   const offset = (mono: number) => formatOffset(mono - archive.model.minMono, locale);
 
   return (
-    <div className="dtab" data-testid="initiator-tab">
+    <div className="ndtab" data-testid="initiator-tab">
       {action ? (
         <Section title={t("initiatorAction")}>
-          <p className="initiator-action">
+          <p className="ninitiator-action">
             <span className="mono muted">{offset(action.startMono)}</span>{" "}
             <span className="mono">{action.actId}</span>{" "}
             {trigger ? describeEventRow(trigger, archive.model).primary : null}{" "}
@@ -404,7 +408,7 @@ export function InitiatorTab({
           />
           {connection.hasUserGesture ? <p className="muted">{t("userGesture")}</p> : null}
           {initiator.frames.length > 0 ? (
-            <ol className="stack mono" aria-label={t("initiatorStack")}>
+            <ol className="nstack mono" aria-label={t("initiatorStack")}>
               {initiator.frames.map((frame, index) => (
                 <li key={index}>
                   <b>{frame.functionName || "(anonymous)"}</b>{" "}
@@ -415,12 +419,12 @@ export function InitiatorTab({
           ) : null}
         </Section>
       ) : null}
-      {!action && !initiator ? <p className="body-note">{t("noInitiator")}</p> : null}
+      {!action && !initiator ? <p className="nbody-note">{t("noInitiator")}</p> : null}
       <Section title={t("linkedEvents")}>
-        <ul className="linked" data-testid="linked-events">
+        <ul className="nlinked" data-testid="linked-events">
           {events.map((event) => (
             <li key={event.id}>
-              <button type="button" className="link" onClick={() => controller.selectEvent(event)}>
+              <button type="button" className="nlink" onClick={() => controller.selectEvent(event)}>
                 <span className="mono muted">{offset(event.mono)}</span>{" "}
                 <span className="mono">{event.type}</span>
               </button>

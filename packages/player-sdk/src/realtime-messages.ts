@@ -118,8 +118,8 @@ export function parseRealtimePayload(
 }
 
 /**
- * Handshakes, pings, acks and completions that carry no result: the plumbing of a hub connection,
- * shown dimmed in a conversation.
+ * Handshakes, pings, acks and completions without a result (`null` or none: a void hub method):
+ * the plumbing of a hub connection, shown dimmed in a conversation.
  */
 export function isServiceRealtimeRecord(record: RealtimeRecord): boolean {
   if (SERVICE_KINDS.has(record.kind)) {
@@ -131,7 +131,7 @@ export function isServiceRealtimeRecord(record: RealtimeRecord): boolean {
   }
 
   const value = asRecord(record.value);
-  return value !== null && value.result === undefined;
+  return value !== null && (value.result === undefined || value.result === null);
 }
 
 function splitSignalrRecords(text: string, truncated: boolean): RealtimeRecord[] {

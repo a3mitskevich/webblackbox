@@ -97,7 +97,7 @@ export function MessageList({ labels, selectedId, minMono }: MessageListProps) {
   const selectedIndex = labels.findIndex((label) => label.entry.eventId === selectedId);
 
   if (labels.length === 0) {
-    return <p className="body-note">{t("messagesEmpty")}</p>;
+    return <p className="nbody-note">{t("messagesEmpty")}</p>;
   }
 
   return (
@@ -125,7 +125,7 @@ export function MessageList({ labels, selectedId, minMono }: MessageListProps) {
             key={entry.eventId}
             role="option"
             aria-selected={isSelected}
-            className={["frame", isSelected ? "sel" : "", label.service ? "dim" : ""]
+            className={["nmsg", isSelected ? "nsel" : "", label.service ? "ndim" : ""]
               .filter(Boolean)
               .join(" ")}
             onClick={() => {
@@ -137,7 +137,7 @@ export function MessageList({ labels, selectedId, minMono }: MessageListProps) {
           >
             <time className="mono">{formatOffset(entry.mono - minMono, locale)}</time>
             <span
-              className={`dir ${direction}`}
+              className={`ndir ${direction}`}
               role="img"
               aria-label={t(`direction_${direction}`)}
             >
@@ -148,7 +148,7 @@ export function MessageList({ labels, selectedId, minMono }: MessageListProps) {
             </span>
             <span className="sz mono">
               {i18n.formatByteSize(realtimeMessageBytes(entry))}
-              {entry.payloadTruncated ? <span className="trunc">cut</span> : null}
+              {entry.payloadTruncated ? <span className="ncut">cut</span> : null}
             </span>
           </div>
         );
@@ -194,7 +194,7 @@ function RecordBody({
         language={isJson ? "json" : "plain"}
       />
       {!record.complete && missingBytes > 0 ? (
-        <p className="not-captured-rest mono" data-testid="message-rest">
+        <p className="nrest mono" data-testid="message-rest">
           {t("notCapturedRest", { size: i18n.formatByteSize(missingBytes) })}
         </p>
       ) : null}
@@ -234,13 +234,13 @@ export function MessageView({ entry, stream, minMono }: MessageViewProps) {
   const missingBytes = Math.max(0, totalBytes - keptBytes);
 
   return (
-    <section className="message-view" aria-label={t("messagesLabel")} data-testid="message-view">
-      <header className="dh">
+    <section className="nmessage-view" aria-label={t("messagesLabel")} data-testid="message-view">
+      <header className="ndh">
         <h3>
           <Icon name={direction} />
           {first?.target ?? kindText(t, first)}
         </h3>
-        <div className="sub">
+        <div className="nsub">
           <span>
             {t("messageAt", {
               direction: t(`direction_${direction}`),
@@ -260,7 +260,7 @@ export function MessageView({ entry, stream, minMono }: MessageViewProps) {
         </div>
       </header>
       {parsed.truncated ? (
-        <p className="notice warn" data-testid="message-cut">
+        <p className="nnotice warn" data-testid="message-cut">
           {totalBytes > keptBytes
             ? t("messageCut", {
                 kept: i18n.formatByteSize(keptBytes),
@@ -270,19 +270,19 @@ export function MessageView({ entry, stream, minMono }: MessageViewProps) {
         </p>
       ) : null}
       {text?.status === "error" ? (
-        <p className="notice bad">{t("payloadLoadFailed", { error: text.message })}</p>
+        <p className="nnotice bad">{t("payloadLoadFailed", { error: text.message })}</p>
       ) : null}
-      <div className="records" data-testid="message-records">
+      <div className="nrecords" data-testid="message-records">
         {parsed.records.map((record, index) => (
-          <div key={index} className="record" data-kind={record.kind}>
+          <div key={index} className="nrecord" data-kind={record.kind}>
             {parsed.records.length > 1 ? (
-              <h4 className="record-head">
+              <h4 className="nrecord-head">
                 {t("recordOf", { index: index + 1, count: parsed.records.length })} ·{" "}
                 {record.target ?? kindText(t, record)}
               </h4>
             ) : null}
             {record.error ? (
-              <p className="notice bad">{t("hubError", { error: record.error })}</p>
+              <p className="nnotice bad">{t("hubError", { error: record.error })}</p>
             ) : null}
             <RecordBody
               record={record}
