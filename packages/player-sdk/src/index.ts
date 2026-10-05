@@ -67,6 +67,7 @@ import { formatTabsContextReport, readTabsContext } from "./tabs-context.js";
 export * from "./playwright-actions.js";
 export * from "./pointer-insights.js";
 export * from "./recording-profile.js";
+export * from "./route-chapters.js";
 export * from "./source-map.js";
 export * from "./stack-trace.js";
 export * from "./symbolicate.js";
