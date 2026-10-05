@@ -10,6 +10,7 @@ import {
 import { migrateStoredRecorderConfig } from "../options-storage.js";
 import {
   DEFAULT_PROFILE_ID,
+  isManagedProfileId,
   isReadOnlyProfileId,
   MANAGED_PROFILE_ID_PREFIX,
   MAX_PROFILES,
@@ -22,7 +23,13 @@ import {
   type RecordingProfile,
   type RecordingProfilesStore
 } from "./model.js";
-import { BUILT_IN_PROFILES, createBaseProfile, createDefaultProfile } from "./presets.js";
+import {
+  BUILT_IN_PROFILES,
+  createBaseProfile,
+  createDefaultProfile,
+  isRecommendedProfileId,
+  RECOMMENDED_PROFILE_IDS
+} from "./presets.js";
 
 /** Why the effective store looks the way it does; surfaced in the options page. */
 export type ProfilesStoreIssue =
@@ -170,16 +177,64 @@ export function parseProfilesStore(raw: unknown): ParsedProfilesStore | null {
   const profiles = parseProfiles(envelope.data.profiles, issues, { allowReserved: false });
   const rules = parseRules(envelope.data.rules, issues);
   const defaultProfileId = envelope.data.defaultProfileId;
+  const removed = normalizeRemovedRecommendedIds(envelope.data.removedRecommendedProfileIds);
 
   return {
     store: {
       schemaVersion: PROFILES_SCHEMA_VERSION,
       defaultProfileId,
-      profiles: ensureDefaultProfile(profiles),
+      profiles: ensureDefaultProfile(profiles, removed),
       rules,
-      extendedCaptureHosts: [...envelope.data.extendedCaptureHosts]
+      extendedCaptureHosts: [...envelope.data.extendedCaptureHosts],
+      ...withRemovedRecommendedIds(removed)
     },
     issues
+  };
+}
+
+/** The store's own profiles plus the built-in presets the user has not deleted. */
+export function listStoreProfiles(store: RecordingProfilesStore): RecordingProfile[] {
+  const removed = new Set(store.removedRecommendedProfileIds ?? []);
+
+  return [...store.profiles, ...BUILT_IN_PROFILES.filter((profile) => !removed.has(profile.id))];
+}
+
+/**
+ * Deletes any profile except enterprise-managed ones. Default and the presets are remembered as
+ * removed so "Restore recommended profiles" can bring them back. Rules that point at the profile
+ * are kept: the rule engine skips them and the editor flags them until the profile exists again.
+ * When the deleted profile was the default, the first remaining profile becomes the default.
+ */
+export function removeProfileFromStore(
+  store: RecordingProfilesStore,
+  profileId: string
+): RecordingProfilesStore {
+  if (isManagedProfileId(profileId)) {
+    return store;
+  }
+
+  const removed = isRecommendedProfileId(profileId)
+    ? normalizeRemovedRecommendedIds([...(store.removedRecommendedProfileIds ?? []), profileId])
+    : (store.removedRecommendedProfileIds ?? []);
+  const next: RecordingProfilesStore = {
+    ...withoutRemovedRecommendedIds(store),
+    profiles: store.profiles.filter((profile) => profile.id !== profileId),
+    ...withRemovedRecommendedIds(removed)
+  };
+
+  if (store.defaultProfileId !== profileId) {
+    return next;
+  }
+
+  const fallback = listStoreProfiles(next)[0]?.id;
+  return fallback ? { ...next, defaultProfileId: fallback } : next;
+}
+
+/** Brings back every deleted recommended profile; Default comes back with today's defaults. */
+export function restoreRecommendedProfiles(store: RecordingProfilesStore): RecordingProfilesStore {
+  return {
+    ...withoutRemovedRecommendedIds(store),
+    profiles: ensureDefaultProfile(store.profiles, [])
   };
 }
 
@@ -204,17 +259,22 @@ export function resolveProfilesState(input: {
   const store = parsed?.store ?? migrateLegacyOptionsToProfiles(input.rawLegacyOptions);
   issues.push(...(parsed?.issues ?? []));
 
-  const catalog = [...store.profiles, ...managed.profiles, ...BUILT_IN_PROFILES];
+  const [ownProfiles, builtIns] = splitStoreProfiles(store);
+  const catalog = [...ownProfiles, ...managed.profiles, ...builtIns];
   const catalogIds = new Set(catalog.map((profile) => profile.id));
 
-  if (!catalogIds.has(store.defaultProfileId)) {
+  if (!catalogIds.has(store.defaultProfileId) && catalog.length > 0) {
     issues.push({ kind: "missing-default-profile", id: store.defaultProfileId });
   }
+
+  const fallbackDefaultId = catalogIds.has(DEFAULT_PROFILE_ID)
+    ? DEFAULT_PROFILE_ID
+    : (catalog[0]?.id ?? store.defaultProfileId);
 
   return {
     store: catalogIds.has(store.defaultProfileId)
       ? store
-      : { ...store, defaultProfileId: DEFAULT_PROFILE_ID },
+      : { ...store, defaultProfileId: fallbackDefaultId },
     legacy,
     catalog,
     rules: [...managed.rules, ...store.rules],
@@ -299,12 +359,14 @@ export function serializeProfilesStore(store: RecordingProfilesStore): Recording
     throw new Error(`Profiles are invalid: ${describeIssues(issues)}`);
   }
 
+  const removed = normalizeRemovedRecommendedIds(store.removedRecommendedProfileIds);
   const serialized: RecordingProfilesStore = {
     schemaVersion: PROFILES_SCHEMA_VERSION,
     defaultProfileId: store.defaultProfileId,
-    profiles: ensureDefaultProfile(profiles),
+    profiles: ensureDefaultProfile(profiles, removed),
     rules,
-    extendedCaptureHosts: [...store.extendedCaptureHosts]
+    extendedCaptureHosts: [...store.extendedCaptureHosts],
+    ...withRemovedRecommendedIds(removed)
   };
   // The reader rejects a bad envelope as a whole, so never write one it would drop.
   const envelope = recordingProfilesStoreSchema.safeParse(serialized);
@@ -396,10 +458,40 @@ function parseRules(entries: readonly unknown[], issues: ProfilesStoreIssue[]): 
   return output;
 }
 
-function ensureDefaultProfile(profiles: RecordingProfile[]): RecordingProfile[] {
-  return profiles.some((profile) => profile.id === DEFAULT_PROFILE_ID)
+/** Stores always carry the Default profile unless the user deleted it. */
+function ensureDefaultProfile(
+  profiles: RecordingProfile[],
+  removed: readonly string[]
+): RecordingProfile[] {
+  return removed.includes(DEFAULT_PROFILE_ID) ||
+    profiles.some((profile) => profile.id === DEFAULT_PROFILE_ID)
     ? profiles
     : [createDefaultProfile(), ...profiles];
+}
+
+/** Known recommended ids only, once each, in catalog order. */
+function normalizeRemovedRecommendedIds(ids: readonly string[] | undefined): string[] {
+  const wanted = new Set(ids ?? []);
+  return RECOMMENDED_PROFILE_IDS.filter((id) => wanted.has(id));
+}
+
+function withRemovedRecommendedIds(
+  removed: readonly string[]
+): Pick<RecordingProfilesStore, "removedRecommendedProfileIds"> {
+  return removed.length > 0 ? { removedRecommendedProfileIds: [...removed] } : {};
+}
+
+function withoutRemovedRecommendedIds(store: RecordingProfilesStore): RecordingProfilesStore {
+  return Object.fromEntries(
+    Object.entries(store).filter(([key]) => key !== "removedRecommendedProfileIds")
+  ) as RecordingProfilesStore;
+}
+
+function splitStoreProfiles(
+  store: RecordingProfilesStore
+): [own: RecordingProfile[], builtIns: RecordingProfile[]] {
+  const all = listStoreProfiles(store);
+  return [all.slice(0, store.profiles.length), all.slice(store.profiles.length)];
 }
 
 function migrateLegacyDefaultProfile(legacyOptions: unknown): RecordingProfile {

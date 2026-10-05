@@ -3,13 +3,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ChromeApi } from "../shared/chrome-api.js";
 import { DEFAULT_PROFILE_ID, PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
-import { BUILT_IN_PROFILE_IDS, createDefaultProfile } from "../shared/profiles/presets.js";
+import {
+  BUILT_IN_PROFILE_IDS,
+  createDefaultProfile,
+  RECOMMENDED_PROFILE_IDS
+} from "../shared/profiles/presets.js";
 import { selectRecordingProfile } from "../shared/profiles/resolve.js";
 import {
   buildProfilePreview,
+  capturedVisualsOf,
   loadProfilesState,
-  mergeCapturedVisuals,
-  NO_CAPTURED_VISUALS,
   parsePageSignals,
   readTabPageContext
 } from "./profile-runtime.js";
@@ -175,32 +178,60 @@ describe("buildProfilePreview", () => {
       extended: true,
       readOnly: true
     });
+    // Extended profiles run on any host: no downgrade to Full.
     expect(preview.selection).toEqual({
-      id: BUILT_IN_PROFILE_IDS.full,
-      name: "Full",
+      id: BUILT_IN_PROFILE_IDS.qa,
+      name: "QA",
       base: "full",
       source: "explicit",
-      extended: false,
-      downgradedFrom: "QA"
+      extended: true
+    });
+    expect(buildProfilePreview(state, selection, ["console"]).selection?.enterpriseCapped).toEqual([
+      "console"
+    ]);
+  });
+
+  it("returns an empty catalog and no selection once every profile is deleted", async () => {
+    const { api } = fakeChrome({
+      local: {
+        [PROFILES_STORAGE_KEY]: {
+          schemaVersion: 2,
+          defaultProfileId: "default",
+          profiles: [],
+          rules: [],
+          extendedCaptureHosts: [],
+          removedRecommendedProfileIds: [...RECOMMENDED_PROFILE_IDS]
+        }
+      }
+    });
+    const state = await loadProfilesState(api, KEYS);
+    const selection = selectRecordingProfile({ state, page: { url: "https://a.example/" } });
+
+    expect(selection).toBeNull();
+    expect(buildProfilePreview(state, selection)).toEqual({
+      kind: "sw.profile-preview",
+      catalog: [],
+      selection: null
     });
   });
 });
 
-describe("mergeCapturedVisuals", () => {
+describe("capturedVisualsOf", () => {
   const categories = (screenshots: "off" | "allow", screenRecordings: "off" | "allow") => ({
     capturePolicy: {
       categories: { ...DEFAULT_CAPTURE_POLICY.categories, screenshots, screenRecordings }
     }
   });
 
-  it("keeps visuals an earlier profile allowed after a switch turns them off", () => {
-    const started = mergeCapturedVisuals(NO_CAPTURED_VISUALS, categories("allow", "allow"));
-    const switched = mergeCapturedVisuals(started, categories("off", "off"));
-
-    expect(switched).toEqual({ screenshots: true, screenRecordings: true });
-    expect(mergeCapturedVisuals(NO_CAPTURED_VISUALS, categories("off", "off"))).toEqual(
-      NO_CAPTURED_VISUALS
-    );
-    expect(mergeCapturedVisuals(NO_CAPTURED_VISUALS, {})).toEqual(NO_CAPTURED_VISUALS);
+  it("reports the visuals the session's config allows", () => {
+    expect(capturedVisualsOf(categories("allow", "allow"))).toEqual({
+      screenshots: true,
+      screenRecordings: true
+    });
+    expect(capturedVisualsOf(categories("off", "off"))).toEqual({
+      screenshots: false,
+      screenRecordings: false
+    });
+    expect(capturedVisualsOf({})).toEqual({ screenshots: false, screenRecordings: false });
   });
 });

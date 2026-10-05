@@ -35,6 +35,8 @@ export type ProfilesDiff = {
   rules: EntityDiff;
   defaultProfileId?: { from: string; to: string };
   extendedCaptureHosts: { added: string[]; removed: string[] };
+  /** Deleted recommended profiles before and after the import, when they differ. */
+  removedRecommendedProfileIds?: { from: string[]; to: string[] };
   hasChanges: boolean;
 };
 
@@ -58,7 +60,10 @@ export function createProfilesExportFile(
     defaultProfileId: store.defaultProfileId,
     profiles: structuredClone(store.profiles),
     rules: structuredClone(store.rules),
-    extendedCaptureHosts: [...store.extendedCaptureHosts]
+    extendedCaptureHosts: [...store.extendedCaptureHosts],
+    ...(store.removedRecommendedProfileIds?.length
+      ? { removedRecommendedProfileIds: [...store.removedRecommendedProfileIds] }
+      : {})
   };
 }
 
@@ -94,7 +99,8 @@ export function previewProfilesImport(
     defaultProfileId: envelope.data.defaultProfileId,
     profiles: envelope.data.profiles,
     rules: envelope.data.rules,
-    extendedCaptureHosts: envelope.data.extendedCaptureHosts
+    extendedCaptureHosts: envelope.data.extendedCaptureHosts,
+    removedRecommendedProfileIds: envelope.data.removedRecommendedProfileIds
   });
 
   if (!parsed) {
@@ -130,16 +136,24 @@ export function diffProfilesStores(
     current.defaultProfileId !== next.defaultProfileId
       ? { from: current.defaultProfileId, to: next.defaultProfileId }
       : undefined;
+  const removedFrom = current.removedRecommendedProfileIds ?? [];
+  const removedTo = next.removedRecommendedProfileIds ?? [];
+  const removedRecommendedProfileIds =
+    JSON.stringify(removedFrom) !== JSON.stringify(removedTo)
+      ? { from: [...removedFrom], to: [...removedTo] }
+      : undefined;
 
   return {
     profiles,
     rules,
     ...(defaultProfileId ? { defaultProfileId } : {}),
     extendedCaptureHosts,
+    ...(removedRecommendedProfileIds ? { removedRecommendedProfileIds } : {}),
     hasChanges:
       hasEntityChanges(profiles) ||
       hasEntityChanges(rules) ||
       defaultProfileId !== undefined ||
+      removedRecommendedProfileIds !== undefined ||
       extendedCaptureHosts.added.length > 0 ||
       extendedCaptureHosts.removed.length > 0
   };

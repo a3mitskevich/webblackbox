@@ -60,9 +60,7 @@ import { materializeLiteRawEvent } from "webblackbox/lite-materializer";
 import {
   AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
-  downgradeExtendedSelection,
-  isHostAllowedForExtendedCapture,
-  isSameProfileSelection,
+  listEnterpriseCappedCategories,
   selectRecordingProfile,
   toArchivedProfileInfo,
   type ProfileSelection
@@ -102,10 +100,18 @@ import {
 import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
 import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
+  buildProfileCancellation,
+  detectProfileChange,
+  toProfileCancelNotice,
+  type ProfileCancellation,
+  type ProfileCancelTrigger,
+  type SessionProfileSnapshot
+} from "./profile-change.js";
+import {
   buildProfilePreview,
   loadProfilesState,
-  mergeCapturedVisuals,
-  NO_CAPTURED_VISUALS,
+  capturedVisualsOf,
+  NO_RECORDING_PROFILE_ERROR,
   readTabPageContext,
   type CapturedVisuals
 } from "./profile-runtime.js";
@@ -123,19 +129,26 @@ import {
   type LocalStorageSnapshotMode
 } from "./storage-snapshot.js";
 
-/** Recording profile bookkeeping for one session. */
+/**
+ * Recording profile bookkeeping for one session. A session records with one profile only: when
+ * the effective profile changes after Start, the recording is cancelled (`cancellation`).
+ */
 type SessionProfileState = {
   /** What Start asked for: a profile id or `auto` (site rules decide on every navigation). */
   request: string;
   visualCapture?: FullModeVisualCapture;
   selection: ProfileSelection;
-  /** Every profile the session recorded under; export rules use the strictest. */
-  history: ProfileSelection[];
-  /** Visual data any profile of the session allowed; the export keeps what was captured. */
+  /** Recorder config the profile rendered to at Start, before enterprise policy. */
+  profileConfig: typeof DEFAULT_RECORDER_CONFIG;
+  /** Visual data the profile allowed; the export keeps what was captured. */
   visualsCaptured: CapturedVisuals;
   reevaluation: Promise<void>;
-  /** Bumped on every switch request; a re-evaluation from an older request is dropped. */
+  /** Bumped on every re-evaluation request; one from an older request is dropped. */
   generation: number;
+  /** Why the recording was stopped after its profile changed. */
+  cancellation?: ProfileCancellation;
+  /** The popup has shown the cancellation notice. */
+  cancellationAcknowledged?: boolean;
 };
 
 type SessionRuntime = {
@@ -752,6 +765,11 @@ async function handleInboundMessage(
     return;
   }
 
+  if (message.kind === "ui.ack-profile-cancel") {
+    await acknowledgeProfileCancel(message.sid);
+    return;
+  }
+
   if (message.kind === "ui.request-session-list") {
     const sessionList = buildSessionListMessage();
 
@@ -912,11 +930,12 @@ async function startSession(
   }
 
   const profileRequest = options.profileId ?? AUTO_PROFILE_ID;
-  const profileSelection = await resolveTabProfileSelection(
-    tabId,
-    profileRequest,
-    enterprisePolicy
-  );
+  const profileSelection = await resolveTabProfileSelection(tabId, profileRequest);
+
+  if (!profileSelection) {
+    throw new Error(NO_RECORDING_PROFILE_ERROR);
+  }
+
   const loadedRecorderConfig = await buildSessionRecorderConfig(
     mode,
     profileSelection,
@@ -954,8 +973,8 @@ async function startSession(
       request: profileRequest,
       visualCapture: options.visualCapture,
       selection: profileSelection,
-      history: [profileSelection],
-      visualsCaptured: mergeCapturedVisuals(NO_CAPTURED_VISUALS, recorderConfig),
+      profileConfig: loadedRecorderConfig,
+      visualsCaptured: capturedVisualsOf(recorderConfig),
       reevaluation: Promise.resolve(),
       generation: 0
     },
@@ -1053,7 +1072,10 @@ async function startSession(
     mono: monotonicTime(),
     payload: {
       ...recorderConfig,
-      profile: toArchivedProfileInfo(profileSelection)
+      profile: toArchivedProfileInfo(
+        profileSelection,
+        listEnterpriseCappedCategories(loadedRecorderConfig, recorderConfig)
+      )
     }
   });
 
@@ -1145,11 +1167,7 @@ async function stopSession(tabId: number): Promise<void> {
   runtime.stoppedAt = Date.now();
   scheduleStoppedRuntimeCleanup(runtime);
 
-  if (sessionsByTab.size === 0) {
-    await setIdleBadge();
-  } else {
-    await setRecordingBadge();
-  }
+  await refreshActionBadge();
 
   await notifyTabStatus(
     tabId,
@@ -1285,23 +1303,21 @@ async function exportSession(
   }
 }
 
-/** Resolves the profile for a tab from the current store, rules and page signals. */
+/**
+ * Resolves the profile for a tab from the current store, rules and page signals; null when no
+ * profile exists.
+ */
 async function resolveTabProfileSelection(
   tabId: number,
   request: string,
-  enterprisePolicy: EnterpriseRecorderPolicy
-): Promise<ProfileSelection> {
-  const state = await loadSessionProfilesState();
+  profilesState?: ProfilesState
+): Promise<ProfileSelection | null> {
+  const state = profilesState ?? (await loadSessionProfilesState());
   const page = (await readTabPageContext(chromeApi, tabId, state.rules)) ?? {
     url: `tab:${tabId}`
   };
 
-  return selectRecordingProfile({
-    state,
-    page,
-    requestedProfileId: request,
-    enterpriseSiteAllowlist: enterprisePolicy.siteAllowlist
-  });
+  return selectRecordingProfile({ state, page, requestedProfileId: request });
 }
 
 /**
@@ -1338,32 +1354,46 @@ async function resolveProfilePreview(
     return buildProfilePreview(state, null);
   }
 
-  const enterprisePolicy = await loadEnterprisePolicy();
   const page = await readTabPageContext(chromeApi, tabId, state.rules);
   const selection = page
     ? selectRecordingProfile({
         state,
         page,
-        requestedProfileId: requestedProfileId ?? AUTO_PROFILE_ID,
-        enterpriseSiteAllowlist: enterprisePolicy.siteAllowlist
+        requestedProfileId: requestedProfileId ?? AUTO_PROFILE_ID
       })
     : null;
 
-  return buildProfilePreview(state, selection);
+  if (!selection) {
+    return buildProfilePreview(state, null);
+  }
+
+  // The preview renders the profile on its recommended transport to name the enterprise caps.
+  const profileConfig = await buildSessionRecorderConfig(
+    selection.profile.base,
+    selection,
+    undefined
+  );
+  const effectiveConfig = applyEnterprisePolicyToRecorderConfig(
+    profileConfig,
+    await loadEnterprisePolicy()
+  );
+
+  return buildProfilePreview(
+    state,
+    selection,
+    listEnterpriseCappedCategories(profileConfig, effectiveConfig)
+  );
 }
 
 /**
  * Serializes profile re-evaluations per session. Only the latest request runs: older queued or
  * in-flight ones are dropped, so a navigation burst costs one page probe, not one per step.
  */
-function scheduleProfileReevaluation(
-  runtime: SessionRuntime,
-  reason: "navigation" | "page-loaded"
-): void {
+function scheduleProfileReevaluation(runtime: SessionRuntime, trigger: ProfileCancelTrigger): void {
   const generation = nextProfileGeneration(runtime);
 
   runtime.profile.reevaluation = runtime.profile.reevaluation
-    .then(() => reevaluateSessionProfile(runtime, reason, generation))
+    .then(() => reevaluateSessionProfile(runtime, trigger, generation))
     .catch((error) => {
       console.warn("[WebBlackbox] recording profile re-evaluation failed", error);
     });
@@ -1380,112 +1410,75 @@ function isProfileRequestCurrent(runtime: SessionRuntime, generation: number): b
 }
 
 /**
- * Drops an extended profile as soon as the tab leaves its allowed hosts. Unlike the full
- * re-evaluation this needs no page probe, so nothing on the new host is captured under the
- * extended profile while rules that read the DOM are still waiting for the page.
- */
-async function enforceExtendedHostGate(
-  runtime: SessionRuntime,
-  rawUrl: string,
-  sessionUrl: string
-): Promise<void> {
-  if (!runtime.profile.selection.extended) {
-    return;
-  }
-
-  // In-flight re-evaluations started on the previous URL must not re-apply the extended profile.
-  nextProfileGeneration(runtime);
-  const [state, enterprisePolicy] = await Promise.all([
-    loadSessionProfilesState(),
-    loadEnterprisePolicy()
-  ]);
-  const current = runtime.profile.selection;
-  // Valid while the tab is still on this URL and no other switch landed meanwhile; a newer
-  // navigation runs its own gate and re-evaluation.
-  const isStillOnUrl = (): boolean =>
-    !runtime.stopping &&
-    !runtime.stoppedAt &&
-    runtime.url === sessionUrl &&
-    runtime.profile.selection === current;
-
-  if (
-    !current.extended ||
-    isHostAllowedForExtendedCapture({
-      url: rawUrl,
-      profileId: current.profile.id,
-      state,
-      enterpriseSiteAllowlist: enterprisePolicy.siteAllowlist
-    })
-  ) {
-    return;
-  }
-
-  await applySessionProfileSelection(
-    runtime,
-    downgradeExtendedSelection(current),
-    "navigation",
-    isStillOnUrl,
-    enterprisePolicy
-  );
-}
-
-/**
- * Re-runs the rules after navigation. When the effective profile changes, the recorder, body
- * rules and page agents switch to it and a `meta.config` event records the switch. The transport
- * (lite/full) and tab recording stay as started.
+ * Re-runs the rules after navigation or page load. A session records with one profile: when the
+ * effective profile is no longer the one it started with (another profile picked by the rules,
+ * the profile deleted or edited, the enterprise policy changed), the recording is cancelled.
+ * What was captured is kept for export or deletion, and the popup explains why and how to fix it.
  */
 async function reevaluateSessionProfile(
   runtime: SessionRuntime,
-  reason: "navigation" | "page-loaded",
+  trigger: ProfileCancelTrigger,
   generation: number
 ): Promise<void> {
   if (!isProfileRequestCurrent(runtime, generation)) {
     return;
   }
 
-  const enterprisePolicy = await loadEnterprisePolicy();
-  const next = await resolveTabProfileSelection(
+  const [state, enterprisePolicy] = await Promise.all([
+    loadSessionProfilesState(),
+    loadEnterprisePolicy()
+  ]);
+  const nextSelection = await resolveTabProfileSelection(
     runtime.tabId,
     runtime.profile.request,
-    enterprisePolicy
+    state
   );
+  const next = nextSelection
+    ? await buildSessionProfileSnapshot(runtime, nextSelection, enterprisePolicy)
+    : null;
 
-  await applySessionProfileSelection(
-    runtime,
+  // The session may have stopped or a newer request may have landed while this one was loading.
+  if (!isProfileRequestCurrent(runtime, generation)) {
+    return;
+  }
+
+  const started = runtime.profile.selection;
+  const reason = detectProfileChange({
+    started: {
+      selection: started,
+      profileConfig: runtime.profile.profileConfig,
+      effectiveConfig: runtime.config
+    },
     next,
-    reason,
-    () => isProfileRequestCurrent(runtime, generation),
-    enterprisePolicy
-  );
+    startedProfileExists: state.catalog.some((profile) => profile.id === started.profile.id)
+  });
+
+  if (reason) {
+    await cancelSessionForProfileChange(
+      runtime,
+      buildProfileCancellation({
+        reason,
+        trigger,
+        at: Date.now(),
+        started,
+        next: nextSelection
+      })
+    );
+  }
 }
 
-/** Switches a running session to `next` unless it is already active or the request is stale. */
-async function applySessionProfileSelection(
+/** The recorder configs a selection would run with in this session. */
+async function buildSessionProfileSnapshot(
   runtime: SessionRuntime,
-  next: ProfileSelection,
-  reason: "navigation" | "page-loaded",
-  isCurrent: () => boolean,
+  selection: ProfileSelection,
   enterprisePolicy: EnterpriseRecorderPolicy
-): Promise<void> {
-  const previous = runtime.profile.selection;
-
-  if (isSameProfileSelection(previous, next) || !isCurrent()) {
-    return;
-  }
-
+): Promise<SessionProfileSnapshot> {
   const profileConfig = await buildSessionRecorderConfig(
     runtime.mode,
-    next,
+    selection,
     runtime.profile.visualCapture
   );
-
-  // The session may have stopped (never re-activate page agents) or a newer navigation may have
-  // been handled while the config was loading.
-  if (!isCurrent()) {
-    return;
-  }
-
-  const config = applyEnterprisePolicyToRecorderConfig(
+  const effectiveConfig = applyEnterprisePolicyToRecorderConfig(
     withSessionCapturePolicy(profileConfig, {
       tabId: runtime.tabId,
       origin: runtime.scopeOrigin ?? "",
@@ -1494,54 +1487,72 @@ async function applySessionProfileSelection(
     enterprisePolicy
   );
 
-  runtime.config = config;
-  runtime.recorder.reconfigure({ ...config, mode: runtime.mode });
-  runtime.profile = {
-    ...runtime.profile,
-    selection: next,
-    history: [...runtime.profile.history, next],
-    visualsCaptured: mergeCapturedVisuals(runtime.profile.visualsCaptured, config)
-  };
+  return { selection, profileConfig, effectiveConfig };
+}
 
+/**
+ * Records why the profile changed (`meta.config.profileCancel`), then stops the session like the
+ * Stop button does: the data stays for export or deletion. The badge and the popup tell the user.
+ */
+async function cancelSessionForProfileChange(
+  runtime: SessionRuntime,
+  cancellation: ProfileCancellation
+): Promise<void> {
+  runtime.profile = { ...runtime.profile, cancellation, cancellationAcknowledged: false };
   ingestRawEvent({
     source: "system",
     rawType: "config",
     sid: runtime.sid,
     tabId: runtime.tabId,
-    t: Date.now(),
+    t: cancellation.at,
     mono: monotonicTime(),
     payload: {
-      ...config,
-      profile: toArchivedProfileInfo(next),
-      profileChange: {
-        reason,
-        previous: toArchivedProfileInfo(previous)
-      }
+      ...runtime.config,
+      profile: cancellation.started,
+      profileCancel: cancellation
     }
   });
+  console.warn(
+    `[WebBlackbox] recording ${runtime.sid} stopped: profile changed (${cancellation.reason})`
+  );
 
-  if (runtime.screenRecording && config.capturePolicy?.categories.screenRecordings !== "allow") {
-    await stopScreenRecording(runtime, "profile-change").catch((error) => {
-      ingestScreenRecordingError(runtime, runtime.screenRecording, error, "profile-change");
-    });
-  }
+  // Stopping updates the badge to `!` while the notice is unread.
+  await stopSession(runtime.tabId);
+}
 
-  // A newer switch may have landed while recording was stopping; it notifies the page itself.
-  // A newer request that kept this selection does not, so this one still has to.
-  if (runtime.stopping || runtime.stoppedAt || runtime.profile.selection !== next) {
-    pushSessionList();
+/**
+ * REC while anything records, otherwise `!` while a profile-change notice is unread, otherwise
+ * no badge.
+ */
+async function refreshActionBadge(): Promise<void> {
+  if (sessionsByTab.size > 0) {
+    await setRecordingBadge();
     return;
   }
 
-  await notifyTabStatus(
-    runtime.tabId,
-    true,
-    runtime.sid,
-    runtime.mode,
-    toStatusSampling(runtime),
-    config.capturePolicy
+  const unread = [...sessionsBySid.values()].some(
+    (runtime) => runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
   );
+
+  if (!unread) {
+    await setIdleBadge();
+    return;
+  }
+
+  await chromeApi?.action?.setBadgeText({ text: "!" }).catch(() => undefined);
+  await chromeApi?.action?.setBadgeBackgroundColor({ color: "#b35c00" }).catch(() => undefined);
+}
+
+async function acknowledgeProfileCancel(sid: string): Promise<void> {
+  const runtime = sessionsBySid.get(sid);
+
+  if (!runtime?.profile.cancellation || runtime.profile.cancellationAcknowledged) {
+    return;
+  }
+
+  runtime.profile = { ...runtime.profile, cancellationAcknowledged: true };
   pushSessionList();
+  await refreshActionBadge();
 }
 
 function resolveSessionExportPolicy(runtime: SessionRuntime, policy: ExportPolicy): ExportPolicy {
@@ -4443,11 +4454,7 @@ async function disposeStoppedSession(runtime: SessionRuntime): Promise<void> {
     .catch(() => undefined);
   sessionsBySid.delete(runtime.sid);
 
-  if (sessionsByTab.size === 0) {
-    await setIdleBadge();
-  } else {
-    await setRecordingBadge();
-  }
+  await refreshActionBadge();
 
   await closeOffscreenIfUnused();
   pushSessionList();
@@ -4500,7 +4507,10 @@ function toSessionListItem(runtime: SessionRuntime): SessionListItem {
     sizeBytes: runtime.capturedSizeBytes,
     tags: [...runtime.tags],
     note: runtime.note,
-    profileName: runtime.profile.selection.profile.name
+    profileName: runtime.profile.selection.profile.name,
+    ...(runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
+      ? { profileCancel: toProfileCancelNotice(runtime.profile.cancellation) }
+      : {})
   };
 }
 
@@ -4654,9 +4664,6 @@ async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void>
     pushSessionList();
   }
 
-  await enforceExtendedHostGate(runtime, rawUrl, nextUrl).catch((error) => {
-    console.warn("[WebBlackbox] extended capture host gate failed", error);
-  });
   scheduleProfileReevaluation(runtime, "navigation");
 }
 

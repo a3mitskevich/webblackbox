@@ -305,6 +305,14 @@ type PlayerMessages = {
   summaryProfile: string;
   summaryProfileRule: string;
   summaryProfileDowngraded: string;
+  profileBannerCancelRuleChanged: string;
+  profileBannerCancelMissing: string;
+  profileBannerCancelEdited: string;
+  profileBannerCancelPolicy: string;
+  profileBannerCancelUnknown: string;
+  profileBannerDowngraded: string;
+  profileBannerCapped: string;
+  profileBannerUnknownProfile: string;
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;
@@ -620,6 +628,20 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     summaryProfile: "profile {name}",
     summaryProfileRule: "profile {name} (rule {rule})",
     summaryProfileDowngraded: "profile {name} ({requested} not allowed on this site)",
+    profileBannerCancelRuleChanged:
+      "Recording stopped early: it recorded with {started}, but after a navigation the site rules picked {next}. Nothing after that point was recorded.",
+    profileBannerCancelMissing:
+      "Recording stopped early: the profile {started} was deleted while recording. Nothing after that point was recorded.",
+    profileBannerCancelEdited:
+      "Recording stopped early: the profile {started} was changed while recording. Nothing after that point was recorded.",
+    profileBannerCancelPolicy:
+      "Recording stopped early: the organization's policy changed what {started} may record. Nothing after that point was recorded.",
+    profileBannerCancelUnknown:
+      "Recording stopped early: the recording profile changed ({reason}).",
+    profileBannerDowngraded:
+      "Recorded with {name} instead of {requested}: {requested} was not allowed on this site, so data only {requested} records is missing.",
+    profileBannerCapped: "The organization's policy limited {name}: {categories}.",
+    profileBannerUnknownProfile: "an unknown profile",
     networkTypes: {
       document: "Document",
       fetch: "Fetch/XHR",
@@ -952,6 +974,19 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     summaryProfile: "配置 {name}",
     summaryProfileRule: "配置 {name}（规则 {rule}）",
     summaryProfileDowngraded: "配置 {name}（{requested} 在此站点不可用）",
+    profileBannerCancelRuleChanged:
+      "录制提前停止：录制使用的是 {started}，但导航后站点规则选择了 {next}。此后的内容未被录制。",
+    profileBannerCancelMissing:
+      "录制提前停止：配置 {started} 在录制期间被删除。此后的内容未被录制。",
+    profileBannerCancelEdited:
+      "录制提前停止：配置 {started} 在录制期间被修改。此后的内容未被录制。",
+    profileBannerCancelPolicy:
+      "录制提前停止：组织策略更改了 {started} 允许录制的内容。此后的内容未被录制。",
+    profileBannerCancelUnknown: "录制提前停止：录制配置发生了变化（{reason}）。",
+    profileBannerDowngraded:
+      "使用 {name} 而不是 {requested} 录制：{requested} 在此站点不可用，因此缺少只有 {requested} 才会录制的数据。",
+    profileBannerCapped: "组织策略限制了 {name}：{categories}。",
+    profileBannerUnknownProfile: "未知配置",
     networkTypes: {
       document: "文档",
       fetch: "Fetch/XHR",

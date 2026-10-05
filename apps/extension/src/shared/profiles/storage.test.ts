@@ -11,9 +11,17 @@ import {
   PROFILES_SCHEMA_VERSION,
   type RecordingProfilesStore
 } from "./model.js";
-import { BUILT_IN_PROFILE_IDS, createDefaultProfile, duplicateProfile } from "./presets.js";
+import {
+  BUILT_IN_PROFILE_IDS,
+  createDefaultProfile,
+  duplicateProfile,
+  findBuiltInProfile,
+  RECOMMENDED_PROFILE_IDS
+} from "./presets.js";
 import {
   applyDefaultProfileToGeneralForm,
+  removeProfileFromStore,
+  restoreRecommendedProfiles,
   migrateLegacyOptionsToProfiles,
   parseManagedProfilesPolicy,
   parseProfilesStore,
@@ -311,5 +319,105 @@ describe("serializeProfilesStore", () => {
     const store = storeWith({ extendedCaptureHosts: ["*.stage.example.com"] });
 
     expect(parseProfilesStore(serializeProfilesStore(store))?.store).toEqual(store);
+  });
+});
+
+describe("deleting and restoring recommended profiles", () => {
+  const catalogIds = (store: RecordingProfilesStore): string[] =>
+    resolveProfilesState({ rawProfilesStore: store, rawLegacyOptions: undefined }).catalog.map(
+      (profile) => profile.id
+    );
+
+  it("hides deleted presets and the Default profile from the catalog", () => {
+    const store = storeWith({
+      profiles: [],
+      removedRecommendedProfileIds: [DEFAULT_PROFILE_ID, BUILT_IN_PROFILE_IDS.qa]
+    });
+    const parsed = parseProfilesStore(store);
+
+    expect(parsed?.store.profiles).toEqual([]);
+    expect(catalogIds(store)).toEqual([
+      BUILT_IN_PROFILE_IDS.lite,
+      BUILT_IN_PROFILE_IDS.full,
+      BUILT_IN_PROFILE_IDS.fullCapture
+    ]);
+  });
+
+  it("leaves stores that never deleted a recommended profile byte-identical", () => {
+    const store = storeWith({});
+    const serialized = serializeProfilesStore(store);
+
+    expect(serialized).toEqual(store);
+    expect("removedRecommendedProfileIds" in serialized).toBe(false);
+    expect(parseProfilesStore(serialized)?.store).toEqual(store);
+  });
+
+  it("drops unknown ids from the removed list", () => {
+    const parsed = parseProfilesStore(
+      storeWith({ removedRecommendedProfileIds: ["builtin:lite", "my-profile", "builtin:nope"] })
+    );
+
+    expect(parsed?.store.removedRecommendedProfileIds).toEqual([BUILT_IN_PROFILE_IDS.lite]);
+  });
+
+  it("removes any profile, keeps rules that point at it and moves the default", () => {
+    const rule = {
+      id: "r",
+      profileId: DEFAULT_PROFILE_ID,
+      priority: 0,
+      enabled: true,
+      match: { hosts: ["example.com"] }
+    };
+    const withoutDefault = removeProfileFromStore(storeWith({ rules: [rule] }), DEFAULT_PROFILE_ID);
+
+    expect(withoutDefault.profiles).toEqual([]);
+    expect(withoutDefault.removedRecommendedProfileIds).toEqual([DEFAULT_PROFILE_ID]);
+    expect(withoutDefault.rules).toEqual([rule]);
+    expect(withoutDefault.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.lite);
+
+    const withoutLite = removeProfileFromStore(withoutDefault, BUILT_IN_PROFILE_IDS.lite);
+    expect(withoutLite.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.full);
+
+    const copy = duplicateProfile(createDefaultProfile(), { id: "mine" });
+    const withCopy = storeWith({
+      profiles: [createDefaultProfile(), copy],
+      defaultProfileId: "mine"
+    });
+    expect(removeProfileFromStore(withCopy, "mine")).toEqual(storeWith({}));
+  });
+
+  it("never removes enterprise-managed profiles", () => {
+    const store = storeWith({});
+
+    expect(removeProfileFromStore(store, "managed:qa")).toBe(store);
+  });
+
+  it("can remove every profile; the catalog is then empty", () => {
+    const empty = RECOMMENDED_PROFILE_IDS.reduce(removeProfileFromStore, storeWith({}));
+    const state = resolveProfilesState({ rawProfilesStore: empty, rawLegacyOptions: undefined });
+
+    expect(serializeProfilesStore(empty).removedRecommendedProfileIds).toEqual([
+      ...RECOMMENDED_PROFILE_IDS
+    ]);
+    expect(state.catalog).toEqual([]);
+    expect(state.legacy).toBe(false);
+  });
+
+  it("restores missing recommended profiles and keeps user profiles", () => {
+    const copy = duplicateProfile(createDefaultProfile(), { id: "mine" });
+    const empty = RECOMMENDED_PROFILE_IDS.reduce(
+      removeProfileFromStore,
+      storeWith({ profiles: [createDefaultProfile(), copy] })
+    );
+    const restored = restoreRecommendedProfiles(empty);
+
+    expect(restored.removedRecommendedProfileIds).toBeUndefined();
+    expect(restored.profiles.map((profile) => profile.id)).toEqual([DEFAULT_PROFILE_ID, "mine"]);
+    expect(restored.profiles[0]).toEqual(createDefaultProfile());
+    expect(catalogIds(restored)).toEqual([
+      DEFAULT_PROFILE_ID,
+      "mine",
+      ...RECOMMENDED_PROFILE_IDS.filter((id) => findBuiltInProfile(id))
+    ]);
   });
 });

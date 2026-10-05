@@ -1,15 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  DEFAULT_PROFILE_ID,
-  PROFILES_SCHEMA_VERSION,
-  type RecordingProfilesStore
-} from "../shared/profiles/model.js";
 import { BUILT_IN_PROFILE_IDS, createDefaultProfile } from "../shared/profiles/presets.js";
 import {
   applyProfileFormValues,
   createUniqueId,
-  deleteProfileFromStore,
   formatQueryLines,
   formatValuePatternLines,
   parseValuePatternLines,
@@ -132,21 +126,7 @@ describe("profile form model", () => {
     });
   });
 
-  it("creates unique ids and deletes profiles with their rules", () => {
+  it("creates unique ids", () => {
     expect(createUniqueId("rule", ["rule-2", "rule-3"])).toBe("rule-4");
-
-    const store: RecordingProfilesStore = {
-      schemaVersion: PROFILES_SCHEMA_VERSION,
-      defaultProfileId: "custom",
-      profiles: [createDefaultProfile(), { ...createDefaultProfile(), id: "custom" }],
-      rules: [{ id: "r", profileId: "custom", priority: 0, enabled: true, match: {} }],
-      extendedCaptureHosts: []
-    };
-    const next = deleteProfileFromStore(store, "custom");
-
-    expect(next.defaultProfileId).toBe(DEFAULT_PROFILE_ID);
-    expect(next.profiles.map((profile) => profile.id)).toEqual([DEFAULT_PROFILE_ID]);
-    expect(next.rules).toEqual([]);
-    expect(deleteProfileFromStore(store, DEFAULT_PROFILE_ID)).toBe(store);
   });
 });

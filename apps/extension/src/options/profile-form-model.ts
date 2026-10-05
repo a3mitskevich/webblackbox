@@ -11,7 +11,6 @@ import {
   type CaptureCategories
 } from "../shared/profiles/categories.js";
 import {
-  DEFAULT_PROFILE_ID,
   MAX_BODY_CAPTURE_BYTES,
   MAX_MOUSEMOVE_HZ,
   MAX_RULE_PRIORITY,
@@ -259,23 +258,6 @@ export function duplicateIntoStore(
 }
 
 /** Removes a user profile, its rules, and resets the default when needed. */
-export function deleteProfileFromStore(
-  store: RecordingProfilesStore,
-  profileId: string
-): RecordingProfilesStore {
-  if (profileId === DEFAULT_PROFILE_ID) {
-    return store;
-  }
-
-  return {
-    ...store,
-    defaultProfileId:
-      store.defaultProfileId === profileId ? DEFAULT_PROFILE_ID : store.defaultProfileId,
-    profiles: store.profiles.filter((profile) => profile.id !== profileId),
-    rules: store.rules.filter((rule) => rule.profileId !== profileId)
-  };
-}
-
 function toCaptureMode(value: string, fallback: CaptureMode): CaptureMode {
   return value === "lite" || value === "full" ? value : fallback;
 }

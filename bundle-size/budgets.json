@@ -23,8 +23,9 @@
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 48000,
-      "maxGzipBytes": 13000
+      "maxBytes": 53400,
+      "maxGzipBytes": 14100,
+      "note": "Measured 51,816 / 13,675 B (+3%): content.js bundles the shared UI dictionary, which grew with the profile-change and profile-deletion strings; #14 moves the dictionary out of the content script."
     },
     {
       "path": "apps/extension/build/sw.js",

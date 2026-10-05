@@ -20,6 +20,7 @@ import {
   serializeProfilesStore,
   syncDefaultProfileWithLegacyOptions
 } from "../shared/profiles/storage.js";
+import { PROFILES_SECTION_ID } from "../shared/messages.js";
 import { mountProfilesEditor, type ProfilesEditorHandle } from "./profiles-editor.js";
 
 const STORAGE_KEY = "webblackbox.options";
@@ -58,6 +59,11 @@ async function bootstrap(container: HTMLElement): Promise<void> {
     legacyOptionsKey: STORAGE_KEY,
     enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
   });
+
+  // The popup links here when no profile exists; the card renders after the hash was resolved.
+  if (window.location.hash === `#${PROFILES_SECTION_ID}`) {
+    document.getElementById(PROFILES_SECTION_ID)?.scrollIntoView();
+  }
 }
 
 function render(container: HTMLElement, options: OptionsState): void {

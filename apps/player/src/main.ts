@@ -8,6 +8,7 @@ import {
   type RealtimeNetworkEntry,
   type ReplayDiagnosticEntry,
   type StorageTimelineEntry,
+  readProfileCancellation,
   readRecordingProfiles,
   WebBlackboxPlayer
 } from "@webblackbox/player-sdk";
@@ -46,6 +47,7 @@ import {
 import { asFiniteNumber, asRecord, asString } from "./lib/parsing.js";
 import {
   formatPrivacyViolationText,
+  formatRecordingProfileBanner,
   formatRecordingProfileSummary,
   isConsolePrivacyViolation
 } from "./lib/recording-profile-view.js";
@@ -3113,7 +3115,19 @@ function renderSummary(): void {
   ).length;
   const visibleNetworkIframeCount = Math.max(0, visibleRequestCount - visibleNetworkMainCount);
   const triage = computeTriageStats(model.events, model.waterfall, TRIAGE_SLOW_REQUEST_MS);
-  const profileSummary = formatRecordingProfileSummary(readRecordingProfiles(model.events), i18n);
+  const profileEntries = readRecordingProfiles(model.events);
+  const profileSummary = formatRecordingProfileSummary(profileEntries, i18n);
+  const profileBanner = formatRecordingProfileBanner(
+    profileEntries,
+    readProfileCancellation(model.events),
+    i18n
+  );
+  const profileBannerHtml =
+    profileBanner.length > 0
+      ? `<div class="summary-alert" role="alert" data-profile-banner>${profileBanner
+          .map((line) => `<p>${escapeHtml(line)}</p>`)
+          .join("")}</div>`
+      : "";
 
   const compareDelta = state.compareSummary
     ? `<div class="pill">${escapeHtml(
@@ -3124,6 +3138,7 @@ function renderSummary(): void {
     : "";
 
   refs.summary.innerHTML = `
+    ${profileBannerHtml}
     <div class="summary-triage">
       <span class="summary-triage__label">${escapeHtml(i18n.messages.summaryLabelTriage)}</span>
       <div class="pill">${escapeHtml(i18n.t("summaryPillErrors", { count: model.totals.errors }))}</div>

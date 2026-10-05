@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
-// E2E: a site rule picks the Full capture preset, which records content as captured (no masking).
-// Planted fake secrets (console text, storage value, URL token, Authorization header, request and
-// response bodies, password field) must be present raw in the decrypted archive. After the tab
-// moves to a host without a rule, the Default profile masks again and the same kind of secrets
-// must be absent. The archive itself is always encrypted: none of the secrets, nor the site,
-// appear in its raw bytes, and an export without a passphrase is refused.
+// E2E: the Full capture preset, chosen explicitly on a host without any site rule, records content
+// as captured (no masking, no host restriction). Planted fake secrets (console text, storage
+// value, URL token, Authorization header, request and response bodies, password field, WebSocket
+// payload) and the raw DOM must be present in the decrypted archive. After the tab moves to
+// another host the explicit choice still applies: the recording keeps going and records the second
+// set raw too. The archive itself is always encrypted: none of the secrets, nor the site, appear
+// in its raw bytes, and an export without a passphrase is refused.
 
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
@@ -32,26 +34,23 @@ const RAW_SECRETS = {
   header: "FC-HEADER-SECRET-1",
   requestBody: "FC-REQUEST-BODY-1",
   responseBody: "FC-RESPONSE-BODY-1",
-  password: "FC-PASSWORD-1"
+  password: "FC-PASSWORD-1",
+  webSocket: "FC-WS-PAYLOAD-1"
 };
-/** The same kinds of secrets planted after the switch to Default: none may be recorded. */
-const DEFAULT_SECRETS = {
-  console: "DF-CONSOLE-SECRET-2",
-  storage: "DF-STORAGE-SECRET-2",
-  url: "DF-URL-TOKEN-2",
-  header: "DF-HEADER-SECRET-2",
-  requestBody: "DF-REQUEST-BODY-2",
-  responseBody: "DF-RESPONSE-BODY-2",
-  password: "DF-PASSWORD-2"
+/** The same kinds of secrets planted on another host: the explicit choice still records them. */
+const OTHER_HOST_SECRETS = {
+  console: "OH-CONSOLE-SECRET-2",
+  storage: "OH-STORAGE-SECRET-2",
+  url: "OH-URL-TOKEN-2",
+  header: "OH-HEADER-SECRET-2",
+  requestBody: "OH-REQUEST-BODY-2",
+  responseBody: "OH-RESPONSE-BODY-2",
+  password: "OH-PASSWORD-2",
+  webSocket: "OH-WS-PAYLOAD-2"
 };
-const FULL_CAPTURE_RULE = {
-  id: "e2e-local-full-capture",
-  name: "Local full capture",
-  profileId: "builtin:full-capture",
-  priority: 10,
-  enabled: true,
-  match: { hosts: ["127.0.0.1:*"] }
-};
+/** Text in the page markup: only a raw DOM snapshot carries it into the archive. */
+const DOM_MARKER = "FC-DOM-MARKER-1";
+const FULL_CAPTURE_ID = "builtin:full-capture";
 
 main().catch(async (error) => {
   console.error(
@@ -76,7 +75,7 @@ async function main() {
         schemaVersion: 2,
         defaultProfileId: "default",
         profiles: [],
-        rules: [${JSON.stringify(FULL_CAPTURE_RULE)}],
+        rules: [],
         extendedCaptureHosts: []
       }
     }).then(() => true)
@@ -90,16 +89,16 @@ async function main() {
   assert(typeof tabId === "number", "Demo page tab not found", { tabId });
 
   const preview = await popup.evaluate(
-    `chrome.runtime.sendMessage({ kind: "ui.resolve-profile", tabId: ${tabId} })`
+    `chrome.runtime.sendMessage({ kind: "ui.resolve-profile", tabId: ${tabId}, profileId: ${JSON.stringify(FULL_CAPTURE_ID)} })`
   );
   assert(
-    preview?.selection?.id === "builtin:full-capture",
-    "Rule did not select the Full capture profile",
+    preview?.selection?.id === FULL_CAPTURE_ID && preview.selection.source === "explicit",
+    "Full capture is not used as chosen on a host without rules",
     preview
   );
 
   await popup.evaluate(
-    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "full", visualCapture: "none" })`
+    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "full", visualCapture: "none", profileId: ${JSON.stringify(FULL_CAPTURE_ID)} })`
   );
   await waitFor(
     () =>
@@ -112,26 +111,33 @@ async function main() {
   await sleep(1_500);
   await runScenario(page, RAW_SECRETS);
 
-  // Same tab, host without a rule: the session switches to Default, which masks content again.
-  const defaultUrl = `http://localhost:${appPort}/fc/`;
-  await page.send("Page.navigate", { url: defaultUrl });
+  const listSessions = () =>
+    popup.evaluate(
+      `chrome.runtime.sendMessage({ kind: "ui.request-session-list" }).then((list) => list?.sessions ?? [])`
+    );
+  const sid = (await listSessions()).find((session) => session.active)?.sid;
+  assert(typeof sid === "string", "Active session not found", { sid });
+
+  // Same tab, another host: the explicit choice applies there too, so recording goes on.
+  const otherHostUrl = `http://localhost:${appPort}/fc/`;
+  await page.send("Page.navigate", { url: otherHostUrl });
   await waitFor(
     () =>
       page.evaluate(
         `(location.hostname === "localhost" && document.readyState === "complete" && typeof window.__runScenario === "function") || null`
       ),
     15_000,
-    "Navigation to the rule-free host did not finish"
+    "Navigation to the other host did not finish"
   );
   await sleep(2_500);
-  await runScenario(page, DEFAULT_SECRETS);
+  await runScenario(page, OTHER_HOST_SECRETS);
 
-  const sid = await popup.evaluate(`
-    chrome.storage.local.get("webblackbox.runtime.sessions").then(
-      (store) => store["webblackbox.runtime.sessions"]?.[0]?.sid ?? null
-    )
-  `);
-  assert(typeof sid === "string", "Active session not found", { sid });
+  const session = (await listSessions()).find((entry) => entry.sid === sid);
+  assert(
+    session?.active === true && !session.profileCancel,
+    "The recording did not keep going on the other host",
+    session
+  );
 
   for (const refused of [undefined, "short"]) {
     const result = await popup.evaluate(
@@ -171,10 +177,35 @@ async function main() {
   );
   const recorded = `${JSON.stringify(events)}\n${blobTexts.join("\n")}`;
   const fullCaptureConfig = events.find(
-    (event) => event.type === "meta.config" && event.data?.profile?.id === "builtin:full-capture"
+    (event) => event.type === "meta.config" && event.data?.profile?.id === FULL_CAPTURE_ID
   );
+  const otherConfig = events.find(
+    (event) =>
+      event.type === "meta.config" &&
+      (event.data?.profile?.id !== FULL_CAPTURE_ID || event.data?.profileCancel)
+  );
+  const rawDomSnapshots = events.filter(
+    (event) => event.type === "dom.snapshot" && event.data?.source === "html"
+  );
+  const wsFrames = events.filter((event) => event.type === "network.ws.frame");
 
   assert(fullCaptureConfig, "meta.config does not record the Full capture profile");
+  assert(
+    fullCaptureConfig.data.profile.source === "explicit" &&
+      !fullCaptureConfig.data.profile.downgradedFrom,
+    "Full capture was not recorded as chosen",
+    fullCaptureConfig.data.profile
+  );
+  assert(!otherConfig, "The recording changed or cancelled its profile", {
+    config: otherConfig?.data
+  });
+  assert(rawDomSnapshots.length > 0, "Full capture did not record the raw DOM", {
+    types: [...new Set(events.map((event) => event.type))]
+  });
+  assert(recorded.includes(DOM_MARKER), "The raw DOM snapshot misses the page markup");
+  assert(wsFrames.length > 0, "Full capture did not record WebSocket frames", {
+    types: [...new Set(events.map((event) => event.type))]
+  });
   assert(player.archive.manifest.protocolVersion === 2, "Archive is not in the encrypted format", {
     protocolVersion: player.archive.manifest.protocolVersion
   });
@@ -187,10 +218,15 @@ async function main() {
     assert(!rawArchive.includes(secret), `The ${kind} secret is readable in the archive bytes`);
   }
 
-  for (const [kind, secret] of Object.entries(DEFAULT_SECRETS)) {
-    assert(!recorded.includes(secret), `The Default profile recorded the ${kind} secret`, {
-      secret
-    });
+  for (const [kind, secret] of Object.entries(OTHER_HOST_SECRETS)) {
+    assert(
+      recorded.includes(secret),
+      `Full capture did not record the ${kind} secret on the other host`,
+      {
+        secret
+      }
+    );
+    assert(!rawArchive.includes(secret), `The ${kind} secret is readable in the archive bytes`);
   }
 
   assert(!rawArchive.includes("127.0.0.1"), "The site appears in the archive's plaintext");
@@ -198,17 +234,22 @@ async function main() {
 
   console.log(`Archive: ${archivePath} (${bytes.byteLength} bytes)`);
   console.log(`Profile: ${JSON.stringify(fullCaptureConfig.data.profile)}`);
-  console.log(`Raw secrets found: ${Object.keys(RAW_SECRETS).join(", ")}`);
+  console.log(`Raw secrets found: ${Object.keys(RAW_SECRETS).join(", ")} (both hosts)`);
+  console.log(`Raw DOM snapshots: ${rawDomSnapshots.length}; WebSocket frames: ${wsFrames.length}`);
   console.log(`Chrome log: ${harness.chromeLogPath}`);
   console.log("Profile full capture E2E passed.");
 
   await harness.cleanup();
 }
 
-/** Plants `secrets` through the page: console, storage, a request, and a password field. */
+/**
+ * Plants `secrets` through the page: console, storage, a request, a WebSocket message (echoed by
+ * the server), and a password field.
+ */
 async function runScenario(page, secrets) {
   const result = await page.evaluate(`window.__runScenario(${JSON.stringify(secrets)})`);
   assert(result?.echo === secrets.responseBody, "Demo request failed", result);
+  assert(result?.wsEcho === secrets.webSocket, "Demo WebSocket echo failed", result);
 
   await page.evaluate(`document.querySelector("input[name=password]").focus()`);
   await page.send("Input.insertText", { text: secrets.password });
@@ -218,8 +259,18 @@ async function runScenario(page, secrets) {
 function startDemoServer() {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Full capture demo</title></head>
-<body><h1>Full capture demo</h1><input name="password" type="password">
+<body><h1>Full capture demo</h1><p>${DOM_MARKER}</p><input name="password" type="password">
 <script>
+  const echoOverWebSocket = (text) =>
+    new Promise((resolve, reject) => {
+      const socket = new WebSocket("ws://" + location.host + "/ws");
+      socket.onopen = () => socket.send(text);
+      socket.onmessage = (event) => {
+        resolve(event.data);
+        socket.close();
+      };
+      socket.onerror = () => reject(new Error("WebSocket failed"));
+    });
   window.__runScenario = async (secrets) => {
     console.log("password=" + secrets.console);
     localStorage.setItem("authToken", secrets.storage);
@@ -231,7 +282,8 @@ function startDemoServer() {
       },
       body: JSON.stringify({ password: secrets.requestBody, reply: secrets.responseBody })
     });
-    return response.json();
+    const result = await response.json();
+    return { ...result, wsEcho: await echoOverWebSocket(secrets.webSocket) };
   };
 </script></body></html>`;
 
@@ -257,8 +309,35 @@ function startDemoServer() {
       response.writeHead(404).end();
     });
 
+    server.on("upgrade", (request, socket) => acceptEchoWebSocket(request, socket));
     harness.trackServer(server);
     server.on("error", reject);
     server.listen(0, "127.0.0.1", () => resolvePort(server.address().port));
+  });
+}
+
+/** Minimal RFC 6455 server side: answers the handshake and echoes the first short text frame. */
+function acceptEchoWebSocket(request, socket) {
+  const key = request.headers["sec-websocket-key"];
+
+  if (!request.url?.startsWith("/ws") || typeof key !== "string") {
+    socket.destroy();
+    return;
+  }
+
+  const accept = createHash("sha1")
+    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest("base64");
+  socket.write(
+    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+      `Sec-WebSocket-Accept: ${accept}\r\n\r\n`
+  );
+  socket.on("error", () => undefined);
+  socket.once("data", (frame) => {
+    // Client frames are masked; short text frames only (payload < 126 bytes).
+    const length = frame[1] & 0x7f;
+    const mask = frame.subarray(2, 6);
+    const payload = Buffer.from(frame.subarray(6, 6 + length).map((byte, i) => byte ^ mask[i % 4]));
+    socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
   });
 }

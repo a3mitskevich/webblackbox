@@ -21,6 +21,10 @@ import {
 } from "../shared/profiles/storage.js";
 
 const PAGE_SIGNAL_PROBE_TIMEOUT_MS = 1_500;
+
+/** Start refused because every profile was deleted; the popup asks the user to create one. */
+export const NO_RECORDING_PROFILE_ERROR =
+  "No recording profile exists. Create or restore one in Options → Profiles, then start again.";
 const MAX_META_VALUES = 10;
 const MAX_META_VALUE_LENGTH = 500;
 
@@ -82,7 +86,8 @@ export async function readTabPageContext(
 /** Popup preview: every selectable profile plus what Start would pick for the tab. */
 export function buildProfilePreview(
   state: ProfilesState,
-  selection: ProfileSelection | null
+  selection: ProfileSelection | null,
+  enterpriseCapped: readonly string[] = []
 ): ProfilePreviewResponse {
   const catalog: ProfileCatalogEntry[] = state.catalog.map((profile) => ({
     id: profile.id,
@@ -103,30 +108,23 @@ export function buildProfilePreview(
           source: selection.source,
           ...(selection.rule?.name ? { ruleName: selection.rule.name } : {}),
           extended: selection.extended,
-          ...(selection.downgradedFrom ? { downgradedFrom: selection.downgradedFrom.name } : {})
+          ...(enterpriseCapped.length > 0 ? { enterpriseCapped: [...enterpriseCapped] } : {})
         }
       : null
   };
 }
 
-/** Visual data a session captured under any of its profiles. */
+/** Visual data a session's profile allowed; the export includes what was captured. */
 export type CapturedVisuals = { screenshots: boolean; screenRecordings: boolean };
 
-export const NO_CAPTURED_VISUALS: CapturedVisuals = { screenshots: false, screenRecordings: false };
-
-/**
- * Adds what `config` allows to what the session already captured. The export keeps visuals
- * recorded while an earlier profile allowed them, even after a switch turned them off.
- */
-export function mergeCapturedVisuals(
-  previous: CapturedVisuals,
-  config: { capturePolicy?: { categories: CapturePolicy["categories"] } }
-): CapturedVisuals {
+export function capturedVisualsOf(config: {
+  capturePolicy?: { categories: CapturePolicy["categories"] };
+}): CapturedVisuals {
   const categories = config.capturePolicy?.categories;
 
   return {
-    screenshots: previous.screenshots || (categories ? categories.screenshots !== "off" : false),
-    screenRecordings: previous.screenRecordings || categories?.screenRecordings === "allow"
+    screenshots: categories ? categories.screenshots !== "off" : false,
+    screenRecordings: categories?.screenRecordings === "allow"
   };
 }
 

@@ -144,4 +144,22 @@ describe("previewProfilesImport", () => {
       error: expect.stringContaining('Default profile "ghost"')
     });
   });
+
+  it("carries deleted recommended profiles and reports restoring or deleting them", () => {
+    const withoutQa = store({ removedRecommendedProfileIds: [BUILT_IN_PROFILE_IDS.qa] });
+    const file = createProfilesExportFile(withoutQa);
+    const roundTrip = previewProfilesImport(JSON.stringify(file), withoutQa);
+
+    expect(file.removedRecommendedProfileIds).toEqual([BUILT_IN_PROFILE_IDS.qa]);
+    expect(roundTrip.ok && roundTrip.next).toEqual(withoutQa);
+    expect(roundTrip.ok && roundTrip.diff.hasChanges).toBe(false);
+
+    const deleting = previewProfilesImport(JSON.stringify(file), store());
+    expect(deleting.ok && deleting.diff.removedRecommendedProfileIds).toEqual({
+      from: [],
+      to: [BUILT_IN_PROFILE_IDS.qa]
+    });
+    expect(deleting.ok && deleting.diff.hasChanges).toBe(true);
+    expect("removedRecommendedProfileIds" in createProfilesExportFile(store())).toBe(false);
+  });
 });
