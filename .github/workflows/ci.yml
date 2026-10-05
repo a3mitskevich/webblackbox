@@ -40,7 +40,9 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
-        run: pnpm test
+        # turbo runs up to 10 packages at once and every vitest starts its own worker pool; on a
+        # 4-vCPU runner that oversubscription pushed heavy tests past vitest's 5 s timeout.
+        run: pnpm exec turbo run test --concurrency=2
 
       - name: Benchmark Regression Gate
         run: pnpm bench:ci
