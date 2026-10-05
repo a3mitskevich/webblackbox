@@ -830,8 +830,10 @@ async function syncContentPortStateOnConnect(port: PortLike): Promise<void> {
     return;
   }
 
+  // Only the connecting frame: re-running the hooks script resets a frame's live capture config
+  // (the script installs inactive), and only that frame gets the recording status back below.
   if (shouldInjectHooksForMode(runtime.mode)) {
-    await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
+    await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce, port.sender?.frameId);
   }
 
   syncContentPortRecordingState(port);
@@ -1092,8 +1094,13 @@ async function handleInboundMessage(
       };
     }
 
+    // The sender's frame only: the reply below reaches only that frame's content script.
     if (shouldInjectHooksForMode(runtime.mode)) {
-      await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
+      await ensureInjectedHooks(
+        tabId,
+        runtime.injectedBridgeNonce,
+        senderFrameId ?? port?.sender?.frameId
+      );
     }
 
     const sampling = toStatusSampling(runtime);
@@ -4740,10 +4747,21 @@ function normalizeHashesManifest(value: unknown): HashesManifest {
   };
 }
 
-async function ensureInjectedHooks(tabId: number, bridgeNonce: string): Promise<void> {
+/**
+ * Installs the page hooks in a frame (the top frame by default). On a frame that already has them
+ * the script only resets their config to inactive, so callers send the frame its recording
+ * status afterwards.
+ */
+async function ensureInjectedHooks(
+  tabId: number,
+  bridgeNonce: string,
+  frameId?: number
+): Promise<void> {
+  const target = frameId === undefined ? { tabId } : { tabId, frameIds: [frameId] };
+
   await chromeApi?.scripting
     ?.executeScript({
-      target: { tabId },
+      target,
       world: "MAIN",
       files: ["injected.js"]
     })
@@ -4752,7 +4770,7 @@ async function ensureInjectedHooks(tabId: number, bridgeNonce: string): Promise<
   // scripts could observe.
   await chromeApi?.scripting
     ?.executeScript({
-      target: { tabId },
+      target,
       world: "MAIN",
       func: applyInjectedBridgeNonce,
       args: [INJECTED_BRIDGE_NONCE_SETTER_KEY, bridgeNonce]
