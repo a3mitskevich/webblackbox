@@ -13,7 +13,8 @@ Enterprise deployments can provide a managed policy object through `chrome.stora
       "screenshots": "off",
       "network": "metadata",
       "storage": "counts-only",
-      "cdp": "off"
+      "cdp": "off",
+      "tabsContext": "metadata"
     },
     "disableLabMode": true,
     "retention": {
