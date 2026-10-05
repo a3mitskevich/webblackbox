@@ -319,7 +319,7 @@
   "optionsBodyCaptureHint": "Largest response body kept in Full mode.",
   "optionsFreezeOnErrorHint": "Keeps the buffer around an error.",
   "optionsStartReloadOffer": "Offer to reload the page when recording starts",
-  "optionsStartReloadOfferHint": "Start asks whether to reload the page so the recording captures its load. When off, recording starts without a reload, in both engines.",
+  "optionsStartReloadOfferHint": "Start asks whether to reload the page first, to record its load. When off, recording starts without a reload.",
   "optionsLcpWarnHint": "Largest Contentful Paint slower than this.",
   "optionsRequestWarnHint": "Requests slower than this count as slow.",
   "optionsErrorRateWarnHint": "Share of failed requests.",

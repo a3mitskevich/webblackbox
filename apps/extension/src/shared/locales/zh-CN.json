@@ -319,7 +319,7 @@
   "optionsBodyCaptureHint": "Full 模式保留的最大响应正文。",
   "optionsFreezeOnErrorHint": "保留错误前后的缓冲区。",
   "optionsStartReloadOffer": "开始录制时提示刷新页面",
-  "optionsStartReloadOfferHint": "点击开始时询问是否刷新页面，以便录制页面加载过程。关闭后，两种引擎都直接开始录制，不刷新页面。",
+  "optionsStartReloadOfferHint": "开始录制前询问是否刷新页面，以录制页面加载过程。关闭后直接开始录制，不刷新页面。",
   "optionsLcpWarnHint": "最大内容绘制慢于此值。",
   "optionsRequestWarnHint": "慢于此值的请求视为慢请求。",
   "optionsErrorRateWarnHint": "失败请求所占比例。",
