@@ -13,9 +13,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 103500,
-      "maxGzipBytes": 24900,
-      "note": "Measured 100,424 / 24,105 B (+3%): #7's bounded, validated archive loading and #9's event ordering plus archive format 2 with the encrypted manifest (#10)."
+      "maxBytes": 124700,
+      "maxGzipBytes": 30500,
+      "note": "Measured 121,065 / 29,575 B (+3%): stack symbolication and the source map consumer (#11) on top of main's archive loading (#7), event ordering (#9) and archive format 2 (#10)."
     },
     {
       "path": "apps/player/build/main.js",
