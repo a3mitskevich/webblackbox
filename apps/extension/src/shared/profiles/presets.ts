@@ -164,8 +164,9 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
     console: "allow",
     network: "body-allowlist",
     storage: "allow",
-    indexedDb: "names-only",
-    cookies: "names-only",
+    // Values (bounded): cookie values, HttpOnly ones included, and IndexedDB records.
+    indexedDb: "allow",
+    cookies: "allow",
     cdp: "full",
     heapProfiles: "off",
     tabsContext: "allow"

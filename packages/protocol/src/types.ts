@@ -228,8 +228,8 @@ export type CapturePolicy = {
     console: "off" | "metadata" | "sanitized" | "allow";
     network: "metadata" | "headers-allowlist" | "body-allowlist";
     storage: "off" | "counts-only" | "names-only" | "lengths-only" | "allow";
-    indexedDb: "off" | "counts-only" | "names-only";
-    cookies: "off" | "count-only" | "names-only";
+    indexedDb: "off" | "counts-only" | "names-only" | "allow";
+    cookies: "off" | "count-only" | "names-only" | "allow";
     cdp: "off" | "safe-subset" | "full";
     heapProfiles: "off" | "lab-only";
     /** Other tabs of the recorded site; absent = `metadata` (policies written before it existed). */
