@@ -117,28 +117,29 @@ export function Header({ searchRef }: HeaderProps) {
         </span>
       ) : null}
       {meta && meta.otherTabs > 0 && meta.tabsEventId ? (
-        <button
-          type="button"
-          className="chip chip-button"
-          aria-label={i18n.tn("otherTabs", { count: i18n.formatNumber(meta.otherTabs) })}
-          title={i18n.tn("otherTabs", { count: i18n.formatNumber(meta.otherTabs) })}
-          data-testid="other-tabs-chip"
-          onClick={() => {
-            const event = archive?.model.eventById.get(meta.tabsEventId ?? "");
+        <Hint label={i18n.tn("otherTabs", { count: i18n.formatNumber(meta.otherTabs) })}>
+          <button
+            type="button"
+            className="chip chip-button"
+            aria-label={i18n.tn("otherTabs", { count: i18n.formatNumber(meta.otherTabs) })}
+            data-testid="other-tabs-chip"
+            onClick={() => {
+              const event = archive?.model.eventById.get(meta.tabsEventId ?? "");
 
-            if (event) {
-              controller.selectEvent(event);
-            }
-          }}
-        >
-          <Icon name="tabs" />
-          <span className="lbl">
-            {i18n.tn("otherTabs", { count: i18n.formatNumber(meta.otherTabs) })}
-          </span>
-          <span className="lbl-short" aria-hidden="true">
-            {i18n.formatNumber(meta.otherTabs)}
-          </span>
-        </button>
+              if (event) {
+                controller.selectEvent(event);
+              }
+            }}
+          >
+            <Icon name="tabs" />
+            <span className="lbl">
+              {i18n.tn("otherTabs", { count: i18n.formatNumber(meta.otherTabs) })}
+            </span>
+            <span className="lbl-short" aria-hidden="true">
+              {i18n.formatNumber(meta.otherTabs)}
+            </span>
+          </button>
+        </Hint>
       ) : null}
       <span className="hdr-spacer" />
       {archive ? (
@@ -163,17 +164,18 @@ export function Header({ searchRef }: HeaderProps) {
         data-testid="locale-switch"
       >
         {PLAYER_LOCALES.map((option) => (
-          <button
-            key={option}
-            type="button"
-            lang={option}
-            aria-pressed={option === locale}
-            title={i18n.messages.localeNames[option]}
-            onClick={() => controller.setLocale(option)}
-            data-testid={`locale-${option}`}
-          >
-            {LOCALE_SHORT_LABELS[option]}
-          </button>
+          <Hint key={option} label={i18n.messages.localeNames[option]}>
+            <button
+              type="button"
+              lang={option}
+              aria-pressed={option === locale}
+              aria-label={i18n.messages.localeNames[option]}
+              onClick={() => controller.setLocale(option)}
+              data-testid={`locale-${option}`}
+            >
+              {LOCALE_SHORT_LABELS[option]}
+            </button>
+          </Hint>
         ))}
       </div>
       <Hint label={i18n.tn(THEME_LABEL_KEYS[theme])}>
