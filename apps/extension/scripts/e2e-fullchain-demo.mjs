@@ -33,6 +33,8 @@ const downloadApiTimeoutMs = readPositiveInteger(
   12_000
 );
 const cdpCommandTimeoutMs = readPositiveInteger(process.env.WB_E2E_CDP_COMMAND_TIMEOUT_MS, 15_000);
+const CDP_EXPRESSION_PREVIEW_CHARS = 160;
+const FAILURE_CONSOLE_TAIL_LINES = 60;
 const captureMode = process.env.WB_E2E_MODE === "lite" ? "lite" : "full";
 const reloadAfterStart = (process.env.WB_E2E_RELOAD_AFTER_START ?? "0") === "1";
 const fullVisualCapture = normalizeFullVisualCaptureMode(
@@ -101,6 +103,12 @@ const state = {
 
 main().catch(async (error) => {
   console.error("Fullchain E2E failed:", error instanceof Error ? error.message : String(error));
+
+  if (error instanceof Error && error.stack) {
+    console.error(error.stack);
+  }
+
+  await printChromeConsoleTail(chromeLogPath, FAILURE_CONSOLE_TAIL_LINES);
   await cleanup();
   process.exit(1);
 });
@@ -1335,6 +1343,19 @@ async function waitForChromeReady(urlBase, timeoutMs, context = undefined) {
     const suffix = logTail ? `\nChrome log tail:\n${logTail}` : "";
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${message}${suffix}`);
+  }
+}
+
+/** Prints the last extension/page console lines so a CI failure shows what the browser was doing. */
+async function printChromeConsoleTail(path, maxLines) {
+  const content = await readFile(path, "utf8").catch(() => "");
+  const lines = content
+    .split(/\r?\n/u)
+    .filter((line) => /:CONSOLE|chrome-extension:\/\//u.test(line))
+    .slice(-maxLines);
+
+  if (lines.length > 0) {
+    console.error(`Chrome console tail (${path}):\n${lines.join("\n")}`);
   }
 }
 
@@ -2863,6 +2884,19 @@ async function verifyScreenRecordingArchiveEvidence(archivePath) {
     missingChunkBlobs,
     screenshotLeak
   };
+}
+
+function describeCdpCommand(method, params) {
+  if (method !== "Runtime.evaluate" || typeof params?.expression !== "string") {
+    return method;
+  }
+
+  const preview = params.expression
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, CDP_EXPRESSION_PREVIEW_CHARS);
+
+  return `${method} (${preview})`;
 }
 
 async function readArchiveEvents(archivePath) {
@@ -4563,11 +4597,15 @@ class CdpClient {
 
     const id = ++this.sequence;
     const message = JSON.stringify({ id, method, params });
+    // Created here so its stack names the caller; a timer callback has no useful stack.
+    const timeoutError = new Error(
+      `CDP command timed out after ${timeoutMs}ms: ${describeCdpCommand(method, params)}`
+    );
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`CDP command timed out after ${timeoutMs}ms: ${method}`));
+        reject(timeoutError);
       }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer });
