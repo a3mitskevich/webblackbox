@@ -4,7 +4,7 @@ import {
   type RedactionProfile
 } from "@webblackbox/protocol";
 
-import type { CaptureCategories } from "./categories.js";
+import { completeCaptureCategories, type CaptureCategories } from "./categories.js";
 import {
   BUILT_IN_PROFILE_ID_PREFIX,
   DEFAULT_PROFILE_ID,
@@ -49,7 +49,9 @@ const ALL_TEXT_BODY_MIME_ALLOWLIST = [
   "application/x-www-form-urlencoded"
 ];
 
-const DEFAULT_CATEGORIES: CaptureCategories = DEFAULT_CAPTURE_POLICY.categories;
+const DEFAULT_CATEGORIES: CaptureCategories = completeCaptureCategories(
+  DEFAULT_CAPTURE_POLICY.categories
+);
 
 /** Ceiling of what a non-extended profile may capture: today's Full mode, visuals included. */
 export const STANDARD_CAPTURE_CEILING: CaptureCategories = {
@@ -119,7 +121,9 @@ const FULL_PRESET = createBaseProfile({
 const QA_PRESET = createBaseProfile({
   id: BUILT_IN_PROFILE_IDS.qa,
   name: "QA",
-  description: "Console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB and screenshots.",
+  description:
+    "Console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots, and paths " +
+    "and titles of other tabs of the site.",
   base: "full",
   categories: {
     ...DEFAULT_CATEGORIES,
@@ -127,7 +131,8 @@ const QA_PRESET = createBaseProfile({
     console: "allow",
     network: "body-allowlist",
     screenshots: "allow",
-    cdp: "safe-subset"
+    cdp: "safe-subset",
+    tabsContext: "allow"
   },
   network: {
     bodyMimeAllowlist: QA_BODY_MIME_ALLOWLIST,
@@ -147,7 +152,7 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
   description:
     "Everything, recorded raw (no content masking): console with stacks, all textual bodies, " +
     "input values and keys (passwords included), storage values, screenshots, optional tab " +
-    "video, 60 Hz pointer. No raw DOM: duplicate the profile to record it.",
+    "video, 60 Hz pointer, other tabs of the site. No raw DOM: duplicate the profile to record it.",
   base: "full",
   categories: {
     actions: "allow",
@@ -162,7 +167,8 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
     indexedDb: "names-only",
     cookies: "names-only",
     cdp: "full",
-    heapProfiles: "off"
+    heapProfiles: "off",
+    tabsContext: "allow"
   },
   network: {
     bodyMimeAllowlist: ALL_TEXT_BODY_MIME_ALLOWLIST,

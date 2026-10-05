@@ -136,7 +136,9 @@ const categoriesSchema = z
     indexedDb: z.enum(CAPTURE_CATEGORY_LEVELS.indexedDb),
     cookies: z.enum(CAPTURE_CATEGORY_LEVELS.cookies),
     cdp: z.enum(CAPTURE_CATEGORY_LEVELS.cdp),
-    heapProfiles: z.enum(CAPTURE_CATEGORY_LEVELS.heapProfiles)
+    heapProfiles: z.enum(CAPTURE_CATEGORY_LEVELS.heapProfiles),
+    // Profiles stored before the category existed record the metadata level.
+    tabsContext: z.enum(CAPTURE_CATEGORY_LEVELS.tabsContext).default("metadata")
   })
   .strict();
 
