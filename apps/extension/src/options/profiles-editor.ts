@@ -61,8 +61,8 @@ export type ProfilesEditorDeps = {
 };
 
 export type ProfilesEditorHandle = {
-  /** Folds a general settings save into the draft's Default profile. */
-  applyGeneralOptions(payload: unknown): void;
+  /** Folds a general settings save (the fields changed from `shown`) into the draft's Default. */
+  applyGeneralOptions(payload: unknown, shown?: unknown): void;
 };
 
 type EditorState = {
@@ -102,19 +102,22 @@ export async function mountProfilesEditor(
   rerender();
 
   return {
-    applyGeneralOptions: (payload) => {
+    applyGeneralOptions: (payload, shown) => {
       const card = container.querySelector<HTMLElement>(".wb-profiles");
 
       if (card) {
         syncDraftFromDom(card, editor);
       }
 
-      editor.draft = syncDefaultProfileWithLegacyOptions(editor.draft, payload);
+      editor.draft = syncDefaultProfileWithLegacyOptions(editor.draft, payload, shown);
       // The general save is already stored; Cancel must not roll it back.
       const snapshot = editor.editingSnapshot;
       editor.editingSnapshot = snapshot
-        ? syncDefaultProfileWithLegacyOptions({ ...editor.draft, profiles: [snapshot] }, payload)
-            .profiles[0]
+        ? syncDefaultProfileWithLegacyOptions(
+            { ...editor.draft, profiles: [snapshot] },
+            payload,
+            shown
+          ).profiles[0]
         : undefined;
       rerender();
     }

@@ -278,6 +278,25 @@ describe("general settings form and the Default profile", () => {
     expect(profile?.categories).toEqual(edited.categories);
   });
 
+  it("copies only the form fields the user changed when the shown values are known", () => {
+    const shown = { ...DEFAULT_RECORDER_CONFIG, optionsVersion: 1 };
+    const saved = {
+      ...shown,
+      ringBufferMinutes: 7,
+      sampling: { ...shown.sampling, scrollHz: 3 }
+    };
+    const store = storeWith({});
+    const before = store.profiles[0];
+
+    // Saving what the form showed (e.g. only the performance budget changed) leaves Default as is.
+    expect(syncDefaultProfileWithLegacyOptions(store, shown, shown).profiles[0]).toEqual(before);
+
+    const profile = syncDefaultProfileWithLegacyOptions(store, saved, shown).profiles[0];
+    expect(profile?.sampling).toEqual({ ...before?.sampling, scrollHz: 3 });
+    expect(profile?.recorder).toEqual({ ...before?.recorder, ringBufferMinutes: 7 });
+    expect(profile?.redaction).toEqual(before?.redaction);
+  });
+
   it("shows the Default profile's values in the form", () => {
     const form = applyDefaultProfileToGeneralForm(
       structuredClone(DEFAULT_RECORDER_CONFIG),

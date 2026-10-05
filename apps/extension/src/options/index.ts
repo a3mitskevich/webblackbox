@@ -212,14 +212,17 @@ function render(container: HTMLElement, options: OptionsState): void {
 
   const saveButton = container.querySelector<HTMLButtonElement>("#saveConfig");
   const resetButton = container.querySelector<HTMLButtonElement>("#resetConfig");
+  // What the form shows: a save copies only the fields that differ from it into Default.
+  let shownConfig = options.recorderConfig;
 
   saveButton?.addEventListener("click", async () => {
     const nextRecorderConfig = readConfigFromForm(container);
     const nextPerformanceBudget = readPerformanceBudgetFromForm(container);
-    await saveOptionsState({
-      recorderConfig: nextRecorderConfig,
-      performanceBudget: nextPerformanceBudget
-    });
+    await saveOptionsState(
+      { recorderConfig: nextRecorderConfig, performanceBudget: nextPerformanceBudget },
+      shownConfig
+    );
+    shownConfig = nextRecorderConfig;
 
     const status = container.querySelector<HTMLElement>("#statusText");
     if (status) {
@@ -230,10 +233,10 @@ function render(container: HTMLElement, options: OptionsState): void {
   });
 
   resetButton?.addEventListener("click", async () => {
-    await saveOptionsState({
-      recorderConfig: DEFAULT_RECORDER_CONFIG,
-      performanceBudget: DEFAULT_PERFORMANCE_BUDGET
-    });
+    await saveOptionsState(
+      { recorderConfig: DEFAULT_RECORDER_CONFIG, performanceBudget: DEFAULT_PERFORMANCE_BUDGET },
+      shownConfig
+    );
     render(container, {
       recorderConfig: normalizeOptionsConfig(DEFAULT_RECORDER_CONFIG),
       performanceBudget: { ...DEFAULT_PERFORMANCE_BUDGET }
@@ -290,7 +293,10 @@ async function loadLegacyOptionsState(): Promise<OptionsState> {
   };
 }
 
-async function saveOptionsState(options: OptionsState): Promise<void> {
+async function saveOptionsState(
+  options: OptionsState,
+  shownConfig?: OptionsState["recorderConfig"]
+): Promise<void> {
   const normalizedConfig = normalizeOptionsConfig(options.recorderConfig);
   const normalizedBudget = normalizePerformanceBudget(options.performanceBudget);
   const payload = {
@@ -302,15 +308,20 @@ async function saveOptionsState(options: OptionsState): Promise<void> {
   await chromeApi?.storage?.local.set({
     [STORAGE_KEY]: payload
   });
-  await syncSavedProfilesWithGeneralOptions(payload).catch((error) => {
+  const shown = shownConfig ? normalizeOptionsConfig(shownConfig) : undefined;
+
+  await syncSavedProfilesWithGeneralOptions(payload, shown).catch((error) => {
     console.warn("[WebBlackbox] failed to sync the Default profile with general options", error);
   });
   // The editor's unsaved draft must not write the old Default values back on its next save.
-  profilesEditor?.applyGeneralOptions(payload);
+  profilesEditor?.applyGeneralOptions(payload, shown);
 }
 
 /** Once profiles are saved, the general form edits the Default profile's matching fields. */
-async function syncSavedProfilesWithGeneralOptions(payload: unknown): Promise<void> {
+async function syncSavedProfilesWithGeneralOptions(
+  payload: unknown,
+  shown: unknown
+): Promise<void> {
   const values = await chromeApi?.storage?.local.get(PROFILES_STORAGE_KEY);
   const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
 
@@ -320,7 +331,7 @@ async function syncSavedProfilesWithGeneralOptions(payload: unknown): Promise<vo
 
   await chromeApi?.storage?.local.set({
     [PROFILES_STORAGE_KEY]: serializeProfilesStore(
-      syncDefaultProfileWithLegacyOptions(parsed.store, payload)
+      syncDefaultProfileWithLegacyOptions(parsed.store, payload, shown)
     )
   });
 }

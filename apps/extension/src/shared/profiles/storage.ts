@@ -107,12 +107,21 @@ type GeneralFormFields = {
  */
 export function syncDefaultProfileWithLegacyOptions(
   store: RecordingProfilesStore,
-  legacyOptions: unknown
+  legacyOptions: unknown,
+  /**
+   * The values the form showed before this save. When given, only the fields the user changed are
+   * copied: saving untouched fields must not pin generic defaults over the mode's own values.
+   */
+  shownOptions?: unknown
 ): RecordingProfilesStore {
   const migrated = migrateLegacyDefaultProfile(legacyOptions);
-  const formRedaction = Object.fromEntries(
-    GENERAL_FORM_REDACTION_KEYS.map((key) => [key, migrated.redaction[key]])
+  const shown = shownOptions === undefined ? undefined : migrateLegacyDefaultProfile(shownOptions);
+  const formRedaction = pickChangedEntries(
+    pickFormRedaction(migrated.redaction),
+    shown && pickFormRedaction(shown.redaction)
   );
+  const sampling = pickChangedEntries(migrated.sampling, shown?.sampling);
+  const recorder = pickChangedEntries(migrated.recorder, shown?.recorder);
 
   return {
     ...store,
@@ -121,12 +130,30 @@ export function syncDefaultProfileWithLegacyOptions(
         ? {
             ...profile,
             redaction: { ...profile.redaction, ...formRedaction },
-            sampling: { ...profile.sampling, ...migrated.sampling },
-            recorder: { ...profile.recorder, ...migrated.recorder }
+            sampling: { ...profile.sampling, ...sampling },
+            recorder: { ...profile.recorder, ...recorder }
           }
         : profile
     )
   };
+}
+
+function pickFormRedaction(redaction: RecordingProfile["redaction"]): Record<string, unknown> {
+  return Object.fromEntries(GENERAL_FORM_REDACTION_KEYS.map((key) => [key, redaction[key]]));
+}
+
+/** Entries of `next` that differ from `previous`; all of them when `previous` is unknown. */
+function pickChangedEntries<T extends object>(next: T, previous: T | undefined): Partial<T> {
+  if (!previous) {
+    return next;
+  }
+
+  const before = previous as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.entries(next).filter(
+      ([key, value]) => JSON.stringify(value) !== JSON.stringify(before[key])
+    )
+  ) as Partial<T>;
 }
 
 /**
