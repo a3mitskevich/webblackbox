@@ -9,6 +9,11 @@ import { readStoredText, writeStoredText } from "./storage.js";
 
 export type PlayerLocale = "en" | "ru" | "zh-CN";
 
+/** Keys of the React player strings; English is the reference dictionary. */
+export type NextMessageKey = keyof (typeof EN_MESSAGES)["next"];
+
+type NextMessages = Record<NextMessageKey, string>;
+
 export const PLAYER_LOCALES: readonly PlayerLocale[] = ["en", "ru", "zh-CN"];
 
 type PanelKey =
@@ -373,6 +378,8 @@ type PlayerMessages = {
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;
+  /** Strings of the React player (`?ui=next`). */
+  next: NextMessages;
 };
 
 export const PLAYER_LOCALE_STORAGE_KEY = "webblackbox.player.locale";
@@ -473,6 +480,10 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     const value = messages[key];
     return typeof value === "string" ? interpolate(value, values) : "";
   };
+
+  /** A React player string with `{placeholders}` filled in. */
+  const tn = (key: NextMessageKey, values?: Record<string, string | number>): string =>
+    interpolate(messages.next[key], values);
 
   const formatNumber = (value: number, style: NumberStyle = {}): string =>
     getNumberFormat(locale, style).format(Number.isFinite(value) ? value : 0);
@@ -638,6 +649,7 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     locale,
     messages,
     t,
+    tn,
     formatMode,
     formatPanelLabel,
     formatScopeTag,
@@ -676,3 +688,4 @@ export function applyPlayerDocumentLocale(locale: PlayerLocale): void {
   document.documentElement.lang = locale;
   document.title = createPlayerI18n(locale).messages.pageTitlePlayer;
 }
+export type PlayerI18n = ReturnType<typeof createPlayerI18n>;

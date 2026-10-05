@@ -9,7 +9,7 @@ const playerVersion =
 
 export default defineConfig({
   entry: {
-    main: "src/main.ts"
+    main: "src/boot.ts"
   },
   format: ["esm"],
   target: "es2022",

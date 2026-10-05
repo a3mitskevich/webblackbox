@@ -8,6 +8,7 @@
     "dev": "node scripts/copy-assets.mjs && tsup --config tsup.config.ts --watch",
     "build": "tsup --config tsup.config.ts --clean && node scripts/copy-assets.mjs",
     "e2e:playback": "pnpm run build && node scripts/e2e-playback-regression.mjs",
+    "e2e:player-next": "pnpm run build && node scripts/e2e-player-next.mjs",
     "pages:build": "pnpm build && node scripts/prepare-pages-build.mjs",
     "pages:deploy": "node scripts/deploy-gh-pages.mjs",
     "serve": "npx -y http-server ./ -p 4177",
@@ -22,7 +23,8 @@
     "clsx": "^2.1.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
@@ -30,7 +32,8 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "jszip": "^3.10.1",
-    "jsdom": "^26.1.0"
+    "@webblackbox/pipeline": "workspace:*",
+    "jsdom": "^26.1.0",
+    "jszip": "^3.10.1"
   }
 }

@@ -11,8 +11,8 @@ export const RIPPLE_WINDOW_MS = 1_200;
 /** Most marks drawn on the pointer lane; denser sessions keep the most telling mark per slot. */
 export const POINTER_LANE_MAX_MARKS = 160;
 
-const RIPPLE_MIN_RADIUS = 6;
-const RIPPLE_MAX_RADIUS = 26;
+export const RIPPLE_MIN_RADIUS = 6;
+export const RIPPLE_MAX_RADIUS = 26;
 const RIPPLE_KINDS = new Set<PointerActionKind>([
   "click",
   "double",

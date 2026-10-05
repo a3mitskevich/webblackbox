@@ -1,0 +1,69 @@
+import type { WebBlackboxPlayer } from "@webblackbox/player-sdk";
+
+import type { ArchiveModel } from "../core/archive-model.js";
+import type { Selection } from "../core/navigation.js";
+import type { ThemePreference } from "../core/preferences.js";
+import type { SessionView } from "../core/session-view.js";
+import type { RailTab } from "../core/url-hash.js";
+import type { PlayerLocale } from "../lib/i18n.js";
+
+/** Where opening an archive stands; `passphrase` shows the passphrase dialog. */
+export type ArchiveStatus =
+  | { phase: "empty" }
+  | { phase: "loading"; fileName: string }
+  | { phase: "passphrase"; fileName: string; invalid: boolean }
+  | { phase: "error"; fileName: string; message: string }
+  | { phase: "ready" };
+
+export type LoadedArchive = {
+  fileName: string;
+  player: WebBlackboxPlayer;
+  model: ArchiveModel;
+  view: SessionView;
+};
+
+/** The classic player's speeds. */
+export const PLAYBACK_RATES = [0.5, 1, 1.5, 2, 4] as const;
+
+export type PlayerState = {
+  locale: PlayerLocale;
+  theme: ThemePreference;
+  status: ArchiveStatus;
+  archive: LoadedArchive | null;
+  playheadMono: number;
+  isPlaying: boolean;
+  rate: number;
+  skipIdle: boolean;
+  /** Lists scroll to and highlight the playhead while playing. */
+  follow: boolean;
+  selection: Selection | null;
+  tab: RailTab;
+  /** Text filter of the rail lists and the header search. */
+  query: string;
+  detailsOpen: boolean;
+  shortcutsOpen: boolean;
+  dragActive: boolean;
+  /** Polite live-region message (jumps, loading results). */
+  announcement: string;
+};
+
+export function createInitialState(locale: PlayerLocale, theme: ThemePreference): PlayerState {
+  return {
+    locale,
+    theme,
+    status: { phase: "empty" },
+    archive: null,
+    playheadMono: 0,
+    isPlaying: false,
+    rate: 1,
+    skipIdle: true,
+    follow: true,
+    selection: null,
+    tab: "activity",
+    query: "",
+    detailsOpen: false,
+    shortcutsOpen: false,
+    dragActive: false,
+    announcement: ""
+  };
+}
