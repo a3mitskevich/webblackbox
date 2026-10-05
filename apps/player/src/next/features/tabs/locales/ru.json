@@ -1,3 +1,23 @@
 {
-  "tabLabel": "Вкладки"
+  "tabLabel": "Вкладки",
+  "noTabs": "Другие вкладки сайта не записаны (старый архив или профиль не записывает вкладки).",
+  "site": "Сайт {site}",
+  "distinct": "Других вкладок: {count}",
+  "atStart": "открыто в начале: {count}",
+  "maxConcurrent": "одновременно не больше {count}",
+  "metadataOnly": "адреса и заголовки не записаны",
+  "openAt": "Открыто в {time} · {count}",
+  "noneOpen": "В этот момент других вкладок сайта не было.",
+  "sameOrigin": "тот же origin",
+  "sameSite": "тот же сайт",
+  "untitled": "(без заголовка)",
+  "changes": "Изменения",
+  "snapshot": "снимок · {reason}",
+  "allTabs": "все другие вкладки сайта",
+  "openCount": "открыто: {count}",
+  "flagActive": "активная",
+  "flagFocused": "в фокусе",
+  "flagIncognito": "инкогнито",
+  "flagDiscarded": "выгружена",
+  "flagFrozen": "заморожена"
 }

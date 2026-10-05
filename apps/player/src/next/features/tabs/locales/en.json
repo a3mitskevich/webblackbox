@@ -1,3 +1,23 @@
 {
-  "tabLabel": "Tabs"
+  "tabLabel": "Tabs",
+  "noTabs": "No other tabs of this site were recorded (an older archive, or the profile does not record tabs).",
+  "site": "Site {site}",
+  "distinct": "{count} other tabs seen",
+  "atStart": "{count} open at start",
+  "maxConcurrent": "at most {count} at once",
+  "metadataOnly": "addresses and titles were not recorded",
+  "openAt": "Open at {time} · {count}",
+  "noneOpen": "No other tab of the site was open at this moment.",
+  "sameOrigin": "same origin",
+  "sameSite": "same site",
+  "untitled": "(no title)",
+  "changes": "Changes",
+  "snapshot": "snapshot · {reason}",
+  "allTabs": "all other tabs of the site",
+  "openCount": "{count} open",
+  "flagActive": "active",
+  "flagFocused": "focused",
+  "flagIncognito": "incognito",
+  "flagDiscarded": "discarded",
+  "flagFrozen": "frozen"
 }

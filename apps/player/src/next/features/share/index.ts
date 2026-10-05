@@ -1,9 +1,11 @@
 import type { PlayerFeature } from "../types.js";
+import { shareMessages } from "./messages.js";
 
 /**
- * Share links, privacy preflight and API keys (R4). Registers nothing yet; R4 adds its UI here (dialogs on Base UI), its
- * strings in `locales/` (see src/next/README.md) and its e2e scenarios in `share.e2e.mjs`.
+ * Share links (R4): the header's Share button (`share-button.tsx`, rendered by the header) uploads
+ * the open recording or opens a shared one; no rail tab.
  */
 export const shareFeature: PlayerFeature = {
-  id: "share"
+  id: "share",
+  messages: shareMessages
 };

@@ -1,3 +1,27 @@
 {
-  "tabLabel": "Произв."
+  "tabLabel": "Произв.",
+  "vitalsAt": "Web vitals на {time}",
+  "rating_good": "хорошо",
+  "rating_needs": "требует улучшения",
+  "rating_poor": "плохо",
+  "notRecorded": "не записано",
+  "networkHeading": "Сеть",
+  "inFlight": "Запросов в полёте",
+  "failed": "Сбои",
+  "transfer": "Передано, КиБ",
+  "mainHeading": "Главный поток",
+  "longTasks": "Долгие задачи, мс",
+  "longTaskSummary": "Долгих задач: {count}, всего {total}",
+  "noLongTasks": "долгие задачи не записаны",
+  "artifacts": "Артефакты",
+  "noArtifacts": "В записи нет трейсов и профилей.",
+  "save": "Сохранить",
+  "prepare": "Скачать",
+  "notInArchive": "нет в архиве",
+  "kind_trace": "Трейс",
+  "kind_cpu": "CPU-профиль",
+  "kind_heap": "Снимок кучи",
+  "kind_longtask": "Долгая задача",
+  "kind_vitals": "Vitals",
+  "kind_other": "Артефакт"
 }
