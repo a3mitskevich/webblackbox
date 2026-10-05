@@ -1,0 +1,9 @@
+{
+  "tabLabel": "Activity",
+  "filterEvents": "Filter events",
+  "listEmpty": "No events match.",
+  "now": "now",
+  "eventDetails": "Event details",
+  "closeDetails": "Close details",
+  "detailsEmpty": "Select an event and press Enter to see its details."
+}

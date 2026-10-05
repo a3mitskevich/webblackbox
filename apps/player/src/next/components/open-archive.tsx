@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import { ArchiveInput } from "./header.js";
 import { Icon } from "./icon.js";
-import { ModalDialog } from "./modal-dialog.js";
+import { DialogDescription, DialogTitle, ModalDialog } from "./modal-dialog.js";
 
 /** Loading / error line shared by the empty state and the loaded layout. */
 export function ArchiveStatusLine() {
@@ -83,11 +83,10 @@ export function PassphraseDialog() {
   const status = usePlayerState((state) => state.status);
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const titleId = useId();
-  const descriptionId = useId();
   const open = status.phase === "passphrase";
   const invalid = open && status.invalid;
 
+  // A wrong passphrase keeps the dialog open: clear the field and focus it again.
   useEffect(() => {
     if (open) {
       setValue("");
@@ -111,16 +110,17 @@ export function PassphraseDialog() {
     <ModalDialog
       open
       onClose={() => controller.cancelPassphrase()}
-      labelledBy={titleId}
-      describedBy={descriptionId}
+      initialFocus={inputRef}
       testId="passphrase-dialog"
     >
       <form className="dlg-body" onSubmit={submit}>
-        <h2 id={titleId}>
+        <DialogTitle>
           <Icon name="lock" />
           {i18n.tn("passphraseTitle")}
-        </h2>
-        <p id={descriptionId}>{i18n.tn("passphrasePrompt", { fileName: status.fileName })}</p>
+        </DialogTitle>
+        <DialogDescription>
+          {i18n.tn("passphrasePrompt", { fileName: status.fileName })}
+        </DialogDescription>
         {invalid ? (
           <p className="field-error" role="alert" data-testid="passphrase-invalid">
             {i18n.tn("passphraseInvalid")}

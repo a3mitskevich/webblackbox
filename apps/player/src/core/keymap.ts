@@ -15,93 +15,81 @@ export type KeyCommand =
   | { type: "close" }
   | { type: "show-shortcuts" };
 
-/** The parts of a `KeyboardEvent` the map reads; keeps the map testable without a DOM. */
-export type KeyInput = {
-  key: string;
-  code?: string;
-  shiftKey?: boolean;
-  ctrlKey?: boolean;
-  metaKey?: boolean;
-  altKey?: boolean;
-  /** Tag name of the focused element (`INPUT`, `BUTTON`, …). */
-  targetTag?: string;
-  targetIsEditable?: boolean;
-  /** The focused element handles Enter/Space itself (a button, link or tab). */
-  targetIsActivatable?: boolean;
+/**
+ * How a binding is matched (react-hotkeys-hook syntax):
+ * - `keys`: physical keys (`event.code`), ignored while the user types in a field. `KeyL` is "l"
+ *   on a Russian layout too, so the map works whatever the layout;
+ * - `keys-in-fields`: physical keys that also work in a field (Esc, Ctrl+K);
+ * - `character`: the typed character, whatever the physical key (`?` is Shift+/ on a US layout
+ *   but Shift+7 on a Russian one).
+ */
+export type KeyBindingMatch = "keys" | "keys-in-fields" | "character";
+
+export type KeyBinding = {
+  /** react-hotkeys-hook key combination, lower case. */
+  hotkey: string;
+  command: KeyCommand;
+  match: KeyBindingMatch;
+  /** A focused button, link, tab or splitter handles this key itself (Space, Enter). */
+  yieldsToControls?: boolean;
 };
 
-const TEXT_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+const seekBy = (deltaMs: "step" | "large-step" | "frame", direction: Direction): KeyCommand => ({
+  type: "seek-by",
+  deltaMs,
+  direction
+});
 
-function isTyping(input: KeyInput): boolean {
-  return TEXT_TAGS.has(input.targetTag?.toUpperCase() ?? "") || input.targetIsEditable === true;
+/** The whole keymap; the hook and the shortcut sheet read it. */
+export const KEY_BINDINGS: readonly KeyBinding[] = [
+  { hotkey: "space", command: { type: "toggle-play" }, match: "keys", yieldsToControls: true },
+  { hotkey: "k", command: { type: "toggle-play" }, match: "keys" },
+  { hotkey: "arrowleft", command: seekBy("step", -1), match: "keys" },
+  { hotkey: "arrowright", command: seekBy("step", 1), match: "keys" },
+  { hotkey: "shift+arrowleft", command: seekBy("large-step", -1), match: "keys" },
+  { hotkey: "shift+arrowright", command: seekBy("large-step", 1), match: "keys" },
+  { hotkey: "comma", command: seekBy("frame", -1), match: "keys" },
+  { hotkey: "period", command: seekBy("frame", 1), match: "keys" },
+  { hotkey: "home", command: { type: "seek-edge", edge: "start" }, match: "keys" },
+  { hotkey: "end", command: { type: "seek-edge", edge: "end" }, match: "keys" },
+  { hotkey: "j", command: { type: "step-list", direction: -1 }, match: "keys" },
+  { hotkey: "l", command: { type: "step-list", direction: 1 }, match: "keys" },
+  { hotkey: "e", command: { type: "step-error", direction: 1 }, match: "keys" },
+  { hotkey: "shift+e", command: { type: "step-error", direction: -1 }, match: "keys" },
+  { hotkey: "a", command: { type: "next-action" }, match: "keys" },
+  { hotkey: "slash", command: { type: "focus-search" }, match: "keys" },
+  { hotkey: "ctrl+k", command: { type: "focus-search" }, match: "keys-in-fields" },
+  { hotkey: "meta+k", command: { type: "focus-search" }, match: "keys-in-fields" },
+  { hotkey: "escape", command: { type: "close" }, match: "keys-in-fields" },
+  { hotkey: "?", command: { type: "show-shortcuts" }, match: "character" },
+  { hotkey: "enter", command: { type: "open-details" }, match: "keys", yieldsToControls: true },
+  ...RAIL_TABS.map(
+    (tab, index): KeyBinding => ({
+      hotkey: String(index + 1),
+      command: { type: "select-tab", tab },
+      match: "keys"
+    })
+  )
+];
+
+/** Commands that make sense before an archive is open. */
+export const COMMANDS_WITHOUT_ARCHIVE: ReadonlySet<KeyCommand["type"]> = new Set([
+  "show-shortcuts",
+  "close"
+]);
+
+/** Comma-separated hotkeys of one match kind (one `useHotkeys` call each). */
+export function hotkeysOf(match: KeyBindingMatch): string {
+  return KEY_BINDINGS.filter((binding) => binding.match === match)
+    .map((binding) => binding.hotkey)
+    .join(",");
 }
 
-/**
- * The command for a key press, or `null`. Keys do nothing while the user types in a field; Esc
- * still closes. Space and Enter are left to focused buttons and tabs.
- */
-export function resolveKeyCommand(input: KeyInput): KeyCommand | null {
-  if (input.key === "Escape") {
-    return { type: "close" };
-  }
+const BINDINGS_BY_HOTKEY = new Map(KEY_BINDINGS.map((binding) => [binding.hotkey, binding]));
 
-  const withModifier = input.ctrlKey === true || input.metaKey === true;
-
-  if (withModifier && !input.altKey && input.key.toLowerCase() === "k") {
-    return { type: "focus-search" };
-  }
-
-  if (isTyping(input) || withModifier || input.altKey) {
-    return null;
-  }
-
-  const direction: Direction = input.shiftKey ? -1 : 1;
-
-  switch (input.key) {
-    case " ":
-      return input.targetIsActivatable ? null : { type: "toggle-play" };
-    case "k":
-    case "K":
-      return { type: "toggle-play" };
-    case "ArrowLeft":
-    case "ArrowRight":
-      return {
-        type: "seek-by",
-        deltaMs: input.shiftKey ? "large-step" : "step",
-        direction: input.key === "ArrowLeft" ? -1 : 1
-      };
-    case ",":
-    case ".":
-      return { type: "seek-by", deltaMs: "frame", direction: input.key === "," ? -1 : 1 };
-    case "Home":
-    case "End":
-      return { type: "seek-edge", edge: input.key === "Home" ? "start" : "end" };
-    case "j":
-    case "J":
-      return { type: "step-list", direction: -1 };
-    case "l":
-    case "L":
-      return { type: "step-list", direction: 1 };
-    case "e":
-    case "E":
-      return { type: "step-error", direction };
-    case "a":
-    case "A":
-      return { type: "next-action" };
-    case "/":
-      return { type: "focus-search" };
-    case "?":
-      return { type: "show-shortcuts" };
-    case "Enter":
-      return input.targetIsActivatable ? null : { type: "open-details" };
-    default:
-      break;
-  }
-
-  const digit = /^Digit([1-9])$/.exec(input.code ?? "")?.[1] ?? /^[1-9]$/.exec(input.key)?.[0];
-  const tab = digit ? RAIL_TABS[Number(digit) - 1] : undefined;
-
-  return tab && !input.shiftKey ? { type: "select-tab", tab } : null;
+/** The binding react-hotkeys-hook matched (its `hotkey` is the trimmed, lower-cased combo). */
+export function findKeyBinding(hotkey: string): KeyBinding | null {
+  return BINDINGS_BY_HOTKEY.get(hotkey.trim().toLowerCase()) ?? null;
 }
 
 /** Shortcut sheet rows: keys and the i18n key of the description. */

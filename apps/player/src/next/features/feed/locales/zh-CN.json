@@ -1,0 +1,9 @@
+{
+  "tabLabel": "活动",
+  "filterEvents": "筛选事件",
+  "listEmpty": "没有匹配的事件。",
+  "now": "当前",
+  "eventDetails": "事件详情",
+  "closeDetails": "关闭详情",
+  "detailsEmpty": "选择一个事件并按 Enter 查看详情。"
+}

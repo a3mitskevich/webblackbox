@@ -2,14 +2,16 @@ import { useMemo, useCallback, type KeyboardEvent } from "react";
 
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 
-import { describeEventRow, type EventRowKind } from "../../core/event-row.js";
-import { formatClock, formatOffset } from "../../core/format.js";
-import { upperBoundByMono } from "../../lib/range.js";
-import { resolveSelectedEventId, selectActivityEvents } from "../controller.js";
-import { useController, useI18n, usePlayerState } from "../context.js";
-import type { LoadedArchive } from "../state.js";
-import { Icon, type IconName } from "./icon.js";
-import { VirtualList } from "./virtual-list.js";
+import { describeEventRow, type EventRowKind } from "../../../core/event-row.js";
+import { formatClock, formatOffset } from "../../../core/format.js";
+import { upperBoundByMono } from "../../../lib/range.js";
+import { Icon, type IconName } from "../../components/icon.js";
+import { VirtualList } from "../../components/virtual-list.js";
+import { useController, usePlayerState } from "../../context.js";
+import { resolveSelectedEventId, selectActivityEvents } from "../../controller.js";
+import type { LoadedArchive } from "../../state.js";
+import { useFeatureI18n } from "../messages.js";
+import { feedMessages } from "./messages.js";
 
 /** Two-line rows (DevTools-like density comes with R3's network table). */
 export const EVENT_ROW_HEIGHT = 52;
@@ -71,7 +73,7 @@ function EventRow({ event, archive, locale, selected, future, onSelect }: EventR
 
 /** "0:10.89 · now": the only part of the list that follows the playhead on every frame. */
 function NowLabel() {
-  const i18n = useI18n();
+  const t = useFeatureI18n(feedMessages);
   const locale = usePlayerState((state) => state.locale);
   const offset = usePlayerState((state) =>
     state.archive ? state.playheadMono - state.archive.model.minMono : 0
@@ -79,7 +81,7 @@ function NowLabel() {
 
   return (
     <span className="nowline-label">
-      {formatClock(offset, locale)} · {i18n.tn("now")}
+      {formatClock(offset, locale)} · {t("now")}
     </span>
   );
 }
@@ -90,7 +92,7 @@ function NowLabel() {
  */
 export function EventList() {
   const controller = useController();
-  const i18n = useI18n();
+  const t = useFeatureI18n(feedMessages);
   const archive = usePlayerState((state) => state.archive);
   const query = usePlayerState((state) => state.query);
   const locale = usePlayerState((state) => state.locale);
@@ -125,7 +127,7 @@ export function EventList() {
   if (events.length === 0) {
     return (
       <p className="list-empty" data-testid="event-list-empty">
-        {i18n.tn("listEmpty")}
+        {t("listEmpty")}
       </p>
     );
   }
@@ -154,7 +156,7 @@ export function EventList() {
     <VirtualList
       role="listbox"
       tabIndex={0}
-      aria-label={i18n.tn("tabActivity")}
+      aria-label={t("tabLabel")}
       aria-activedescendant={selectedIndex >= 0 ? `evt-${selectedId}` : undefined}
       className="feed"
       itemCount={events.length}

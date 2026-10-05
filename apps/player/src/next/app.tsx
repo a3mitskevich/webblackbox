@@ -1,5 +1,7 @@
+import { CSPProvider } from "@base-ui/react/csp-provider";
 import { useRef } from "react";
 
+import { HintProvider } from "./components/hint.js";
 import {
   ArchiveStatusLine,
   DropOverlay,
@@ -7,8 +9,10 @@ import {
   PassphraseDialog
 } from "./components/open-archive.js";
 import { Header } from "./components/header.js";
+import { PanelBoundary } from "./components/panel-boundary.js";
 import { Rail } from "./components/rail.js";
 import { ShortcutsDialog } from "./components/shortcuts-dialog.js";
+import { BodySplit } from "./components/split-layout.js";
 import { Stage } from "./components/stage.js";
 import { Timeline } from "./components/timeline.js";
 import { Transport } from "./components/transport.js";
@@ -18,8 +22,13 @@ import {
   useArchiveDropTarget,
   useHashSync,
   useKeyboardShortcuts,
+  useMediaQuery,
   useThemeAttribute
 } from "./hooks.js";
+import { WIDE_LAYOUT_QUERY } from "./layout.js";
+
+/** Tooltips open after this hover delay; moving along a toolbar shows the next one at once. */
+const HINT_DELAY_MS = 500;
 
 function LiveRegion() {
   const announcement = usePlayerState((state) => state.announcement);
@@ -31,8 +40,41 @@ function LiveRegion() {
   );
 }
 
-function Layout() {
+function StageColumn() {
   const i18n = useI18n();
+  const archive = usePlayerState((state) => state.archive);
+
+  return (
+    <section className="stage-col" aria-label={i18n.tn("stageLabel")}>
+      <ArchiveStatusLine />
+      <PanelBoundary resetKeys={[archive]}>
+        <Stage />
+      </PanelBoundary>
+      <Transport />
+      <PanelBoundary resetKeys={[archive]}>
+        <Timeline />
+      </PanelBoundary>
+    </section>
+  );
+}
+
+/** Stage and rail: side by side with a splitter on wide screens, one column below 900 px. */
+function Workspace() {
+  const wide = useMediaQuery(WIDE_LAYOUT_QUERY);
+
+  return wide ? (
+    <main className="body body-split">
+      <BodySplit stage={<StageColumn />} rail={<Rail />} />
+    </main>
+  ) : (
+    <main className="body">
+      <StageColumn />
+      <Rail />
+    </main>
+  );
+}
+
+function Layout() {
   const searchRef = useRef<HTMLInputElement>(null);
   const hasArchive = usePlayerState((state) => state.archive !== null);
 
@@ -45,15 +87,7 @@ function Layout() {
     <div className="app" data-testid="player-next">
       <Header searchRef={searchRef} />
       {hasArchive ? (
-        <main className="body">
-          <section className="stage-col" aria-label={i18n.tn("stageLabel")}>
-            <ArchiveStatusLine />
-            <Stage />
-            <Transport />
-            <Timeline />
-          </section>
-          <Rail />
-        </main>
+        <Workspace />
       ) : (
         <main className="body body-empty">
           <EmptyState />
@@ -71,10 +105,18 @@ type AppProps = {
   controller: PlayerController;
 };
 
+/**
+ * The React player. `CSPProvider disableStyleElements` keeps Base UI from rendering any `<style>`
+ * element, so the UI works under a `style-src` without 'unsafe-inline' (e2e CSP guard).
+ */
 export function App({ controller }: AppProps) {
   return (
-    <PlayerProvider controller={controller}>
-      <Layout />
-    </PlayerProvider>
+    <CSPProvider disableStyleElements>
+      <PlayerProvider controller={controller}>
+        <HintProvider delay={HINT_DELAY_MS}>
+          <Layout />
+        </HintProvider>
+      </PlayerProvider>
+    </CSPProvider>
   );
 }

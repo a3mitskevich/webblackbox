@@ -4,6 +4,7 @@ import { defineConfig } from "vitest/config";
 // loading `vite.config.ts`, whose Vite 8 plugins it cannot run; tests need no build plugins.
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.{ts,tsx}"]
+    include: ["src/**/*.test.{ts,tsx}"],
+    setupFiles: ["src/test-setup.ts"]
   }
 });

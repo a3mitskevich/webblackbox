@@ -1,6 +1,13 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type RefObject } from "react";
+import { useHotkeys, type HotkeyCallback } from "react-hotkeys-hook";
 
-import { resolveKeyCommand, type KeyCommand } from "../core/keymap.js";
+import {
+  COMMANDS_WITHOUT_ARCHIVE,
+  findKeyBinding,
+  hotkeysOf,
+  type KeyBinding,
+  type KeyCommand
+} from "../core/keymap.js";
 import { resolveTheme } from "../core/preferences.js";
 import { parseHashState, serializeHashState } from "../core/url-hash.js";
 import { hasFilePayload, pickArchiveFile } from "../lib/archive-files.js";
@@ -53,53 +60,106 @@ function runCommand(
   }
 }
 
-/** Global keyboard map (PROPOSAL §4); inactive while a modal dialog is open. */
+const KEYS = hotkeysOf("keys");
+const KEYS_IN_FIELDS = hotkeysOf("keys-in-fields");
+const CHARACTER_KEYS = hotkeysOf("character");
+
+/** Elements that handle Space / Enter themselves. */
+const ACTIVATABLE = "button, a[href], [role='tab'], [role='separator'], summary";
+/**
+ * Widgets that move with the arrow keys, Home and End themselves (tabs, splitters). The scrubber
+ * and the lists are not among them: arrows seek there, as everywhere else.
+ */
+const ARROW_WIDGETS = "[role='tablist'], [role='separator']";
+const WIDGET_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"]);
+
+function targetElement(event: KeyboardEvent): Element | null {
+  return event.target instanceof Element ? event.target : null;
+}
+
+/** A key some other handler owns: a dialog, IME composition, or a widget that already reacted. */
+function isOwnedElsewhere(event: KeyboardEvent): boolean {
+  const target = targetElement(event);
+
+  return (
+    event.defaultPrevented ||
+    event.isComposing ||
+    Boolean(target?.closest("[role='dialog'], [role='alertdialog'], dialog")) ||
+    (WIDGET_KEYS.has(event.key) && Boolean(target?.closest(ARROW_WIDGETS)))
+  );
+}
+
+function yieldsToTarget(event: KeyboardEvent, binding: KeyBinding): boolean {
+  return binding.yieldsToControls === true && Boolean(targetElement(event)?.closest(ACTIVATABLE));
+}
+
+/**
+ * Global keyboard map (PROPOSAL §4) on react-hotkeys-hook. Keys match by physical key, so they
+ * work on any layout; they stay quiet while the user types in a field (except Esc and Ctrl+K) and
+ * while a modal dialog is open (it handles its own keys).
+ */
 export function useKeyboardShortcuts(searchRef: RefObject<HTMLInputElement | null>): void {
   const controller = useController();
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.defaultPrevented || event.isComposing) {
+  const handleHotkey = useCallback<HotkeyCallback>(
+    (event, hotkey) => {
+      const binding = findKeyBinding(hotkey.hotkey);
+
+      if (!binding || yieldsToTarget(event, binding)) {
         return;
       }
 
-      const target = event.target instanceof HTMLElement ? event.target : null;
+      const { command } = binding;
 
-      if (target?.closest("dialog")) {
+      if (!controller.store.getState().archive && !COMMANDS_WITHOUT_ARCHIVE.has(command.type)) {
         return;
       }
 
-      const state = controller.store.getState();
-      const command = resolveKeyCommand({
-        key: event.key,
-        code: event.code,
-        shiftKey: event.shiftKey,
-        ctrlKey: event.ctrlKey,
-        metaKey: event.metaKey,
-        altKey: event.altKey,
-        targetTag: target?.tagName,
-        targetIsEditable: target?.isContentEditable === true,
-        targetIsActivatable: Boolean(target?.closest("button, a[href], [role='tab'], summary"))
-      });
-
-      if (
-        !command ||
-        (!state.archive && command.type !== "show-shortcuts" && command.type !== "close")
-      ) {
-        return;
-      }
-
-      if (command.type === "focus-search" && target === searchRef.current) {
+      if (command.type === "focus-search" && event.target === searchRef.current) {
         return;
       }
 
       event.preventDefault();
       runCommand(controller, command, searchRef);
-    };
+    },
+    [controller, searchRef]
+  );
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [controller, searchRef]);
+  // The library skips form controls and ARIA widgets; only typing targets should silence the
+  // map, so the scrubber (slider) and list rows (option) keep the playback keys.
+  useHotkeys(KEYS, handleHotkey, {
+    enableOnFormTags: ["slider", "option"],
+    ignoreEventWhen: isOwnedElsewhere
+  });
+  useHotkeys(KEYS_IN_FIELDS, handleHotkey, {
+    enableOnFormTags: true,
+    ignoreEventWhen: isOwnedElsewhere
+  });
+  useHotkeys(CHARACTER_KEYS, handleHotkey, {
+    useKey: true,
+    ignoreModifiers: true,
+    ignoreEventWhen: isOwnedElsewhere
+  });
+}
+
+/** Whether a media query matches, kept in sync with the window (e.g. the wide two-column layout). */
+export function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (typeof window.matchMedia !== "function") {
+        return () => undefined;
+      }
+
+      const list = window.matchMedia(query);
+      list.addEventListener("change", onChange);
+      return () => list.removeEventListener("change", onChange);
+    },
+    [query]
+  );
+  const getSnapshot = (): boolean =>
+    typeof window.matchMedia === "function" ? window.matchMedia(query).matches : true;
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 /**

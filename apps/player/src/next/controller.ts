@@ -505,6 +505,11 @@ export function createPlayerController(
       update({ shortcutsOpen });
     },
 
+    /** "Reset layout": the splitters return to their default sizes (stored sizes are dropped). */
+    resetLayout(): void {
+      store.setState((state) => ({ ...state, layoutRevision: state.layoutRevision + 1 }));
+    },
+
     setDragActive(dragActive: boolean): void {
       if (store.getState().dragActive !== dragActive) {
         update({ dragActive });

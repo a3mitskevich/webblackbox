@@ -42,9 +42,28 @@ async function openArchive(controller: ReturnType<typeof renderPlayer>["controll
   });
 }
 
+/** The physical key (`event.code`) a US layout produces `key` with; the keymap matches codes. */
+function codeOf(key: string): string {
+  if (/^[a-z]$/i.test(key)) {
+    return `Key${key.toUpperCase()}`;
+  }
+
+  if (/^[0-9]$/.test(key)) {
+    return `Digit${key}`;
+  }
+
+  return { "/": "Slash", "?": "Slash", ",": "Comma", ".": "Period", " ": "Space" }[key] ?? key;
+}
+
+/** A key press on the focused element, as the browser sends it (key + code + Shift for `?`). */
 function key(key: string, init: KeyboardEventInit = {}) {
   act(() => {
-    fireEvent.keyDown(window, { key, ...init });
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key,
+      code: codeOf(key),
+      shiftKey: key === "?" || (key.length === 1 && key !== key.toLowerCase()),
+      ...init
+    });
   });
 }
 
@@ -107,13 +126,13 @@ describe("React player", () => {
     key("e");
     expect(screen.getByTestId("live-region")).toHaveTextContent(/^Error 1 of 1/);
     const selected = store.getState().selection?.id;
-    expect(
-      document.querySelector('[aria-selected="true"][data-testid="event-row"]')
-    ).toHaveAttribute("data-event-id", selected);
-    // The selected row is at the playhead: the present, not dimmed as the future.
-    expect(
-      document.querySelector('[aria-selected="true"][data-testid="event-row"]')
-    ).toHaveAttribute("data-future", "false");
+    // jsdom has no layout, so the virtual list cannot scroll the row into its window; the
+    // listbox still points at it. e2e:player-next checks the rendered row (and that it is the
+    // present, not the dimmed future) in Chrome.
+    expect(screen.getByTestId("event-list")).toHaveAttribute(
+      "aria-activedescendant",
+      `evt-${selected}`
+    );
 
     key("Enter");
     expect(screen.getByTestId("details-json")).toHaveTextContent(selected ?? "-");
@@ -183,6 +202,41 @@ describe("React player", () => {
       window.dispatchEvent(drag);
     });
     expect(screen.getByTestId("drop-overlay")).toHaveTextContent("Drop the archive to open it");
+  });
+
+  it("matches physical keys, so the keymap works on a Russian layout", async () => {
+    const { controller, store } = renderPlayer();
+    await openArchive(controller);
+
+    // Russian ЙЦУКЕН: KeyE types "у", KeyL types "д", and "?" is Shift+7.
+    key("у", { code: "KeyE" });
+    expect(screen.getByTestId("live-region")).toHaveTextContent(/^Error 1 of 1/);
+    const error = store.getState().selection?.id;
+
+    key("д", { code: "KeyL" });
+    expect(store.getState().selection?.id).not.toBe(error);
+
+    key("?", { code: "Digit7", shiftKey: true });
+    expect(screen.getByTestId("shortcuts-dialog")).toBeInTheDocument();
+  });
+
+  it("opens the Base UI dialog as a modal and returns focus to its opener", async () => {
+    const { controller } = renderPlayer();
+    await openArchive(controller);
+    const opener = screen.getByTestId("shortcuts-button");
+    opener.focus();
+
+    act(() => {
+      fireEvent.click(opener);
+    });
+    const dialog = screen.getByRole("dialog", { name: "Keyboard shortcuts" });
+    expect(dialog).toHaveAttribute("data-testid", "shortcuts-dialog");
+
+    act(() => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    });
+    expect(screen.queryByTestId("shortcuts-dialog")).not.toBeInTheDocument();
+    expect(document.querySelectorAll("style")).toHaveLength(0);
   });
 
   it("writes the URL hash after the playhead settles", async () => {

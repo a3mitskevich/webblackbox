@@ -304,13 +304,26 @@ async function verifyEncryptedOpen(client, archivePath) {
     15_000,
     "Passphrase dialog did not open"
   );
-  const dialog = await client.evaluate(`({
-    modal: document.querySelector('${testId("passphrase-dialog")}').matches(":modal"),
-    focused: document.activeElement?.dataset?.testid ?? ""
-  })`);
+  // Base UI Dialog: a role="dialog" popup with a backdrop; the rest of the page is inert.
+  const dialog = await client.evaluate(`(() => {
+    const popup = document.querySelector('${testId("passphrase-dialog")}');
+    const header = document.querySelector('${testId("header")}');
+    return {
+      role: popup.getAttribute("role"),
+      ariaModal: popup.getAttribute("aria-modal"),
+      backdrop: Boolean(document.querySelector(".dlg-backdrop")),
+      outsideHidden: Boolean(header?.closest("[inert], [aria-hidden='true']")),
+      labelled: Boolean(document.getElementById(popup.getAttribute("aria-labelledby") ?? "")),
+      focused: document.activeElement?.dataset?.testid ?? ""
+    };
+  })()`);
   assert(
-    dialog.modal && dialog.focused === "passphrase-input",
-    "Passphrase dialog is not a focused modal",
+    dialog.role === "dialog" &&
+      dialog.backdrop &&
+      dialog.outsideHidden &&
+      dialog.labelled &&
+      dialog.focused === "passphrase-input",
+    "Passphrase dialog is not a focused, labelled modal",
     dialog
   );
 
@@ -328,7 +341,7 @@ async function verifyEncryptedOpen(client, archivePath) {
     20_000,
     "Archive did not load after the passphrase"
   );
-  return { modal: dialog.modal, invalidReported: true };
+  return { dialog, invalidReported: true };
 }
 
 async function readSnapshot(client) {

@@ -1,9 +1,7 @@
-import { useId } from "react";
-
 import { SHORTCUT_SHEET, type ShortcutAction } from "../../core/keymap.js";
 import type { NextMessageKey } from "../../lib/i18n.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
-import { ModalDialog } from "./modal-dialog.js";
+import { DialogTitle, ModalDialog } from "./modal-dialog.js";
 
 const ACTION_KEYS: Record<ShortcutAction, NextMessageKey> = {
   togglePlay: "keyTogglePlay",
@@ -24,18 +22,16 @@ export function ShortcutsDialog() {
   const controller = useController();
   const i18n = useI18n();
   const open = usePlayerState((state) => state.shortcutsOpen);
-  const titleId = useId();
 
   return (
     <ModalDialog
       open={open}
       onClose={() => controller.setShortcutsOpen(false)}
-      labelledBy={titleId}
       className="dlg-wide"
       testId="shortcuts-dialog"
     >
       <div className="dlg-body">
-        <h2 id={titleId}>{i18n.tn("shortcutsTitle")}</h2>
+        <DialogTitle>{i18n.tn("shortcutsTitle")}</DialogTitle>
         <table className="keys">
           <thead>
             <tr>

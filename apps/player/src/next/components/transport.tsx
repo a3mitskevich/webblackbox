@@ -3,6 +3,7 @@ import { useId } from "react";
 import { formatClock } from "../../core/format.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import { PLAYBACK_RATES } from "../state.js";
+import { Hint } from "./hint.js";
 import { Icon } from "./icon.js";
 
 type SwitchProps = {
@@ -49,37 +50,40 @@ export function Transport() {
 
   return (
     <div className="transport" data-testid="transport">
-      <button
-        type="button"
-        className="btn icon-only"
-        aria-label={i18n.tn("previousEvent")}
-        title={`${i18n.tn("previousEvent")} (J)`}
-        onClick={() => controller.stepList(-1)}
-        data-testid="previous-event"
-      >
-        <Icon name="prev" />
-      </button>
-      <button
-        type="button"
-        className="play"
-        aria-label={isPlaying ? i18n.tn("pause") : i18n.tn("play")}
-        title={`${isPlaying ? i18n.tn("pause") : i18n.tn("play")} (Space)`}
-        onClick={() => controller.togglePlay()}
-        data-testid="play-toggle"
-        data-playing={isPlaying}
-      >
-        <Icon name={isPlaying ? "pause" : "play"} />
-      </button>
-      <button
-        type="button"
-        className="btn icon-only"
-        aria-label={i18n.tn("nextEvent")}
-        title={`${i18n.tn("nextEvent")} (L)`}
-        onClick={() => controller.stepList(1)}
-        data-testid="next-event"
-      >
-        <Icon name="next" />
-      </button>
+      <Hint label={`${i18n.tn("previousEvent")} (J)`} side="top">
+        <button
+          type="button"
+          className="btn icon-only"
+          aria-label={i18n.tn("previousEvent")}
+          onClick={() => controller.stepList(-1)}
+          data-testid="previous-event"
+        >
+          <Icon name="prev" />
+        </button>
+      </Hint>
+      <Hint label={`${isPlaying ? i18n.tn("pause") : i18n.tn("play")} (Space)`} side="top">
+        <button
+          type="button"
+          className="play"
+          aria-label={isPlaying ? i18n.tn("pause") : i18n.tn("play")}
+          onClick={() => controller.togglePlay()}
+          data-testid="play-toggle"
+          data-playing={isPlaying}
+        >
+          <Icon name={isPlaying ? "pause" : "play"} />
+        </button>
+      </Hint>
+      <Hint label={`${i18n.tn("nextEvent")} (L)`} side="top">
+        <button
+          type="button"
+          className="btn icon-only"
+          aria-label={i18n.tn("nextEvent")}
+          onClick={() => controller.stepList(1)}
+          data-testid="next-event"
+        >
+          <Icon name="next" />
+        </button>
+      </Hint>
       <span className="clock" data-testid="clock">
         <time>{formatClock(playheadMono - minMono, locale)}</time>{" "}
         <span>/ {formatClock(durationMono, locale)}</span>

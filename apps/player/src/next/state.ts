@@ -22,6 +22,19 @@ export type LoadedArchive = {
   view: SessionView;
 };
 
+/**
+ * Per-feature store slices (`features/<feature>/slice.ts`). Each feature adds its own key by
+ * module augmentation, so parallel stages never edit this file:
+ *
+ *   declare module "../../state.js" {
+ *     interface FeatureSlices { feed: FeedSlice }
+ *   }
+ *
+ * Read and write a slice through `defineFeatureSlice` (features/slice.ts).
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- filled by augmentation
+export interface FeatureSlices {}
+
 /** The classic player's speeds. */
 export const PLAYBACK_RATES = [0.5, 1, 1.5, 2, 4] as const;
 
@@ -45,6 +58,10 @@ export type PlayerState = {
   dragActive: boolean;
   /** Polite live-region message (jumps, loading results). */
   announcement: string;
+  /** Bumped by "Reset layout": the splitters return to their default sizes. */
+  layoutRevision: number;
+  /** Feature state; a missing key means the feature's initial slice. */
+  slices: Readonly<Partial<FeatureSlices>>;
 };
 
 export function createInitialState(locale: PlayerLocale, theme: ThemePreference): PlayerState {
@@ -64,6 +81,8 @@ export function createInitialState(locale: PlayerLocale, theme: ThemePreference)
     detailsOpen: false,
     shortcutsOpen: false,
     dragActive: false,
-    announcement: ""
+    announcement: "",
+    layoutRevision: 0,
+    slices: {}
   };
 }

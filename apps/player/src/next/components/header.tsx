@@ -4,6 +4,7 @@ import { formatRecordedAt } from "../../core/format.js";
 import { nextThemePreference, type ThemePreference } from "../../core/preferences.js";
 import { PLAYER_LOCALES, type PlayerLocale } from "../../lib/i18n.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
+import { Hint } from "./hint.js";
 import { Icon, type IconName } from "./icon.js";
 
 const LOCALE_SHORT_LABELS: Record<PlayerLocale, string> = {
@@ -175,37 +176,53 @@ export function Header({ searchRef }: HeaderProps) {
           </button>
         ))}
       </div>
-      <button
-        type="button"
-        className="btn icon-only"
-        aria-label={`${i18n.tn(THEME_LABEL_KEYS[theme])} → ${i18n.tn(THEME_LABEL_KEYS[nextTheme])}`}
-        title={i18n.tn(THEME_LABEL_KEYS[theme])}
-        onClick={() => controller.setTheme(nextTheme)}
-        data-testid="theme-toggle"
-        data-theme-preference={theme}
-      >
-        <Icon name={THEME_ICONS[theme]} />
-      </button>
-      <button
-        type="button"
-        className="btn icon-only hide-narrow"
-        aria-label={i18n.tn("shortcuts")}
-        title={i18n.tn("shortcuts")}
-        onClick={() => controller.setShortcutsOpen(true)}
-        data-testid="shortcuts-button"
-      >
-        <Icon name="keyboard" />
-      </button>
-      <a
-        className="btn hide-narrow"
-        href={classicPlayerHref()}
-        title={i18n.tn("classicPlayer")}
-        aria-label={i18n.tn("classicPlayer")}
-        data-testid="classic-link"
-      >
-        <Icon name="back" />
-        <span className="lbl">{i18n.tn("classicPlayer")}</span>
-      </a>
+      <Hint label={i18n.tn(THEME_LABEL_KEYS[theme])}>
+        <button
+          type="button"
+          className="btn icon-only"
+          aria-label={`${i18n.tn(THEME_LABEL_KEYS[theme])} → ${i18n.tn(THEME_LABEL_KEYS[nextTheme])}`}
+          onClick={() => controller.setTheme(nextTheme)}
+          data-testid="theme-toggle"
+          data-theme-preference={theme}
+        >
+          <Icon name={THEME_ICONS[theme]} />
+        </button>
+      </Hint>
+      {archive ? (
+        <Hint label={i18n.tn("resetLayout")}>
+          <button
+            type="button"
+            className="btn icon-only hide-narrow"
+            aria-label={i18n.tn("resetLayout")}
+            onClick={() => controller.resetLayout()}
+            data-testid="reset-layout"
+          >
+            <Icon name="layout" />
+          </button>
+        </Hint>
+      ) : null}
+      <Hint label={i18n.tn("shortcuts")}>
+        <button
+          type="button"
+          className="btn icon-only hide-narrow"
+          aria-label={i18n.tn("shortcuts")}
+          onClick={() => controller.setShortcutsOpen(true)}
+          data-testid="shortcuts-button"
+        >
+          <Icon name="keyboard" />
+        </button>
+      </Hint>
+      <Hint label={i18n.tn("classicPlayer")}>
+        <a
+          className="btn hide-narrow"
+          href={classicPlayerHref()}
+          aria-label={i18n.tn("classicPlayer")}
+          data-testid="classic-link"
+        >
+          <Icon name="back" />
+          <span className="lbl">{i18n.tn("classicPlayer")}</span>
+        </a>
+      </Hint>
       <ArchiveInput className="btn primary" label={i18n.tn("openArchive")} hideLabelWhenNarrow />
     </header>
   );

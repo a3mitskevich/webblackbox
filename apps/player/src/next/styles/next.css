@@ -551,8 +551,22 @@ h2 {
   box-shadow: var(--shadow);
 }
 
-/* Dialogs */
+/* Dialogs (Base UI Dialog: a portal with a backdrop and a fixed, centred popup) */
+.dlg-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgb(16 24 40 / 0.5);
+  transition: opacity 120ms ease-out;
+}
 .dlg {
+  position: fixed;
+  z-index: 61;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 0;
@@ -560,12 +574,22 @@ h2 {
   background: var(--surface);
   color: var(--ink);
   box-shadow: var(--shadow);
+  transition:
+    opacity 120ms ease-out,
+    transform 120ms ease-out;
 }
 .dlg-wide {
   width: min(560px, calc(100vw - 32px));
 }
-.dlg::backdrop {
-  background: rgb(16 24 40 / 0.5);
+.dlg-backdrop[data-starting-style],
+.dlg-backdrop[data-ending-style],
+.dlg[data-starting-style],
+.dlg[data-ending-style] {
+  opacity: 0;
+}
+.dlg[data-starting-style],
+.dlg[data-ending-style] {
+  transform: translate(-50%, -48%);
 }
 .dlg-body {
   display: flex;
@@ -574,6 +598,7 @@ h2 {
   padding: 20px 22px;
 }
 .dlg-body h2 {
+  margin: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1028,6 +1053,12 @@ h2 {
   flex-direction: column;
   min-height: 0;
 }
+.rail-panel[hidden] {
+  display: none;
+}
+.rail-tab:focus-visible {
+  outline-offset: -2px;
+}
 .rail-tools {
   display: flex;
   gap: 8px;
@@ -1199,6 +1230,106 @@ h2 {
 .details-head h2 {
   font-size: 14px;
 }
+/* Splitters (react-resizable-panels: Group / Panel / Separator) */
+.body-split {
+  display: block;
+}
+.body-split .stage-col {
+  border-right: 0;
+}
+.split {
+  width: 100%;
+  height: 100%;
+}
+.rail-panel > .split {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+.split-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.split-panel > * {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.split-handle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 1px;
+  background: var(--line);
+  outline: none;
+  transition: background-color 120ms ease-out;
+}
+/* A wider, invisible hit area around the 1 px line. */
+.split-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+.split-handle[aria-orientation="horizontal"] {
+  width: auto;
+  height: 1px;
+}
+.split-handle[aria-orientation="horizontal"]::after {
+  inset: -4px 0;
+}
+.split-handle[data-separator="hover"],
+.split-handle[data-separator="active"],
+.split-handle[data-separator="focus"] {
+  background: var(--accent);
+}
+.split-handle[data-separator="focus"] {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.split-v .details {
+  max-height: none;
+  height: 100%;
+  border-top: 0;
+}
+
+/* Tooltips (Base UI Tooltip; positioned with element.style) */
+.tip-layer {
+  z-index: 70;
+}
+.tip {
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+  transition: opacity 100ms ease-out;
+}
+.tip[data-starting-style],
+.tip[data-ending-style] {
+  opacity: 0;
+}
+
+/* A panel that failed to render (error boundary) */
+.panel-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--bad);
+  border-radius: 10px;
+  background: var(--bad-soft);
+  color: var(--ink);
+}
+.panel-failed p {
+  margin: 0;
+}
+
 pre.code {
   margin: 0;
   padding: 4px 16px 16px;
