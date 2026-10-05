@@ -405,8 +405,15 @@ const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
 const POINTER_STALE_MS = 2_500;
 const NETWORK_BODY_MAX_BYTES = 256 * 1024;
 const FULL_MODE_BODY_CAPTURE_MAX_BYTES = 128 * 1024;
-/** How long stop waits for response bodies still being read before recording them as skipped. */
+/**
+ * How long stop waits for response bodies still being read before recording them as skipped:
+ * a base plus a share per pending body, capped.
+ */
 const FULL_MODE_BODY_STOP_DRAIN_MS = 3_000;
+const FULL_MODE_BODY_STOP_DRAIN_PER_BODY_MS = 25;
+const FULL_MODE_BODY_STOP_DRAIN_MAX_MS = 15_000;
+/** CDP events waiting behind request body reads before new reads are skipped as `backlog`. */
+const FULL_MODE_CDP_INGEST_MAX_BACKLOG = 500;
 /** How long a request body CDP left out of `requestWillBeSent` may take to read. */
 const FULL_MODE_POST_DATA_TIMEOUT_MS = 2_000;
 const FULL_MODE_INCIDENT_CAPTURE_COOLDOWN_MS = 15_000;
@@ -1183,7 +1190,13 @@ async function stopSession(tabId: number): Promise<void> {
     console.warn("[WebBlackbox] failed to stop screen recording", error);
   });
   // Bodies still being read are kept (or recorded as skipped) before the debugger detaches.
-  await runtime.fullBodyCapture.drain(FULL_MODE_BODY_STOP_DRAIN_MS);
+  await runtime.fullBodyCapture.drain(
+    Math.min(
+      FULL_MODE_BODY_STOP_DRAIN_MAX_MS,
+      FULL_MODE_BODY_STOP_DRAIN_MS +
+        runtime.fullBodyCapture.pendingCount() * FULL_MODE_BODY_STOP_DRAIN_PER_BODY_MS
+    )
+  );
   await runtime.cdpIngestChain;
   await flushBufferedPipelineEvents(runtime);
   await teardownCaptureInstrumentation(runtime);
@@ -1354,7 +1367,14 @@ function hasExportPassphrase(passphrase: string | undefined): passphrase is stri
   return typeof passphrase === "string" && passphrase.length > 0;
 }
 
-function ingestRawEvent(rawEvent: RawRecorderEvent): void {
+/**
+ * `arrivedBeforeStop`: the event reached the service worker while recording and only waited in
+ * the ordered CDP chain, so a stop in the meantime must not drop it.
+ */
+function ingestRawEvent(
+  rawEvent: RawRecorderEvent,
+  options: { arrivedBeforeStop?: boolean } = {}
+): void {
   const runtime =
     sessionsByTab.get(rawEvent.tabId) ??
     (typeof rawEvent.sid === "string" ? sessionsBySid.get(rawEvent.sid) : undefined);
@@ -1366,6 +1386,7 @@ function ingestRawEvent(rawEvent: RawRecorderEvent): void {
   if (
     runtime.stopping &&
     rawEvent.source !== "system" &&
+    !options.arrivedBeforeStop &&
     !shouldAllowStopDrainContentEvent(runtime, rawEvent)
   ) {
     return;
@@ -2396,6 +2417,8 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
     runtime.removeCdpListeners.push(unsubscribeEvent, unsubscribeDetach);
 
     await router.attach(runtime.tabId);
+    // Set before the domains are enabled: their first events already read bodies through it.
+    runtime.cdpRouter = router;
     runtime.enabledCdpSessions.clear();
     await router.enableBaseline(runtime.tabId);
     runtime.enabledCdpSessions.add("root");
@@ -2621,7 +2644,9 @@ function trackFullModeNetworkEvent(
       url: typeof response?.url === "string" ? response.url : undefined,
       mimeType: typeof response?.mimeType === "string" ? response.mimeType : undefined,
       status: typeof response?.status === "number" ? response.status : undefined,
-      resourceType: typeof payload?.type === "string" ? payload.type : undefined
+      resourceType: typeof payload?.type === "string" ? payload.type : undefined,
+      // Bytes received when the response arrived: its headers (the body follows).
+      headerBytes: asFiniteNumber(response?.encodedDataLength) ?? undefined
     });
     runtime.fullBodyCapture.onResponseReceived({
       requestId,
@@ -2663,10 +2688,11 @@ function ingestCdpRawEvent(
     return;
   }
 
+  const arrivedBeforeStop = !runtime.stopping;
   runtime.cdpIngestBacklog += 1;
   runtime.cdpIngestChain = runtime.cdpIngestChain
     .then(async () => {
-      ingestRawEvent(await rawEvent);
+      ingestRawEvent(await rawEvent, { arrivedBeforeStop });
     })
     .catch((error) => {
       console.warn("[WebBlackbox] failed to ingest a CDP event", error);
@@ -2691,6 +2717,15 @@ function prepareCdpRequestEvent(
 
   if (!requestId) {
     return rawEvent;
+  }
+
+  // Events wait behind pending reads; past this backlog the body is recorded as skipped instead.
+  if (runtime.cdpIngestBacklog >= FULL_MODE_CDP_INGEST_MAX_BACKLOG) {
+    const request = asRecord(payload.request) ?? {};
+    return {
+      ...rawEvent,
+      payload: { ...payload, request: { ...request, postDataSkipped: "backlog" } }
+    };
   }
 
   return completeRequestPostData(payload, () =>

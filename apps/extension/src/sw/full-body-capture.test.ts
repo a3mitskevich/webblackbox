@@ -250,8 +250,8 @@ describe("FullBodyCapture", () => {
   it("tells an empty body from bytes the browser did not hand over", async () => {
     const harness = createHarness({ autoRead: false });
 
-    harness.capture.onLoadingFinished(finished("zero", {}, 0));
-    harness.capture.onLoadingFinished(finished("streamed", {}, 64));
+    harness.capture.onLoadingFinished(finished("zero", { headerBytes: 180 }, 180));
+    harness.capture.onLoadingFinished(finished("streamed", { headerBytes: 180 }, 244));
     harness.release("zero", { ok: true, value: { body: "" } });
     harness.release("streamed", { ok: true, value: { body: "" } });
     await harness.settle();
@@ -260,6 +260,16 @@ describe("FullBodyCapture", () => {
       ["zero", "empty", 0],
       ["streamed", "unavailable", 64]
     ]);
+  });
+
+  it("uses the metadata kept at response time when the shared map expired it", async () => {
+    const harness = createHarness();
+
+    harness.capture.onResponseReceived(finished("long-poll"));
+    harness.capture.onLoadingFinished(finished("long-poll", null));
+    await harness.capture.drain(1_000);
+
+    expect(harness.stored).toEqual(["long-poll:body-long-poll"]);
   });
 
   it("leaves responses it never saw to the archive's own record", async () => {

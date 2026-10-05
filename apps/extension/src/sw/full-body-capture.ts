@@ -125,8 +125,14 @@ export class FullBodyCapture {
     this.awaitingFinish.delete(requestKey({ requestId, sessionId }));
   }
 
-  public onLoadingFinished(response: FinishedResponse): void {
-    this.awaitingFinish.delete(requestKey(response));
+  public onLoadingFinished(finishedResponse: FinishedResponse): void {
+    const key = requestKey(finishedResponse);
+    // Metadata kept at response time covers entries the shared metadata map already expired.
+    const response = {
+      ...finishedResponse,
+      meta: finishedResponse.meta ?? this.awaitingFinish.get(key)?.meta
+    };
+    this.awaitingFinish.delete(key);
 
     if (this.closed || !this.deps.isEnabled()) {
       return;
@@ -284,12 +290,16 @@ export class FullBodyCapture {
     const { body, base64Encoded } = outcome.value;
 
     if (typeof body !== "string" || body.length === 0) {
-      // No bytes for a response that had some: the body went elsewhere (a service worker's own
-      // fetch streams it to the page, which records it on its request).
-      const hadBytes = (response.encodedDataLength ?? 0) > 0;
+      // No bytes for a response whose body had some: the body went elsewhere (a service
+      // worker's own fetch streams it to the page, which records it on its request).
+      const bodyBytes = Math.max(
+        0,
+        (response.encodedDataLength ?? 0) - (response.meta?.headerBytes ?? 0)
+      );
+      const hadBytes = response.meta?.headerBytes !== undefined && bodyBytes > 0;
       this.skip(response, hadBytes ? "unavailable" : "empty", {
         mimeType,
-        size: hadBytes ? response.encodedDataLength : 0,
+        size: hadBytes ? bodyBytes : 0,
         detail: hadBytes ? "the browser returned no body bytes" : undefined
       });
       return;
