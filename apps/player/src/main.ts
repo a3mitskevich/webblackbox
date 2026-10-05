@@ -43,6 +43,7 @@ import {
   type NetworkStatusFilter,
   type NetworkTypeFilter
 } from "./lib/network-view.js";
+import { formatRealtimePayload } from "./lib/realtime-payload.js";
 import { asFiniteNumber, asRecord, asString } from "./lib/parsing.js";
 import { markerKindToPanel } from "./lib/progress.js";
 import { normalizePlaybackEvents, type PlaybackTimeNormalization } from "./lib/playback-time.js";
@@ -313,6 +314,10 @@ type PlayerState = {
   } | null;
   maskResponsePreview: boolean;
   responsePreviewByHash: Map<string, ResponsePreview | null>;
+  /** Formatted full payloads of expanded realtime rows, by event id. */
+  realtimePayloadById: Map<string, string>;
+  /** Realtime rows the user expanded; kept open across re-renders on playhead moves. */
+  openRealtimeEventIds: Set<string>;
   responseJsonExpanded: boolean;
   responseCopyText: string;
   quickTriageAutoDismissMs: number;
@@ -462,6 +467,8 @@ const state: PlayerState = {
   progressHoverContext: null,
   maskResponsePreview: true,
   responsePreviewByHash: new Map<string, ResponsePreview | null>(),
+  realtimePayloadById: new Map<string, string>(),
+  openRealtimeEventIds: new Set<string>(),
   responseJsonExpanded: false,
   responseCopyText: "",
   quickTriageAutoDismissMs: readQuickTriageAutoDismissMs(),
@@ -970,6 +977,9 @@ function bindGlobalActions(): void {
       renderTimelineWindow();
     }
   });
+
+  // `toggle` does not bubble; listen in the capture phase for every row of the list.
+  refs.realtimeList.addEventListener("toggle", handleRealtimeToggle, true);
 
   refs.waterfallBody.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
@@ -1560,6 +1570,8 @@ async function loadPrimaryArchiveBytes(bytes: Uint8Array, sourceName: string): P
 
     resetScreenshotResources();
     state.responsePreviewByHash.clear();
+    state.realtimePayloadById.clear();
+    state.openRealtimeEventIds.clear();
 
     state.player = player;
     state.model = model;
@@ -4002,10 +4014,72 @@ function renderRealtimeSignals(): void {
       const scopeLabel = i18n.formatScopeTag(scope);
       const scopeClass =
         scope === "iframe" ? "scope-tag scope-tag-iframe" : "scope-tag scope-tag-main";
+      const summary = `<span class="signal-type">${escapeHtml(entry.eventType)}</span><span class="${scopeClass}">${scopeLabel}</span><span class="signal-text">${escapeHtml(direction)}${escapeHtml(entry.streamId ?? "-")} @ ${entry.mono.toFixed(2)}ms ${escapeHtml(preview)}</span>`;
 
-      return `<li class="signal"><span class="signal-type">${escapeHtml(entry.eventType)}</span><span class="${scopeClass}">${scopeLabel}</span><span class="signal-text">${escapeHtml(direction)}${escapeHtml(entry.streamId ?? "-")} @ ${entry.mono.toFixed(2)}ms ${escapeHtml(preview)}</span></li>`;
+      if (!entry.payloadPreview && !entry.payloadHash) {
+        return `<li class="signal">${summary}</li>`;
+      }
+
+      const isOpen = state.openRealtimeEventIds.has(entry.eventId);
+      const body = isOpen
+        ? (state.realtimePayloadById.get(entry.eventId) ?? i18n.messages.realtimePayloadLoading)
+        : "";
+
+      return `<li class="signal signal-expandable"><details class="realtime-entry" data-event-id="${escapeHtml(entry.eventId)}"${isOpen ? " open" : ""}><summary class="realtime-summary">${summary}</summary><pre class="realtime-payload">${escapeHtml(body)}</pre></details></li>`;
     })
     .join("");
+}
+
+function handleRealtimeToggle(event: Event): void {
+  const details = event.target;
+
+  if (!(details instanceof HTMLDetailsElement) || !details.dataset.eventId) {
+    return;
+  }
+
+  const eventId = details.dataset.eventId;
+
+  if (!details.open) {
+    state.openRealtimeEventIds.delete(eventId);
+    return;
+  }
+
+  state.openRealtimeEventIds.add(eventId);
+  void showRealtimePayload(eventId, details);
+}
+
+/** Fills an expanded realtime row with the full frame (loaded from its blob when stored out of line). */
+async function showRealtimePayload(eventId: string, details: HTMLDetailsElement): Promise<void> {
+  const player = state.player;
+  let formatted = state.realtimePayloadById.get(eventId);
+
+  if (formatted === undefined && player) {
+    const entry = state.model?.realtime.find((item) => item.eventId === eventId);
+    const text = await player.getRealtimePayloadText(eventId).catch(() => null);
+    formatted =
+      text === null
+        ? i18n.messages.realtimeNoPayload
+        : formatRealtimePayload(text, (index, count) =>
+            i18n.t("realtimePayloadRecord", { index, count })
+          );
+
+    if (entry?.payloadTruncated) {
+      formatted = `${formatted}\n\n${i18n.messages.realtimePayloadTruncated}`;
+    }
+
+    // The archive may have been replaced while the blob was loading.
+    if (state.player !== player) {
+      return;
+    }
+
+    state.realtimePayloadById.set(eventId, formatted);
+  }
+
+  const pre = details.querySelector("pre");
+
+  if (pre && formatted !== undefined) {
+    pre.textContent = formatted;
+  }
 }
 
 function renderStorageSignals(): void {

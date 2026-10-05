@@ -242,7 +242,6 @@ type PlayerMessages = {
   scopeSummaryIframe: string;
   realtimeNoPayload: string;
   realtimePayloadLoading: string;
-  realtimePayloadMissing: string;
   realtimePayloadTruncated: string;
   realtimePayloadRecord: string;
   noScreenshotEvents: string;
@@ -538,7 +537,6 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     scopeSummaryIframe: "iframe",
     realtimeNoPayload: "(no payload)",
     realtimePayloadLoading: "Loading the full payload...",
-    realtimePayloadMissing: "The full payload is not in this archive; showing the stored preview.",
     realtimePayloadTruncated: "Cut at the recording profile's body size limit.",
     realtimePayloadRecord: "Record {index} of {count}",
     noScreenshotEvents: "No screenshot events in this archive.",
@@ -868,7 +866,6 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     scopeSummaryIframe: "子框架",
     realtimeNoPayload: "（无载荷）",
     realtimePayloadLoading: "正在加载完整载荷...",
-    realtimePayloadMissing: "归档中没有完整载荷，显示已保存的预览。",
     realtimePayloadTruncated: "已按录制配置的正文大小上限截断。",
     realtimePayloadRecord: "第 {index} 条，共 {count} 条",
     noScreenshotEvents: "该归档中没有截图事件。",
