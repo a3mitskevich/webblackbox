@@ -1,6 +1,7 @@
 import {
   DEFAULT_CAPTURE_POLICY,
   EventIdFactory,
+  isContentRedactionEnabled,
   type CapturePolicy,
   type FreezeReason,
   type PrivacyClassification,
@@ -22,6 +23,8 @@ import {
 import { DefaultEventNormalizer } from "./normalizer.js";
 import type { RecorderPlugin, RecorderPluginContext } from "./plugins.js";
 import { createRedactionHashKey, redactPayload } from "./redaction.js";
+import { withUrlRules } from "./url-recording.js";
+import { applyValuePatterns } from "./value-pattern-rules.js";
 import { EventRingBuffer } from "./ring-buffer.js";
 import type { EventNormalizer, RawRecorderEvent, RecorderIngestResult } from "./types.js";
 
@@ -42,15 +45,15 @@ export class WebBlackboxRecorder {
 
   private readonly actionSpanTracker: ActionSpanTracker;
 
-  private readonly freezePolicy: FreezePolicy;
+  private freezePolicy: FreezePolicy;
 
-  private readonly pluginContext: RecorderPluginContext;
+  private pluginContext: RecorderPluginContext;
 
   // Per-session HMAC key for hashed sensitive values; memory-only, never exported.
   private readonly redactionHashKey = createRedactionHashKey();
 
   public constructor(
-    private readonly config: RecorderConfig,
+    private config: RecorderConfig,
     private readonly hooks: RecorderHooks = {},
     private readonly normalizer: EventNormalizer = new DefaultEventNormalizer({
       consoleDetail: config.capturePolicy?.categories.console === "allow" ? "full" : "compact"
@@ -72,7 +75,8 @@ export class WebBlackboxRecorder {
       return {};
     }
 
-    const normalized = this.normalizer.normalize(nextRawEvent);
+    const rules = this.config.redaction;
+    const normalized = withUrlRules(rules, () => this.normalizer.normalize(nextRawEvent));
 
     if (!normalized) {
       return {};
@@ -86,30 +90,36 @@ export class WebBlackboxRecorder {
     // Inline bodies skip key/value redaction: they get value masking under the body policy instead.
     const detached = detachInlineNetworkBody(normalized.eventType, policyPayload);
     const shouldKeepBody = this.hooks.shouldKeepInlineNetworkBody;
-    const redactedPayload = attachInlineNetworkBody(
-      redactEventPayload(
-        normalized.eventType,
-        detached.payload,
-        this.config,
-        this.redactionHashKey
-      ),
-      detached.body,
-      {
-        capturePolicy: this.config.capturePolicy,
-        redactBodyPatterns: this.config.redaction.redactBodyPatterns,
-        maxBodyBytes: this.config.sampling.bodyCaptureMaxBytes,
-        isBodyAllowed: shouldKeepBody
-          ? () =>
-              shouldKeepBody(
-                readInlineNetworkBodyContext(
-                  normalized.eventType,
-                  nextRawEvent.payload,
-                  detached.payload
-                )
+    // The single masking switch of the recorder: with `contentRedaction: false` the payload is
+    // kept as captured (categories still decide below what may be recorded at all).
+    const maskedPayload = isContentRedactionEnabled(rules)
+      ? applyValuePatterns(
+          normalized.eventType,
+          redactEventPayload(
+            normalized.eventType,
+            detached.payload,
+            this.config,
+            rules,
+            this.redactionHashKey
+          ),
+          rules
+        )
+      : detached.payload;
+    const redactedPayload = attachInlineNetworkBody(maskedPayload, detached.body, {
+      capturePolicy: this.config.capturePolicy,
+      redaction: rules,
+      maxBodyBytes: this.config.sampling.bodyCaptureMaxBytes,
+      isBodyAllowed: shouldKeepBody
+        ? () =>
+            shouldKeepBody(
+              readInlineNetworkBodyContext(
+                normalized.eventType,
+                nextRawEvent.payload,
+                detached.payload
               )
-          : undefined
-      }
-    );
+            )
+        : undefined
+    });
     const privacy = classifyPrivacy(
       normalized.eventType,
       redactedPayload,
@@ -165,6 +175,23 @@ export class WebBlackboxRecorder {
       event: pluginEvent,
       freezeReason: freezeReason ?? undefined
     };
+  }
+
+  /**
+   * Swaps the active config mid-session (e.g. a recording profile switch on navigation). Buffered
+   * events, action spans and the per-session hash key are kept; freeze state restarts. The ring
+   * buffer and action-span windows stay as configured at construction.
+   */
+  public reconfigure(config: RecorderConfig): void {
+    this.config = config;
+    this.freezePolicy = new FreezePolicy(config);
+    this.pluginContext = {
+      config
+    };
+  }
+
+  public getConfig(): RecorderConfig {
+    return this.config;
   }
 
   public snapshotRingBuffer(): WebBlackboxEvent[] {
@@ -236,9 +263,10 @@ function redactEventPayload(
   eventType: WebBlackboxEventType,
   payload: unknown,
   config: RecorderConfig,
+  rules: Parameters<typeof redactPayload>[1],
   hashKey: Uint8Array
 ): unknown {
-  const redacted = redactPayload(payload, config.redaction, { hashKey });
+  const redacted = redactPayload(payload, rules, { hashKey });
 
   return eventType === "user.keydown"
     ? sanitizeKeydownPayload(redacted, config.capturePolicy)
@@ -581,8 +609,13 @@ function hasStorageDetail(payload: unknown): boolean {
   return (
     hasBlobReference(row) ||
     typeof row.key === "string" ||
+    typeof row.name === "string" ||
+    typeof row.value === "string" ||
     Array.isArray(row.names) ||
+    Array.isArray(row.keys) ||
+    Array.isArray(row.lengths) ||
     Array.isArray(row.databaseNames) ||
+    Array.isArray(row.entries) ||
     asRecord(row.entries) !== null
   );
 }

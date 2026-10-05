@@ -242,7 +242,8 @@ function isArchivePrivatePath(path: string): boolean {
     path === "index/time.json" ||
     path === "index/req.json" ||
     path === "index/inv.json" ||
-    path === "privacy/manifest.json"
+    path === "privacy/manifest.json" ||
+    path === "meta/manifest.json"
   );
 }
 
@@ -288,7 +289,7 @@ function looksLikePlaintextPrivateArchiveFile(path: string, bytes: Uint8Array): 
     return isPlainJsonBytes(bytes);
   }
 
-  if (path === "privacy/manifest.json") {
+  if (path === "privacy/manifest.json" || path === "meta/manifest.json") {
     return isPlainJsonBytes(bytes);
   }
 

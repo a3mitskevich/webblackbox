@@ -1,9 +1,15 @@
 import {
   DEFAULT_CAPTURE_POLICY,
+  DEFAULT_RECORDER_CONFIG,
   type CaptureMode,
   type CapturePolicy,
   type RecorderConfig
 } from "@webblackbox/protocol";
+
+import type { FullModeVisualCapture } from "./messages.js";
+
+/** Default body capture cap for CDP-backed (full) sessions. */
+export const FULL_MODE_BODY_CAPTURE_MAX_BYTES = 128 * 1024;
 
 export type ModeProductProfile = {
   label: string;
@@ -54,6 +60,75 @@ export function applyModeProductBoundary(
   }
 
   return next;
+}
+
+/** Transport defaults (sampling, freeze triggers) before stored options or profiles apply. */
+export function resolveModeBaseConfig(mode: CaptureMode): RecorderConfig {
+  const base: RecorderConfig = {
+    ...DEFAULT_RECORDER_CONFIG,
+    mode
+  };
+
+  if (mode === "full") {
+    return {
+      ...base,
+      freezeOnNetworkFailure: false,
+      freezeOnLongTaskSpike: false,
+      sampling: {
+        ...base.sampling,
+        mousemoveHz: 12,
+        scrollHz: 10,
+        domFlushMs: 180,
+        snapshotIntervalMs: 30_000,
+        screenshotIdleMs: 12_000,
+        bodyCaptureMaxBytes: FULL_MODE_BODY_CAPTURE_MAX_BYTES
+      }
+    };
+  }
+
+  return {
+    ...base,
+    freezeOnNetworkFailure: false,
+    freezeOnLongTaskSpike: false,
+    sampling: {
+      ...base.sampling,
+      mousemoveHz: 14,
+      scrollHz: 10,
+      domFlushMs: 160,
+      snapshotIntervalMs: 30_000,
+      screenshotIdleMs: base.sampling.screenshotIdleMs,
+      bodyCaptureMaxBytes: 0
+    }
+  };
+}
+
+/** Full-mode screenshots / tab recording as picked in the popup (or pinned by a profile). */
+export function applyFullModeVisualCapture(
+  config: RecorderConfig,
+  mode: CaptureMode,
+  visualCapture: FullModeVisualCapture | undefined
+): RecorderConfig {
+  if (mode !== "full" || !visualCapture) {
+    return config;
+  }
+
+  const basePolicy =
+    config.capturePolicy ?? DEFAULT_RECORDER_CONFIG.capturePolicy ?? DEFAULT_CAPTURE_POLICY;
+  const screenshots = visualCapture === "screenshots" || visualCapture === "both" ? "allow" : "off";
+  const screenRecordings =
+    visualCapture === "recording" || visualCapture === "both" ? "allow" : "off";
+
+  return {
+    ...config,
+    capturePolicy: {
+      ...basePolicy,
+      categories: {
+        ...basePolicy.categories,
+        screenshots,
+        screenRecordings
+      }
+    }
+  };
 }
 
 export function shouldInjectPageHooksForMode(mode: CaptureMode): boolean {

@@ -63,12 +63,17 @@ The extension consists of multiple main components:
 #### Popup (`popup.html`)
 
 - Quick controls for starting/stopping recording sessions
+- Recording profile selector (`Auto` = site rules) with the selected profile, matching rule and enterprise caps
+- Notice when a recording was stopped because its profile changed (what changed, how to fix it), and a "create a profile" requirement with a link to Options when no profile exists
 - Session status display
 - Archive policy controls and export trigger
 
 #### Options Page (`options.html`)
 
-- Full recorder configuration UI
+- Full recorder configuration UI (these general fields edit the `Default` profile)
+- Recording profiles: presets (read-only, duplicate to edit), capture level matrix, redaction / unmask lists, body filters, export requirements
+- Delete any profile (presets and `Default` included; not policy profiles) and "Restore recommended profiles"; recording needs at least one profile
+- Site rules that pick a profile (rules to a deleted profile are flagged and skipped), JSON import/export with a diff preview, redaction sandbox
 - Runtime profile overview for shipped `lite` / `full` modes
 - Sampling cadence and ring-buffer configuration
 - Freeze-on-error and performance budget controls
@@ -135,6 +140,8 @@ Build entries:
 ## E2E
 
 - `pnpm e2e:fullchain:full` runs the full-mode end-to-end capture/export demo.
+- `pnpm e2e:profile:qa` checks that a site rule selects the QA profile, that console text and value-masked JSON bodies reach the encrypted archive, that navigating to a host where the rules pick another profile stops the recording (reason in the archive, `!` badge, popup notice, nothing recorded afterwards), and that a plaintext export is refused.
+- `pnpm e2e:profile:full-capture` checks that the Full capture preset, chosen explicitly on a host without rules, records planted secrets (console, storage, URL token, headers, bodies, password field, WebSocket payload) and the raw DOM inside the encrypted archive, keeps doing so after the tab moves to another host, and that neither the secrets nor the site appear in the archive bytes.
 - `pnpm e2e:realworld` and `pnpm e2e:realworld:ci` run the real-world stability matrix across lite/full startup paths, reload recovery, iframe/child-target capture, downloads/uploads, large response previews, export, and player replay. Use `pnpm e2e:realworld:quick` for the reduced local smoke slice.
 - `pnpm e2e:memory:full` runs a synthetic long-session full-mode stress case and samples JS heap usage for the target page, service worker, and offscreen document.
 - `pnpm e2e:perf:lite` runs a lite-mode A/B stress matrix that now covers same-page request/hover pressure, real document navigation, iframe-heavy interaction, and contenteditable typing before comparing baseline vs active-recording budgets.
@@ -168,8 +175,8 @@ Build entries:
 
 1. User clicks **Export** in popup
 2. Popup export policy is applied (defaults: `includeScreenshots=false`, `maxArchiveBytes=100MB`, `recentWindowMs=20 minutes`)
-3. Service worker signals the pipeline to export with policy + optional encryption
-4. Pipeline finalizes indexes, generates archive with optional encryption
+3. Service worker signals the pipeline to export with policy and the (required) passphrase
+4. Pipeline finalizes indexes, generates the encrypted archive
 5. Service worker downloads the `.webblackbox` file via `chrome.downloads`
 
 ### Freeze
@@ -208,6 +215,8 @@ Body capture sizing note:
 The SW ↔ offscreen pipeline path also uses ingest batching with chunked drain to reduce message round-trips and avoid giant postMessage payloads under high event volume.
 
 Users can still tune other settings through the Options page.
+
+Recording profiles sit on top of this: the Start button still picks the transport (`lite` / `full`), and the profile chosen in the popup (or by a site rule) decides capture levels, redaction, sampling, body filters, visual capture and export requirements. See [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#recording-profiles) and [docs/PRIVACY.md](../../docs/PRIVACY.md#recording-profiles).
 
 ## Requirements
 

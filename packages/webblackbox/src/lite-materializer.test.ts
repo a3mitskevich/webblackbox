@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_RECORDER_CONFIG, type RecorderConfig } from "@webblackbox/protocol";
+import {
+  DEFAULT_CAPTURE_POLICY,
+  DEFAULT_RECORDER_CONFIG,
+  type CapturePolicy,
+  type RecorderConfig
+} from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
 import { materializeLiteRawEvent, shouldMaterializeLiteRawEvent } from "./lite-materializer.js";
@@ -328,6 +333,87 @@ describe("lite-materializer", () => {
     });
     expect(JSON.stringify(cookieResult)).not.toContain("sessionSecret");
     expect(JSON.stringify(idbResult)).not.toContain("customer-secret-db");
+  });
+
+  it("passes default counts-only snapshots through unchanged, field order included", async () => {
+    const context = { config: cloneConfig(), putBlob: vi.fn(async () => "unused") };
+    const agentPayloads = {
+      localStorageSnapshot: {
+        reason: "start",
+        count: 2,
+        truncated: false,
+        mode: "counts-only",
+        redacted: true
+      },
+      indexedDbSnapshot: {
+        reason: "start",
+        count: 1,
+        mode: "counts-only",
+        redacted: true,
+        truncated: false
+      },
+      cookieSnapshot: { reason: "start", count: 3, mode: "counts-only", redacted: true }
+    };
+
+    for (const [rawType, payload] of Object.entries(agentPayloads)) {
+      const result = await materializeLiteRawEvent(createRawEvent(rawType, payload), context);
+      expect(JSON.stringify(result?.payload), rawType).toBe(JSON.stringify(payload));
+    }
+  });
+
+  it("keeps storage snapshot details the capture policy allows", async () => {
+    const config = cloneConfig();
+    const putBlob = vi.fn(async () => "unused");
+    const withCategories = (categories: Partial<CapturePolicy["categories"]>) => ({
+      config: {
+        ...config,
+        capturePolicy: {
+          ...DEFAULT_CAPTURE_POLICY,
+          categories: { ...DEFAULT_CAPTURE_POLICY.categories, ...categories }
+        }
+      },
+      putBlob
+    });
+
+    const local = await materializeLiteRawEvent(
+      createRawEvent("localStorageSnapshot", {
+        count: 2,
+        entries: [
+          { key: "theme", value: "dark", valueLength: 4 },
+          { key: "big", value: "x".repeat(5_000), valueLength: 5_000 }
+        ]
+      }),
+      withCategories({ storage: "allow" })
+    );
+    const names = await materializeLiteRawEvent(
+      createRawEvent("localStorageSnapshot", { count: 1, keys: ["theme"], entries: [] }),
+      withCategories({ storage: "names-only" })
+    );
+    const idb = await materializeLiteRawEvent(
+      createRawEvent("indexedDbSnapshot", { count: 1, databaseNames: ["app-db"] }),
+      withCategories({ indexedDb: "names-only" })
+    );
+    const cookies = await materializeLiteRawEvent(
+      createRawEvent("cookieSnapshot", { count: 1, names: ["theme"] }),
+      withCategories({ cookies: "names-only" })
+    );
+
+    expect(local?.payload).toMatchObject({
+      mode: "allow",
+      redacted: false,
+      entries: [
+        { key: "theme", value: "dark", valueLength: 4 },
+        { key: "big", valueLength: 5_000, valueTruncated: true }
+      ]
+    });
+    expect(
+      ((local?.payload as { entries: Array<{ value: string }> }).entries[1]?.value ?? "").length
+    ).toBe(2_048);
+    expect(names?.payload).toMatchObject({ mode: "names-only", keys: ["theme"] });
+    expect(names?.payload).not.toHaveProperty("entries");
+    expect(idb?.payload).toMatchObject({ mode: "names-only", databaseNames: ["app-db"] });
+    expect(cookies?.payload).toMatchObject({ mode: "names-only", names: ["theme"] });
+    expect(putBlob).not.toHaveBeenCalled();
   });
 
   it("treats a zero body-capture budget as disabled", async () => {

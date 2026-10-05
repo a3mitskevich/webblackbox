@@ -1,7 +1,7 @@
 import { DEFAULT_CAPTURE_POLICY, type WebBlackboxEvent } from "@webblackbox/protocol";
 import { describe, expect, it } from "vitest";
 
-import { assertPrivacyScannerPassed, buildPrivacyManifest } from "./privacy.js";
+import { buildPrivacyManifest } from "./privacy.js";
 import type { StoredBlob } from "./storage.js";
 
 function createEvent(
@@ -90,16 +90,6 @@ function createBlob(hash: string, mime: string, text: string): StoredBlob {
     createdAt: 1_778_655_646_749,
     refCount: 1
   };
-}
-
-function readThrownMessage(action: () => void): string {
-  try {
-    action();
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-
-  throw new Error("Expected action to throw");
 }
 
 async function scanText(text: string) {
@@ -263,35 +253,5 @@ describe("privacy manifest", () => {
 
     expect(manifest.encryption).toEqual({ archive: "encrypted", algorithm: "AES-GCM" });
     expect(manifest.categories).toEqual([]);
-  });
-});
-
-describe("assertPrivacyScannerPassed", () => {
-  it("accepts passed scanner results", async () => {
-    const scanner = await scanText("nothing sensitive");
-
-    expect(() => assertPrivacyScannerPassed(scanner)).not.toThrow();
-  });
-
-  it("throws with a summary of at most five findings when blocked", async () => {
-    const scanner = await scanText(
-      [
-        "-----BEGIN PRIVATE KEY-----",
-        "Bearer abcdefghijklmnop1234",
-        "owner@example.com",
-        "123-45-6789",
-        "sessionid=abcdef1234567890",
-        "card: 4111 1111 1111 1111"
-      ].join("\n")
-    );
-
-    expect(scanner.findings.length).toBeGreaterThan(5);
-
-    const message = readThrownMessage(() => assertPrivacyScannerPassed(scanner));
-
-    expect(message).toMatch(
-      /^Privacy scanner blocked export: private-key in event:E-scan, bearer-token in event:E-scan, /
-    );
-    expect(message.match(/ in event:/g)).toHaveLength(5);
   });
 });

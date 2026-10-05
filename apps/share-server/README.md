@@ -36,7 +36,7 @@ Set these environment variables for production-like deployments:
 - `WEBBLACKBOX_SHARE_ANALYSIS_TIMEOUT_MS`: wall-clock budget for analyzing an upload (default `30000`). Each upload is analyzed in a worker thread that is terminated on timeout, and the upload is rejected with `413`.
 - `WEBBLACKBOX_SHARE_ANALYSIS_MAX_HEAP_MB`: V8 heap limit of the analysis worker in MiB (default `1024`). Exceeding it rejects the upload instead of crashing the server.
 - `WEBBLACKBOX_SHARE_ANALYSIS_CONCURRENCY`: maximum number of analysis workers running at once (default `2`). Further uploads wait for a free slot; the analysis timeout starts when their worker starts. Peak analysis memory is roughly this value times the heap and uncompressed limits above.
-- `WEBBLACKBOX_SHARE_ALLOW_PLAINTEXT_UPLOADS`: default `false`. Public deployments should keep this disabled so uploads must be encrypted before reaching the server.
+- Uploads are always encrypted: plaintext archives are rejected (the former `WEBBLACKBOX_SHARE_ALLOW_PLAINTEXT_UPLOADS` switch is gone). Privacy scanner findings in the client preflight summary are reported, not blocking.
 - `WEBBLACKBOX_SHARE_DEFAULT_TTL_MS`: default share lifetime in ms (default `604800000`, seven days).
 - `WEBBLACKBOX_SHARE_MAX_TTL_MS`: maximum accepted share lifetime in ms (default `2592000000`, 30 days).
 - `WEBBLACKBOX_SHARE_RETAIN_EXPIRED_MS`: how long expired share records/files are retained before pruning (default `2592000000`, 30 days).

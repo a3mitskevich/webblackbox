@@ -9,8 +9,11 @@ import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_EXPORT_POLICY,
   DEFAULT_RECORDER_CONFIG,
-  redactBodyBytes,
-  redactBodyText,
+  assertExportPassphrase,
+  isValidExportPassphrase,
+  maskBodyBytes,
+  maskBodyText,
+  normalizeExportPassphrase,
   sanitizeUrlForPrivacy,
   type CapturePolicy,
   type CaptureMode,
@@ -47,17 +50,37 @@ import {
   normalizePerformanceBudget,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
-import { shouldInjectPageHooksForMode } from "../shared/mode-profile.js";
+import {
+  applyFullModeVisualCapture,
+  resolveModeBaseConfig,
+  shouldInjectPageHooksForMode
+} from "../shared/mode-profile.js";
+import {
+  capturesPageStorageInFullMode,
+  isPageEventKeptInFullMode
+} from "webblackbox/capture-scope";
+import { materializeLiteRawEvent } from "webblackbox/lite-materializer";
+import {
+  AUTO_PROFILE_ID,
+  buildProfileRecorderConfig,
+  listEnterpriseCappedCategories,
+  selectRecordingProfile,
+  toArchivedProfileInfo,
+  type ProfileSelection
+} from "../shared/profiles/resolve.js";
+import type { ProfilesState } from "../shared/profiles/storage.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
   ENTERPRISE_POLICY_STORAGE_KEY,
   getSessionStartBlockReason,
   isEnterpriseOriginAllowed,
   normalizeEnterprisePolicy,
+  readManagedEnterprisePolicy,
   type EnterpriseRecorderPolicy
 } from "../shared/options-storage.js";
 import { resolveModeRecorderConfig } from "../shared/recorder-config.js";
 import {
+  applyBodyUrlFilters,
   isLikelyTextualResourceType as isLikelyTextualResourceTypeUtil,
   isMimeAllowed as isMimeAllowedUtil,
   normalizeBodyCaptureMaxBytes as normalizeBodyCaptureMaxBytesUtil,
@@ -90,6 +113,27 @@ import {
   type SenderTrustContext
 } from "./port-sender.js";
 import {
+  buildProfileCancellation,
+  detectProfileChange,
+  isProfileSettingsChange,
+  reselectStartedProfile,
+  shouldDeferProfileCheck,
+  toProfileCancelNotice,
+  toSessionProfileRequest,
+  type ProfileCancellation,
+  type ProfileCancelTrigger,
+  type SessionProfileSnapshot
+} from "./profile-change.js";
+import {
+  buildProfilePreview,
+  loadProfilesState,
+  capturedVisualsOf,
+  isTabLoading,
+  NO_RECORDING_PROFILE_ERROR,
+  readTabPageContext,
+  type CapturedVisuals
+} from "./profile-runtime.js";
+import {
   buildRequestMetaKey,
   deleteRequestMeta,
   getRequestMeta,
@@ -114,10 +158,33 @@ import {
 } from "./storage-snapshot.js";
 import { resolveUiActionTabId } from "./ui-action-target.js";
 
+/**
+ * Recording profile bookkeeping for one session. A session records with one profile only: when
+ * the effective profile changes after Start, the recording is cancelled (`cancellation`).
+ */
+type SessionProfileState = {
+  /** What Start asked for: a profile id or `auto` (site rules decide on every navigation). */
+  request: string;
+  visualCapture?: FullModeVisualCapture;
+  selection: ProfileSelection;
+  /** Recorder config the profile rendered to at Start, before enterprise policy. */
+  profileConfig: typeof DEFAULT_RECORDER_CONFIG;
+  /** Visual data the profile allowed; the export keeps what was captured. */
+  visualsCaptured: CapturedVisuals;
+  reevaluation: Promise<void>;
+  /** Bumped on every re-evaluation request; one from an older request is dropped. */
+  generation: number;
+  /** Why the recording was stopped after its profile changed. */
+  cancellation?: ProfileCancellation;
+  /** The popup has shown the cancellation notice. */
+  cancellationAcknowledged?: boolean;
+};
+
 type SessionRuntime = {
   sid: string;
   tabId: number;
   mode: CaptureMode;
+  profile: SessionProfileState;
   url: string;
   scopeOrigin: string | null;
   title?: string;
@@ -139,7 +206,6 @@ type SessionRuntime = {
   lastViewport: ViewportState | null;
   lastActionScreenshotMono: number;
   lastIncidentCaptureAt: number;
-  lastNavigationSnapshotAt: number;
   queueDepth: number;
   droppedBestEffortTasks: number;
   pipelineEventBuffer: WebBlackboxEvent[];
@@ -246,7 +312,6 @@ type SessionPipelineClient = {
     includeScreenRecordings?: boolean;
     maxArchiveBytes?: number;
     recentWindowMs?: number;
-    allowPlaintextLocalExport?: boolean;
   }) => Promise<PipelineExportDownloadResult>;
   close: (options?: { purge?: boolean }) => Promise<void>;
 };
@@ -277,7 +342,6 @@ type OffscreenPipelineRequest = {
   includeScreenRecordings?: boolean;
   maxArchiveBytes?: number;
   recentWindowMs?: number;
-  allowPlaintextLocalExport?: boolean;
   purge?: boolean;
   recordingId?: string;
   streamId?: string;
@@ -395,12 +459,10 @@ const SERVICE_WORKER_BOOTED_AT = Date.now();
 const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
 const POINTER_STALE_MS = 2_500;
 const NETWORK_BODY_MAX_BYTES = 256 * 1024;
-const FULL_MODE_BODY_CAPTURE_MAX_BYTES = 128 * 1024;
 const FULL_MODE_BODY_CAPTURE_MAX_PER_MINUTE = 80;
 const FULL_MODE_BODY_CAPTURE_MAX_PER_SESSION = 2_000;
 const FULL_MODE_INCIDENT_CAPTURE_COOLDOWN_MS = 15_000;
 const FULL_MODE_MIN_SCREENSHOT_INTERVAL_MS = 12_000;
-const FULL_MODE_NAV_SNAPSHOT_COOLDOWN_MS = 30_000;
 const FREEZE_NOTICE_COOLDOWN_MS = 20_000;
 const FREEZE_BADGE_HIGHLIGHT_MS = 15_000;
 const PERFORMANCE_BUDGET_BREACH_COOLDOWN_MS = 15_000;
@@ -455,7 +517,6 @@ const LITE_BODY_REDACTED_TOKEN = "[REDACTED]";
 const LITE_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const LITE_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
 const LITE_DOM_SNAPSHOT_MAX_BYTES = 1_500 * 1024;
-const LITE_STORAGE_SNAPSHOT_MAX_BYTES = 600 * 1024;
 const CPU_PROFILE_SAMPLE_MS = 350;
 const HEAP_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024;
 const OPTIONS_STORAGE_KEY = "webblackbox.options";
@@ -729,6 +790,17 @@ chromeApi?.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
   }
 });
 
+// Deleting or editing a profile, or a policy change, re-checks running recordings at once.
+chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
+  if (!isProfileSettingsChange(changes, areaName, { legacyOptionsKey: OPTIONS_STORAGE_KEY })) {
+    return;
+  }
+
+  for (const runtime of sessionsByTab.values()) {
+    scheduleProfileReevaluation(runtime, "settings-changed");
+  }
+});
+
 chromeApi?.tabs?.onRemoved?.addListener((tabId) => {
   void stopSession(tabId);
 });
@@ -747,7 +819,8 @@ async function handleInboundMessage(
     }
 
     await startSession(tabId, message.mode, {
-      visualCapture: resolveFullModeVisualCapture(message)
+      visualCapture: resolveFullModeVisualCapture(message),
+      profileId: typeof message.profileId === "string" ? message.profileId : undefined
     });
     if (message.mode === "lite" && message.reloadPage) {
       try {
@@ -780,6 +853,17 @@ async function handleInboundMessage(
     );
   }
 
+  if (message.kind === "ui.resolve-profile") {
+    const preview = await resolveProfilePreview(message.tabId, senderTabId, message.profileId);
+
+    if (port) {
+      sendPortMessage(port, preview);
+      return;
+    }
+
+    return preview;
+  }
+
   if (message.kind === "ui.delete") {
     await deleteSessionBySid(message.sid);
     return;
@@ -787,6 +871,11 @@ async function handleInboundMessage(
 
   if (message.kind === "ui.annotate") {
     await updateSessionAnnotation(message.sid, message.tags, message.note);
+    return;
+  }
+
+  if (message.kind === "ui.ack-profile-cancel") {
+    await acknowledgeProfileCancel(message.sid);
     return;
   }
 
@@ -930,7 +1019,7 @@ async function deleteSessionBySid(sid: string): Promise<void> {
 async function startSession(
   tabId: number,
   mode: CaptureMode,
-  options: { visualCapture?: FullModeVisualCapture } = {}
+  options: { visualCapture?: FullModeVisualCapture; profileId?: string } = {}
 ): Promise<void> {
   const existing = sessionsByTab.get(tabId);
 
@@ -952,9 +1041,16 @@ async function startSession(
     throw new Error(startBlockReason);
   }
 
-  const loadedRecorderConfig = applyFullModeVisualCapture(
-    await loadRecorderConfig(mode),
+  const profileRequest = options.profileId ?? AUTO_PROFILE_ID;
+  const profileSelection = await resolveTabProfileSelection(tabId, profileRequest);
+
+  if (!profileSelection) {
+    throw new Error(NO_RECORDING_PROFILE_ERROR);
+  }
+
+  const loadedRecorderConfig = await buildSessionRecorderConfig(
     mode,
+    profileSelection,
     options.visualCapture
   );
   const recorderConfig = applyEnterprisePolicyToRecorderConfig(
@@ -985,6 +1081,15 @@ async function startSession(
     sid,
     tabId,
     mode,
+    profile: {
+      request: toSessionProfileRequest(profileRequest, profileSelection),
+      visualCapture: options.visualCapture,
+      selection: profileSelection,
+      profileConfig: loadedRecorderConfig,
+      visualsCaptured: capturedVisualsOf(recorderConfig),
+      reevaluation: Promise.resolve(),
+      generation: 0
+    },
     url: metadata.url,
     scopeOrigin: resolveUrlOrigin(metadata.url),
     title: metadata.title,
@@ -1013,7 +1118,6 @@ async function startSession(
     lastViewport: null,
     lastActionScreenshotMono: Number.NEGATIVE_INFINITY,
     lastIncidentCaptureAt: Number.NEGATIVE_INFINITY,
-    lastNavigationSnapshotAt: Number.NEGATIVE_INFINITY,
     queueDepth: 0,
     droppedBestEffortTasks: 0,
     pipelineEventBuffer: [],
@@ -1079,7 +1183,13 @@ async function startSession(
     tabId,
     t: Date.now(),
     mono: monotonicTime(),
-    payload: recorderConfig
+    payload: {
+      ...recorderConfig,
+      profile: toArchivedProfileInfo(
+        profileSelection,
+        listEnterpriseCappedCategories(loadedRecorderConfig, recorderConfig)
+      )
+    }
   });
 
   if (shouldInjectHooksForMode(mode)) {
@@ -1156,6 +1266,8 @@ async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<
     runtime.config.capturePolicy,
     runtime.injectedBridgeNonce
   );
+  // Title, meta tags and selectors are only reliable once the page has loaded.
+  scheduleProfileReevaluation(runtime, "page-loaded");
 }
 
 async function stopSession(tabId: number): Promise<void> {
@@ -1180,11 +1292,7 @@ async function stopSession(tabId: number): Promise<void> {
     console.warn("[WebBlackbox] failed to persist stopped session record", error);
   });
 
-  if (sessionsByTab.size === 0) {
-    await setIdleBadge();
-  } else {
-    await setRecordingBadge();
-  }
+  await refreshActionBadge();
 
   await notifyTabStatus(
     tabId,
@@ -1235,23 +1343,26 @@ async function exportSession(
   }
 
   const effectivePolicy = resolveSessionExportPolicy(runtime, policy);
+  // Every archive is encrypted, whatever the profile; whitespace around it is not part of it.
+  const encryptionPassphrase = normalizeExportPassphrase(passphrase);
 
   try {
+    // Before stopping the session: a refused export leaves the recording running.
+    assertExportPassphrase(encryptionPassphrase);
+
     if (!runtime.stoppedAt) {
       await stopSession(runtime.tabId);
     }
 
     await flushBufferedPipelineEvents(runtime);
-    const encrypted = hasExportPassphrase(passphrase);
 
     const exported = await enqueueWithResult(runtime, async () => {
       return runtime.pipeline.exportAndDownload({
-        passphrase: encrypted ? passphrase : undefined,
+        passphrase: encryptionPassphrase,
         includeScreenshots: effectivePolicy.includeScreenshots,
         includeScreenRecordings: effectivePolicy.includeScreenRecordings,
         maxArchiveBytes: effectivePolicy.maxArchiveBytes,
-        recentWindowMs: effectivePolicy.recentWindowMs,
-        allowPlaintextLocalExport: !encrypted
+        recentWindowMs: effectivePolicy.recentWindowMs
       });
     });
 
@@ -1263,7 +1374,7 @@ async function exportSession(
       sid,
       mode: runtime.mode,
       outcome: "ok",
-      encrypted,
+      encrypted: true,
       includeScreenshots: effectivePolicy.includeScreenshots,
       includeScreenRecordings: effectivePolicy.includeScreenRecordings,
       maxArchiveBytes: effectivePolicy.maxArchiveBytes,
@@ -1296,7 +1407,7 @@ async function exportSession(
       sid,
       mode: runtime.mode,
       outcome: "error",
-      encrypted: hasExportPassphrase(passphrase),
+      encrypted: isValidExportPassphrase(encryptionPassphrase),
       includeScreenshots: effectivePolicy.includeScreenshots,
       includeScreenRecordings: effectivePolicy.includeScreenRecordings,
       maxArchiveBytes: effectivePolicy.maxArchiveBytes,
@@ -1317,26 +1428,283 @@ async function exportSession(
   }
 }
 
+/**
+ * Resolves the profile for a tab from the current store, rules and page signals; null when no
+ * profile exists.
+ */
+async function resolveTabProfileSelection(
+  tabId: number,
+  request: string
+): Promise<ProfileSelection | null> {
+  const state = await loadSessionProfilesState();
+  const page = (await readTabPageContext(chromeApi, tabId, state.rules)) ?? {
+    url: `tab:${tabId}`
+  };
+
+  return selectRecordingProfile({ state, page, requestedProfileId: request });
+}
+
+/**
+ * Recorder config for a profile on a transport. The v1-derived Default (no v2 store yet) keeps
+ * the exact pre-profile code path so its output is byte-for-byte what it used to be.
+ */
+async function buildSessionRecorderConfig(
+  mode: CaptureMode,
+  selection: ProfileSelection,
+  visualCapture: FullModeVisualCapture | undefined
+): Promise<typeof DEFAULT_RECORDER_CONFIG> {
+  if (selection.legacy) {
+    return applyFullModeVisualCapture(await loadRecorderConfig(mode), mode, visualCapture);
+  }
+
+  return buildProfileRecorderConfig({ mode, profile: selection.profile, visualCapture });
+}
+
+function loadSessionProfilesState(): Promise<ProfilesState> {
+  return loadProfilesState(chromeApi, {
+    legacyOptionsKey: OPTIONS_STORAGE_KEY,
+    enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
+  });
+}
+
+async function resolveProfilePreview(
+  requestedTabId: number | undefined,
+  senderTabId: number | undefined,
+  requestedProfileId: string | undefined
+): Promise<ReturnType<typeof buildProfilePreview>> {
+  const state = await loadSessionProfilesState();
+  // The same tab `ui.start` would record, so the preview shows the profile Start applies.
+  const tabId = await resolveUiActionTarget(requestedTabId, senderTabId);
+
+  if (typeof tabId !== "number") {
+    return buildProfilePreview(state, null);
+  }
+
+  const page = await readTabPageContext(chromeApi, tabId, state.rules);
+  const selection = page
+    ? selectRecordingProfile({
+        state,
+        page,
+        requestedProfileId: requestedProfileId ?? AUTO_PROFILE_ID
+      })
+    : null;
+
+  if (!selection) {
+    return buildProfilePreview(state, null);
+  }
+
+  // The preview renders the profile on its recommended transport to name the enterprise caps.
+  const profileConfig = await buildSessionRecorderConfig(
+    selection.profile.base,
+    selection,
+    undefined
+  );
+  const effectiveConfig = applyEnterprisePolicyToRecorderConfig(
+    profileConfig,
+    await loadEnterprisePolicy()
+  );
+
+  return buildProfilePreview(
+    state,
+    selection,
+    listEnterpriseCappedCategories(profileConfig, effectiveConfig)
+  );
+}
+
+/**
+ * Serializes profile re-evaluations per session. Only the latest request runs: older queued or
+ * in-flight ones are dropped, so a navigation burst costs one page probe, not one per step.
+ */
+function scheduleProfileReevaluation(runtime: SessionRuntime, trigger: ProfileCancelTrigger): void {
+  const generation = nextProfileGeneration(runtime);
+
+  runtime.profile.reevaluation = runtime.profile.reevaluation
+    .then(() => reevaluateSessionProfile(runtime, trigger, generation))
+    .catch((error) => {
+      console.warn("[WebBlackbox] recording profile re-evaluation failed", error);
+    });
+}
+
+function nextProfileGeneration(runtime: SessionRuntime): number {
+  const generation = runtime.profile.generation + 1;
+  runtime.profile = { ...runtime.profile, generation };
+  return generation;
+}
+
+function isProfileRequestCurrent(runtime: SessionRuntime, generation: number): boolean {
+  return runtime.profile.generation === generation && !runtime.stopping && !runtime.stoppedAt;
+}
+
+/**
+ * Re-runs the rules after navigation or page load. A session records with one profile: when the
+ * effective profile is no longer the one it started with (another profile picked by the rules,
+ * the profile deleted or edited, the enterprise policy changed), the recording is cancelled.
+ * What was captured is kept for export or deletion, and the popup explains why and how to fix it.
+ */
+async function reevaluateSessionProfile(
+  runtime: SessionRuntime,
+  trigger: ProfileCancelTrigger,
+  generation: number
+): Promise<void> {
+  if (!isProfileRequestCurrent(runtime, generation)) {
+    return;
+  }
+
+  const [state, enterprisePolicy, tabLoading] = await Promise.all([
+    loadSessionProfilesState(),
+    loadEnterprisePolicy(),
+    isTabLoading(chromeApi, runtime.tabId)
+  ]);
+
+  // Rules that read the page cannot match before it loads; the page-loaded check decides.
+  if (shouldDeferProfileCheck({ trigger, tabLoading, rules: state.rules })) {
+    return;
+  }
+
+  const page = await readTabPageContext(chromeApi, runtime.tabId, state.rules, {
+    requireSignals: true
+  });
+
+  const started = runtime.profile.selection;
+  // A tab or page that cannot be read right now says nothing about the rules: only the started
+  // profile itself is checked (deleted, edited or capped by the policy).
+  const nextSelection = page
+    ? selectRecordingProfile({ state, page, requestedProfileId: runtime.profile.request })
+    : reselectStartedProfile(started, state);
+  const next = nextSelection
+    ? await buildSessionProfileSnapshot(runtime, nextSelection, enterprisePolicy)
+    : null;
+
+  // The session may have stopped or a newer request may have landed while this one was loading.
+  if (!isProfileRequestCurrent(runtime, generation)) {
+    return;
+  }
+
+  const reason = detectProfileChange({
+    started: {
+      selection: started,
+      profileConfig: runtime.profile.profileConfig,
+      effectiveConfig: runtime.config
+    },
+    next,
+    startedProfileExists: state.catalog.some((profile) => profile.id === started.profile.id)
+  });
+
+  if (reason) {
+    await cancelSessionForProfileChange(
+      runtime,
+      buildProfileCancellation({
+        reason,
+        trigger,
+        at: Date.now(),
+        started,
+        next: nextSelection
+      })
+    );
+  }
+}
+
+/** The recorder configs a selection would run with in this session. */
+async function buildSessionProfileSnapshot(
+  runtime: SessionRuntime,
+  selection: ProfileSelection,
+  enterprisePolicy: EnterpriseRecorderPolicy
+): Promise<SessionProfileSnapshot> {
+  const profileConfig = await buildSessionRecorderConfig(
+    runtime.mode,
+    selection,
+    runtime.profile.visualCapture
+  );
+  const effectiveConfig = applyEnterprisePolicyToRecorderConfig(
+    withSessionCapturePolicy(profileConfig, {
+      tabId: runtime.tabId,
+      origin: runtime.scopeOrigin ?? "",
+      startedAt: runtime.startedAt
+    }),
+    enterprisePolicy
+  );
+
+  return { selection, profileConfig, effectiveConfig };
+}
+
+/**
+ * Records why the profile changed (`meta.config.profileCancel`), then stops the session like the
+ * Stop button does: the data stays for export or deletion. The badge and the popup tell the user.
+ */
+async function cancelSessionForProfileChange(
+  runtime: SessionRuntime,
+  cancellation: ProfileCancellation
+): Promise<void> {
+  runtime.profile = { ...runtime.profile, cancellation, cancellationAcknowledged: false };
+  ingestRawEvent({
+    source: "system",
+    rawType: "config",
+    sid: runtime.sid,
+    tabId: runtime.tabId,
+    t: cancellation.at,
+    mono: monotonicTime(),
+    payload: {
+      ...runtime.config,
+      profile: cancellation.started,
+      profileCancel: cancellation
+    }
+  });
+  console.warn(
+    `[WebBlackbox] recording ${runtime.sid} stopped: profile changed (${cancellation.reason})`
+  );
+
+  // Stopping updates the badge to `!` while the notice is unread.
+  await stopSession(runtime.tabId);
+}
+
+/**
+ * REC while anything records, otherwise `!` while a profile-change notice is unread, otherwise
+ * no badge.
+ */
+async function refreshActionBadge(): Promise<void> {
+  if (sessionsByTab.size > 0) {
+    await setRecordingBadge();
+    return;
+  }
+
+  const unread = [...sessionsBySid.values()].some(
+    (runtime) => runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
+  );
+
+  if (!unread) {
+    await setIdleBadge();
+    return;
+  }
+
+  await chromeApi?.action?.setBadgeText({ text: "!" }).catch(() => undefined);
+  await chromeApi?.action?.setBadgeBackgroundColor({ color: "#b35c00" }).catch(() => undefined);
+}
+
+async function acknowledgeProfileCancel(sid: string): Promise<void> {
+  const runtime = sessionsBySid.get(sid);
+
+  if (!runtime?.profile.cancellation || runtime.profile.cancellationAcknowledged) {
+    return;
+  }
+
+  runtime.profile = { ...runtime.profile, cancellationAcknowledged: true };
+  pushSessionList();
+  await refreshActionBadge();
+}
+
 function resolveSessionExportPolicy(runtime: SessionRuntime, policy: ExportPolicy): ExportPolicy {
-  if (runtime.mode !== "full") {
+  if (runtime.mode !== "full" || !runtime.config.capturePolicy) {
     return policy;
   }
 
-  const categories = runtime.config.capturePolicy?.categories;
-
-  if (!categories) {
-    return policy;
-  }
+  // A mid-session switch must not drop visuals recorded while an earlier profile allowed them.
+  const { visualsCaptured } = runtime.profile;
 
   return {
     ...policy,
-    includeScreenshots: categories.screenshots !== "off",
-    includeScreenRecordings: categories.screenRecordings === "allow"
+    includeScreenshots: visualsCaptured.screenshots,
+    includeScreenRecordings: visualsCaptured.screenRecordings
   };
-}
-
-function hasExportPassphrase(passphrase: string | undefined): passphrase is string {
-  return typeof passphrase === "string" && passphrase.length > 0;
 }
 
 function ingestRawEvent(rawEvent: RawRecorderEvent): void {
@@ -1410,10 +1778,13 @@ function shouldSkipFullModeContentRawEvent(
   runtime: SessionRuntime,
   rawEvent: RawRecorderEvent
 ): boolean {
+  const categories = runtime.config.capturePolicy?.categories;
+
   return (
     runtime.mode === "full" &&
     rawEvent.source === "content" &&
-    SKIPPED_FULL_MODE_CONTENT_RAW_TYPES.has(rawEvent.rawType)
+    SKIPPED_FULL_MODE_CONTENT_RAW_TYPES.has(rawEvent.rawType) &&
+    !(categories && isPageEventKeptInFullMode(rawEvent.rawType, categories))
   );
 }
 
@@ -1421,7 +1792,11 @@ function shouldMaterializeLiteContentEvent(
   runtime: SessionRuntime,
   rawEvent: RawRecorderEvent
 ): boolean {
-  if (runtime.mode !== "lite") {
+  const categories = runtime.config.capturePolicy?.categories;
+  const isKeptInFullMode =
+    categories !== undefined && isPageEventKeptInFullMode(rawEvent.rawType, categories);
+
+  if (runtime.mode !== "lite" && !isKeptInFullMode) {
     return false;
   }
 
@@ -1443,16 +1818,13 @@ function shouldMaterializeLiteContentEvent(
     return typeof payload.html === "string" && payload.html.length > 0;
   }
 
-  if (rawEvent.rawType === "localStorageSnapshot") {
-    return asRecord(payload.entries) !== null;
-  }
-
-  if (rawEvent.rawType === "indexedDbSnapshot") {
-    return Array.isArray(payload.databaseNames);
-  }
-
-  if (rawEvent.rawType === "cookieSnapshot") {
-    return Array.isArray(payload.names);
+  // Storage snapshots are always normalized to what the capture policy allows.
+  if (
+    rawEvent.rawType === "localStorageSnapshot" ||
+    rawEvent.rawType === "indexedDbSnapshot" ||
+    rawEvent.rawType === "cookieSnapshot"
+  ) {
+    return true;
   }
 
   if (rawEvent.rawType === "networkBody") {
@@ -1482,7 +1854,11 @@ async function materializeLiteContentEvent(
     rawEvent.rawType === "indexedDbSnapshot" ||
     rawEvent.rawType === "cookieSnapshot"
   ) {
-    return materializeLiteStorageSnapshot(runtime, rawEvent);
+    // Details stay inline (never in blobs) so the recorder's redactor and policy checks see them.
+    return materializeLiteRawEvent(rawEvent, {
+      config: runtime.config,
+      putBlob: (mime, bytes) => runtime.pipeline.putBlob(mime, bytes)
+    });
   }
 
   if (rawEvent.rawType === "networkBody") {
@@ -1571,90 +1947,6 @@ async function materializeLiteDomSnapshot(
   };
 }
 
-async function materializeLiteStorageSnapshot(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): Promise<RawRecorderEvent | null> {
-  const payload = asRecord(rawEvent.payload);
-
-  if (!payload) {
-    return null;
-  }
-
-  const reason = asString(payload.reason) ?? undefined;
-
-  if (rawEvent.rawType === "localStorageSnapshot") {
-    const entries = asRecord(payload.entries) ?? {};
-    const serialized = JSON.stringify(entries);
-    const encoded = encodeTextWithByteLimit(serialized, LITE_STORAGE_SNAPSHOT_MAX_BYTES);
-    const hash =
-      encoded.bytes.byteLength > 0
-        ? await runtime.pipeline.putBlob("application/json", encoded.bytes)
-        : undefined;
-    const count = normalizeNonNegativeInt(payload.count) ?? Object.keys(entries).length;
-
-    return {
-      ...rawEvent,
-      payload: {
-        hash,
-        count,
-        mode: "sample",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true || encoded.truncated
-      }
-    };
-  }
-
-  if (rawEvent.rawType === "indexedDbSnapshot") {
-    const names = asStringArray(payload.databaseNames, 400);
-    const serialized = JSON.stringify(names);
-    const encoded = encodeTextWithByteLimit(serialized, LITE_STORAGE_SNAPSHOT_MAX_BYTES);
-    const hash =
-      encoded.bytes.byteLength > 0
-        ? await runtime.pipeline.putBlob("application/json", encoded.bytes)
-        : undefined;
-    const count = normalizeNonNegativeInt(payload.count) ?? names.length;
-
-    return {
-      ...rawEvent,
-      payload: {
-        hash,
-        count,
-        mode: "schema-only",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true || encoded.truncated
-      }
-    };
-  }
-
-  if (rawEvent.rawType === "cookieSnapshot") {
-    const names = asStringArray(payload.names, 400);
-    const serialized = JSON.stringify(names);
-    const encoded = encodeTextWithByteLimit(serialized, LITE_STORAGE_SNAPSHOT_MAX_BYTES);
-    const hash =
-      encoded.bytes.byteLength > 0
-        ? await runtime.pipeline.putBlob("application/json", encoded.bytes)
-        : undefined;
-    const count = normalizeNonNegativeInt(payload.count) ?? names.length;
-
-    return {
-      ...rawEvent,
-      payload: {
-        hash,
-        count,
-        mode: "sample",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true || encoded.truncated
-      }
-    };
-  }
-
-  return rawEvent;
-}
-
 async function materializeLiteNetworkBody(
   runtime: SessionRuntime,
   rawEvent: RawRecorderEvent
@@ -1681,16 +1973,16 @@ async function materializeLiteNetworkBody(
     return null;
   }
 
-  const patterns = runtime.config.redaction.redactBodyPatterns;
+  const rules = runtime.config.redaction;
   let bytes: Uint8Array;
   let redacted = payload.redacted === true;
 
   if (encoding === "utf8") {
-    const redaction = redactBodyText(body, patterns, LITE_BODY_REDACTED_TOKEN);
+    const redaction = maskBodyText(body, rules, LITE_BODY_REDACTED_TOKEN);
     redacted = redacted || redaction.redacted;
     bytes = new TextEncoder().encode(redaction.value);
   } else {
-    const redaction = redactBodyBytes(decodeBase64(body), patterns, {
+    const redaction = maskBodyBytes(decodeBase64(body), rules, {
       mimeType,
       redactionToken: LITE_BODY_REDACTED_TOKEN
     });
@@ -2062,8 +2354,7 @@ function createOffscreenPipelineClient(sid: string): SessionPipelineClient {
         includeScreenshots: options.includeScreenshots,
         includeScreenRecordings: options.includeScreenRecordings,
         maxArchiveBytes: options.maxArchiveBytes,
-        recentWindowMs: options.recentWindowMs,
-        allowPlaintextLocalExport: options.allowPlaintextLocalExport
+        recentWindowMs: options.recentWindowMs
       });
 
       return normalizePipelineExportDownloadResult(exported);
@@ -2492,10 +2783,6 @@ async function processFullModeEvent(
 
     return;
   }
-
-  if (method === "Page.frameNavigated" && shouldCaptureNavigationSnapshot(runtime)) {
-    await captureDomSnapshot(runtime, "navigation");
-  }
 }
 
 async function primeChildCdpSession(
@@ -2550,7 +2837,7 @@ async function captureResponseBody(
   const transformed = transformResponseBodyForCapture({
     body: response.body,
     base64Encoded: response.base64Encoded === true,
-    redactPatterns: runtime.config.redaction.redactBodyPatterns,
+    redaction: runtime.config.redaction,
     maxBytes: captureRule.maxBytes,
     mimeType: normalizedMime,
     redactionToken: LITE_BODY_REDACTED_TOKEN,
@@ -2686,29 +2973,6 @@ async function captureIncidentArtifacts(runtime: SessionRuntime, reason: string)
   ]);
 }
 
-function shouldCaptureNavigationSnapshot(runtime: SessionRuntime): boolean {
-  if (runtime.stopping) {
-    return false;
-  }
-
-  if (runtime.config.capturePolicy?.categories.dom !== "allow") {
-    return false;
-  }
-
-  if (runtime.queueDepth >= Math.floor(BEST_EFFORT_QUEUE_MAX_PENDING / 4)) {
-    return false;
-  }
-
-  const now = Date.now();
-
-  if (now - runtime.lastNavigationSnapshotAt < FULL_MODE_NAV_SNAPSHOT_COOLDOWN_MS) {
-    return false;
-  }
-
-  runtime.lastNavigationSnapshotAt = now;
-  return true;
-}
-
 function handleFreezeNotice(runtime: SessionRuntime, reason: FreezeReason): void {
   if (runtime.stopping) {
     return;
@@ -2733,7 +2997,9 @@ async function captureFullModeArtifacts(runtime: SessionRuntime, reason: string)
   ];
 
   if (reason !== "session-start") {
-    tasks.push(captureDomSnapshot(runtime, reason), captureStorageSnapshots(runtime, reason));
+    // The DOM comes from the page agent's raw snapshot (`dom: allow`), which masks blocked
+    // selectors and field values; a CDP DOMSnapshot would carry both unmasked.
+    tasks.push(captureStorageSnapshots(runtime, reason));
   }
 
   if (shouldCaptureAdvancedProfiles(reason)) {
@@ -3091,54 +3357,6 @@ function createScreenRecordingId(sid: string): string {
   return `VR-${sid}-${Date.now()}-${random}`;
 }
 
-async function captureDomSnapshot(runtime: SessionRuntime, reason: string): Promise<void> {
-  if (!runtime.cdpRouter) {
-    return;
-  }
-
-  if (runtime.config.capturePolicy?.categories.dom !== "allow") {
-    return;
-  }
-
-  const snapshot = await sendCdpCommand<Record<string, unknown>>(
-    runtime,
-    { tabId: runtime.tabId },
-    "DOMSnapshot.captureSnapshot",
-    {
-      computedStyles: [],
-      includeDOMRects: false,
-      includePaintOrder: false
-    }
-  );
-
-  if (!snapshot) {
-    return;
-  }
-
-  const bytes = new TextEncoder().encode(JSON.stringify(snapshot));
-  const hash = await runtime.pipeline.putBlob("application/json", bytes);
-  const documents = Array.isArray(snapshot.documents) ? snapshot.documents : [];
-  const firstDocument = documents[0] as Record<string, unknown> | undefined;
-  const nodes = firstDocument ? asRecord(firstDocument.nodes) : null;
-  const nodeNameArray = Array.isArray(nodes?.nodeName) ? nodes.nodeName : [];
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "cdp.dom.snapshot",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      snapshotId: `D-${Date.now()}`,
-      contentHash: hash,
-      source: "cdp",
-      nodeCount: nodeNameArray.length,
-      reason
-    }
-  });
-}
-
 async function captureStorageSnapshots(runtime: SessionRuntime, reason: string): Promise<void> {
   if (!runtime.cdpRouter) {
     return;
@@ -3146,12 +3364,18 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
 
   const policy = runtime.config.capturePolicy;
 
+  // The page agent records localStorage and IndexedDB itself (inline, through the redactor);
+  // the CDP snapshots below would duplicate them in blobs the redactor never sees. Cookie names
+  // stay on CDP: `document.cookie` cannot see HttpOnly cookies.
+  const pageRecordsStorage = !!policy && capturesPageStorageInFullMode(policy.categories);
+
   const cookies =
     policy?.categories.cookies === "names-only"
       ? await sendCdpCommand<{ cookies?: unknown[] }>(
           runtime,
           { tabId: runtime.tabId },
-          "Storage.getCookies"
+          // The page's cookies only; Storage.getCookies would list every site in the browser.
+          "Network.getCookies"
         )
       : null;
 
@@ -3181,7 +3405,7 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
     });
   }
 
-  const localStorageMode = resolveLocalStorageSnapshotMode(policy);
+  const localStorageMode = pageRecordsStorage ? null : resolveLocalStorageSnapshotMode(policy);
   const localStorageData = localStorageMode
     ? await evaluateExpression(runtime, buildLocalStorageSnapshotExpression(localStorageMode))
     : null;
@@ -3211,7 +3435,7 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
   }
 
   const origin =
-    policy?.categories.indexedDb === "names-only"
+    !pageRecordsStorage && policy?.categories.indexedDb === "names-only"
       ? await evaluateExpression(runtime, "location.origin")
       : null;
 
@@ -3494,10 +3718,14 @@ function resolveLiteBodyCaptureRule(
   url: string,
   mimeType: string | undefined
 ): LiteBodyCaptureRule {
-  return resolveLiteBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-    defaultMimeAllowlist: LITE_DEFAULT_BODY_MIME_ALLOWLIST,
-    fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
-  });
+  return applyBodyUrlFilters(
+    resolveLiteBodyCaptureRuleUtil(runtime.config, url, mimeType, {
+      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(runtime),
+      fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
+    }),
+    url,
+    runtime.profile.selection.profile.network
+  );
 }
 
 function resolveFullBodyCaptureRule(
@@ -3505,10 +3733,19 @@ function resolveFullBodyCaptureRule(
   url: string,
   mimeType: string | undefined
 ): LiteBodyCaptureRule {
-  return resolveFullBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-    defaultMimeAllowlist: LITE_DEFAULT_BODY_MIME_ALLOWLIST,
-    fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
-  });
+  return applyBodyUrlFilters(
+    resolveFullBodyCaptureRuleUtil(runtime.config, url, mimeType, {
+      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(runtime),
+      fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
+    }),
+    url,
+    runtime.profile.selection.profile.network
+  );
+}
+
+function resolveProfileBodyMimeAllowlist(runtime: SessionRuntime): string[] {
+  const profileAllowlist = runtime.profile.selection.profile.network.bodyMimeAllowlist;
+  return profileAllowlist.length > 0 ? profileAllowlist : LITE_DEFAULT_BODY_MIME_ALLOWLIST;
 }
 
 function isMimeAllowed(allowlist: string[], mimeType: string | undefined): boolean {
@@ -3622,28 +3859,6 @@ function normalizeNonNegativeInt(value: unknown): number | undefined {
   }
 
   return Math.max(0, Math.round(candidate));
-}
-
-function asStringArray(value: unknown, limit: number): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const output: string[] = [];
-
-  for (const entry of value) {
-    if (typeof entry !== "string" || entry.length === 0) {
-      continue;
-    }
-
-    output.push(entry);
-
-    if (output.length >= limit) {
-      break;
-    }
-  }
-
-  return output;
 }
 
 function encodeTextWithByteLimit(
@@ -4459,11 +4674,7 @@ async function disposeStoppedSession(runtime: SessionRuntime): Promise<void> {
     console.warn("[WebBlackbox] failed to drop stopped session record", error);
   });
 
-  if (sessionsByTab.size === 0) {
-    await setIdleBadge();
-  } else {
-    await setRecordingBadge();
-  }
+  await refreshActionBadge();
 
   await closeOffscreenIfUnused();
   pushSessionList();
@@ -4515,7 +4726,11 @@ function toSessionListItem(runtime: SessionRuntime): SessionListItem {
     budgetAlertCount: runtime.budgetAlertCount,
     sizeBytes: runtime.capturedSizeBytes,
     tags: [...runtime.tags],
-    note: runtime.note
+    note: runtime.note,
+    profileName: runtime.profile.selection.profile.name,
+    ...(runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
+      ? { profileCancel: toProfileCancelNotice(runtime.profile.cancellation) }
+      : {})
   };
 }
 
@@ -4668,6 +4883,8 @@ async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void>
     runtime.url = nextUrl;
     pushSessionList();
   }
+
+  scheduleProfileReevaluation(runtime, "navigation");
 }
 
 function shouldStopOnOriginChange(runtime: SessionRuntime, nextOrigin: string | null): boolean {
@@ -4753,43 +4970,10 @@ function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture
   return value === "screenshots" || value === "recording" || value === "both" || value === "none";
 }
 
-function applyFullModeVisualCapture(
-  config: typeof DEFAULT_RECORDER_CONFIG,
-  mode: CaptureMode,
-  visualCapture: FullModeVisualCapture | undefined
-): typeof DEFAULT_RECORDER_CONFIG {
-  if (mode !== "full" || !visualCapture) {
-    return config;
-  }
-
-  const basePolicy =
-    config.capturePolicy ?? DEFAULT_RECORDER_CONFIG.capturePolicy ?? DEFAULT_CAPTURE_POLICY;
-  const screenshots = visualCapture === "screenshots" || visualCapture === "both" ? "allow" : "off";
-  const screenRecordings =
-    visualCapture === "recording" || visualCapture === "both" ? "allow" : "off";
-
-  return {
-    ...config,
-    capturePolicy: {
-      ...basePolicy,
-      categories: {
-        ...basePolicy.categories,
-        screenshots,
-        screenRecordings
-      }
-    }
-  };
-}
-
 async function loadEnterprisePolicy(): Promise<EnterpriseRecorderPolicy> {
-  try {
-    const values = await chromeApi?.storage?.managed?.get(ENTERPRISE_POLICY_STORAGE_KEY);
-    const scoped = asRecord(values?.[ENTERPRISE_POLICY_STORAGE_KEY]);
-
-    return normalizeEnterprisePolicy(scoped ?? values ?? {});
-  } catch {
-    return normalizeEnterprisePolicy({});
-  }
+  return normalizeEnterprisePolicy(
+    (await readManagedEnterprisePolicy(chromeApi?.storage?.managed)) ?? {}
+  );
 }
 
 function withSessionCapturePolicy(
@@ -4833,45 +5017,6 @@ async function loadPerformanceBudgetConfig(): Promise<PerformanceBudgetConfig> {
   }
 
   return normalizePerformanceBudget(stored.performanceBudget);
-}
-
-function resolveModeBaseConfig(mode: CaptureMode): typeof DEFAULT_RECORDER_CONFIG {
-  const base: typeof DEFAULT_RECORDER_CONFIG = {
-    ...DEFAULT_RECORDER_CONFIG,
-    mode
-  };
-
-  if (mode === "full") {
-    return {
-      ...base,
-      freezeOnNetworkFailure: false,
-      freezeOnLongTaskSpike: false,
-      sampling: {
-        ...base.sampling,
-        mousemoveHz: 12,
-        scrollHz: 10,
-        domFlushMs: 180,
-        snapshotIntervalMs: 30_000,
-        screenshotIdleMs: 12_000,
-        bodyCaptureMaxBytes: FULL_MODE_BODY_CAPTURE_MAX_BYTES
-      }
-    };
-  }
-
-  return {
-    ...base,
-    freezeOnNetworkFailure: false,
-    freezeOnLongTaskSpike: false,
-    sampling: {
-      ...base.sampling,
-      mousemoveHz: 14,
-      scrollHz: 10,
-      domFlushMs: 160,
-      snapshotIntervalMs: 30_000,
-      screenshotIdleMs: base.sampling.screenshotIdleMs,
-      bodyCaptureMaxBytes: 0
-    }
-  };
 }
 
 async function updateSessionAnnotation(

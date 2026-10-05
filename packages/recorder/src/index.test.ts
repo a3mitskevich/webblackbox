@@ -964,6 +964,40 @@ describe("recorder", () => {
       },
       {
         raw: createRawEvent({
+          rawType: "indexedDbOp",
+          payload: {
+            op: "open",
+            name: "app-db"
+          }
+        }),
+        policy: createPolicy({
+          categories: {
+            ...TEST_CAPTURE_POLICY.categories,
+            indexedDb: "counts-only"
+          }
+        }),
+        reason: "storage-detail-disabled",
+        blockedType: "storage.idb.op"
+      },
+      {
+        raw: createRawEvent({
+          rawType: "localStorageSnapshot",
+          payload: {
+            count: 1,
+            entries: [{ key: "theme", value: "dark" }]
+          }
+        }),
+        policy: createPolicy({
+          categories: {
+            ...TEST_CAPTURE_POLICY.categories,
+            storage: "counts-only"
+          }
+        }),
+        reason: "storage-detail-disabled",
+        blockedType: "storage.local.snapshot"
+      },
+      {
+        raw: createRawEvent({
           rawType: "indexedDbSnapshot",
           payload: {
             databaseNames: ["app-db"]
@@ -1376,5 +1410,32 @@ describe("recorder", () => {
     expect(warnSpy).toHaveBeenCalledTimes(2);
 
     warnSpy.mockRestore();
+  });
+});
+
+describe("recorder reconfigure", () => {
+  it("applies a new capture policy to later events and keeps the buffer", () => {
+    const metadataPolicy: CapturePolicy = {
+      ...TEST_CAPTURE_POLICY,
+      categories: { ...TEST_CAPTURE_POLICY.categories, console: "metadata" }
+    };
+    const recorder = new WebBlackboxRecorder({ ...TEST_CONFIG, capturePolicy: metadataPolicy });
+    const consoleEvent = (t: number): RawRecorderEvent => ({
+      source: "content",
+      rawType: "console",
+      tabId: 1,
+      sid: "S-1",
+      t,
+      mono: t,
+      payload: { level: "log", text: "checkout failed" }
+    });
+
+    expect(recorder.ingest(consoleEvent(1)).event?.type).toBe("privacy.violation");
+
+    recorder.reconfigure({ ...TEST_CONFIG, capturePolicy: TEST_CAPTURE_POLICY });
+
+    expect(recorder.getConfig().capturePolicy?.categories.console).toBe("allow");
+    expect(recorder.ingest(consoleEvent(2)).event?.type).toBe("console.entry");
+    expect(recorder.getBufferedEventCount()).toBe(2);
   });
 });

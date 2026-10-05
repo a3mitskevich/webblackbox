@@ -294,7 +294,12 @@ async function stopActiveSessionFromPopup(popupClient) {
 async function exportSessionFromPopup(popupClient, sid) {
   const expression = `
     (async () => {
-      await chrome.runtime.sendMessage({ kind: 'ui.export', sid: ${JSON.stringify(sid)} });
+      // Every archive is encrypted: an export needs a passphrase.
+      await chrome.runtime.sendMessage({
+        kind: 'ui.export',
+        sid: ${JSON.stringify(sid)},
+        passphrase: 'e2e-check-passphrase'
+      });
       return { ok: true, sid: ${JSON.stringify(sid)} };
     })()
   `;

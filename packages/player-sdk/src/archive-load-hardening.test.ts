@@ -171,10 +171,10 @@ describe("archive load hardening", () => {
   });
 
   it("rejects an unknown protocolVersion with a clear message", async () => {
-    const archive = await createArchive({ manifest: { protocolVersion: 2 } });
+    const archive = await createArchive({ manifest: { protocolVersion: 3 } });
 
     await expect(WebBlackboxPlayer.open(archive)).rejects.toThrow(
-      "Unsupported archive protocolVersion 2; this player supports protocolVersion 1."
+      "Unsupported archive protocolVersion 3; this player supports protocolVersion 1 and 2."
     );
   });
 

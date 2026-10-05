@@ -17,6 +17,9 @@ const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const delayAuditAppendPreload = resolve(appRoot, "src/test-support/delay-audit-append.mjs");
 const apiKey = "share-test-key";
 const MIN_SHARE_TTL_MS = 1_000;
+// The audit-ordering test waits on purpose: about 3 s of delayed audit writes plus one share TTL.
+// That alone is close to vitest's 5 s default, so it gets room for loaded CI runners.
+const AUDIT_ORDER_TEST_TIMEOUT_MS = 20_000;
 const BLOB_FIXTURE_PATH =
   "blobs/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json";
 const TEXT_BLOB_FIXTURE_PATH =
@@ -235,7 +238,7 @@ describe("share-server", () => {
     expect(response.status).toBe(422);
   });
 
-  it("rejects encrypted public share uploads without a passed client privacy preflight", async () => {
+  it("rejects encrypted public share uploads without a client privacy preflight", async () => {
     const server = await startShareServer();
 
     const response = await fetch(`${server.baseUrl}/api/share/upload`, {
@@ -249,9 +252,30 @@ describe("share-server", () => {
     });
 
     await expect(response.json()).resolves.toEqual({
-      error: "Encrypted public share uploads require a passed client privacy preflight summary."
+      error: "Encrypted public share uploads require a client privacy preflight summary."
     });
     expect(response.status).toBe(422);
+  });
+
+  it("accepts encrypted uploads whose preflight reported scanner findings (warn-only)", async () => {
+    const server = await startShareServer();
+    const summary = buildPassedShareSummary() as {
+      privacy: { scanner: Record<string, unknown> };
+    };
+    summary.privacy.scanner = { preEncryption: true, status: "blocked", findingCount: 2 };
+
+    const response = await fetch(`${server.baseUrl}/api/share/upload`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-webblackbox-api-key": apiKey,
+        "x-webblackbox-filename": "encrypted.webblackbox",
+        "x-webblackbox-share-summary": encodeURIComponent(JSON.stringify(summary))
+      },
+      body: Buffer.from(await createEncryptedEnvelopeArchive())
+    });
+
+    expect(response.status).toBe(201);
   });
 
   it("rejects encrypted public share uploads with incomplete encrypted file metadata", async () => {
@@ -422,65 +446,74 @@ describe("share-server", () => {
     expect(auditLog).not.toContain("webblackbox-share-");
   });
 
-  it("persists the audit event before sending each response", async () => {
-    const server = await startShareServer({
-      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${pathToFileURL(delayAuditAppendPreload)}`]
-        .filter(Boolean)
-        .join(" ")
-    });
-    const { shareId } = await uploadEncryptedFixture(server);
-    const { shareId: expiringShareId } = await uploadEncryptedFixture(server, apiKey, {
-      "x-webblackbox-share-ttl-ms": String(MIN_SHARE_TTL_MS)
-    });
-    const expiresBy = Date.now() + MIN_SHARE_TTL_MS;
-    const assertAuditedBeforeResponse = async (step: AuditedRequestStep): Promise<void> => {
-      const response = await fetch(`${server.baseUrl}${step.path}`, {
-        method: step.method ?? "GET",
-        headers: { "x-webblackbox-api-key": apiKey }
+  it(
+    "persists the audit event before sending each response",
+    { timeout: AUDIT_ORDER_TEST_TIMEOUT_MS },
+    async () => {
+      const server = await startShareServer({
+        NODE_OPTIONS: [
+          process.env.NODE_OPTIONS,
+          `--import=${pathToFileURL(delayAuditAppendPreload)}`
+        ]
+          .filter(Boolean)
+          .join(" ")
       });
-      await response.arrayBuffer();
-      expect(response.status).toBe(step.status);
+      const { shareId } = await uploadEncryptedFixture(server);
+      const { shareId: expiringShareId } = await uploadEncryptedFixture(server, apiKey, {
+        "x-webblackbox-share-ttl-ms": String(MIN_SHARE_TTL_MS)
+      });
+      const expiresBy = Date.now() + MIN_SHARE_TTL_MS;
+      const assertAuditedBeforeResponse = async (step: AuditedRequestStep): Promise<void> => {
+        const response = await fetch(`${server.baseUrl}${step.path}`, {
+          method: step.method ?? "GET",
+          headers: { "x-webblackbox-api-key": apiKey }
+        });
+        await response.arrayBuffer();
+        expect(response.status).toBe(step.status);
 
-      const auditEvents = await readAuditEvents(server);
-      expect(auditEvents.at(-1)).toMatchObject({ action: step.action, outcome: step.outcome });
-    };
-    const steps: AuditedRequestStep[] = [
-      { path: `/api/share/${shareId}/meta`, status: 200, action: "metadata", outcome: "ok" },
-      { path: `/share/${shareId}`, status: 200, action: "page", outcome: "ok" },
-      { path: `/api/share/${shareId}/archive`, status: 200, action: "download", outcome: "ok" },
-      {
-        path: `/api/share/${shareId}/revoke`,
-        method: "POST",
-        status: 200,
-        action: "revoke",
-        outcome: "ok"
-      },
-      {
-        path: `/api/share/${shareId}/archive`,
+        const auditEvents = await readAuditEvents(server);
+        expect(auditEvents.at(-1)).toMatchObject({ action: step.action, outcome: step.outcome });
+      };
+      const steps: AuditedRequestStep[] = [
+        { path: `/api/share/${shareId}/meta`, status: 200, action: "metadata", outcome: "ok" },
+        { path: `/share/${shareId}`, status: 200, action: "page", outcome: "ok" },
+        { path: `/api/share/${shareId}/archive`, status: 200, action: "download", outcome: "ok" },
+        {
+          path: `/api/share/${shareId}/revoke`,
+          method: "POST",
+          status: 200,
+          action: "revoke",
+          outcome: "ok"
+        },
+        {
+          path: `/api/share/${shareId}/archive`,
+          status: 410,
+          action: "download",
+          outcome: "revoked"
+        },
+        {
+          path: `/api/share/${"0".repeat(32)}/meta`,
+          status: 404,
+          action: "metadata",
+          outcome: "not-found"
+        }
+      ];
+
+      for (const step of steps) {
+        await assertAuditedBeforeResponse(step);
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(0, expiresBy - Date.now() + 100))
+      );
+      await assertAuditedBeforeResponse({
+        path: `/api/share/${expiringShareId}/archive`,
         status: 410,
         action: "download",
-        outcome: "revoked"
-      },
-      {
-        path: `/api/share/${"0".repeat(32)}/meta`,
-        status: 404,
-        action: "metadata",
-        outcome: "not-found"
-      }
-    ];
-
-    for (const step of steps) {
-      await assertAuditedBeforeResponse(step);
+        outcome: "expired"
+      });
     }
-
-    await new Promise((resolve) => setTimeout(resolve, Math.max(0, expiresBy - Date.now() + 100)));
-    await assertAuditedBeforeResponse({
-      path: `/api/share/${expiringShareId}/archive`,
-      status: 410,
-      action: "download",
-      outcome: "expired"
-    });
-  });
+  );
 
   it("enforces scoped API keys", async () => {
     const uploadKey = "upload-scope-key";

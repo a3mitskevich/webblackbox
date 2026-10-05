@@ -1004,7 +1004,10 @@ describe("LiteCaptureAgent", () => {
         summaryMode: "pressure",
         reason: "pressure-recovery"
       });
-      expect(observe).toHaveBeenCalledTimes(2);
+      // DOM mutation observes only; the password-reveal watcher observes `type` once at start.
+      expect(observe.mock.calls.filter(([, options]) => options?.childList === true)).toHaveLength(
+        2
+      );
 
       agent.dispose();
     } finally {
@@ -1088,7 +1091,10 @@ describe("LiteCaptureAgent", () => {
         summaryMode: "pressure",
         reason: "pressure-recovery"
       });
-      expect(observe).toHaveBeenCalledTimes(2);
+      // DOM mutation observes only; the password-reveal watcher observes `type` once at start.
+      expect(observe.mock.calls.filter(([, options]) => options?.childList === true)).toHaveLength(
+        2
+      );
 
       agent.dispose();
     } finally {
@@ -1194,6 +1200,38 @@ describe("LiteCaptureAgent", () => {
     });
     expect(inputEvent?.payload).not.toHaveProperty("value");
     expect(JSON.stringify(inputEvent)).not.toContain("customer-secret-token");
+
+    agent.dispose();
+  });
+
+  it("records raw input values when the profile allows them, never for passwords", () => {
+    const { agent, emitBatch } = createAgent({
+      capturePolicy: {
+        ...DEFAULT_CAPTURE_POLICY,
+        categories: { ...DEFAULT_CAPTURE_POLICY.categories, inputs: "allow" }
+      }
+    });
+    document.body.innerHTML =
+      '<input id="city" name="city" /><input id="pw" type="password" name="pw" />';
+    const city = document.getElementById("city") as HTMLInputElement;
+    const password = document.getElementById("pw") as HTMLInputElement;
+
+    city.value = "Minsk";
+    city.dispatchEvent(new Event("input", { bubbles: true }));
+    password.value = "hunter2";
+    password.dispatchEvent(new Event("input", { bubbles: true }));
+    agent.flush();
+
+    const inputEvents = emitBatch.mock.calls
+      .flatMap((call) => {
+        const [batch] = call as [Array<{ rawType?: string; payload?: Record<string, unknown> }>];
+        return batch;
+      })
+      .filter((entry) => entry.rawType === "input");
+
+    expect(inputEvents.map((entry) => entry.payload?.value)).toEqual(["Minsk", undefined]);
+    expect(inputEvents[1]?.payload).toMatchObject({ valueRedacted: true, length: 7 });
+    expect(JSON.stringify(inputEvents)).not.toContain("hunter2");
 
     agent.dispose();
   });
@@ -1309,6 +1347,32 @@ describe("LiteCaptureAgent", () => {
       idToken: expect.stringMatching(/^t_[a-z0-9]+$/)
     });
     expect(JSON.stringify(clickEvent?.payload?.target)).not.toContain("target");
+
+    agent.dispose();
+  });
+
+  it("records selector tokens as-is when content masking is off", async () => {
+    const { agent, emitBatch } = createAgent({
+      capturePolicy: {
+        ...DEFAULT_CAPTURE_POLICY,
+        redaction: { ...DEFAULT_CAPTURE_POLICY.redaction, contentRedaction: false }
+      }
+    });
+
+    clickTarget();
+    agent.flush();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const clickEvent = emitBatch.mock.calls
+      .flatMap(
+        (call) => (call as [Array<{ rawType?: string; payload?: Record<string, unknown> }>])[0]
+      )
+      .find((entry) => entry.rawType === "click");
+
+    expect(clickEvent?.payload?.target).toMatchObject({
+      selector: "button[id:target]",
+      idToken: "target"
+    });
 
     agent.dispose();
   });
@@ -1516,5 +1580,96 @@ describe("LiteCaptureAgent", () => {
     } finally {
       globalThis.MutationObserver = OriginalMutationObserver;
     }
+  });
+});
+
+describe("profile-driven page capture", () => {
+  type EmittedEvent = { rawType: string; payload: Record<string, unknown> };
+
+  function emittedEvents(emitBatch: ReturnType<typeof vi.fn>): EmittedEvent[] {
+    return emitBatch.mock.calls.flatMap(([batch]) => batch as EmittedEvent[]);
+  }
+
+  function withCategories(categories: Partial<CapturePolicy["categories"]>): CapturePolicy {
+    return {
+      ...DEFAULT_CAPTURE_POLICY,
+      categories: { ...DEFAULT_CAPTURE_POLICY.categories, ...categories }
+    };
+  }
+
+  function markerEvents(mode: "lite" | "full", capturePolicy: CapturePolicy): EmittedEvent[] {
+    const { agent, emitBatch } = createAgent({ mode, capturePolicy });
+
+    agent.emitMarker("profile test");
+    agent.flush();
+    agent.dispose();
+    return emittedEvents(emitBatch);
+  }
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+    localStorage.clear();
+  });
+
+  it("records the masked raw DOM under dom: allow in both transports", () => {
+    document.body.innerHTML = '<h1>Visible order text</h1><p class="secret">hidden-secret</p>';
+
+    for (const mode of ["lite", "full"] as const) {
+      const snapshot = markerEvents(mode, withCategories({ dom: "allow" })).find(
+        (event) => event.rawType === "snapshot"
+      );
+
+      expect(snapshot?.payload.summaryOnly, mode).toBe(false);
+      expect(snapshot?.payload.html, mode).toContain("Visible order text");
+      expect(snapshot?.payload.html, mode).not.toContain("hidden-secret");
+    }
+  });
+
+  it("keeps the summary in lite and records no page DOM in full mode by default", () => {
+    document.body.innerHTML = "<h1>Visible order text</h1>";
+
+    const lite = markerEvents("lite", DEFAULT_CAPTURE_POLICY).find(
+      (event) => event.rawType === "snapshot"
+    );
+
+    expect(lite?.payload.summaryOnly).toBe(true);
+    expect(lite?.payload.html).not.toContain("Visible order text");
+    expect(
+      markerEvents("full", DEFAULT_CAPTURE_POLICY).some(
+        (event) => event.rawType === "snapshot" || event.rawType === "localStorageSnapshot"
+      )
+    ).toBe(false);
+  });
+
+  it("never lists a cookie without a name as a cookie name", () => {
+    document.cookie = "NAMELESS-SECRET-VALUE";
+    document.cookie = "theme=dark";
+
+    const snapshot = markerEvents("lite", withCategories({ cookies: "names-only" })).find(
+      (event) => event.rawType === "cookieSnapshot"
+    )?.payload;
+
+    expect(snapshot?.names).toEqual(["theme"]);
+    expect(JSON.stringify(snapshot)).not.toContain("NAMELESS-SECRET-VALUE");
+    document.cookie = "theme=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
+
+  it("lists localStorage per profile level, in full mode too", () => {
+    localStorage.setItem("theme", "dark");
+
+    const snapshot = (mode: "lite" | "full", storage: CapturePolicy["categories"]["storage"]) =>
+      markerEvents(mode, withCategories({ storage })).find(
+        (event) => event.rawType === "localStorageSnapshot"
+      )?.payload;
+
+    expect(snapshot("lite", "counts-only")).toMatchObject({ count: 1, mode: "counts-only" });
+    expect(snapshot("lite", "counts-only")).not.toHaveProperty("keys");
+    expect(snapshot("lite", "names-only")).toMatchObject({ mode: "names-only", keys: ["theme"] });
+    expect(snapshot("lite", "lengths-only")).toMatchObject({ mode: "lengths-only", lengths: [4] });
+    expect(snapshot("full", "allow")).toMatchObject({
+      mode: "allow",
+      redacted: false,
+      entries: [{ key: "theme", value: "dark", valueLength: 4 }]
+    });
   });
 });

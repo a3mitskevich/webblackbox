@@ -1,3 +1,5 @@
+import { isValidExportPassphrase } from "@webblackbox/protocol/archive-encryption";
+
 import { getChromeApi } from "../shared/chrome-api.js";
 import { createExtensionI18n } from "../shared/i18n.js";
 import {
@@ -17,6 +19,10 @@ const { locale, t, formatMode, formatRelativeTime, formatDuration, formatByteSiz
 const root = document.getElementById("sessions-root");
 
 let sessions: SessionListItem[] = [];
+/** Exports started on this page, by sid: their failures are reported here. */
+const pendingExports = new Set<string>();
+/** Privacy scanner findings of the last export: shown on the page, never blocking. */
+let exportNotice: string | null = null;
 
 if (root) {
   render(root);
@@ -30,10 +36,40 @@ if (root) {
       return;
     }
 
-    if (typed.kind === "sw.export-status" && typed.ok && typed.privacyWarning) {
-      window.alert(formatExportPrivacyWarning(typed.privacyWarning));
+    if (typed.kind === "sw.export-status") {
+      handleExportStatus(typed);
     }
   });
+}
+
+function handleExportStatus(
+  status: Extract<ExtensionOutboundMessage, { kind: "sw.export-status" }>
+) {
+  const pending = pendingExports.has(status.sid);
+
+  if (status.ok) {
+    pendingExports.delete(status.sid);
+
+    if (status.privacyWarning && root) {
+      exportNotice = formatExportPrivacyWarning(status.privacyWarning);
+      render(root);
+    }
+
+    return;
+  }
+
+  // Failures of exports started elsewhere (e.g. the popup) are reported there.
+  if (!pending) {
+    return;
+  }
+
+  pendingExports.delete(status.sid);
+  window.alert(t("popupExportFailed", { error: status.error || t("unknownError") }));
+}
+
+function requestExport(sid: string, passphrase: string): void {
+  pendingExports.add(sid);
+  postUiMessage({ kind: "ui.export", sid, passphrase, saveAs: false });
 }
 
 function postUiMessage(message: ExtensionInboundMessage): void {
@@ -82,6 +118,14 @@ function render(container: HTMLElement): void {
   subtitle.className = "wb-sessions-subtitle";
   subtitle.textContent = t("sessionsSubtitle");
   section.append(subtitle);
+
+  if (exportNotice) {
+    const notice = document.createElement("p");
+    notice.className = "wb-sessions-notice";
+    notice.setAttribute("role", "status");
+    notice.textContent = exportNotice;
+    section.append(notice);
+  }
 
   const list = document.createElement("div");
   list.className = "wb-sessions-list";
@@ -335,12 +379,7 @@ function bindActions(container: HTMLElement): void {
         return;
       }
 
-      postUiMessage({
-        kind: "ui.export",
-        sid,
-        ...(hasDialogPassphrase(passphrase) ? { passphrase } : {}),
-        saveAs: false
-      });
+      requestExport(sid, passphrase);
     });
   });
 
@@ -472,9 +511,14 @@ function openPassphraseDialog(sid: string): Promise<string | null> {
     };
 
     const submitPassphrase = (): void => {
-      const passphrase = input.value;
+      // Archives are always encrypted: no export without a passphrase of the minimum length.
+      if (!isValidExportPassphrase(input.value)) {
+        input.setCustomValidity(t("popupPassphraseRequired"));
+        input.reportValidity();
+        return;
+      }
 
-      finish(passphrase.trim().length > 0 ? passphrase : "");
+      finish(input.value);
     };
 
     const onKeydown = (event: KeyboardEvent): void => {
@@ -509,10 +553,6 @@ function openPassphraseDialog(sid: string): Promise<string | null> {
     document.body.append(overlay);
     input.focus();
   });
-}
-
-function hasDialogPassphrase(passphrase: string): boolean {
-  return passphrase.length > 0;
 }
 
 function openConfirmDialog(message: string): Promise<boolean> {

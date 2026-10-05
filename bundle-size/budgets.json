@@ -2,18 +2,20 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 76000,
-      "maxGzipBytes": 17600
+      "maxBytes": 78300,
+      "maxGzipBytes": 18400,
+      "note": "Measured 76,018 / 17,842 B (+3%): full console detail, the CDP cache tracker and byte-capped stream bodies (#9) plus per-profile redaction rules (#10)."
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 80000,
+      "maxBytes": 79000,
       "maxGzipBytes": 18000
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 95000,
-      "maxGzipBytes": 23000
+      "maxBytes": 103500,
+      "maxGzipBytes": 24900,
+      "note": "Measured 100,424 / 24,105 B (+3%): #7's bounded, validated archive loading and #9's event ordering plus archive format 2 with the encrypted manifest (#10)."
     },
     {
       "path": "apps/player/build/main.js",
@@ -21,10 +23,16 @@
       "maxGzipBytes": 330000
     },
     {
+      "path": "apps/extension/build/content.js",
+      "maxBytes": 53400,
+      "maxGzipBytes": 14100,
+      "note": "Measured 51,816 / 13,675 B (+3%): content.js bundles the shared UI dictionary, which grew with the profile-change and profile-deletion strings; #14 moves the dictionary out of the content script."
+    },
+    {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 825000,
-      "maxGzipBytes": 150000,
-      "note": "808,875 B raw with the CDP Network allowlist and inline body gate (#9) on top of the service worker recovery (#8); original budget 800,000."
+      "maxBytes": 919600,
+      "maxGzipBytes": 164800,
+      "note": "Measured 892,782 / 159,934 B (+3%): the service worker recovery (#8) and the CDP Network allowlist (#9) plus recording profiles, redaction rules and the linear regex engine (#10)."
     }
   ]
 }

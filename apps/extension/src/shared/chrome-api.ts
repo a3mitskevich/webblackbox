@@ -195,9 +195,9 @@ export type ChromeApi = {
       target: { tabId: number; allFrames?: boolean };
       world?: "MAIN" | "ISOLATED";
       files?: string[];
-      func?: (...args: string[]) => void;
-      args?: string[];
-    }): Promise<unknown>;
+      func?: (...args: never[]) => unknown;
+      args?: unknown[];
+    }): Promise<Array<{ result?: unknown }> | void>;
   };
   storage?: {
     local: {
@@ -210,6 +210,9 @@ export type ChromeApi = {
       get(
         keys?: string[] | string | Record<string, unknown> | null
       ): Promise<Record<string, unknown>>;
+    };
+    onChanged?: {
+      addListener(callback: (changes: Record<string, unknown>, areaName: string) => void): void;
     };
   };
   tabs?: {
@@ -225,7 +228,9 @@ export type ChromeApi = {
       active?: boolean;
       url?: string;
       title?: string;
+      incognito?: boolean;
       lastAccessed?: number;
+      status?: "unloaded" | "loading" | "complete";
     }>;
     query(queryInfo: {
       active?: boolean;

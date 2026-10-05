@@ -94,6 +94,16 @@ Sensitive data is redacted before it enters the pipeline:
 - DOM elements matching CSS selectors like `input[type='password']` are blocked
 - Optional HMAC-SHA-256 hashing with a per-session, never-exported key preserves correlation within a session without exposing raw values
 
+### Recording Profiles
+
+The extension resolves a recording profile before it builds the recorder config:
+
+- **Storage**: `chrome.storage.local["webblackbox.profiles"]` (schema v2, Zod-validated row by row). Without it, the v1 `webblackbox.options` record is migrated on read into an editable `Default` profile that reproduces the pre-profile config. Read-only presets (`Lite`, `Full`, `QA`, `Full capture`) live in code; the store lists the ones the user deleted (`removedRecommendedProfileIds`, also covering `Default`). Managed policy can add read-only, undeletable `managed:*` profiles and rules.
+- **Selection**: explicit popup choice → highest-priority matching site rule (hosts with subdomains/ports, path globs, query, title regex, meta tag, selector presence, incognito) → store default → first profile left (none: Start is refused and the popup asks for a profile). DOM-derived signals are probed with `chrome.scripting` only when a rule needs them. Title regexes run in a linear-time matcher (`shared/profiles/title-regex.ts`, no backreferences or lookarounds) and path globs in a linear glob matcher, so no rule can stall the service worker.
+- **Application**: the profile is rendered through the existing mode boundary into `RecorderConfig` (categories, redaction, unmask selectors, sampling, body MIME/size/URL filters, visual capture), then enterprise caps apply. The chosen profile runs on every host; categories the caps lowered are recorded as `profile.enterpriseCapped`.
+- **Navigation**: rules are re-evaluated on URL change, on page load and when the profiles store, the v1 options or the managed policy change (only the latest request runs). While the tab is still loading, a check waits for the page-load one if any enabled rule reads the title, meta tags or selectors, which are not there yet. A session records with one profile: when the effective profile differs from the one it started with (`sw/profile-change.ts`: another profile picked by the rules, the profile deleted or edited, the enterprise policy changed), the service worker writes a `meta.config` with `profileCancel` (reason, trigger, started and next profile) and stops the session. The data stays for export or deletion; the session list carries a notice for the popup and the badge shows `!` until the popup dismisses it. A different rule that picks the same profile with the same settings is no change. Every `meta.config` carries `profile` (id, name, source, rule, enterprise caps), which the Player shows; older archives may carry `downgradedFrom`, which the Player flags.
+- **Export**: every export is encrypted with a passphrase of at least 8 characters, whatever the profile.
+
 ### 5. Separation of Concerns
 
 Each package has a single responsibility:
@@ -199,7 +209,7 @@ The export process creates a `.webblackbox` ZIP file:
 3. Blobs are included
 4. Manifest is generated with metadata and stats
 5. Integrity hashes are computed for all files
-6. Optional AES-GCM encryption is applied
+6. AES-GCM encryption is applied to every file but the plaintext envelope `manifest.json` (format version and encryption parameters); a passphrase of at least 8 characters is required
 7. Everything is packaged into a ZIP archive
 
 ## Playback Architecture
@@ -207,8 +217,8 @@ The export process creates a `.webblackbox` ZIP file:
 ### Archive Loading
 
 1. ZIP is extracted
-2. Manifest is parsed and validated
-3. If encrypted, encryption metadata is extracted
+2. The envelope manifest is parsed; with a passphrase, the encrypted full manifest (`meta/manifest.json`) is decrypted and merged (format 1 archives keep the full manifest in `manifest.json`)
+3. Encryption metadata is extracted
 4. Chunks are decrypted (if needed) and decoded
 5. Indexes are loaded
 6. Blobs are kept in the archive for on-demand retrieval
@@ -281,9 +291,8 @@ Page World          Extension World         Background
 ### Data Protection
 
 - Sensitive headers are redacted before entering the pipeline
-- Body content is pattern-matched and scrubbed
-- DOM elements with sensitive selectors are masked
-- Archives can be encrypted with AES-GCM
+- Content masking follows each profile's redaction rules (best effort, no guarantee): body keys and value patterns, blocked selectors, header/cookie/query/storage rules, and the optional built-in heuristics; `contentRedaction: false` records content as captured
+- Every archive is encrypted with AES-GCM
 
 ### Encryption Details
 
@@ -291,7 +300,7 @@ Page World          Extension World         Background
 - **Key Derivation**: PBKDF2 with SHA-256, 600,000 iterations for new exports (readers take the count from the manifest, so older 120,000-iteration archives still open; counts outside 10,000–10,000,000 are rejected)
 - **Salt**: Random 16-byte salt per archive
 - **IV**: Random 12-byte IV per file within the archive
-- **Scope**: Event chunks, indexes, and blobs; manifest remains readable
+- **Scope**: Event chunks, indexes, and blobs; manifest remains readable and therefore holds only the sanitized origin (no page title)
 
 ### Permission Model
 
