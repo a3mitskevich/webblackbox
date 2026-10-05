@@ -149,7 +149,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
   let bodyWindowStartedAt = Date.now();
   let bodyWindowCount = 0;
   let bodyWindowBytes = 0;
-  let emitFlushTimer = 0;
+  let isFlushScheduled = false;
   let captureActive = options.active !== false;
   let bridgeNonce: string | null = null;
   let capturePolicy = options.capturePolicy ?? DEFAULT_CAPTURE_POLICY;
@@ -283,22 +283,21 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
     });
   }
 
+  /**
+   * Posts the batch at the end of the current task. A timer would wait for seconds in a hidden
+   * tab, where Chrome throttles them, and Stop then lost every event still waiting.
+   */
   function schedulePendingCaptureFlush(): void {
-    if (emitFlushTimer > 0) {
+    if (isFlushScheduled) {
       return;
     }
 
-    emitFlushTimer = window.setTimeout(() => {
-      emitFlushTimer = 0;
-      flushPendingCaptureEvents();
-    }, 0);
+    isFlushScheduled = true;
+    queueMicrotask(flushPendingCaptureEvents);
   }
 
   function flushPendingCaptureEvents(): void {
-    if (emitFlushTimer > 0) {
-      clearTimeout(emitFlushTimer);
-      emitFlushTimer = 0;
-    }
+    isFlushScheduled = false;
 
     if (pendingCaptureEvents.length === 0) {
       return;
