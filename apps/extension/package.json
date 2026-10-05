@@ -16,6 +16,7 @@
     "e2e:fullchain:lite:reload": "WB_E2E_MODE=lite WB_E2E_RELOAD_AFTER_START=1 node scripts/e2e-fullchain-demo.mjs",
     "e2e:fullchain:full": "WB_E2E_MODE=full node scripts/e2e-fullchain-demo.mjs",
     "e2e:fullchain:full:defaults": "WB_E2E_MODE=full WB_E2E_CONFIGURE_OPTIONS=0 node scripts/e2e-fullchain-demo.mjs",
+    "e2e:full:reload": "node scripts/e2e-full-start-reload.mjs",
     "e2e:sw-restart": "node scripts/e2e-sw-restart.mjs",
     "e2e:profile:qa": "node scripts/e2e-profile-qa.mjs",
     "e2e:profile:full-capture": "node scripts/e2e-profile-full-capture.mjs",

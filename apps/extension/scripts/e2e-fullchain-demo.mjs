@@ -1842,35 +1842,39 @@ async function startSessionFromPopup(popupClient, mode, expectedUrl, useUiAction
         }
 
         button.click();
-        if (${JSON.stringify(mode)} === 'lite') {
-          const reloadButton = await new Promise((resolve) => {
-            const startedAt = Date.now();
-            const tick = () => {
-              const candidate = document.querySelector("[data-action='start-lite-reload']");
+        // Start asks whether to reload the page first, in both engines. Lite keeps its reload
+        // (page startup); Full starts on the loaded page, as the run's later checks expect.
+        const choiceSelector =
+          ${JSON.stringify(mode)} === 'lite'
+            ? "[data-action='start-reload']"
+            : "[data-action='start-direct']";
+        const choiceButton = await new Promise((resolve) => {
+          const startedAt = Date.now();
+          const tick = () => {
+            const candidate = document.querySelector(choiceSelector);
 
-              if (candidate instanceof HTMLButtonElement || Date.now() - startedAt > 5000) {
-                resolve(candidate);
-                return;
-              }
+            if (candidate instanceof HTMLButtonElement || Date.now() - startedAt > 5000) {
+              resolve(candidate);
+              return;
+            }
 
-              setTimeout(tick, 50);
-            };
+            setTimeout(tick, 50);
+          };
 
-            tick();
-          });
+          tick();
+        });
 
-          if (!(reloadButton instanceof HTMLButtonElement)) {
-            return {
-              ok: false,
-              reason: 'lite-reload-confirm-not-found',
-              selector,
-              tabLine,
-              statusLine
-            };
-          }
-
-          reloadButton.click();
+        if (!(choiceButton instanceof HTMLButtonElement)) {
+          return {
+            ok: false,
+            reason: 'start-reload-question-not-found',
+            selector: choiceSelector,
+            tabLine,
+            statusLine
+          };
         }
+
+        choiceButton.click();
         return {
           ok: true,
           mode: ${JSON.stringify(mode)},
