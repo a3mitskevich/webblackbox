@@ -202,7 +202,11 @@ async function recordAndStop(popupClient, pageClient, pageUrl) {
 async function exportSession(popupClient, sid) {
   return popupClient.evaluate(`
     (async () => {
-      const response = await chrome.runtime.sendMessage({ kind: 'ui.export', sid: ${JSON.stringify(sid)} });
+      const response = await chrome.runtime.sendMessage({
+        kind: 'ui.export',
+        sid: ${JSON.stringify(sid)},
+        passphrase: 'webblackbox-e2e-passphrase'
+      });
       return { ok: response?.ok !== false, response };
     })()
   `);
