@@ -528,11 +528,13 @@ function isRedactedByPolicy(
         : policy.categories.network === "metadata";
     case "storage":
       if (eventType.startsWith("storage.cookie.")) {
-        return policy.categories.cookies !== "names-only";
+        return policy.categories.cookies !== "names-only" && policy.categories.cookies !== "allow";
       }
 
       if (eventType.startsWith("storage.idb.")) {
-        return policy.categories.indexedDb !== "names-only";
+        return (
+          policy.categories.indexedDb !== "names-only" && policy.categories.indexedDb !== "allow"
+        );
       }
 
       return policy.categories.storage !== "allow";
