@@ -2,8 +2,9 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 80000,
-      "maxGzipBytes": 19000
+      "maxBytes": 82500,
+      "maxGzipBytes": 19400,
+      "note": "Measured 80,056 / 18,786 B (+3%): body skip records, browser-internal URL filtering and console object previews (#21)."
     },
     {
       "path": "packages/pipeline/dist/index.js",
