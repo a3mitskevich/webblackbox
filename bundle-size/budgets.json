@@ -13,9 +13,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 94700,
-      "maxGzipBytes": 22700,
-      "note": "Measured 91,931 / 21,992 B (+3%): profile cancellation reading (#10) plus parallel tabs and their bug-report section (#16)."
+      "maxBytes": 103500,
+      "maxGzipBytes": 24900,
+      "note": "Measured 100,424 / 24,105 B (+3%): #7's bounded, validated archive loading and #9's event ordering plus archive format 2 with the encrypted manifest (#10)."
     },
     {
       "path": "apps/player/build/main.js",
@@ -30,9 +30,9 @@
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 909900,
-      "maxGzipBytes": 163200,
-      "note": "Measured 883,321 / 158,373 B (+3%): recording profiles, profile cancellation, redaction rules, the linear regex engine (#10) and the parallel-tabs tracker (#16) run in the service worker."
+      "maxBytes": 919600,
+      "maxGzipBytes": 164800,
+      "note": "Measured 892,782 / 159,934 B (+3%): the service worker recovery (#8) and the CDP Network allowlist (#9) plus recording profiles, redaction rules and the linear regex engine (#10)."
     }
   ]
 }

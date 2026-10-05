@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import {
+  ARCHIVE_KDF_MAX_ITERATIONS,
+  ARCHIVE_KDF_MIN_ITERATIONS,
   CAPTURE_MODES,
   CHUNK_CODECS,
   EVENT_LEVELS,
@@ -188,7 +190,8 @@ export const capturePolicySchema = z
         inputs: z.enum(["none", "length-only", "masked", "allow"]),
         dom: z.enum(["off", "wireframe", "masked", "allow"]),
         screenshots: z.enum(["off", "masked", "allow"]),
-        screenRecordings: z.enum(["off", "allow"]),
+        // Added in v0.6.0; v0.5.0 policies (stored options, archived privacy manifests) lack it.
+        screenRecordings: z.enum(["off", "allow"]).default("off"),
         console: z.enum(["off", "metadata", "sanitized", "allow"]),
         network: z.enum(["metadata", "headers-allowlist", "body-allowlist"]),
         storage: z.enum(["off", "counts-only", "names-only", "lengths-only", "allow"]),
@@ -292,7 +295,8 @@ export const exportStatsSchema = z
     eventCount: z.number().int().nonnegative(),
     chunkCount: z.number().int().nonnegative(),
     blobCount: z.number().int().nonnegative(),
-    durationMs: z.number().int().nonnegative()
+    // Derived from wall-clock event timestamps, which are fractional (timeOrigin + now()).
+    durationMs: z.number().finite().nonnegative()
   })
   .strict();
 
@@ -303,7 +307,11 @@ export const exportEncryptionSchema = z
       .object({
         name: z.literal("PBKDF2"),
         hash: z.literal("SHA-256"),
-        iterations: z.number().int().positive(),
+        iterations: z
+          .number()
+          .int()
+          .min(ARCHIVE_KDF_MIN_ITERATIONS)
+          .max(ARCHIVE_KDF_MAX_ITERATIONS),
         saltBase64: z.string().min(1)
       })
       .strict(),

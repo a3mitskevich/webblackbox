@@ -27,7 +27,7 @@ export function generatePlaywrightScriptFromEvents(
   const lines = [
     "import { test } from '@playwright/test';",
     "",
-    `test('${name}', async ({ browser }) => {`,
+    `test(${JSON.stringify(name)}, async ({ browser }) => {`,
     "  const context = await browser.newContext();",
     includeHarReplay
       ? "  await context.routeFromHAR('./session.har', { notFound: 'fallback' });"
@@ -73,7 +73,7 @@ function toPlaywrightLines(event: WebBlackboxEvent): string[] {
     }
 
     if (!value || value === "[MASKED]") {
-      return [`  // input on ${selector} was masked in capture`];
+      return [`  // input on ${toCommentText(selector)} was masked in capture`];
     }
 
     return [`  await page.fill(${JSON.stringify(selector)}, ${JSON.stringify(value)});`];
@@ -91,7 +91,8 @@ function toPlaywrightLines(event: WebBlackboxEvent): string[] {
     const payload = asRecord(event.data);
     const key = asString(payload?.key);
 
-    if (!key) {
+    // Redacted keystrokes carry no replayable key.
+    if (!key || payload?.keyRedacted === true) {
       return [];
     }
 
@@ -115,4 +116,9 @@ function readSelector(event: WebBlackboxEvent): string | null {
   }
 
   return selector;
+}
+
+/** Keeps archive-controlled text inside a single-line `//` comment of generated code. */
+function toCommentText(value: string): string {
+  return value.replace(/[\r\n\u2028\u2029]+/g, " ");
 }

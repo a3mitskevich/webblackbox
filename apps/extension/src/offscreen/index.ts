@@ -7,7 +7,7 @@ import type {
   WebBlackboxEvent
 } from "@webblackbox/protocol";
 
-import { getChromeApi } from "../shared/chrome-api.js";
+import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { createExtensionI18n } from "../shared/i18n.js";
 import { PORT_NAMES } from "../shared/messages.js";
 
@@ -102,7 +102,6 @@ const chromeApi = getChromeApi();
 createExtensionI18n({
   pageTitleKey: "pageTitleOffscreen"
 });
-const port = chromeApi?.runtime?.connect({ name: PORT_NAMES.offscreen });
 const pipelines = new Map<string, FlightRecorderPipeline>();
 const screenRecordings = new Map<string, OffscreenScreenRecordingState>();
 const EXPORT_OBJECT_URL_TTL_MS = 90_000;
@@ -116,6 +115,10 @@ const SCREEN_RECORDING_MIME_CANDIDATES = [
   "video/webm;codecs=vp8",
   "video/webm"
 ];
+const OFFSCREEN_CONNECT_REQUEST_KIND = "sw.offscreen-connect";
+const RECONNECT_BASE_DELAY_MS = 250;
+const RECONNECT_MAX_DELAY_MS = 5_000;
+const RECONNECT_MAX_ATTEMPTS = 8;
 
 const state: OffscreenState = {
   active: false,
@@ -124,10 +127,89 @@ const state: OffscreenState = {
 };
 
 let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+let port: PortLike | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
 
 console.info("[WebBlackbox] offscreen pipeline initialized");
 
-port?.onMessage.addListener((message) => {
+chromeApi?.runtime?.onMessage.addListener((message, sender, sendResponse) => {
+  if (!isOffscreenConnectRequest(message) || sender.tab) {
+    return;
+  }
+
+  connectToServiceWorker();
+  sendResponse({ ok: true });
+});
+
+connectToServiceWorker();
+
+/**
+ * Opens the pipeline port to the service worker. The port dies with the worker
+ * (MV3 terminates idle workers); a restarted worker asks us to reconnect through
+ * `sw.offscreen-connect`, and we reconnect on our own only while capture is live.
+ */
+function connectToServiceWorker(): void {
+  if (port || !chromeApi?.runtime?.connect) {
+    return;
+  }
+
+  clearReconnectTimer();
+
+  const nextPort = chromeApi.runtime.connect({ name: PORT_NAMES.offscreen });
+  port = nextPort;
+  nextPort.onMessage.addListener(handleServiceWorkerMessage);
+  nextPort.onDisconnect.addListener(() => {
+    if (port !== nextPort) {
+      return;
+    }
+
+    port = null;
+    stopServiceWorkerKeepalive();
+    scheduleReconnectWhileBusy();
+  });
+
+  postToSw({
+    kind: "offscreen.ready",
+    t: Date.now()
+  });
+}
+
+function scheduleReconnectWhileBusy(): void {
+  // Reconnecting wakes the worker, so only do it when capture would otherwise be lost.
+  if (screenRecordings.size === 0 && state.activeSessions === 0) {
+    reconnectAttempts = 0;
+    return;
+  }
+
+  if (reconnectTimer !== null || reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+    return;
+  }
+
+  const delay = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** reconnectAttempts);
+  reconnectAttempts += 1;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectToServiceWorker();
+  }, delay);
+}
+
+function clearReconnectTimer(): void {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function isOffscreenConnectRequest(message: unknown): boolean {
+  return (
+    message !== null &&
+    typeof message === "object" &&
+    (message as { kind?: unknown }).kind === OFFSCREEN_CONNECT_REQUEST_KIND
+  );
+}
+
+function handleServiceWorkerMessage(message: unknown): void {
   if (message && typeof message === "object") {
     const kind = (message as { kind?: unknown }).kind;
 
@@ -145,6 +227,7 @@ port?.onMessage.addListener((message) => {
       state.activeSessions =
         typeof activeSessions === "number" && Number.isFinite(activeSessions) ? activeSessions : 0;
       state.updatedAt = typeof updatedAt === "number" ? updatedAt : Date.now();
+      reconnectAttempts = 0;
       syncServiceWorkerKeepalive();
 
       console.info("[WebBlackbox] offscreen pipeline status", {
@@ -159,16 +242,7 @@ port?.onMessage.addListener((message) => {
       void handlePipelineRequest(message as OffscreenPipelineRequest);
     }
   }
-});
-
-port?.onDisconnect?.addListener(() => {
-  stopServiceWorkerKeepalive();
-});
-
-postToSw({
-  kind: "offscreen.ready",
-  t: Date.now()
-});
+}
 
 async function handlePipelineRequest(message: OffscreenPipelineRequest): Promise<void> {
   try {

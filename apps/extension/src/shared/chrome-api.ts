@@ -2,14 +2,18 @@ export type PortMessageHandler = (message: unknown) => void;
 
 export type PortDisconnectHandler = () => void;
 
+export type RuntimeMessageSender = {
+  id?: string;
+  url?: string;
+  frameId?: number;
+  tab?: {
+    id?: number;
+  };
+};
+
 export type PortLike = {
   name: string;
-  sender?: {
-    frameId?: number;
-    tab?: {
-      id?: number;
-    };
-  };
+  sender?: RuntimeMessageSender;
   onMessage: {
     addListener(handler: PortMessageHandler): void;
     removeListener(handler: PortMessageHandler): void;
@@ -109,6 +113,7 @@ export type ChromeApi = {
     getMediaStreamId(options?: { targetTabId?: number; consumerTabId?: number }): Promise<string>;
   };
   runtime?: {
+    id?: string;
     connect(connectInfo: { name: string }): PortLike;
     getManifest?: () => {
       version?: string;
@@ -131,7 +136,7 @@ export type ChromeApi = {
       addListener(
         callback: (
           message: unknown,
-          sender: { tab?: { id?: number }; frameId?: number },
+          sender: RuntimeMessageSender,
           sendResponse: (response: unknown) => void
         ) => boolean | void
       ): void;
