@@ -83,6 +83,12 @@ export async function readTabPageContext(
   };
 }
 
+/** The tab is still loading its document (title, meta tags and DOM may not be there yet). */
+export async function isTabLoading(chromeApi: ChromeApi | null, tabId: number): Promise<boolean> {
+  const tab = await chromeApi?.tabs?.get(tabId).catch(() => undefined);
+  return tab?.status === "loading";
+}
+
 /** Popup preview: every selectable profile plus what Start would pick for the tab. */
 export function buildProfilePreview(
   state: ProfilesState,

@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
 // E2E: a site rule picks the QA profile on a matching host and the exported archive contains
-// console text and JSON response bodies. Navigating to a host where the rules pick another profile
-// (Default) stops the recording: the archive records why, the badge shows "!", the popup explains
-// it, and nothing after the change is recorded. Exporting without a passphrase is refused (every
-// archive is encrypted).
+// console text and JSON response bodies. The rule also reads the DOM: a navigation on the same
+// host to a page that is slow to load keeps recording (the check waits for the loaded page).
+// Navigating to a host where the rules pick another profile (Default) stops the recording: the
+// archive records why, the badge shows "!", the popup explains it, and nothing after the change is
+// recorded. Exporting without a passphrase is refused (every archive is encrypted). A second
+// recording is stopped as soon as its profile is deleted, without any navigation.
 
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -31,8 +33,10 @@ const QA_RULE = {
   profileId: "builtin:qa",
   priority: 10,
   enabled: true,
-  match: { hosts: ["127.0.0.1:*"] }
+  match: { hosts: ["127.0.0.1:*"], selectorPresent: "#qa-app" }
 };
+/** The `?slow=1` page sends `#qa-app` only after this delay (longer than the page probe). */
+const SLOW_PAGE_DELAY_MS = 2_500;
 
 main().catch(async (error) => {
   console.error("Profile QA E2E failed:", error instanceof Error ? error.message : String(error));
@@ -101,6 +105,25 @@ async function main() {
     );
   const sid = (await listSessions()).find((session) => session.active)?.sid;
   assert(typeof sid === "string", "Active session not found", { sid });
+
+  // Same host, a page whose DOM arrives late: the rule cannot match before the page has loaded,
+  // and the recording must go on instead of being cancelled on the half-loaded page.
+  await page.send("Page.navigate", { url: `${pageUrl}?slow=1` });
+  await waitFor(
+    () =>
+      page.evaluate(
+        `(location.search === "?slow=1" && document.readyState === "complete" && typeof window.__runQaScenario === "function") || null`
+      ),
+    15_000,
+    "Navigation to the slow page did not finish"
+  );
+  await sleep(2_500);
+  const afterSlowPage = (await listSessions()).find((session) => session.sid === sid);
+  assert(
+    afterSlowPage?.active === true && !afterSlowPage.profileCancel,
+    "The recording was cancelled while a same-host page was loading",
+    afterSlowPage
+  );
 
   // Same tab, host without a rule: the rules now pick Default, so the recording is cancelled.
   const defaultUrl = `http://localhost:${appPort}/qa/`;
@@ -255,16 +278,61 @@ async function main() {
   console.log(`JSON body: ${jsonBody.slice(0, 200)}`);
   console.log(`Plaintext export refused: ${plaintext.error}`);
   console.log(`Dialogs accepted: ${JSON.stringify(dialogs)}`);
+
+  await assertCancelOnProfileDeletion({ popup, tabId, listSessions });
+
   console.log(`Chrome log: ${harness.chromeLogPath}`);
   console.log("Profile QA E2E passed.");
 
   await harness.cleanup();
 }
 
+/** A recording whose profile is deleted in storage stops at once, with no navigation. */
+async function assertCancelOnProfileDeletion({ popup, tabId, listSessions }) {
+  await popup.evaluate(
+    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "full", visualCapture: "none", profileId: "builtin:qa" })`
+  );
+  const session = await waitFor(
+    async () => (await listSessions()).find((entry) => entry.active) ?? null,
+    25_000,
+    "The second recording did not start"
+  );
+  assert(session.profileName === "QA", "The second recording does not use QA", session);
+  await sleep(1_500);
+
+  await popup.evaluate(`
+    chrome.storage.local.set({
+      "webblackbox.profiles": {
+        schemaVersion: 2,
+        defaultProfileId: "default",
+        profiles: [],
+        rules: [${JSON.stringify(QA_RULE)}],
+        extendedCaptureHosts: [],
+        removedRecommendedProfileIds: ["builtin:qa"]
+      }
+    }).then(() => true)
+  `);
+  const cancelled = await waitFor(
+    async () =>
+      (await listSessions()).find(
+        (entry) => entry.sid === session.sid && !entry.active && entry.profileCancel
+      ) ?? null,
+    10_000,
+    "Deleting the recording's profile did not stop it"
+  );
+  assert(
+    cancelled.profileCancel.reason === "profile-missing" &&
+      cancelled.profileCancel.startedName === "QA",
+    "Unexpected notice after deleting the profile",
+    cancelled.profileCancel
+  );
+  console.log(`Deleted profile: ${JSON.stringify(cancelled.profileCancel)}`);
+}
+
 function startDemoServer() {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>QA demo for alice@example.com</title></head>
-<body><h1>QA demo</h1><input name="password" type="password">
+<body><h1>QA demo</h1><div id="qa-app"></div><input name="password" type="password">
 <script>
   window.__runQaScenario = async (marker) => {
     console.log(marker, { orderId: 42 });
@@ -289,6 +357,16 @@ function startDemoServer() {
         request.resume();
         response.writeHead(200, { "content-type": "application/json" });
         response.end(body);
+        return;
+      }
+
+      if (request.url?.startsWith("/qa/?slow=1")) {
+        // The head (and title) arrive at once, the body with `#qa-app` only after the delay.
+        const split = html.indexOf("<body>");
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.write(html.slice(0, split));
+        const timer = setTimeout(() => response.end(html.slice(split)), SLOW_PAGE_DELAY_MS);
+        response.on("close", () => clearTimeout(timer));
         return;
       }
 

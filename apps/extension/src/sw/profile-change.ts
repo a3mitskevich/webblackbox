@@ -1,11 +1,13 @@
 import type { RecorderConfig } from "@webblackbox/protocol";
 
 import type { ProfileCancelNotice, ProfileCancelReason } from "../shared/messages.js";
+import { PROFILES_STORAGE_KEY, type ProfileRule } from "../shared/profiles/model.js";
 import {
   toArchivedProfileInfo,
   type ArchivedProfileInfo,
   type ProfileSelection
 } from "../shared/profiles/resolve.js";
+import { collectPageSignalRequest } from "../shared/profiles/rules.js";
 
 /** A recording profile as a session runs it. */
 export type SessionProfileSnapshot = {
@@ -16,7 +18,7 @@ export type SessionProfileSnapshot = {
   effectiveConfig: RecorderConfig;
 };
 
-export type ProfileCancelTrigger = "navigation" | "page-loaded";
+export type ProfileCancelTrigger = "navigation" | "page-loaded" | "settings-changed";
 
 /** What `meta.config.profileCancel` records in the archive. */
 export type ProfileCancellation = {
@@ -54,6 +56,43 @@ export function detectProfileChange(input: {
   }
 
   return isSameValue(next.effectiveConfig, started.effectiveConfig) ? null : "enterprise-policy";
+}
+
+/**
+ * Title, meta tags and selectors are only reliable once the page has loaded: while it loads, a
+ * rule that reads them may not match yet, which would look like a profile change. Such a check
+ * waits for the `page-loaded` one. Rules that read only the URL are checked at once.
+ */
+export function shouldDeferProfileCheck(input: {
+  trigger: ProfileCancelTrigger;
+  tabLoading: boolean;
+  rules: readonly ProfileRule[];
+}): boolean {
+  if (input.trigger === "page-loaded" || !input.tabLoading) {
+    return false;
+  }
+
+  const request = collectPageSignalRequest(input.rules);
+  return request.needsTitle || request.metaNames.length > 0 || request.selectors.length > 0;
+}
+
+/**
+ * Storage writes that can change the profile a running recording uses: the profiles store, the
+ * v1 options behind the legacy Default profile, and the managed enterprise policy.
+ */
+export function isProfileSettingsChange(
+  changes: Record<string, unknown>,
+  areaName: string,
+  keys: { legacyOptionsKey: string }
+): boolean {
+  if (areaName === "managed") {
+    return true;
+  }
+
+  return (
+    areaName === "local" &&
+    (Object.hasOwn(changes, PROFILES_STORAGE_KEY) || Object.hasOwn(changes, keys.legacyOptionsKey))
+  );
 }
 
 export function buildProfileCancellation(input: {

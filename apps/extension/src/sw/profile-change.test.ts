@@ -4,7 +4,12 @@ import {
   applyEnterprisePolicyToRecorderConfig,
   normalizeEnterprisePolicy
 } from "../shared/options-storage.js";
-import { DEFAULT_PROFILE_ID, PROFILES_SCHEMA_VERSION } from "../shared/profiles/model.js";
+import {
+  DEFAULT_PROFILE_ID,
+  PROFILES_SCHEMA_VERSION,
+  PROFILES_STORAGE_KEY,
+  type ProfileRule
+} from "../shared/profiles/model.js";
 import {
   BUILT_IN_PROFILE_IDS,
   createDefaultProfile,
@@ -20,6 +25,8 @@ import { resolveProfilesState, type ProfilesState } from "../shared/profiles/sto
 import {
   buildProfileCancellation,
   detectProfileChange,
+  isProfileSettingsChange,
+  shouldDeferProfileCheck,
   toProfileCancelNotice,
   type SessionProfileSnapshot
 } from "./profile-change.js";
@@ -224,5 +231,80 @@ describe("buildProfileCancellation / toProfileCancelNotice", () => {
       at: 1,
       startedName: "Default"
     });
+  });
+});
+
+describe("shouldDeferProfileCheck", () => {
+  const rule = (match: ProfileRule["match"], enabled = true): ProfileRule => ({
+    id: "rule",
+    profileId: "builtin:qa",
+    priority: 1,
+    enabled,
+    match
+  });
+  const hostRule = rule({ hosts: ["shop.example.com"] });
+  const pageSignalRules = [
+    rule({ titleRegex: "Admin" }),
+    rule({ selectorPresent: "#admin-app" }),
+    rule({ metaTag: { name: "app", value: "admin" } })
+  ];
+
+  it("waits for the loaded page when a rule reads the title, meta tags or selectors", () => {
+    for (const signalRule of pageSignalRules) {
+      expect(
+        shouldDeferProfileCheck({
+          trigger: "navigation",
+          tabLoading: true,
+          rules: [hostRule, signalRule]
+        })
+      ).toBe(true);
+      expect(
+        shouldDeferProfileCheck({
+          trigger: "settings-changed",
+          tabLoading: true,
+          rules: [signalRule]
+        })
+      ).toBe(true);
+    }
+  });
+
+  it("checks at once when the rules read only the URL or the page has loaded", () => {
+    expect(
+      shouldDeferProfileCheck({ trigger: "navigation", tabLoading: true, rules: [hostRule] })
+    ).toBe(false);
+    expect(
+      shouldDeferProfileCheck({
+        trigger: "navigation",
+        tabLoading: true,
+        rules: [hostRule, rule({ titleRegex: "Admin" }, false)]
+      })
+    ).toBe(false);
+    expect(
+      shouldDeferProfileCheck({
+        trigger: "navigation",
+        tabLoading: false,
+        rules: pageSignalRules
+      })
+    ).toBe(false);
+    expect(
+      shouldDeferProfileCheck({ trigger: "page-loaded", tabLoading: true, rules: pageSignalRules })
+    ).toBe(false);
+  });
+});
+
+describe("isProfileSettingsChange", () => {
+  const keys = { legacyOptionsKey: "webblackbox.options" };
+
+  it("re-checks running recordings when profiles, options or the managed policy change", () => {
+    expect(isProfileSettingsChange({ [PROFILES_STORAGE_KEY]: {} }, "local", keys)).toBe(true);
+    expect(isProfileSettingsChange({ "webblackbox.options": {} }, "local", keys)).toBe(true);
+    expect(isProfileSettingsChange({ anything: {} }, "managed", keys)).toBe(true);
+  });
+
+  it("ignores unrelated storage writes", () => {
+    expect(isProfileSettingsChange({ "webblackbox.runtime.sessions": {} }, "local", keys)).toBe(
+      false
+    );
+    expect(isProfileSettingsChange({ [PROFILES_STORAGE_KEY]: {} }, "sync", keys)).toBe(false);
   });
 });

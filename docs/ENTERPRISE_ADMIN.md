@@ -24,7 +24,7 @@ Enterprise deployments can provide a managed policy object through `chrome.stora
 }
 ```
 
-`siteDenylist` wins over `siteAllowlist`. If `siteAllowlist` is non-empty, recording is denied outside the allowlist. `disableLabMode` forces lab-only categories such as full CDP and heap profiles off. `dataCategoryCaps` are a ceiling for every recording profile, presets included; the popup names the capped categories and archives record them. If the policy changes what a running recording's profile may record, the recording is stopped at the next navigation and the user is told why.
+`siteDenylist` wins over `siteAllowlist`. If `siteAllowlist` is non-empty, recording is denied outside the allowlist. `disableLabMode` forces lab-only categories such as full CDP and heap profiles off. `dataCategoryCaps` are a ceiling for every recording profile, presets included; the popup names the capped categories and archives record them. If the policy changes what a running recording's profile may record, the recording is stopped as soon as the policy changes and the user is told why.
 
 ### Managed Recording Profiles And Rules
 

@@ -102,6 +102,8 @@ import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
   buildProfileCancellation,
   detectProfileChange,
+  isProfileSettingsChange,
+  shouldDeferProfileCheck,
   toProfileCancelNotice,
   type ProfileCancellation,
   type ProfileCancelTrigger,
@@ -111,6 +113,7 @@ import {
   buildProfilePreview,
   loadProfilesState,
   capturedVisualsOf,
+  isTabLoading,
   NO_RECORDING_PROFILE_ERROR,
   readTabPageContext,
   type CapturedVisuals
@@ -689,6 +692,17 @@ chromeApi?.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
 
   if (changeInfo.status === "complete") {
     void restoreTabInstrumentationAfterNavigation(tabId);
+  }
+});
+
+// Deleting or editing a profile, or a policy change, re-checks running recordings at once.
+chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
+  if (!isProfileSettingsChange(changes, areaName, { legacyOptionsKey: OPTIONS_STORAGE_KEY })) {
+    return;
+  }
+
+  for (const runtime of sessionsByTab.values()) {
+    scheduleProfileReevaluation(runtime, "settings-changed");
   }
 });
 
@@ -1423,10 +1437,17 @@ async function reevaluateSessionProfile(
     return;
   }
 
-  const [state, enterprisePolicy] = await Promise.all([
+  const [state, enterprisePolicy, tabLoading] = await Promise.all([
     loadSessionProfilesState(),
-    loadEnterprisePolicy()
+    loadEnterprisePolicy(),
+    isTabLoading(chromeApi, runtime.tabId)
   ]);
+
+  // Rules that read the page cannot match before it loads; the page-loaded check decides.
+  if (shouldDeferProfileCheck({ trigger, tabLoading, rules: state.rules })) {
+    return;
+  }
+
   const page = await readTabPageContext(chromeApi, runtime.tabId, state.rules);
 
   // A tab that cannot be read right now says nothing about the profile: never cancel on it.
