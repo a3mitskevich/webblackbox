@@ -2,8 +2,15 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 
+import { runInNewContext } from "node:vm";
+
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
+
+import {
+  contentScriptScopePlugin,
+  wrapInScriptScope
+} from "../../scripts/lib/content-script-scope.mjs";
 
 import {
   createChromeArchive,
@@ -44,6 +51,44 @@ describe("managed storage schema", () => {
       expect(scope.rules.items.properties.match.properties.hosts.type).toBe("array");
       expect(scope.dataCategoryCaps.type).toBe("object");
     }
+  });
+});
+
+describe("content script scope", () => {
+  // A content script with a guard, as bundled: top-level `var` state, then the guard check.
+  const guardedScript = `
+    var state = { started: false };
+    if (!globalThis.claimed) {
+      globalThis.claimed = true;
+      state.started = true;
+      globalThis.readStarted = () => state.started;
+    }
+  `;
+
+  it("keeps a second run in the same world from resetting the first run's state", () => {
+    const bare = {};
+    runInNewContext(guardedScript, bare);
+    runInNewContext(guardedScript, bare);
+    // Without a scope of its own the second run re-initialized the shared `var`.
+    expect(bare.readStarted()).toBe(false);
+
+    const scoped = {};
+    runInNewContext(wrapInScriptScope(guardedScript), scoped);
+    runInNewContext(wrapInScriptScope(guardedScript), scoped);
+    expect(scoped.readStarted()).toBe(true);
+  });
+
+  it("wraps only content.js and keeps its line numbers", () => {
+    const plugin = contentScriptScopePlugin();
+    const code = "// module\nvar a = 1;\n//# sourceMappingURL=content.js.map";
+
+    expect(plugin.renderChunk(code, { path: "/x/build/content-agent.js" })).toBeUndefined();
+    expect(plugin.renderChunk(code, { path: "/x/build/sw.js" })).toBeUndefined();
+
+    const wrapped = plugin.renderChunk(code, { path: "/x/build/content.js" })?.code ?? "";
+
+    expect(wrapped.split("\n")[1]).toBe("var a = 1;");
+    expect(wrapped.trimEnd().endsWith("})();")).toBe(true);
   });
 });
 
