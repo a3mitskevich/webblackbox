@@ -213,6 +213,30 @@ describe("injected console hook text and stack", () => {
       expect(frames[0]).toContain("logErrorFromDepth");
     });
 
+    it("does not recurse when a page Error.prepareStackTrace logs", async () => {
+      install("allow");
+      const stackApi = Error as { prepareStackTrace?: unknown };
+      const previous = stackApi.prepareStackTrace;
+      stackApi.prepareStackTrace = (error: Error, frames: unknown[]) => {
+        console.warn("formatting stack");
+        return `${error.name}\n${frames.map(() => "    at pageFrame (page.js:1:1)").join("\n")}`;
+      };
+
+      try {
+        expect(() => logErrorFromDepth(2, "nested failure")).not.toThrow();
+      } finally {
+        stackApi.prepareStackTrace = previous;
+      }
+
+      await delay(10);
+
+      const consoleEvents = captured.filter((entry) => entry.rawType === "console");
+      const nested = consoleEvents.find((entry) => entry.payload.method === "warn");
+      const outer = consoleEvents.find((entry) => entry.payload.method === "error");
+      expect(nested?.payload.stack).toBeUndefined();
+      expect(readStackFrames(outer?.payload.stack)[0]).toContain("pageFrame");
+    });
+
     it("records no stack for plain console.log", async () => {
       install("allow");
 

@@ -29,6 +29,9 @@ type StackApi = {
 
 type CaptureStackTrace = (target: object, boundary?: (...args: never[]) => unknown) => void;
 
+// Set while a stack is formatted: a page `Error.prepareStackTrace` that logs must not recurse.
+let isCapturingStack = false;
+
 export function createConsoleTextBudget(): ConsoleTextBudget {
   let remaining = CONSOLE_FULL_ENTRY_MAX_CHARS;
   let truncated = false;
@@ -52,12 +55,19 @@ export function createConsoleTextBudget(): ConsoleTextBudget {
  * The call stack of the code that called `boundary` (the hook's console wrapper), as V8
  * `Error.stack` frame lines without the hook's own frames, at most
  * {@link CONSOLE_FULL_STACK_MAX_FRAMES} deep. `Error.stackTraceLimit` is raised only for this one
- * capture and restored right after, so the page never sees a changed limit.
+ * capture and restored right after, so the page never sees a changed limit. A console call made
+ * while a stack is being formatted gets no stack.
  */
 export function captureCallerStack(boundary: (...args: never[]) => unknown): string | undefined {
+  if (isCapturingStack) {
+    return undefined;
+  }
+
   const stackApi = Error as unknown as StackApi;
   const previousLimit = stackApi.stackTraceLimit;
   const canRaiseLimit = typeof previousLimit === "number";
+
+  isCapturingStack = true;
 
   try {
     if (canRaiseLimit) {
@@ -74,6 +84,8 @@ export function captureCallerStack(boundary: (...args: never[]) => unknown): str
   } catch {
     return undefined;
   } finally {
+    isCapturingStack = false;
+
     if (canRaiseLimit) {
       trySetStackTraceLimit(stackApi, previousLimit);
     }
