@@ -36,6 +36,19 @@ Example MCP client entry:
 }
 ```
 
+### Restricting file access
+
+By default the tools can read archives and list directories anywhere the server process can.
+Pass `--allow-dir` (repeatable) to limit access to specific directories. Paths are checked after
+symlinks are resolved, and anything outside the allowed directories is rejected:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "@webblackbox/mcp-server", "--allow-dir", "/path/to/archives"]
+}
+```
+
 ## Technology Stack
 
 - **Node.js / TypeScript**
@@ -91,6 +104,7 @@ node dist/cli.js --version
 ## Notes
 
 - Archive paths are resolved from the current working directory if relative.
+- Archive content is untrusted: every archive tool result is preceded by a text block marking the JSON payload as data, not instructions, and the server publishes the same rule in its MCP `instructions`.
 - Encrypted archives require `passphrase`.
 - `query_events` defaults to payload-hidden output (`includeData=false`) to avoid huge responses.
 - Range-scoped tools (`monoStart` / `monoEnd`) preload only intersecting chunks when opening archives.

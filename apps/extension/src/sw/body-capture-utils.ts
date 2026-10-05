@@ -1,4 +1,12 @@
-import type { CaptureMode, RecorderConfig } from "@webblackbox/protocol";
+import {
+  BODY_REDACTION_TOKEN,
+  isTextualMimeType,
+  redactBodyBytes,
+  type CaptureMode,
+  type RecorderConfig
+} from "@webblackbox/protocol";
+
+export { isTextualMimeType };
 
 export type BodyCaptureRule = {
   enabled: boolean;
@@ -24,6 +32,7 @@ type TransformResponseBodyArgs = {
   redactPatterns: string[];
   maxBytes: number;
   decodeBase64: (value: string) => Uint8Array;
+  mimeType?: string;
   redactionToken?: string;
 };
 
@@ -37,7 +46,6 @@ const DEFAULT_BODY_MIME_ALLOWLIST = [
   "application/javascript",
   "application/x-www-form-urlencoded"
 ];
-const DEFAULT_REDACTION_TOKEN = "[REDACTED]";
 
 export function resolveLiteBodyCaptureRule(
   config: BodyCaptureConfig,
@@ -207,58 +215,6 @@ export function normalizeMimeType(value: string | null | undefined): string | un
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
-export function redactBodyText(
-  value: string,
-  patterns: string[],
-  redactionToken: string = DEFAULT_REDACTION_TOKEN
-): {
-  value: string;
-  redacted: boolean;
-} {
-  if (patterns.length === 0 || value.length === 0) {
-    return {
-      value,
-      redacted: false
-    };
-  }
-
-  let output = value;
-  let touched = false;
-
-  for (const pattern of patterns) {
-    const normalized = pattern.trim();
-
-    if (!normalized) {
-      continue;
-    }
-
-    const regex = new RegExp(normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-
-    if (!regex.test(output)) {
-      continue;
-    }
-
-    output = output.replace(regex, redactionToken);
-    touched = true;
-  }
-
-  return {
-    value: output,
-    redacted: touched
-  };
-}
-
-export function isTextualMimeType(mimeType: string): boolean {
-  return (
-    mimeType.startsWith("text/") ||
-    mimeType.includes("json") ||
-    mimeType.includes("xml") ||
-    mimeType.includes("javascript") ||
-    mimeType.includes("ecmascript") ||
-    mimeType.includes("x-www-form-urlencoded")
-  );
-}
-
 export function isLikelyTextualResourceType(resourceType?: string): boolean {
   return (
     resourceType === "Document" ||
@@ -278,22 +234,11 @@ export function transformResponseBodyForCapture(args: TransformResponseBodyArgs)
   const originalBytes = args.base64Encoded
     ? args.decodeBase64(args.body)
     : new TextEncoder().encode(args.body);
-
-  let candidateBytes = originalBytes;
-  let redacted = false;
-
-  if (!args.base64Encoded && args.redactPatterns.length > 0) {
-    const redaction = redactBodyText(
-      args.body,
-      args.redactPatterns,
-      args.redactionToken ?? DEFAULT_REDACTION_TOKEN
-    );
-
-    if (redaction.redacted) {
-      candidateBytes = new TextEncoder().encode(redaction.value);
-      redacted = true;
-    }
-  }
+  const { bytes: candidateBytes, redacted } = redactBodyBytes(originalBytes, args.redactPatterns, {
+    // Plain (non-base64) CDP bodies are always text, whatever the declared MIME type.
+    mimeType: args.base64Encoded ? args.mimeType : "text/plain",
+    redactionToken: args.redactionToken ?? BODY_REDACTION_TOKEN
+  });
 
   const maxBytes = normalizeBodyCaptureMaxBytes(args.maxBytes);
   const truncated = candidateBytes.byteLength > maxBytes;

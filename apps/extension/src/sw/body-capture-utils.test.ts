@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_REDACTION_PROFILE } from "@webblackbox/protocol";
+
 import {
   resolveFullBodyCaptureRule,
   resolveLiteBodyCaptureRule,
   transformResponseBodyForCapture
 } from "./body-capture-utils.js";
+
+const DEFAULT_PATTERNS = DEFAULT_REDACTION_PROFILE.redactBodyPatterns;
 
 function decodeBase64ForTest(value: string): Uint8Array {
   return new Uint8Array(Buffer.from(value, "base64"));
@@ -93,11 +97,11 @@ describe("body-capture utils", () => {
     expect(rule.maxBytes).toBe(0);
   });
 
-  it("redacts and truncates utf8 response bodies for capture", () => {
+  it("redacts values (not keys) and truncates utf8 response bodies for capture", () => {
     const transformed = transformResponseBodyForCapture({
-      body: `token=secret-123&${"x".repeat(5_000)}`,
+      body: `user=qa&password=hunter2&csrf_token=abc123&${"x".repeat(5_000)}`,
       base64Encoded: false,
-      redactPatterns: ["secret-123"],
+      redactPatterns: DEFAULT_PATTERNS,
       maxBytes: 4_096,
       decodeBase64: decodeBase64ForTest
     });
@@ -106,26 +110,63 @@ describe("body-capture utils", () => {
 
     expect(transformed.redacted).toBe(true);
     expect(transformed.truncated).toBe(true);
-    expect(sampledText).toContain("[REDACTED]");
+    expect(sampledText.startsWith("user=qa&password=[REDACTED]&csrf_token=[REDACTED]&x")).toBe(
+      true
+    );
+    expect(sampledText).not.toContain("hunter2");
+    expect(sampledText).not.toContain("abc123");
     expect(transformed.sampledBytes.byteLength).toBe(4_096);
     expect(transformed.originalBytes.byteLength).toBeGreaterThan(
       transformed.sampledBytes.byteLength
     );
   });
 
-  it("does not redact base64 response bodies", () => {
+  it("redacts nested JSON response bodies with the default patterns", () => {
     const transformed = transformResponseBodyForCapture({
-      body: Buffer.from("plain-secret", "utf8").toString("base64"),
-      base64Encoded: true,
-      redactPatterns: ["secret"],
+      body: JSON.stringify({ user: { id: 1, session: { accessToken: "eyJ.secret" } } }),
+      base64Encoded: false,
+      redactPatterns: DEFAULT_PATTERNS,
       maxBytes: 64 * 1024,
+      mimeType: "application/json",
+      decodeBase64: decodeBase64ForTest
+    });
+
+    expect(transformed.redacted).toBe(true);
+    expect(JSON.parse(new TextDecoder().decode(transformed.sampledBytes))).toEqual({
+      user: { id: 1, session: { accessToken: "[REDACTED]" } }
+    });
+  });
+
+  it("redacts base64-encoded textual response bodies", () => {
+    const transformed = transformResponseBodyForCapture({
+      body: Buffer.from('{"otp":"123456","ok":true}', "utf8").toString("base64"),
+      base64Encoded: true,
+      redactPatterns: DEFAULT_PATTERNS,
+      maxBytes: 64 * 1024,
+      mimeType: "application/json",
       decodeBase64: decodeBase64ForTest
     });
 
     const sampledText = new TextDecoder().decode(transformed.sampledBytes);
 
+    expect(transformed.redacted).toBe(true);
+    expect(transformed.truncated).toBe(false);
+    expect(sampledText).toBe('{"otp":"[REDACTED]","ok":true}');
+  });
+
+  it("does not redact base64 binary response bodies", () => {
+    const binary = Buffer.from("password=hunter2", "utf8");
+    const transformed = transformResponseBodyForCapture({
+      body: binary.toString("base64"),
+      base64Encoded: true,
+      redactPatterns: DEFAULT_PATTERNS,
+      maxBytes: 64 * 1024,
+      mimeType: "image/png",
+      decodeBase64: decodeBase64ForTest
+    });
+
     expect(transformed.redacted).toBe(false);
     expect(transformed.truncated).toBe(false);
-    expect(sampledText).toBe("plain-secret");
+    expect(new TextDecoder().decode(transformed.sampledBytes)).toBe("password=hunter2");
   });
 });

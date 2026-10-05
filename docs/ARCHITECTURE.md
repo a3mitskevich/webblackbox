@@ -89,9 +89,10 @@ Binary data (screenshots, DOM snapshots, response bodies) is stored as blobs ide
 Sensitive data is redacted before it enters the pipeline:
 
 - Headers like `Authorization`, `Cookie`, and `Set-Cookie` are scrubbed
-- Body content matching patterns like `password`, `token`, `secret` is masked
+- Values of body keys matching patterns like `password`, `token`, `secret` are masked (JSON, form, query, XML, text; base64 textual bodies are decoded first)
+- URL-valued headers lose their query/fragment; credential-like header names are masked
 - DOM elements matching CSS selectors like `input[type='password']` are blocked
-- Optional SHA-256 hashing preserves correlation analysis without exposing raw values
+- Optional HMAC-SHA-256 hashing with a per-session, never-exported key preserves correlation within a session without exposing raw values
 
 ### 5. Separation of Concerns
 
