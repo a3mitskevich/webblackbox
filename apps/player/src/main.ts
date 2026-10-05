@@ -1,19 +1,11 @@
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import {
-  type ActionSpan,
   type ActionTimelineEntry,
   type NetworkWaterfallEntry,
-  type PerformanceArtifactEntry,
   type PlayerComparison,
-  type RealtimeNetworkEntry,
   type ReplayDiagnosticEntry,
-  type StorageTimelineEntry,
-  buildPointerTimeline,
-  detectPointerSignals,
-  type TabsContext,
   readProfileCancellation,
   readRecordingProfiles,
-  readTabsContext,
   WebBlackboxPlayer
 } from "@webblackbox/player-sdk";
 import { flushSync } from "react-dom";
@@ -51,31 +43,24 @@ import {
   type NetworkTypeFilter
 } from "./lib/network-view.js";
 import { readRealtimePayloadView } from "./lib/realtime-payload.js";
-import { asFiniteNumber, asRecord, asString } from "./lib/parsing.js";
+import { asFiniteNumber, asRecord } from "./lib/parsing.js";
 import {
   formatPrivacyViolationText,
   formatRecordingProfileBanner,
-  formatRecordingProfileSummary,
-  isConsolePrivacyViolation
+  formatRecordingProfileSummary
 } from "./lib/recording-profile-view.js";
 import { markerKindToPanel } from "./lib/progress.js";
 import {
   buildParallelTabsBadge,
   buildTabsEventDetails,
-  findTabsEventAt,
-  isTabLifecycleEvent
+  findTabsEventAt
 } from "./lib/tabs-context-view.js";
-import { normalizePlaybackEvents, type PlaybackTimeNormalization } from "./lib/playback-time.js";
 import { generatePlaywrightScriptFromEvents } from "./lib/playwright-script.js";
 import {
-  buildPointerLaneMarks,
   buildRippleMarks,
   projectOverlayPoint,
   renderRippleSvg,
-  toOverlayActions,
-  type OverlayFrame,
-  type OverlayPointerAction,
-  type PointerLaneMark
+  type OverlayFrame
 } from "./lib/pointer-overlay.js";
 import { lowerBoundByMono, prefixValue, upperBoundByMono } from "./lib/range.js";
 import {
@@ -85,15 +70,7 @@ import {
 } from "./lib/replay.js";
 import { decodeResponsePreview, type ResponsePreview } from "./lib/response-decoder.js";
 import { highlightJsonPreview, redactPreviewText } from "./lib/response-preview.js";
-import {
-  buildActionScopeIndex,
-  extractReqIdFromEvent,
-  inferEventScope,
-  mergeEventScopes,
-  matchesScopeFilter,
-  type EventScope,
-  type ScopeFilter
-} from "./lib/scope.js";
+import { inferEventScope, matchesScopeFilter, type ScopeFilter } from "./lib/scope.js";
 import {
   bindShareApiKeyInputToTargetOrigin,
   getShareServerApiKeyForBaseUrl,
@@ -105,20 +82,10 @@ import {
   resolveShareArchiveRequest,
   resolveShareServerOrigin
 } from "./lib/share.js";
-import {
-  readScreenshotContext,
-  readScreenshotMarker,
-  readScreenshotShotId
-} from "./lib/screenshot-data.js";
 import { describeScreenshotMeta } from "./lib/screenshot-description.js";
-import { buildActionSearchText, buildEventSearchText } from "./lib/search-text.js";
 import { createStackViewController } from "./lib/stack-view.js";
 import { uploadArchiveWithProgress } from "./lib/share-upload.js";
-import {
-  buildConsoleSignalSearchText,
-  readEventSummaryText,
-  stringifySignalPayload
-} from "./lib/signal-text.js";
+import { readEventSummaryText, stringifySignalPayload } from "./lib/signal-text.js";
 import {
   readStoredNumber,
   readStoredText,
@@ -129,8 +96,34 @@ import {
 import { compactText, shortUrl, truncateId } from "./lib/text.js";
 import { computeTriageStats, findFirstErrorEvent, findSlowestRequest } from "./lib/triage.js";
 import { PlayerShell, type PlayerShellProps } from "./shell.js";
+import {
+  buildArchiveModel,
+  isErrorEvent,
+  type ArchiveModel,
+  type ArchiveModelLabels,
+  type ProgressMarkerKind,
+  type ScreenRecordingRecord,
+  type ScreenshotMarker,
+  type ScreenshotRenderContext,
+  type ScreenshotTrailPoint
+} from "./core/archive-model.js";
+import {
+  filterActionEntries,
+  filterTimelineEvents,
+  resolveActionScope,
+  resolveEventScope,
+  resolveRequestScope,
+  resolveScopeByEventId,
+  type TimelineFilter,
+  type TimelineFilterState
+} from "./core/filters.js";
+import {
+  buildScreenshotTrail,
+  resolveScreenRecordingForMono,
+  resolveScreenshotMarker,
+  resolveShotForMono
+} from "./core/stage-media.js";
 
-type TimelineFilter = "all" | "errors" | "network" | "storage" | "console";
 type LogPanelKey =
   | "timeline"
   | "details"
@@ -146,6 +139,12 @@ const locale = detectPlayerLocale();
 const i18n = createPlayerI18n(locale);
 
 applyPlayerDocumentLocale(locale);
+
+const ARCHIVE_MODEL_LABELS: ArchiveModelLabels = {
+  pointerReasonClick: i18n.messages.pointerReasonActionClick,
+  pointerReasonMove: i18n.messages.pointerReasonMove,
+  formatPointerKind: i18n.formatPointerKind
+};
 
 const PANEL_LABELS: Record<LogPanelKey, string> = {
   timeline: i18n.formatPanelLabel("timeline"),
@@ -168,34 +167,6 @@ const PANEL_SHORTCUT_BY_CODE: Record<string, LogPanelKey> = {
   Digit6: "realtime",
   Digit7: "storage",
   Digit8: "perf"
-};
-
-type ScreenshotMarker = {
-  x: number;
-  y: number;
-  viewportWidth?: number;
-  viewportHeight?: number;
-  reason?: string;
-};
-
-type ScreenshotTrailPoint = {
-  x: number;
-  y: number;
-  mono: number;
-  click: boolean;
-};
-
-type ScreenshotRenderContext = {
-  mono: number | null;
-  viewportWidth?: number;
-  viewportHeight?: number;
-};
-
-type ProgressMarkerKind = "error" | "network" | "screenshot" | "recording" | "action" | "tabs";
-
-type ProgressMarker = {
-  mono: number;
-  kind: ProgressMarkerKind;
 };
 
 type ProgressHoverTagTone =
@@ -225,83 +196,6 @@ type ProgressHoverSummary = {
 type RequestHoverContext = {
   entry: NetworkWaterfallEntry;
   tag: ProgressHoverTag;
-};
-
-type PointerSample = {
-  mono: number;
-  x: number;
-  y: number;
-  click: boolean;
-  reason?: string;
-  viewportWidth?: number;
-  viewportHeight?: number;
-};
-
-type ScreenshotRecord = {
-  eventId: string;
-  mono: number;
-  shotId: string;
-  reason: string | null;
-  format: string | null;
-  size: number | null;
-  marker: ScreenshotMarker | null;
-  context: ScreenshotRenderContext | null;
-};
-
-type ScreenRecordingRecord = {
-  eventId: string;
-  recordingId: string;
-  source: string | null;
-  mime: string;
-  startMono: number;
-  endMono: number;
-  durationMs: number;
-  chunks: string[];
-  chunkCount: number;
-  size: number | null;
-  width?: number;
-  height?: number;
-};
-
-type ArchiveModel = {
-  events: WebBlackboxEvent[];
-  eventScopeById: Map<string, EventScope>;
-  actionTimeline: ActionTimelineEntry[];
-  actionScopeByActId: Map<string, EventScope>;
-  actionSearchText: string[];
-  replayDiagnostics: ReplayDiagnosticEntry[];
-  replayDiagnosticByActId: Map<string, ReplayDiagnosticEntry>;
-  consoleSignals: WebBlackboxEvent[];
-  consoleSignalSearchText: string[];
-  eventById: Map<string, WebBlackboxEvent>;
-  eventSearchText: string[];
-  errorPrefix: number[];
-  requestPrefix: number[];
-  screenshots: ScreenshotRecord[];
-  shotByEventId: Map<string, ScreenshotRecord>;
-  screenRecordings: ScreenRecordingRecord[];
-  screenRecordingById: Map<string, ScreenRecordingRecord>;
-  pointers: PointerSample[];
-  pointerActions: OverlayPointerAction[];
-  pointerLane: PointerLaneMark[];
-  waterfall: NetworkWaterfallEntry[];
-  waterfallByReqId: Map<string, NetworkWaterfallEntry>;
-  requestScopeByReqId: Map<string, EventScope>;
-  realtime: RealtimeNetworkEntry[];
-  storage: StorageTimelineEntry[];
-  perf: PerformanceArtifactEntry[];
-  progressMarkers: ProgressMarker[];
-  /** Other tabs of the recorded site (empty for archives without them). */
-  tabsContext: TabsContext;
-  minMono: number;
-  maxMono: number;
-  durationMono: number;
-  totals: {
-    events: number;
-    errors: number;
-    requests: number;
-    actionSpans: number;
-  };
 };
 
 type PlayerState = {
@@ -416,12 +310,9 @@ const MAX_ACTION_ROWS = 2_000;
 const MAX_WATERFALL_ROWS = 360;
 const MAX_SIGNAL_ROWS = 120;
 const MAX_SHOT_BUTTONS = 180;
-const MAX_TRAIL_POINTS = 110;
 const TIMELINE_VIRTUALIZE_AFTER = 1200;
 const TIMELINE_ROW_HEIGHT = 38;
 const TIMELINE_OVERSCAN = 8;
-const MAX_PROGRESS_MARKERS_PER_KIND = 120;
-const TRAIL_WINDOW_MS = 3_500;
 const SCREENSHOT_OBJECT_URL_TTL_MS = 5 * 60 * 1000;
 const SCREEN_RECORDING_OBJECT_URL_TTL_MS = 5 * 60 * 1000;
 const SCREEN_RECORDING_SYNC_DRIFT_SECONDS = 0.35;
@@ -449,21 +340,6 @@ const STAGE_HEIGHT_MIN_PX = 220;
 const STAGE_HEIGHT_BOTTOM_GUARD_PX = 280;
 const STAGE_HEIGHT_KEY_STEP = 24;
 const STAGE_HEIGHT_STORAGE_KEY = "webblackbox.player.stageHeightPx";
-const POINTER_SAMPLE_TYPES = new Set<string>([
-  "user.mousemove",
-  "user.click",
-  "user.dblclick",
-  "user.contextmenu",
-  "user.auxclick"
-]);
-
-const ACTION_MARKER_TYPES = new Set([
-  "user.click",
-  "user.dblclick",
-  "user.keydown",
-  "user.submit",
-  "user.marker"
-]);
 
 const initialShareServerBaseUrl =
   readStoredText(SHARE_SERVER_BASE_URL_STORAGE_KEY) ?? DEFAULT_SHARE_SERVER_BASE_URL;
@@ -1664,7 +1540,7 @@ async function loadPrimaryArchiveBytes(bytes: Uint8Array, sourceName: string): P
 
   try {
     const player = await openArchiveWithPassphraseFallback(bytes, sourceName);
-    const model = buildArchiveModel(player);
+    const model = buildArchiveModel(player, ARCHIVE_MODEL_LABELS);
 
     resetScreenshotResources();
     state.responsePreviewByHash.clear();
@@ -1715,7 +1591,7 @@ async function handleCompareArchiveChange(): Promise<void> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const comparePlayer = await openArchiveWithPassphraseFallback(bytes, file.name);
     state.comparePlayer = comparePlayer;
-    state.compareModel = buildArchiveModel(comparePlayer);
+    state.compareModel = buildArchiveModel(comparePlayer, ARCHIVE_MODEL_LABELS);
     refreshCompareSummary();
     renderSummary();
     setFeedback(i18n.t("feedbackCompareLoaded", { fileName: file.name }));
@@ -4796,799 +4672,15 @@ function describeScreenRecordingMeta(recording: ScreenRecordingRecord): string {
 }
 
 function applyTimelineFilters(model: ArchiveModel, visibleCount: number): WebBlackboxEvent[] {
-  const text = state.textFilter.trim().toLowerCase();
-  const filterType = state.typeFilter;
-  const scopeFilter = state.scopeFilter;
-
-  if (!text && filterType === "all" && scopeFilter === "all") {
-    return model.events.slice(0, visibleCount);
-  }
-
-  const filtered: WebBlackboxEvent[] = [];
-
-  for (let index = 0; index < visibleCount; index += 1) {
-    const event = model.events[index];
-
-    if (!event) {
-      continue;
-    }
-
-    if (!matchesTypeFilter(event, filterType)) {
-      continue;
-    }
-
-    if (!matchesScopeFilter(resolveEventScope(model, event), scopeFilter)) {
-      continue;
-    }
-
-    if (text && !model.eventSearchText[index]?.includes(text)) {
-      continue;
-    }
-
-    filtered.push(event);
-  }
-
-  return filtered;
+  return filterTimelineEvents(model, visibleCount, readTimelineFilterState());
 }
 
 function applyActionFilters(model: ArchiveModel, visibleCount: number): ActionTimelineEntry[] {
-  const text = state.textFilter.trim().toLowerCase();
-  const filterType = state.typeFilter;
-  const scopeFilter = state.scopeFilter;
-
-  if (!text && filterType === "all" && scopeFilter === "all") {
-    return model.actionTimeline.slice(0, visibleCount);
-  }
-
-  const filtered: ActionTimelineEntry[] = [];
-
-  for (let index = 0; index < visibleCount; index += 1) {
-    const action = model.actionTimeline[index];
-
-    if (!action) {
-      continue;
-    }
-
-    if (!matchesActionTypeFilter(action, filterType)) {
-      continue;
-    }
-
-    if (!matchesScopeFilter(resolveActionScope(model, action), scopeFilter)) {
-      continue;
-    }
-
-    if (text && !model.actionSearchText[index]?.includes(text)) {
-      continue;
-    }
-
-    filtered.push(action);
-  }
-
-  return filtered;
+  return filterActionEntries(model, visibleCount, readTimelineFilterState());
 }
 
-function matchesTypeFilter(event: WebBlackboxEvent, filterType: TimelineFilter): boolean {
-  if (filterType === "all") {
-    return true;
-  }
-
-  if (filterType === "errors") {
-    return isErrorEvent(event);
-  }
-
-  if (filterType === "network") {
-    return event.type.startsWith("network.");
-  }
-
-  if (filterType === "storage") {
-    return event.type.startsWith("storage.");
-  }
-
-  if (filterType === "console") {
-    return event.type.startsWith("console.") || isErrorEvent(event);
-  }
-
-  return true;
-}
-
-function isErrorEvent(event: WebBlackboxEvent): boolean {
-  return event.type.startsWith("error.") || event.lvl === "error";
-}
-
-function matchesActionTypeFilter(action: ActionTimelineEntry, filterType: TimelineFilter): boolean {
-  if (filterType === "all") {
-    return true;
-  }
-
-  if (filterType === "errors") {
-    return action.errorCount > 0;
-  }
-
-  if (filterType === "network") {
-    return action.requestCount > 0;
-  }
-
-  if (filterType === "storage") {
-    return action.triggerType?.startsWith("storage.") ?? false;
-  }
-
-  if (filterType === "console") {
-    return action.errorCount > 0 || (action.triggerType?.startsWith("console.") ?? false);
-  }
-
-  return true;
-}
-
-function resolveEventScope(model: ArchiveModel, event: WebBlackboxEvent): EventScope {
-  return model.eventScopeById.get(event.id) ?? inferEventScope(event);
-}
-
-function resolveRequestScope(model: ArchiveModel, reqId: string): EventScope {
-  return model.requestScopeByReqId.get(reqId) ?? "main";
-}
-
-function resolveScopeByEventId(model: ArchiveModel, eventId: string): EventScope {
-  const event = model.eventById.get(eventId);
-
-  if (!event) {
-    return "main";
-  }
-
-  return resolveEventScope(model, event);
-}
-
-function resolveActionScope(model: ArchiveModel, action: ActionTimelineEntry): EventScope {
-  const indexedScope = model.actionScopeByActId.get(action.actId);
-
-  if (indexedScope) {
-    return indexedScope;
-  }
-
-  const triggerEvent = model.eventById.get(action.triggerEventId);
-
-  if (triggerEvent && resolveEventScope(model, triggerEvent) === "iframe") {
-    return "iframe";
-  }
-
-  const hasIframeRequest = action.requests.some(
-    (request) => resolveRequestScope(model, request.reqId) === "iframe"
-  );
-
-  if (hasIframeRequest) {
-    return "iframe";
-  }
-
-  const hasIframeError = action.errors.some((error) => {
-    const event = model.eventById.get(error.eventId);
-    return Boolean(event && resolveEventScope(model, event) === "iframe");
-  });
-
-  if (hasIframeError) {
-    return "iframe";
-  }
-
-  return "main";
-}
-
-function buildArchiveModel(player: WebBlackboxPlayer): ArchiveModel {
-  const timeNormalization = normalizePlaybackEvents(player.events);
-  const events = timeNormalization.events;
-  const rawActionTimeline = player.getActionTimeline();
-  const derived = player.buildDerived();
-  const consoleSignals: WebBlackboxEvent[] = [];
-  const consoleSignalSearchText: string[] = [];
-  const eventById = new Map<string, WebBlackboxEvent>();
-  const eventScopeById = new Map<string, EventScope>();
-  const eventSearchText: string[] = [];
-  const errorPrefix: number[] = [];
-  const requestPrefix: number[] = [];
-  const screenshots: ScreenshotRecord[] = [];
-  const shotByEventId = new Map<string, ScreenshotRecord>();
-  const screenRecordingStarts = new Map<
-    string,
-    {
-      eventId: string;
-      mono: number;
-      source: string | null;
-      mime: string | null;
-      width?: number;
-      height?: number;
-    }
-  >();
-  const screenRecordings: ScreenRecordingRecord[] = [];
-  const screenRecordingById = new Map<string, ScreenRecordingRecord>();
-  const pointers: PointerSample[] = [];
-  const requestScopeByReqId = new Map<string, EventScope>();
-
-  let errorCount = 0;
-  let requestCount = 0;
-
-  for (const event of events) {
-    const scope = inferEventScope(event);
-
-    eventById.set(event.id, event);
-    eventScopeById.set(event.id, scope);
-
-    if (isErrorEvent(event)) {
-      errorCount += 1;
-      consoleSignals.push(event);
-      consoleSignalSearchText.push(buildConsoleSignalSearchText(event));
-    } else if (event.type.startsWith("console.") || isConsolePrivacyViolation(event)) {
-      consoleSignals.push(event);
-      consoleSignalSearchText.push(buildConsoleSignalSearchText(event));
-    }
-
-    if (event.type === "network.request") {
-      requestCount += 1;
-    }
-
-    const reqId = extractReqIdFromEvent(event);
-
-    if (reqId) {
-      requestScopeByReqId.set(reqId, mergeEventScopes(requestScopeByReqId.get(reqId), scope));
-    }
-
-    errorPrefix.push(errorCount);
-    requestPrefix.push(requestCount);
-    eventSearchText.push(
-      `${buildEventSearchText(event)} ${scope} ${event.cdp ?? ""} ${event.frame ?? ""}`.toLowerCase()
-    );
-
-    const data = asRecord(event.data);
-
-    if (event.type === "screen.screenshot") {
-      const shotId = readScreenshotShotId(event, data);
-
-      if (shotId) {
-        const shot: ScreenshotRecord = {
-          eventId: event.id,
-          mono: event.mono,
-          shotId,
-          reason: typeof data?.reason === "string" ? data.reason : null,
-          format: typeof data?.format === "string" ? data.format : null,
-          size: asFiniteNumber(data?.size),
-          marker: readScreenshotMarker(data),
-          context: readScreenshotContext(data, event)
-        };
-
-        screenshots.push(shot);
-        shotByEventId.set(shot.eventId, shot);
-      }
-    }
-
-    if (event.type === "screen.recording.start") {
-      const recordingId = asString(data?.recordingId);
-
-      if (recordingId) {
-        screenRecordingStarts.set(recordingId, {
-          eventId: event.id,
-          mono: event.mono,
-          source: asString(data?.source),
-          mime: asString(data?.mime),
-          width: normalizePositiveInteger(data?.width),
-          height: normalizePositiveInteger(data?.height)
-        });
-      }
-    }
-
-    if (event.type === "screen.recording.end") {
-      const recording = readScreenRecordingRecord(
-        event,
-        data,
-        screenRecordingStarts.get(asString(data?.recordingId) ?? "")
-      );
-
-      if (recording) {
-        screenRecordings.push(recording);
-        screenRecordingById.set(recording.recordingId, recording);
-      }
-    }
-
-    if (POINTER_SAMPLE_TYPES.has(event.type)) {
-      const x = asFiniteNumber(data?.x);
-      const y = asFiniteNumber(data?.y);
-
-      if (x === null || y === null) {
-        continue;
-      }
-
-      // Same-origin iframes record frame-relative points; the stage shows the top viewport.
-      const frameOffset = asRecord(data?.frameOffset);
-      const viewport = asRecord(data?.viewport);
-      const viewportWidth = asFiniteNumber(viewport?.w);
-      const viewportHeight = asFiniteNumber(viewport?.h);
-      const click = event.type !== "user.mousemove";
-      pointers.push({
-        mono: event.mono,
-        x: x + (asFiniteNumber(frameOffset?.x) ?? 0),
-        y: y + (asFiniteNumber(frameOffset?.y) ?? 0),
-        click,
-        reason: click ? i18n.messages.pointerReasonActionClick : i18n.messages.pointerReasonMove,
-        ...(viewportWidth !== null && viewportHeight !== null && frameOffset === null
-          ? { viewportWidth, viewportHeight }
-          : {})
-      });
-    }
-  }
-
-  screenshots.sort((left, right) => left.mono - right.mono);
-  screenRecordings.sort((left, right) => left.startMono - right.startMono);
-  pointers.sort((left, right) => left.mono - right.mono);
-
-  const waterfall = player
-    .getNetworkWaterfall()
-    .map((entry) => normalizeWaterfallEntry(entry, timeNormalization))
-    .sort((left, right) => left.startMono - right.startMono);
-  const waterfallByReqId = new Map<string, NetworkWaterfallEntry>();
-
-  for (const entry of waterfall) {
-    waterfallByReqId.set(entry.reqId, entry);
-  }
-
-  const actionSpanById = new Map(derived.actionSpans.map((span) => [span.actId, span]));
-  const actionTimeline = rawActionTimeline
-    .map((entry) =>
-      normalizeActionTimelineEntry(entry, actionSpanById, timeNormalization, screenshots)
-    )
-    .sort((left, right) => left.startMono - right.startMono);
-  const actionSearchText = actionTimeline.map((entry) => buildActionSearchText(entry));
-  const replayDiagnostics = player.getReplayDiagnostics({
-    actions: actionTimeline,
-    waterfall
-  });
-  const replayDiagnosticByActId = new Map(
-    replayDiagnostics.map((entry) => [entry.actId, entry] as const)
-  );
-  const actionScopeByActId = buildActionScopeIndex(
-    derived.actionSpans,
-    eventById,
-    requestScopeByReqId
-  );
-  const minMono = events[0]?.mono ?? 0;
-  const maxMono = events[events.length - 1]?.mono ?? 0;
-  const progressMarkers = buildProgressMarkers(events, minMono, maxMono);
-  const pointerTimeline = buildPointerTimeline(events);
-  const pointerActions = toOverlayActions(pointerTimeline);
-  const pointerLane = buildPointerLaneMarks(
-    pointerTimeline,
-    detectPointerSignals(events, {
-      captureMonoOf: (event) => timeNormalization.rawMonoByEventId.get(event.id) ?? event.mono
-    }),
-    i18n.formatPointerKind
-  );
-
-  return {
-    events,
-    eventScopeById,
-    actionTimeline,
-    actionScopeByActId,
-    actionSearchText,
-    replayDiagnostics,
-    replayDiagnosticByActId,
-    consoleSignals,
-    consoleSignalSearchText,
-    eventById,
-    eventSearchText,
-    errorPrefix,
-    requestPrefix,
-    screenshots,
-    shotByEventId,
-    screenRecordings,
-    screenRecordingById,
-    pointers,
-    waterfall,
-    waterfallByReqId,
-    requestScopeByReqId,
-    realtime: player
-      .getRealtimeNetworkTimeline()
-      .map((entry) => ({
-        ...entry,
-        mono: normalizeMonoForEvent(entry.eventId, timeNormalization, entry.mono)
-      }))
-      .sort((left, right) => left.mono - right.mono),
-    storage: player
-      .getStorageTimeline()
-      .map((entry) => ({
-        ...entry,
-        mono: normalizeMonoForEvent(entry.eventId, timeNormalization, entry.mono)
-      }))
-      .sort((left, right) => left.mono - right.mono),
-    perf: player
-      .getPerformanceArtifacts()
-      .map((entry) => ({
-        ...entry,
-        mono: normalizeMonoForEvent(entry.eventId, timeNormalization, entry.mono)
-      }))
-      .sort((left, right) => left.mono - right.mono),
-    progressMarkers,
-    pointerActions,
-    pointerLane,
-    tabsContext: readTabsContext(events),
-    minMono,
-    maxMono,
-    durationMono: Math.max(0, maxMono - minMono),
-    totals: {
-      events: derived.totals.events,
-      errors: derived.totals.errors,
-      requests: derived.totals.requests,
-      actionSpans: derived.actionSpans.length
-    }
-  };
-}
-
-function readScreenRecordingRecord(
-  event: WebBlackboxEvent,
-  data: Record<string, unknown> | null,
-  start:
-    | {
-        eventId: string;
-        mono: number;
-        source: string | null;
-        mime: string | null;
-        width?: number;
-        height?: number;
-      }
-    | undefined
-): ScreenRecordingRecord | null {
-  const recordingId = asString(data?.recordingId);
-  const chunks = readStringList(data?.chunks);
-
-  if (!recordingId || chunks.length === 0) {
-    return null;
-  }
-
-  const durationMs = Math.max(0, Math.round(asFiniteNumber(data?.durationMs) ?? 0));
-  const fallbackStartMono = durationMs > 0 ? Math.max(0, event.mono - durationMs) : event.mono;
-  const startMono = typeof start?.mono === "number" ? start.mono : fallbackStartMono;
-  const endMono = Math.max(event.mono, startMono);
-  const width = normalizePositiveInteger(data?.width) ?? start?.width;
-  const height = normalizePositiveInteger(data?.height) ?? start?.height;
-
-  return {
-    eventId: event.id,
-    recordingId,
-    source: start?.source ?? null,
-    mime: asString(data?.mime) ?? start?.mime ?? "video/webm",
-    startMono,
-    endMono,
-    durationMs: Math.max(durationMs, Math.round(endMono - startMono)),
-    chunks,
-    chunkCount: Math.max(
-      chunks.length,
-      Math.max(0, Math.round(asFiniteNumber(data?.chunkCount) ?? chunks.length))
-    ),
-    size: asFiniteNumber(data?.size),
-    width,
-    height
-  };
-}
-
-function readStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
-}
-
-function normalizePositiveInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? Math.round(value)
-    : undefined;
-}
-
-function normalizeWaterfallEntry(
-  entry: NetworkWaterfallEntry,
-  timeNormalization: PlaybackTimeNormalization
-): NetworkWaterfallEntry {
-  const eventMonos = entry.eventIds
-    .map((eventId) => timeNormalization.monoByEventId.get(eventId))
-    .filter((mono): mono is number => typeof mono === "number" && Number.isFinite(mono))
-    .sort((left, right) => left - right);
-
-  if (eventMonos.length === 0) {
-    return entry;
-  }
-
-  const startMono = eventMonos[0] ?? entry.startMono;
-  const eventEndMono = eventMonos[eventMonos.length - 1] ?? startMono;
-  const eventDurationMs = Math.max(0, eventEndMono - startMono);
-  const durationMs =
-    timeNormalization.source === "wall-clock" && eventMonos.length > 1
-      ? eventDurationMs
-      : entry.durationMs;
-  const endMono = Math.max(eventEndMono, startMono + Math.max(0, durationMs));
-
-  return {
-    ...entry,
-    startMono,
-    endMono,
-    durationMs: Math.max(0, durationMs)
-  };
-}
-
-function normalizeActionTimelineEntry(
-  entry: ActionTimelineEntry,
-  actionSpanById: Map<string, ActionSpan>,
-  timeNormalization: PlaybackTimeNormalization,
-  screenshots: ScreenshotRecord[]
-): ActionTimelineEntry {
-  const span = actionSpanById.get(entry.actId);
-  const spanMonos =
-    span?.eventIds
-      .map((eventId) => timeNormalization.monoByEventId.get(eventId))
-      .filter((mono): mono is number => typeof mono === "number" && Number.isFinite(mono)) ?? [];
-  const triggerMono = normalizeMonoForEvent(
-    entry.triggerEventId,
-    timeNormalization,
-    entry.startMono
-  );
-  const startMono = spanMonos.length > 0 ? Math.min(...spanMonos) : triggerMono;
-  const endMono =
-    spanMonos.length > 0
-      ? Math.max(...spanMonos)
-      : Math.max(startMono, normalizeMonoValue(entry.endMono, timeNormalization));
-  const normalizedErrors = entry.errors.map((error) => ({
-    ...error,
-    mono: normalizeMonoForEvent(error.eventId, timeNormalization, error.mono)
-  }));
-  const screenshot = entry.screenshot
-    ? {
-        ...entry.screenshot,
-        mono: normalizeMonoForEvent(
-          entry.screenshot.eventId,
-          timeNormalization,
-          entry.screenshot.mono
-        )
-      }
-    : findScreenshotForNormalizedAction(startMono, endMono, screenshots);
-
-  return {
-    ...entry,
-    startMono,
-    endMono,
-    durationMs: Number(Math.max(0, endMono - startMono).toFixed(2)),
-    errors: normalizedErrors,
-    screenshot
-  };
-}
-
-function findScreenshotForNormalizedAction(
-  startMono: number,
-  endMono: number,
-  screenshots: ScreenshotRecord[]
-): ActionTimelineEntry["screenshot"] {
-  const inSpan = screenshots.filter((shot) => shot.mono >= startMono && shot.mono <= endMono);
-  const afterSpan = screenshots.find((shot) => shot.mono > endMono && shot.mono <= endMono + 2_000);
-  const shot = inSpan[inSpan.length - 1] ?? afterSpan;
-
-  if (!shot) {
-    return null;
-  }
-
-  return {
-    eventId: shot.eventId,
-    mono: shot.mono,
-    shotId: shot.shotId,
-    reason: shot.reason,
-    format: shot.format,
-    size: shot.size
-  };
-}
-
-function normalizeMonoForEvent(
-  eventId: string,
-  timeNormalization: PlaybackTimeNormalization,
-  fallbackMono: number
-): number {
-  return (
-    timeNormalization.monoByEventId.get(eventId) ??
-    normalizeMonoValue(fallbackMono, timeNormalization)
-  );
-}
-
-function normalizeMonoValue(mono: number, timeNormalization: PlaybackTimeNormalization): number {
-  if (timeNormalization.source === "mono") {
-    return mono;
-  }
-
-  for (const [eventId, rawMono] of timeNormalization.rawMonoByEventId.entries()) {
-    if (Math.abs(rawMono - mono) < 0.001) {
-      return timeNormalization.monoByEventId.get(eventId) ?? mono;
-    }
-  }
-
-  return mono;
-}
-
-function buildProgressMarkers(
-  events: WebBlackboxEvent[],
-  minMono: number,
-  maxMono: number
-): ProgressMarker[] {
-  if (events.length === 0) {
-    return [];
-  }
-
-  const buckets: Record<ProgressMarkerKind, number[]> = {
-    error: [],
-    network: [],
-    screenshot: [],
-    recording: [],
-    action: [],
-    tabs: []
-  };
-
-  for (const event of events) {
-    if (isErrorEvent(event)) {
-      buckets.error.push(event.mono);
-      continue;
-    }
-
-    if (event.type === "network.request") {
-      buckets.network.push(event.mono);
-      continue;
-    }
-
-    if (event.type === "screen.screenshot") {
-      buckets.screenshot.push(event.mono);
-      continue;
-    }
-
-    if (event.type === "screen.recording.start" || event.type === "screen.recording.end") {
-      buckets.recording.push(event.mono);
-      continue;
-    }
-
-    if (isTabLifecycleEvent(event)) {
-      buckets.tabs.push(event.mono);
-      continue;
-    }
-
-    if (ACTION_MARKER_TYPES.has(event.type)) {
-      buckets.action.push(event.mono);
-    }
-  }
-
-  const durationMono = Math.max(0, maxMono - minMono);
-  const markers: ProgressMarker[] = [];
-
-  for (const kind of Object.keys(buckets) as ProgressMarkerKind[]) {
-    const sampled = compactMarkerMonos(buckets[kind], durationMono);
-
-    for (const mono of sampled) {
-      markers.push({
-        mono,
-        kind
-      });
-    }
-  }
-
-  return markers.sort((left, right) => left.mono - right.mono);
-}
-
-function compactMarkerMonos(monos: number[], durationMono: number): number[] {
-  if (monos.length === 0) {
-    return [];
-  }
-
-  const sorted = [...monos].sort((left, right) => left - right);
-  const minGap = durationMono > 0 ? Math.max(40, durationMono / 500) : 40;
-  const compacted: number[] = [];
-
-  for (const mono of sorted) {
-    const last = compacted[compacted.length - 1];
-
-    if (last === undefined || mono - last >= minGap) {
-      compacted.push(mono);
-    }
-  }
-
-  if (compacted.length <= MAX_PROGRESS_MARKERS_PER_KIND) {
-    return compacted;
-  }
-
-  const step = Math.ceil(compacted.length / MAX_PROGRESS_MARKERS_PER_KIND);
-  return compacted.filter((_, index) => index % step === 0 || index === compacted.length - 1);
-}
-
-function buildScreenshotTrail(
-  points: PointerSample[],
-  playheadMono: number
-): ScreenshotTrailPoint[] {
-  if (points.length === 0) {
-    return [];
-  }
-
-  const startMono = playheadMono - TRAIL_WINDOW_MS;
-  const startIndex = lowerBoundByMono(points, startMono, (point) => point.mono);
-  const endIndex = upperBoundByMono(points, playheadMono, (point) => point.mono);
-  const scoped = points.slice(startIndex, endIndex);
-
-  if (scoped.length === 0) {
-    return [];
-  }
-
-  const mapped = scoped.map((point) => ({
-    x: point.x,
-    y: point.y,
-    mono: point.mono,
-    click: point.click
-  }));
-
-  if (mapped.length <= MAX_TRAIL_POINTS) {
-    return mapped;
-  }
-
-  const step = Math.ceil(mapped.length / MAX_TRAIL_POINTS);
-
-  return mapped.filter((_, index) => index % step === 0 || index === mapped.length - 1);
-}
-
-function resolveScreenshotMarker(
-  points: PointerSample[],
-  playheadMono: number,
-  fallback: ScreenshotMarker | null
-): ScreenshotMarker | null {
-  const index = upperBoundByMono(points, playheadMono, (point) => point.mono) - 1;
-  const latest = index >= 0 ? points[index] : undefined;
-
-  if (latest) {
-    return {
-      x: latest.x,
-      y: latest.y,
-      reason: latest.reason,
-      ...(latest.viewportWidth !== undefined && latest.viewportHeight !== undefined
-        ? { viewportWidth: latest.viewportWidth, viewportHeight: latest.viewportHeight }
-        : {})
-    };
-  }
-
-  return fallback
-    ? {
-        ...fallback
-      }
-    : null;
-}
-
-function resolveShotForMono(
-  screenshots: ScreenshotRecord[],
-  mono: number
-): ScreenshotRecord | null {
-  if (screenshots.length === 0) {
-    return null;
-  }
-
-  const end = upperBoundByMono(screenshots, mono, (entry) => entry.mono) - 1;
-
-  if (end < 0) {
-    return null;
-  }
-
-  return screenshots[end] ?? null;
-}
-
-function resolveScreenRecordingForMono(
-  recordings: ScreenRecordingRecord[],
-  mono: number
-): ScreenRecordingRecord | null {
-  if (recordings.length === 0) {
-    return null;
-  }
-
-  const end = upperBoundByMono(recordings, mono, (entry) => entry.startMono) - 1;
-
-  if (end < 0) {
-    return null;
-  }
-
-  const recording = recordings[end] ?? null;
-
-  if (!recording) {
-    return null;
-  }
-
-  return mono <= recording.endMono + 1 ? recording : null;
+function readTimelineFilterState(): TimelineFilterState {
+  return { text: state.textFilter, type: state.typeFilter, scope: state.scopeFilter };
 }
 
 function renderSignalEvents(
