@@ -418,4 +418,40 @@ describe("CDP console object arguments", () => {
   it("keeps the short description in the compact detail", () => {
     expect(consoleObjectEvent("sanitized")?.args[1]).toBe("Object");
   });
+
+  it("keeps an error argument's description, the whole stack, not its cut preview", () => {
+    const stack = `RangeError: Invalid quantity for demo-sku\n    at n (${"http://127.0.0.1:8080/demo/vendor/"}checkout.min.js:1:95)\n    at r (http://127.0.0.1:8080/demo/vendor/checkout.min.js:1:150)`;
+    const recorder = new WebBlackboxRecorder(createConfig("allow"));
+    const data = recorder.ingest({
+      source: "cdp",
+      rawType: "Runtime.consoleAPICalled",
+      sid: "S-console-error-object",
+      tabId: 1,
+      t: 1,
+      mono: 1,
+      payload: {
+        type: "error",
+        args: [
+          {
+            type: "object",
+            subtype: "error",
+            className: "RangeError",
+            description: stack,
+            preview: {
+              type: "object",
+              subtype: "error",
+              description: stack,
+              overflow: false,
+              properties: [
+                { name: "stack", type: "string", value: stack.slice(0, 100) },
+                { name: "message", type: "string", value: "Invalid quantity for demo-sku" }
+              ]
+            }
+          }
+        ]
+      }
+    }).event?.data as { args: unknown[] } | undefined;
+
+    expect(data?.args[0]).toBe(stack);
+  });
 });
