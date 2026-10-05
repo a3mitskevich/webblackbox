@@ -272,6 +272,62 @@
   margin: 0;
 }
 
+/* Radio cards: one option per card, its description always visible. */
+.wb-choice {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 10px;
+}
+
+.wb-choice__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--wb-border-strong);
+  border-radius: var(--wb-radius-sm);
+  background: var(--wb-surface);
+  cursor: pointer;
+  transition:
+    border-color 120ms var(--wb-ease),
+    background-color 120ms var(--wb-ease);
+}
+
+.wb-choice__option:has(.wb-choice__input:checked) {
+  border-color: var(--wb-brand);
+  background: var(--wb-brand-soft);
+}
+
+.wb-choice__option:has(.wb-choice__input:focus-visible) {
+  box-shadow: var(--wb-focus-ring);
+}
+
+.wb-choice__input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+}
+
+.wb-choice__text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.wb-choice__title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--wb-text);
+}
+
+.wb-choice__description {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--wb-text-muted);
+}
+
 .wb-input-group {
   display: flex;
   align-items: stretch;

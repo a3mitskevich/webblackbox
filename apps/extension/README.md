@@ -1,6 +1,6 @@
 # WebBlackbox Chrome Extension
 
-Chrome Manifest V3 extension that continuously records web session data using the Chrome DevTools Protocol and content script injection.
+Chrome Manifest V3 extension that records web sessions in the tabs where you press Start, using the Chrome DevTools Protocol and a content script. Nothing is recorded in other tabs; see [Page injection](#page-injection) for whether the content script runs there at all.
 
 ## Architecture
 
@@ -39,7 +39,8 @@ The extension consists of multiple main components:
 
 #### Content Script (`content.js`)
 
-- Injected at `document_start` on all URLs
+- Runs in every frame from `document_start` (default), or only in the recorded tab once a recording starts; see [Page injection](#page-injection)
+- Stays idle until the tab is recorded: the capture agent (`content-agent.js`) loads on Start
 - Captures user interaction events (click, input, scroll, keydown, etc.)
 - Captures DOM mutations via MutationObserver
 - Takes DOM snapshots at configured intervals
@@ -87,22 +88,50 @@ The extension consists of multiple main components:
 - View session metadata and statistics
 - Export and delete sessions
 
+## Page injection
+
+Settings → Performance & sampling → **Inject into pages** decides when `content.js` runs. Recording itself always happens only in tabs where you press Start.
+
+| Mode                                          | What runs in pages you are not recording                                                                                                                                                   | Trade-off during a recording                                                                                                                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Always (record from page start)** (default) | `content.js` in every page and frame from `document_start`: one `content.ready` message to the service worker per frame load and a watcher that remembers password fields the page reveals | None: pages the recorded tab loads later (reload, navigation, new iframes) have the script before their own code                                                                                 |
+| **Only when recording starts**                | Nothing                                                                                                                                                                                    | Pages the recorded tab loads later get the script right after they commit, which can be after their first scripts ran; password fields the page revealed before Start are not known as passwords |
+
+In both modes nothing is recorded before Start: the capture agent loads only when a recording starts.
+
+How it works:
+
+- The manifest declares no static `content_scripts`. In the default mode the service worker registers `content.js` for `<all_urls>`, all frames, `document_start` with `chrome.scripting.registerContentScripts`; in "Only when recording starts" it unregisters it. The setting lives in `chrome.storage.local` under `webblackbox.injection` and is re-applied on every service worker start.
+- On Start, `content.js` is injected into every frame of the tab. While a tab is recorded, each frame it commits (reload, navigation, an iframe added later) gets the script as soon as `webNavigation.onCommitted` reports it (`injectImmediately`). That is early, but unlike `document_start` it is not guaranteed to run before the page's own scripts.
+- `content.js` runs once per frame: a second copy (registered plus injected) exits without touching the first, and the bundle is wrapped in its own scope so the second run cannot reset the running copy's state.
+- Tab and navigation listeners are attached only while something records, so idle navigations do not wake the service worker in either mode.
+- The store-safe build has no persistent host access, so it always injects on Start.
+- `<all_urls>` stays in both modes: `webRequest` (lite network baseline), `scripting.executeScript`, `registerContentScripts` and `captureVisibleTab` need host access.
+
+Idle cost, measured with `pnpm e2e:injection:idle` (50 tabs, each a page with one iframe, headless Chrome 153):
+
+| Mode                       | Frames running `content.js` | Messages to the service worker | JS heap per tab |
+| -------------------------- | --------------------------- | ------------------------------ | --------------- |
+| Always                     | 100 of 100                  | 100 (`content.ready`)          | ~1.5 MB         |
+| Only when recording starts | 0 of 100                    | 0                              | ~1.05 MB        |
+
 ## rrweb Status
 
 `dom.rrweb.event` is emitted from lite-mode mutation summaries (`schema: rrweb-lite/v1`) and ingested through the standard content-event pipeline.
 
 ## Permissions
 
-| Permission   | Purpose                                          |
-| ------------ | ------------------------------------------------ |
-| `debugger`   | CDP access for network, runtime, and page events |
-| `tabs`       | Tab information and URL access                   |
-| `scripting`  | Content script injection                         |
-| `storage`    | Extension settings and session data              |
-| `offscreen`  | Pipeline processing in background                |
-| `webRequest` | Network request monitoring                       |
-| `downloads`  | Archive file download                            |
-| `<all_urls>` | Content script injection on any page             |
+| Permission      | Purpose                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| `debugger`      | CDP access for network, runtime, and page events                                                    |
+| `tabs`          | Tab information and URL access                                                                      |
+| `scripting`     | Register the content script, or inject it on Start                                                  |
+| `storage`       | Extension settings and session data                                                                 |
+| `offscreen`     | Pipeline processing in background                                                                   |
+| `webRequest`    | Network request monitoring                                                                          |
+| `webNavigation` | Re-inject the content script into frames a recorded tab commits                                     |
+| `downloads`     | Archive file download                                                                               |
+| `<all_urls>`    | Host access for content script registration and injection, `webRequest` and screenshots on any page |
 
 ## Keyboard Shortcuts
 
@@ -139,7 +168,8 @@ Build entries:
 
 ## E2E
 
-- `pnpm e2e:fullchain:full` runs the full-mode end-to-end capture/export demo.
+- `pnpm e2e:fullchain:full` runs the full-mode end-to-end capture/export demo. `pnpm e2e:fullchain:lite:on-demand` (with a reload after Start) and `pnpm e2e:fullchain:full:on-demand` run it with injection on Start only (`WB_E2E_INJECTION_MODE=on-start`).
+- `pnpm e2e:injection` checks over CDP which frames run `content.js` in both injection modes: before Start, after Start, in an iframe added later, after a reload and a navigation, in a tab that is not recorded and after Stop. `pnpm e2e:injection:idle` measures the idle cost of both modes with many tabs (`WB_E2E_INJECTION_BENCH_TABS`, default 50).
 - `pnpm e2e:profile:qa` checks that a site rule selects the QA profile, that console text and value-masked JSON bodies reach the encrypted archive, that navigating to a host where the rules pick another profile stops the recording (reason in the archive, `!` badge, popup notice, nothing recorded afterwards), and that a plaintext export is refused.
 - `pnpm e2e:at-rest` reads the extension's IndexedDB over CDP after a Full capture recording with planted secrets and checks that nothing in it is readable (every chunk and blob AES-GCM framed, session rows without URL or title), that the export still decrypts to the secrets and deletes the recording, that stopped recordings stay listed, stored and exportable after the service worker is stopped and more than 30 s pass, and that an unexported recording is gone after Chrome restarts on the same profile.
 - `pnpm e2e:profile:full-capture` checks that the Full capture preset, chosen explicitly on a host without rules, records planted secrets (console, storage, URL token, headers, bodies, password field, WebSocket payload) and the raw DOM inside the encrypted archive, keeps doing so after the tab moves to another host, and that neither the secrets nor the site appear in the archive bytes.
@@ -164,7 +194,7 @@ Build entries:
 
 1. User clicks **Start** in popup
 2. Service worker creates session, attaches CDP debugger, initializes recorder
-3. `content.js` is already present as a manifest `document_start` content script across frames
+3. `content.js` is already running in every frame (registered at `document_start`) or, with injection on Start only, is injected into every frame of the tab now; frames the tab commits later get it as they commit
 4. Injected content capture begins streaming user events and DOM summaries
 5. In `lite` mode, injected script captures console/network/storage events
 6. CDP provides network, runtime exception, and page navigation events
