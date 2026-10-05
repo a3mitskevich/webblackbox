@@ -315,7 +315,8 @@
     "screenshot": "screenshot",
     "recording": "recording",
     "action": "action",
-    "pointer": "pointer"
+    "pointer": "pointer",
+    "tabs": "other tab"
   },
   "pointerLaneLabel": "Pointer actions",
   "pointerKinds": {
@@ -369,6 +370,8 @@
     "tab-recording": "tab recording",
     "storage": "storage",
     "storage-details": "storage details",
+    "tabs": "other tabs of the site",
+    "tab-details": "paths and titles of other tabs",
     "profile": "profiling data",
     "unknown": "data"
   },
@@ -388,6 +391,8 @@
   "profileBannerDowngraded": "Recorded with {name} instead of {requested}: {requested} was not allowed on this site, so data only {requested} records is missing.",
   "profileBannerCapped": "The organization's policy limited {name}: {categories}.",
   "profileBannerUnknownProfile": "an unknown profile",
+  "summaryParallelTabs": "{count} other tabs of this site were open",
+  "summaryParallelTabsDetail": "Up to {max} at once, {start} when recording started; {sameOrigin} same-origin, {sameSite} same-site. Click for details.",
   "networkTypes": {
     "document": "Document",
     "fetch": "Fetch/XHR",

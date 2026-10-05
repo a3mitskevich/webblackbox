@@ -315,7 +315,8 @@
     "screenshot": "скриншот",
     "recording": "видео",
     "action": "действие",
-    "pointer": "указатель"
+    "pointer": "указатель",
+    "tabs": "другая вкладка"
   },
   "pointerLaneLabel": "Действия указателя",
   "pointerKinds": {
@@ -369,6 +370,8 @@
     "tab-recording": "видео вкладки",
     "storage": "хранилище",
     "storage-details": "подробности хранилища",
+    "tabs": "другие вкладки сайта",
+    "tab-details": "пути и заголовки других вкладок",
     "profile": "данные профилирования",
     "unknown": "данные"
   },
@@ -388,6 +391,8 @@
   "profileBannerDowngraded": "Записано по профилю {name} вместо {requested}: {requested} был запрещён на этом сайте, поэтому данных, которые записывает только {requested}, нет.",
   "profileBannerCapped": "Политика организации ограничила профиль {name}: {categories}.",
   "profileBannerUnknownProfile": "неизвестный профиль",
+  "summaryParallelTabs": "Других вкладок этого сайта: {count}",
+  "summaryParallelTabsDetail": "Не больше {max} одновременно, {start} на старте записи; того же источника: {sameOrigin}, того же сайта: {sameSite}. Нажмите, чтобы открыть подробности.",
   "networkTypes": {
     "document": "Документ",
     "fetch": "Fetch/XHR",

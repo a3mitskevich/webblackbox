@@ -33,7 +33,7 @@ type NetworkType =
   | "other";
 
 type CompareSignal = "regressed" | "stable" | "new" | "missing";
-type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action" | "pointer";
+type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action" | "pointer" | "tabs";
 type PointerRippleKind = "double" | "right" | "middle" | "hold" | "drag" | "dnd";
 type SortDirection = "asc" | "desc";
 type SelectionKind = "action" | "event" | "request";
@@ -368,6 +368,8 @@ type PlayerMessages = {
   profileBannerDowngraded: string;
   profileBannerCapped: string;
   profileBannerUnknownProfile: string;
+  summaryParallelTabs: string;
+  summaryParallelTabsDetail: string;
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;
