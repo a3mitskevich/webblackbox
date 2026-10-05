@@ -23,16 +23,15 @@
       "maxGzipBytes": 330000
     },
     {
-      "path": "apps/extension/build/content.js",
-      "maxBytes": 80300,
-      "maxGzipBytes": 20800,
-      "note": "Measured 78,000 / 20,200 B (+3%): the content script bundles both shared i18n locale tables, which the redesigned UI (#12) grew (last: the profile deletion, restore and skipped-rule strings), plus the capture-scope and redaction changes and the profile-change, profile-deletion and restore strings (#10)."
-    },
-    {
       "path": "apps/extension/build/sw.js",
       "maxBytes": 942100,
       "maxGzipBytes": 170600,
       "note": "Measured 914,610 / 165,540 B (+3%): the service worker recovery (#8), the CDP Network allowlist (#9), recording profiles (#10) and the parallel-tabs tracking (#16)."
+    },
+    {
+      "path": "apps/extension/build/content.js",
+      "maxBytes": 30000,
+      "maxGzipBytes": 8000
     }
   ]
 }

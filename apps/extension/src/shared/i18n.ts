@@ -1,24 +1,52 @@
 import type { CaptureMode, FreezeReason } from "@webblackbox/protocol";
 
 import { getChromeApi } from "./chrome-api.js";
-import { EN_MESSAGES, type ExtensionMessageKey } from "./locales/en.js";
-import { ZH_CN_MESSAGES } from "./locales/zh-cn.js";
+import EN_MESSAGES from "./locales/en.json" with { type: "json" };
+import RU_MESSAGES from "./locales/ru.json" with { type: "json" };
+import ZH_CN_MESSAGES from "./locales/zh-CN.json" with { type: "json" };
 
-export type ExtensionLocale = "en" | "zh-CN";
+export type ExtensionLocale = "en" | "ru" | "zh-CN";
+
+/** What the user picked in Options; `auto` follows Chrome's UI language. */
+export type ExtensionLocalePreference = "auto" | ExtensionLocale;
+
+export const EXTENSION_LOCALES: readonly ExtensionLocale[] = ["en", "ru", "zh-CN"];
+
+/** Units shown next to number inputs; each has a translated label. */
+export type ExtensionUnit = "B" | "MB" | "Hz" | "ms" | "min" | "%";
+
+export const EXTENSION_UNIT_LABEL_KEYS: Record<ExtensionUnit, ExtensionMessageKey> = {
+  B: "unitLabelBytes",
+  MB: "unitLabelMegabytes",
+  Hz: "unitLabelHertz",
+  ms: "unitLabelMilliseconds",
+  min: "unitLabelMinutes",
+  "%": "unitLabelPercent"
+};
+
+const BYTES_PER_KB = 1024;
+const BYTES_PER_MB = BYTES_PER_KB * 1024;
+
+/** `chrome.storage.local` key holding the {@link ExtensionLocalePreference}. */
+export const EXTENSION_LOCALE_STORAGE_KEY = "webblackbox.uiLocale";
+
+/** English is the reference dictionary; `locales.test.ts` keeps every other locale's keys equal. */
+export type ExtensionMessageKey = keyof typeof EN_MESSAGES;
 
 const EXTENSION_MESSAGES: Record<ExtensionLocale, Record<ExtensionMessageKey, string>> = {
   en: EN_MESSAGES,
+  ru: RU_MESSAGES,
   "zh-CN": ZH_CN_MESSAGES
 };
-
-export type { ExtensionMessageKey };
 
 export function createExtensionI18n(
   options: {
     pageTitleKey?: ExtensionMessageKey;
+    /** Resolved locale (see {@link loadExtensionLocale}); defaults to Chrome's UI language. */
+    locale?: ExtensionLocale;
   } = {}
 ) {
-  const locale = getExtensionLocale();
+  const locale = options.locale ?? getExtensionLocale();
 
   if (typeof document !== "undefined") {
     document.documentElement.lang = locale;
@@ -38,7 +66,9 @@ export function createExtensionI18n(
       formatExtensionRelativeTime(locale, timestamp, now),
     formatDuration: (startedAt: number, endedAt: number) =>
       formatExtensionDuration(locale, startedAt, endedAt),
-    formatByteSize: (bytes: number) => formatExtensionByteSize(bytes)
+    formatByteSize: (bytes: number) => formatExtensionByteSize(locale, bytes),
+    formatNumber: (value: number, fractionDigits?: number) =>
+      formatExtensionNumber(locale, value, fractionDigits)
   };
 }
 
@@ -51,12 +81,62 @@ export function getExtensionLocale(): ExtensionLocale {
   return normalizeExtensionLocale(uiLanguage ?? navigatorLanguage);
 }
 
+/** Anything other than a known locale (missing, tampered, from a newer build) means `auto`. */
+export function parseExtensionLocalePreference(value: unknown): ExtensionLocalePreference {
+  return EXTENSION_LOCALES.find((locale) => locale === value) ?? "auto";
+}
+
+export function resolveExtensionLocale(preference: ExtensionLocalePreference): ExtensionLocale {
+  return preference === "auto" ? getExtensionLocale() : preference;
+}
+
+/** Reads the stored preference; storage being unavailable or failing falls back to `auto`. */
+export async function loadExtensionLocalePreference(): Promise<ExtensionLocalePreference> {
+  const storage = getChromeApi()?.storage?.local;
+
+  if (!storage) {
+    return "auto";
+  }
+
+  try {
+    const stored = await storage.get(EXTENSION_LOCALE_STORAGE_KEY);
+    return parseExtensionLocalePreference(stored?.[EXTENSION_LOCALE_STORAGE_KEY]);
+  } catch {
+    return "auto";
+  }
+}
+
+export async function saveExtensionLocalePreference(
+  preference: ExtensionLocalePreference
+): Promise<void> {
+  const storage = getChromeApi()?.storage?.local;
+
+  if (!storage) {
+    throw new Error("chrome.storage.local is unavailable");
+  }
+
+  await storage.set({ [EXTENSION_LOCALE_STORAGE_KEY]: preference });
+}
+
+/** The locale extension pages render in: the Options choice, else Chrome's UI language. */
+export async function loadExtensionLocale(): Promise<ExtensionLocale> {
+  return resolveExtensionLocale(await loadExtensionLocalePreference());
+}
+
 export function normalizeExtensionLocale(candidate?: string | null): ExtensionLocale {
   if (typeof candidate !== "string") {
     return "en";
   }
 
-  return candidate.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+  const language = candidate.trim().toLowerCase();
+
+  if (language.startsWith("zh")) {
+    return "zh-CN";
+  }
+
+  return language === "ru" || language.startsWith("ru-") || language.startsWith("ru_")
+    ? "ru"
+    : "en";
 }
 
 export function translateExtensionMessage(
@@ -147,21 +227,48 @@ export function formatExtensionDuration(
   });
 }
 
-export function formatExtensionByteSize(bytes: number): string {
+const numberFormats = new Map<string, Intl.NumberFormat>();
+
+/** Locale digits and separators with a fixed number of decimals (`1,5` in Russian). */
+export function formatExtensionNumber(
+  locale: ExtensionLocale,
+  value: number,
+  fractionDigits = 0
+): string {
+  const cacheKey = `${locale}:${fractionDigits}`;
+  let format = numberFormats.get(cacheKey);
+
+  if (!format) {
+    format = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits
+    });
+    numberFormats.set(cacheKey, format);
+  }
+
+  return format.format(value);
+}
+
+export function formatExtensionByteSize(locale: ExtensionLocale, bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 B";
+    return translateExtensionMessage(locale, "unitBytes", {
+      value: formatExtensionNumber(locale, 0)
+    });
   }
 
-  if (bytes < 1024) {
-    return `${Math.round(bytes)} B`;
+  if (bytes < BYTES_PER_KB) {
+    return translateExtensionMessage(locale, "unitBytes", {
+      value: formatExtensionNumber(locale, Math.round(bytes))
+    });
   }
 
-  const kb = bytes / 1024;
-
-  if (kb < 1024) {
-    return `${kb.toFixed(1)} KB`;
+  if (bytes < BYTES_PER_MB) {
+    return translateExtensionMessage(locale, "unitKilobytes", {
+      value: formatExtensionNumber(locale, bytes / BYTES_PER_KB, 1)
+    });
   }
 
-  const mb = kb / 1024;
-  return `${mb.toFixed(2)} MB`;
+  return translateExtensionMessage(locale, "unitMegabytes", {
+    value: formatExtensionNumber(locale, bytes / BYTES_PER_MB, 2)
+  });
 }

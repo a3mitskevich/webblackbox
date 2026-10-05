@@ -67,4 +67,32 @@ describe("formatCompareSummary", () => {
     expect(text).toContain("count +3");
     expect(text).toContain("p95 +390ms");
   });
+
+  it("writes the summary in Russian with locale numbers", () => {
+    const text = formatCompareSummary(
+      {
+        leftSessionId: "S-left",
+        rightSessionId: "S-right",
+        leftSid: "S-left",
+        rightSid: "S-right",
+        eventDelta: 1200,
+        errorDelta: 0,
+        requestDelta: -2,
+        durationDeltaMs: 1250,
+        typeDeltas: [],
+        endpointRegressions: []
+      },
+      "ru"
+    );
+
+    expect(text).toContain("Сравнение записей");
+    expect(text).toContain("слева: S-left");
+    expect(text).toContain(
+      `события: ${new Intl.NumberFormat("ru", { signDisplay: "exceptZero" }).format(1200)}`
+    );
+    expect(text).toContain("ошибки: 0");
+    expect(text).toContain("запросы: -2");
+    expect(text).toContain("длительность: +1,25 с");
+    expect(text).not.toMatch(/events|Totals/);
+  });
 });

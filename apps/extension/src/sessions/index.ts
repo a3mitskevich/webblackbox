@@ -1,6 +1,6 @@
 import { getChromeApi } from "../shared/chrome-api.js";
 import { loadExportPolicyPrefs, toExportPolicy } from "../shared/export-policy-prefs.js";
-import { createExtensionI18n } from "../shared/i18n.js";
+import { createExtensionI18n, loadExtensionLocale } from "../shared/i18n.js";
 import {
   PORT_NAMES,
   type ExportPrivacyWarning,
@@ -34,8 +34,12 @@ import {
 const PLAYER_URL = "https://webllm.github.io/webblackbox/";
 
 const chromeApi = getChromeApi();
+// Resolved before the port opens, so no port message can arrive before its listener exists.
+const i18n = createExtensionI18n({
+  pageTitleKey: "pageTitleSessions",
+  locale: await loadExtensionLocale()
+});
 const port = chromeApi?.runtime?.connect({ name: PORT_NAMES.sessions });
-const i18n = createExtensionI18n({ pageTitleKey: "pageTitleSessions" });
 const { locale, t } = i18n;
 const format: SessionFormatters = {
   t,
@@ -43,6 +47,7 @@ const format: SessionFormatters = {
   formatRelativeTime: i18n.formatRelativeTime,
   formatDuration: i18n.formatDuration,
   formatByteSize: i18n.formatByteSize,
+  formatNumber: i18n.formatNumber,
   formatAbsoluteTime: (timestamp) => new Date(timestamp).toLocaleString(locale)
 };
 const root = document.getElementById("sessions-root");
