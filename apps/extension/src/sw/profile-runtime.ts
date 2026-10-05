@@ -8,6 +8,7 @@ import {
   isReadOnlyProfileId,
   type ProfileRule
 } from "../shared/profiles/model.js";
+import { selectionRequiresFullEngine } from "../shared/profiles/engine.js";
 import { isExtendedCaptureProfile, type ProfileSelection } from "../shared/profiles/resolve.js";
 import {
   collectPageSignalRequest,
@@ -123,6 +124,7 @@ export function buildProfilePreview(
           source: selection.source,
           ...(selection.rule?.name ? { ruleName: selection.rule.name } : {}),
           extended: selection.extended,
+          requiresFull: selectionRequiresFullEngine(selection),
           ...(selection.profile.visual ? { visual: selection.profile.visual } : {}),
           ...(enterpriseCapped.length > 0 ? { enterpriseCapped: [...enterpriseCapped] } : {})
         }

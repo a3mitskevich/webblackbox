@@ -100,11 +100,12 @@ export function describeProfileSelection(
     ? [t("popupProfileEnterpriseCapped", { categories: selection.enterpriseCapped.join(", ") })]
     : [];
 
-  return [
-    headline,
-    ...capped,
-    t("popupProfileRecommends", { mode: options.formatMode(selection.base) })
-  ].join(" ");
+  // A profile that needs Full locks the engine switch: the hint says why instead of recommending.
+  const engine = selection.requiresFull
+    ? t("popupProfileFullOnly")
+    : t("popupProfileRecommends", { mode: options.formatMode(selection.base) });
+
+  return [headline, ...capped, engine].join(" ");
 }
 
 /** The service worker answered and no profile exists: recording needs one first. */

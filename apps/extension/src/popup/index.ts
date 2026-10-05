@@ -208,9 +208,18 @@ function selectSessions(): PopupSessions {
   return { activeSession, recordingHere, exportSession, cancelledSession };
 }
 
-/** The engine Start uses: the popup's pick, else the profile's recommendation, else Lite. */
+/**
+ * The engine Start uses: Full for a profile that needs it (a pick made for another profile does not
+ * carry over), else the popup's pick, else the profile's recommendation, else Lite.
+ */
 function resolveEngine(): CaptureMode {
-  return state.engineOverride ?? state.profilePreview?.selection?.base ?? "lite";
+  const selection = state.profilePreview?.selection;
+
+  if (selection?.requiresFull) {
+    return "full";
+  }
+
+  return state.engineOverride ?? selection?.base ?? "lite";
 }
 
 function render(container: HTMLElement): void {
@@ -348,6 +357,7 @@ function createStartArea(pending: boolean): HTMLElement {
     engine: resolveEngine(),
     visualCapture: state.fullModeVisualCapture,
     pinnedVisual: state.profilePreview?.selection?.visual,
+    engineLocked: state.profilePreview?.selection?.requiresFull === true,
     pending
   });
 }
