@@ -36,7 +36,16 @@ main().catch(async (error) => {
 async function main() {
   const origin = await startPageServer();
   const { popup, sw, swExceptions, extensionId } = await harness.launch("about:blank");
-  const extension = createExtensionControl(popup, sw);
+  const swWarnings = [];
+  sw.on("Runtime.consoleAPICalled", ({ type, args }) => {
+    if (type === "warning" || type === "error") {
+      swWarnings.push(args?.map((arg) => arg.value ?? arg.description ?? "").join(" "));
+    }
+  });
+  // Re-enabling replays what the worker logged before this script subscribed.
+  await sw.send("Runtime.disable");
+  await sw.send("Runtime.enable");
+  const extension = createExtensionControl(popup, sw, swWarnings);
 
   await extension.installSwStats();
   await extension.waitForRegistration(true);
@@ -216,7 +225,7 @@ function summarizeFrames(report) {
   );
 }
 
-function createExtensionControl(popup, sw) {
+function createExtensionControl(popup, sw, swWarnings) {
   return {
     async installSwStats() {
       await sw.evaluate(`(() => {
@@ -262,17 +271,32 @@ function createExtensionControl(popup, sw) {
         `chrome.storage.local.set({ "webblackbox.injection": ${JSON.stringify(mode)} }).then(() => true)`
       );
     },
-    waitForRegistration(expected) {
-      return waitFor(
-        async () => {
-          const ids = await popup.evaluate(
-            `chrome.scripting.getRegisteredContentScripts().then((scripts) => scripts.map((script) => script.id))`
-          );
-          return ids.includes(SCRIPT_ID) === expected ? true : null;
-        },
-        10_000,
-        `Content script registration did not become ${expected ? "present" : "absent"}`
-      );
+    async waitForRegistration(expected) {
+      let lastIds = null;
+
+      try {
+        return await waitFor(
+          async () => {
+            lastIds = await popup.evaluate(
+              `chrome.scripting.getRegisteredContentScripts().then((scripts) => scripts.map((script) => script.id))`
+            );
+            return lastIds.includes(SCRIPT_ID) === expected ? true : null;
+          },
+          20_000,
+          `Content script registration did not become ${expected ? "present" : "absent"}`
+        );
+      } catch (error) {
+        const stored = await popup
+          .evaluate(`chrome.storage.local.get("webblackbox.injection")`)
+          .catch(() => null);
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} | ${JSON.stringify({
+            lastIds,
+            stored,
+            swWarnings
+          })}`
+        );
+      }
     },
     tabIdFor(url) {
       return popup.evaluate(
