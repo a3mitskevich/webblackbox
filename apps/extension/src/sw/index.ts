@@ -132,6 +132,8 @@ type SessionRuntime = {
   config: typeof DEFAULT_RECORDER_CONFIG;
   startedAt: number;
   stoppedAt?: number;
+  /** Set once Stop received the page's last events; later page snapshots are dropped. */
+  stopDrained?: boolean;
   /** Secret shared with the injected page hooks and the content script of this session. */
   injectedBridgeNonce: string;
   recorder: WebBlackboxRecorder;
@@ -1241,6 +1243,7 @@ async function stopSession(tabId: number): Promise<void> {
   notifyOffscreenPipelineStatus();
   await stopDrainAck;
   await flushBufferedPipelineEvents(runtime);
+  runtime.stopDrained = true;
 }
 
 async function exportSession(
@@ -1442,9 +1445,12 @@ function shouldAllowStopDrainContentEvent(
   runtime: SessionRuntime,
   rawEvent: RawRecorderEvent
 ): boolean {
+  // Only while the stop drains: a snapshot that arrives after the drain (the session may already
+  // be exported and deleted) would leave its blob behind in the pipeline's storage.
   return (
     rawEvent.source === "content" &&
     rawEvent.sid === runtime.sid &&
+    runtime.stopDrained !== true &&
     STOP_DRAIN_CONTENT_RAW_TYPES.has(rawEvent.rawType)
   );
 }

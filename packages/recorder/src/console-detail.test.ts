@@ -361,3 +361,64 @@ describe("CDP exceptions under console: allow", () => {
     expect(readStackLines(data.stack).length).toBeLessThanOrEqual(11);
   });
 });
+
+describe("CDP console object arguments", () => {
+  function consoleObjectEvent(console: ConsolePolicy) {
+    const recorder = new WebBlackboxRecorder({
+      ...createConfig(console),
+      redaction: { ...DEFAULT_RECORDER_CONFIG.redaction, contentRedaction: false }
+    });
+
+    return recorder.ingest({
+      source: "cdp",
+      rawType: "Runtime.consoleAPICalled",
+      sid: "S-console-objects",
+      tabId: 1,
+      t: 1,
+      mono: 1,
+      payload: {
+        type: "log",
+        args: [
+          { type: "string", value: "login attempt" },
+          {
+            type: "object",
+            className: "Object",
+            description: "Object",
+            preview: {
+              type: "object",
+              description: "Object",
+              overflow: false,
+              properties: [
+                { name: "user", type: "string", value: "ada" },
+                { name: "attempt", type: "number", value: "3" },
+                {
+                  name: "tags",
+                  type: "object",
+                  subtype: "array",
+                  value: "Array(2)",
+                  valuePreview: {
+                    type: "object",
+                    subtype: "array",
+                    overflow: true,
+                    properties: [{ name: "0", type: "string", value: "beta" }]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }).event?.data as { args: unknown[]; text: string } | undefined;
+  }
+
+  it("keeps the object CDP previews under console: allow", () => {
+    const data = consoleObjectEvent("allow");
+
+    expect(data?.args[1]).toEqual({ user: "ada", attempt: 3, tags: ["beta", "…"] });
+    expect(data?.text).toContain("ada");
+  });
+
+  it("keeps the short description in the compact detail", () => {
+    expect(consoleObjectEvent("sanitized")?.args[1]).toBe("Object");
+  });
+});
