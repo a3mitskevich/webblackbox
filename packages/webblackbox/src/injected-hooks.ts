@@ -1561,7 +1561,9 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
 
     indexedDB.open = (name: string, version?: number) => {
       if (captureActive) {
-        const showsName = capturePolicy.categories.indexedDb === "names-only";
+        const showsName =
+          capturePolicy.categories.indexedDb === "names-only" ||
+          capturePolicy.categories.indexedDb === "allow";
 
         emit("indexedDbOp", {
           op: "open",

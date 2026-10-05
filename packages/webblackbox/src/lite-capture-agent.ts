@@ -210,6 +210,8 @@ export class LiteCaptureAgent {
 
   private domChangeSnapshotTimer = 0;
 
+  private indexedDbSnapshotInFlight = false;
+
   private lastDomSnapshotMono = Number.NEGATIVE_INFINITY;
   private flushTimer = 0;
   private lastScrollTime = 0;
@@ -1086,8 +1088,8 @@ export class LiteCaptureAgent {
   /**
    * Sessions that record the raw DOM snapshot the page again after it changes, at most every
    * {@link DOM_CHANGE_SNAPSHOT_INTERVAL_MS}, so a replayed DOM follows the session instead of
-   * freezing at the start snapshot. Under mutation pressure (quiet mode, observer off) the DOM is
-   * assumed to keep changing and is re-snapshotted at that interval until the pressure ends.
+   * freezing at the start snapshot. Under capture pressure the snapshot waits (checked again
+   * every interval) and is taken once the pressure ends.
    */
   private scheduleDomChangeSnapshot(): void {
     if (
@@ -1119,10 +1121,6 @@ export class LiteCaptureAgent {
       }
 
       this.emitDomSnapshot("mutation");
-
-      if (this.isQuietModeActive()) {
-        this.scheduleDomChangeSnapshot();
-      }
     }, delayMs);
   }
 
@@ -1354,15 +1352,27 @@ export class LiteCaptureAgent {
   }
 
   private async emitIndexedDbSnapshot(reason: string): Promise<void> {
-    if (!("indexedDB" in window) || typeof indexedDB.databases !== "function") {
+    // One read at a time: start, interval and stop snapshots must not stack up on the page.
+    if (
+      this.indexedDbSnapshotInFlight ||
+      !("indexedDB" in window) ||
+      typeof indexedDB.databases !== "function"
+    ) {
       return;
     }
+
+    this.indexedDbSnapshotInFlight = true;
 
     try {
       const rows = await indexedDB.databases();
 
       if (this.capturePolicy.categories.indexedDb === "allow") {
         const snapshot = await readIndexedDbSnapshot(indexedDB, rows);
+
+        if (!this.recordingActive) {
+          return;
+        }
+
         this.queueEvent("indexedDbSnapshot", {
           reason,
           count: rows.length,
@@ -1391,6 +1401,8 @@ export class LiteCaptureAgent {
       });
     } catch {
       void 0;
+    } finally {
+      this.indexedDbSnapshotInFlight = false;
     }
   }
 

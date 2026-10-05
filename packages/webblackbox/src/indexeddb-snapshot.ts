@@ -72,6 +72,9 @@ async function readDatabase(
     return { name, version, stores: [], error: errorText(error) };
   }
 
+  // Never hold up the page's own upgrade: give the connection back at once.
+  database.onversionchange = () => database.close();
+
   try {
     const storeNames = Array.from(database.objectStoreNames);
     const stores: IdbSnapshotStore[] = [];
@@ -126,34 +129,42 @@ function openExisting(factory: IDBFactory, name: string): Promise<IDBDatabase> {
   });
 }
 
+/**
+ * Records in key order through a cursor, one at a time, stopping at the record limit or when the
+ * shared budget is spent: values past it are never read or serialized.
+ */
 async function readStore(
   database: IDBDatabase,
   storeName: string,
   budget: { chars: number }
 ): Promise<IdbSnapshotStore> {
   const store = database.transaction(storeName, "readonly").objectStore(storeName);
-  const [count, keys, values] = await Promise.all([
-    requestResult(store.count()),
-    requestResult(store.getAllKeys(null, IDB_SNAPSHOT_MAX_RECORDS)),
-    requestResult(store.getAll(null, IDB_SNAPSHOT_MAX_RECORDS))
-  ]);
+  const count = await requestResult(store.count());
   const records: IdbSnapshotRecord[] = [];
-  let truncated = count > values.length;
 
-  for (let index = 0; index < values.length; index += 1) {
-    if (budget.chars <= 0) {
-      truncated = true;
-      break;
-    }
+  await new Promise<void>((resolve, reject) => {
+    const request = store.openCursor();
 
-    const record = {
-      key: capStorageValue(toText(keys[index])).value,
-      ...capStorageValue(toText(values[index]))
+    request.onerror = () => reject(request.error ?? new Error("cursor failed"));
+    request.onsuccess = () => {
+      const cursor = request.result;
+
+      if (!cursor || records.length >= IDB_SNAPSHOT_MAX_RECORDS || budget.chars <= 0) {
+        resolve();
+        return;
+      }
+
+      const record = {
+        key: capStorageValue(toText(cursor.key)).value,
+        ...capStorageValue(toText(cursor.value))
+      };
+      budget.chars -= record.key.length + record.value.length;
+      records.push(record);
+      cursor.continue();
     };
-    budget.chars -= record.key.length + record.value.length;
-    records.push(record);
-  }
+  });
 
+  const truncated = count > records.length;
   return { name: storeName, count, records, ...(truncated ? { truncated: true as const } : {}) };
 }
 
