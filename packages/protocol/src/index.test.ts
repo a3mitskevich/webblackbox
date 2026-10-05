@@ -258,4 +258,16 @@ describe("protocol", () => {
       "/v1/items/:token"
     );
   });
+
+  it("keeps the WebSocket endpoint and strips query, fragment, and userinfo", () => {
+    expect(sanitizeUrlForPrivacy("ws://127.0.0.1:8080/ws?token=secret#frag")).toBe(
+      "ws://127.0.0.1:8080/ws"
+    );
+    expect(
+      sanitizeUrlForPrivacy("wss://alice:hunter2@realtime.example.test/rooms/123/socket?auth=abc")
+    ).toBe("wss://realtime.example.test/rooms/:id/socket");
+    expect(sanitizeUrlForPrivacy("WSS://Realtime.Example.Test:443/live")).toBe(
+      "wss://realtime.example.test/live"
+    );
+  });
 });
