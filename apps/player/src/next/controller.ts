@@ -266,7 +266,8 @@ export function createPlayerController(
           fileName,
           player,
           model,
-          view: buildSessionView(player.archive, model)
+          view: buildSessionView(player.archive, model),
+          bytes
         };
 
         mediaCache.clear();

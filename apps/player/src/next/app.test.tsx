@@ -91,7 +91,7 @@ describe("React player", () => {
       "aria-valuetext",
       "0.00s of 17.80s"
     );
-    expect(screen.getAllByRole("tab")).toHaveLength(7);
+    expect(screen.getAllByRole("tab")).toHaveLength(8);
     expect(screen.getAllByTestId("event-row").length).toBeGreaterThan(5);
     expect(screen.getByTestId("now-line")).toHaveTextContent("now");
   });
@@ -148,9 +148,7 @@ describe("React player", () => {
     expect(screen.queryByTestId("shortcuts-dialog")).not.toBeInTheDocument();
 
     key("3", { code: "Digit3" });
-    expect(screen.getByTestId("panel-placeholder-console")).toHaveTextContent(
-      "Console arrives in a later stage"
-    );
+    expect(screen.getByTestId("tab-console")).toHaveAttribute("aria-selected", "true");
 
     key("Home");
     key("ArrowRight");

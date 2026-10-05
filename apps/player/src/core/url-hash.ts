@@ -1,6 +1,6 @@
 import type { Selection, SelectionKind } from "./navigation.js";
 
-/** Rail tabs of the player (PROPOSAL §3); the order is the `1`…`7` keyboard order. */
+/** Rail tabs of the player (PROPOSAL §3); the order is the `1`…`8` keyboard order. */
 export const RAIL_TABS = [
   "activity",
   "network",
@@ -8,7 +8,8 @@ export const RAIL_TABS = [
   "realtime",
   "storage",
   "tabs",
-  "perf"
+  "perf",
+  "compare"
 ] as const;
 
 export type RailTab = (typeof RAIL_TABS)[number];

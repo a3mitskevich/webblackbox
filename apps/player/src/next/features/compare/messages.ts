@@ -3,10 +3,10 @@ import EN from "./locales/en.json" with { type: "json" };
 import RU from "./locales/ru.json" with { type: "json" };
 import ZH_CN from "./locales/zh-CN.json" with { type: "json" };
 
-export type StorageMessageKey = keyof typeof EN;
-export type StorageTranslate = FeatureTranslator<StorageMessageKey>;
+export type CompareMessageKey = keyof typeof EN;
+export type CompareTranslate = FeatureTranslator<CompareMessageKey>;
 
-export const storageMessages = defineFeatureMessages<StorageMessageKey>("storage", {
+export const compareMessages = defineFeatureMessages<CompareMessageKey>("compare", {
   en: EN,
   ru: RU,
   "zh-CN": ZH_CN

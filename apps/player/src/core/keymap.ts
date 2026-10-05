@@ -103,7 +103,7 @@ export const SHORTCUT_SHEET = [
   { keys: ["E", "Shift E"], action: "stepError" },
   { keys: ["A"], action: "nextAction" },
   { keys: ["/", "Ctrl K"], action: "search" },
-  { keys: ["1…7"], action: "tabs" },
+  { keys: ["1…8"], action: "tabs" },
   { keys: ["Enter", "Esc"], action: "details" },
   { keys: ["?"], action: "shortcuts" }
 ] as const;

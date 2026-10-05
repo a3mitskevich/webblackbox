@@ -61,7 +61,7 @@ describe("buildArchiveModel", () => {
     expect(model.waterfallByReqId.get("90080.1706")?.status).toBe(401);
     expect(model.screenshots).toHaveLength(5);
     expect(model.realtime.length).toBeGreaterThan(8);
-    expect(model.storage).toHaveLength(2);
+    expect(model.storage).toHaveLength(9);
     expect(model.actionTimeline.length).toBeGreaterThanOrEqual(5);
     expect(model.tabsContext.summary.distinctTabs).toBe(2);
     expect(model.totals.errors).toBe(1);
@@ -75,7 +75,7 @@ describe("buildArchiveModel", () => {
   it("builds progress markers per kind", () => {
     const kinds = new Set(model.progressMarkers.map((marker) => marker.kind));
 
-    expect([...kinds].sort()).toEqual(["action", "error", "network", "screenshot"]);
+    expect([...kinds].sort()).toEqual(["action", "error", "network", "screenshot", "tabs"]);
     expect(buildProgressMarkers([], 0, 0)).toEqual([]);
   });
 
@@ -250,6 +250,7 @@ describe("event rows", () => {
         "network.finished",
         "network.body",
         "network.ws.frame",
+        "perf.trace",
         "user.mousemove"
       ])
     );

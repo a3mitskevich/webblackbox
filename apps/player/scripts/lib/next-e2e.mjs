@@ -198,7 +198,10 @@ const ALLOWED_FUNCTION_CALLS = [
   {
     label: "setImmediate string callback",
     pattern: /typeof ([\w$]+)!=[`"']function[`"']&&\(\1=Function\([`"']{2}\+\1\)\)/u
-  }
+  },
+  // Shiki's JavaScript/TypeScript TextMate grammars: the word inside a regex *string*
+  // (`Function(?![$_[:alnum:]])`), never a call.
+  { label: "Shiki grammar regex text", pattern: /Function\(\?!\[\$_\[:alnum:\]\]\)/u }
 ];
 
 function findForbiddenCode(source) {

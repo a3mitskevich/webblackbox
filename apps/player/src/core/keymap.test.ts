@@ -50,7 +50,8 @@ describe("keymap", () => {
     expect(findKeyBinding(" escape ")?.command).toEqual({ type: "close" });
     expect(findKeyBinding("3")?.command).toEqual({ type: "select-tab", tab: "console" });
     expect(findKeyBinding("7")?.command).toEqual({ type: "select-tab", tab: "perf" });
-    expect(findKeyBinding("8")).toBeNull();
+    expect(findKeyBinding("8")?.command).toEqual({ type: "select-tab", tab: "compare" });
+    expect(findKeyBinding("9")).toBeNull();
     expect(findKeyBinding("x")).toBeNull();
   });
 

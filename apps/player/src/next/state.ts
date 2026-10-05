@@ -20,6 +20,8 @@ export type LoadedArchive = {
   player: WebBlackboxPlayer;
   model: ArchiveModel;
   view: SessionView;
+  /** The archive file as opened (the Share upload sends it unchanged). */
+  bytes: Uint8Array;
 };
 
 /**
