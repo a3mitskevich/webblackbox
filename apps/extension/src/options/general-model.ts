@@ -13,6 +13,7 @@ import {
   normalizePerformanceBudget,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
+import { DEFAULT_START_RELOAD_OFFER } from "../shared/start-reload-offer.js";
 
 /**
  * Pure model of the general settings (everything outside the profiles editor): the draft being
@@ -23,6 +24,8 @@ export type GeneralDraft = {
   recorderConfig: RecorderConfig;
   performanceBudget: PerformanceBudgetConfig;
   archive: ExportPolicyPrefs;
+  /** Stored under its own key (`webblackbox.startReloadOffer`), not in `webblackbox.options`. */
+  startReloadOffer: boolean;
 };
 
 export type GeneralSectionId = "sensitivity" | "pointer" | "sampling" | "budgets" | "export";
@@ -144,6 +147,15 @@ function redactionList(
 }
 
 export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
+  {
+    kind: "toggle",
+    id: "startReloadOffer",
+    section: "sampling",
+    label: "optionsStartReloadOffer",
+    hint: "optionsStartReloadOfferHint",
+    get: (draft) => draft.startReloadOffer,
+    set: (draft, value) => ({ ...draft, startReloadOffer: value })
+  },
   redactionList("blockedSelectors", {
     label: "optionsBlockedSelectors",
     hint: "optionsBlockedSelectorsHint",
@@ -385,7 +397,8 @@ export function createDefaultGeneralDraft(): GeneralDraft {
   return {
     recorderConfig: normalizeOptionsConfig(structuredClone(DEFAULT_RECORDER_CONFIG)),
     performanceBudget: { ...DEFAULT_PERFORMANCE_BUDGET },
-    archive: { ...DEFAULT_EXPORT_POLICY_PREFS }
+    archive: { ...DEFAULT_EXPORT_POLICY_PREFS },
+    startReloadOffer: DEFAULT_START_RELOAD_OFFER
   };
 }
 
@@ -424,6 +437,10 @@ export function isStoredOptionsChanged(draft: GeneralDraft, baseline: GeneralDra
 
 export function isArchiveChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
   return JSON.stringify(draft.archive) !== JSON.stringify(baseline.archive);
+}
+
+export function isStartReloadOfferChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
+  return draft.startReloadOffer !== baseline.startReloadOffer;
 }
 
 const GENERAL_SECTION_IDS: readonly GeneralSectionId[] = [

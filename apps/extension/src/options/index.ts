@@ -15,6 +15,10 @@ import {
   migrateStoredRecorderConfig
 } from "../shared/options-storage.js";
 import { normalizePerformanceBudget } from "../shared/performance-budget.js";
+import {
+  normalizeStartReloadOffer,
+  START_RELOAD_OFFER_STORAGE_KEY
+} from "../shared/start-reload-offer.js";
 import { PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
 import {
   applyDefaultProfileToGeneralForm,
@@ -35,6 +39,7 @@ import {
   createDefaultGeneralDraft,
   findField,
   isArchiveChanged,
+  isStartReloadOfferChanged,
   isStoredOptionsChanged,
   normalizeOptionsConfig,
   resetGeneralSection,
@@ -259,6 +264,7 @@ function isDirty(page: PageState): boolean {
   return (
     isStoredOptionsChanged(page.draft, page.baseline) ||
     isArchiveChanged(page.draft, page.baseline) ||
+    isStartReloadOfferChanged(page.draft, page.baseline) ||
     (page.editor?.isDirty() ?? false)
   );
 }
@@ -324,6 +330,7 @@ async function saveAll(page: PageState): Promise<void> {
     const editor = await page.editorReady;
     const generalChanged = isStoredOptionsChanged(page.draft, page.baseline);
     const archiveChanged = isArchiveChanged(page.draft, page.baseline);
+    const startReloadOfferChanged = isStartReloadOfferChanged(page.draft, page.baseline);
     const profilesChanged = editor.isDirty();
     // Nothing is written when the profiles draft cannot be saved, so a failed Save never leaves
     // the general options ahead of the Default profile they are folded into.
@@ -338,7 +345,11 @@ async function saveAll(page: PageState): Promise<void> {
       // What the form showed: only the fields that differ from it are copied into Default.
       const shown = toStoredOptionsPayload(page.baseline);
       await chromeApi?.storage?.local.set({ [STORAGE_KEY]: payload });
-      page.baseline = { ...page.draft, archive: page.baseline.archive };
+      page.baseline = {
+        ...page.draft,
+        archive: page.baseline.archive,
+        startReloadOffer: page.baseline.startReloadOffer
+      };
 
       if (profilesChanged) {
         // The editor's draft must not write the old Default values back on its save.
@@ -360,6 +371,13 @@ async function saveAll(page: PageState): Promise<void> {
 
     if (archiveChanged && !saveExportPolicyPrefs(page.draft.archive)) {
       throw new Error(t("optionsArchiveSaveFailed"));
+    }
+
+    if (startReloadOfferChanged) {
+      // The popup reads this key on every Start.
+      await chromeApi?.storage?.local.set({
+        [START_RELOAD_OFFER_STORAGE_KEY]: page.draft.startReloadOffer
+      });
     }
 
     const reloaded = await loadGeneralDraft();
@@ -395,7 +413,11 @@ function cancelAll(page: PageState): void {
 
 /** Once profiles are saved, the general form shows the Default profile's matching fields. */
 async function loadGeneralDraft(): Promise<GeneralDraft> {
-  const values = await chromeApi?.storage?.local.get([STORAGE_KEY, PROFILES_STORAGE_KEY]);
+  const values = await chromeApi?.storage?.local.get([
+    STORAGE_KEY,
+    PROFILES_STORAGE_KEY,
+    START_RELOAD_OFFER_STORAGE_KEY
+  ]);
   const legacy = toLegacyGeneralFields(values?.[STORAGE_KEY]);
   const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
 
@@ -404,11 +426,14 @@ async function loadGeneralDraft(): Promise<GeneralDraft> {
     recorderConfig: parsed
       ? applyDefaultProfileToGeneralForm(legacy.recorderConfig, parsed.store)
       : legacy.recorderConfig,
-    archive: loadExportPolicyPrefs()
+    archive: loadExportPolicyPrefs(),
+    startReloadOffer: normalizeStartReloadOffer(values?.[START_RELOAD_OFFER_STORAGE_KEY])
   };
 }
 
-function toLegacyGeneralFields(stored: unknown): Omit<GeneralDraft, "archive"> {
+function toLegacyGeneralFields(
+  stored: unknown
+): Omit<GeneralDraft, "archive" | "startReloadOffer"> {
   if (!stored || typeof stored !== "object") {
     const defaults = createDefaultGeneralDraft();
     return {

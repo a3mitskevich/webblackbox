@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const STORAGE_KEY = "webblackbox.options";
 const PROFILES_KEY = "webblackbox.profiles";
 const ARCHIVE_KEY = "webblackbox.popup.export-policy";
+const START_RELOAD_OFFER_KEY = "webblackbox.startReloadOffer";
 
 function installChromeStub(initial: Record<string, unknown> = {}) {
   const data: Record<string, unknown> = { ...initial };
@@ -188,6 +189,59 @@ describe("options page", () => {
     expect(storage.data[PROFILES_KEY]).toBeUndefined();
     expect(saveState()).toMatch(/^Saved at /);
     expect(saveButton().disabled).toBe(true);
+  });
+
+  it("offers the page reload on Start by default and stores the switch under its own key", async () => {
+    const storage = installChromeStub();
+    await importOptionsModule();
+    const toggle = query<HTMLInputElement>(
+      "[data-options-section='sampling'] input#startReloadOffer"
+    );
+
+    expect(toggle.checked).toBe(true);
+
+    toggle.click();
+
+    expect(saveState()).toBe("Unsaved changes");
+    expect(query("[data-section-link='sampling']").getAttribute("data-dirty")).toBe("true");
+
+    saveButton().click();
+    await flush();
+
+    expect(storage.data[START_RELOAD_OFFER_KEY]).toBe(false);
+    // A popup preference, not a recorder setting: the options record and profiles stay as they are.
+    expect(storage.data[STORAGE_KEY]).toBeUndefined();
+    expect(storage.data[PROFILES_KEY]).toBeUndefined();
+    expect(query<HTMLInputElement>("#startReloadOffer").checked).toBe(false);
+    expect(saveState()).toMatch(/^Saved at /);
+  });
+
+  it("writes the reload offer only when it changed", async () => {
+    const storage = installChromeStub();
+    await importOptionsModule();
+
+    typeNumber("scrollHz", "30");
+    saveButton().click();
+    await flush();
+
+    expect(storage.data[START_RELOAD_OFFER_KEY]).toBeUndefined();
+  });
+
+  it("shows a stored off switch; section reset turns it back on and Discard restores it", async () => {
+    installChromeStub({ [START_RELOAD_OFFER_KEY]: false });
+    await importOptionsModule();
+
+    expect(query<HTMLInputElement>("#startReloadOffer").checked).toBe(false);
+
+    query<HTMLElement>("[data-action='section-reset'][data-section='sampling']").click();
+
+    expect(query<HTMLInputElement>("#startReloadOffer").checked).toBe(true);
+    expect(saveState()).toBe("Unsaved changes");
+
+    cancelButton().click();
+
+    expect(query<HTMLInputElement>("#startReloadOffer").checked).toBe(false);
+    expect(saveState()).toBe("All changes saved");
   });
 
   it("keeps stored settings the page does not show when saving", async () => {

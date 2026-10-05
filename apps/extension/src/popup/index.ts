@@ -13,6 +13,7 @@ import {
   type ProfilePreviewResponse,
   type SessionListItem
 } from "../shared/messages.js";
+import { loadStartReloadOffer } from "../shared/start-reload-offer.js";
 import { openChoiceDialog, openPassphraseDialog } from "../shared/ui/dialogs.js";
 import { el } from "../shared/ui/dom.js";
 import { preserveFocus } from "../shared/ui/focus.js";
@@ -474,41 +475,51 @@ async function startFromPopup(container: HTMLElement): Promise<void> {
   }
 
   state.tabId = tabId;
+  const mode = resolveEngine();
+  const reloadPage = await askReloadOnStart();
 
-  if (resolveEngine() === "full") {
-    await startRecordingFromPopup(container, tabId, "full", {
-      visualCapture: state.fullModeVisualCapture
-    });
+  if (reloadPage === null) {
     return;
   }
 
+  await startRecordingFromPopup(container, tabId, mode, {
+    reloadPage,
+    ...(mode === "full" ? { visualCapture: state.fullModeVisualCapture } : {})
+  });
+}
+
+/**
+ * Whether to reload the page once recording started, in either engine; null when cancelled.
+ * Asks only while the offer is on (Options), read on every Start so a change applies at once.
+ */
+async function askReloadOnStart(): Promise<boolean | null> {
+  if (!(await loadStartReloadOffer(chromeApi?.storage?.local))) {
+    return false;
+  }
+
   const startAction = await openChoiceDialog<"reload" | "direct">({
-    title: t("popupLiteReloadTitle"),
-    body: t("popupLiteReloadBody"),
+    title: t("popupReloadTitle"),
+    body: t("popupReloadBody"),
     cancelLabel: t("popupCancel"),
-    cancelAction: "start-lite-cancel",
+    cancelAction: "start-cancel",
     choices: [
       {
         value: "direct",
-        label: t("popupLiteStartWithoutReload"),
-        action: "start-lite-direct",
+        label: t("popupStartWithoutReload"),
+        action: "start-direct",
         variant: "surface"
       },
       {
         value: "reload",
-        label: t("popupLiteReloadStart"),
-        action: "start-lite-reload",
+        label: t("popupReloadStart"),
+        action: "start-reload",
         variant: "brand",
         primary: true
       }
     ]
   });
 
-  if (startAction !== null) {
-    await startRecordingFromPopup(container, tabId, "lite", {
-      reloadPage: startAction === "reload"
-    });
-  }
+  return startAction === null ? null : startAction === "reload";
 }
 
 async function exportWithDialog(container: HTMLElement, session: SessionListItem): Promise<void> {
