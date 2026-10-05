@@ -15,6 +15,8 @@ const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const SIGNALR_RECORD_SEPARATOR = "\u001e";
 const LOBBY_FRAME_MIN_CHARS = 10_500;
 const MIN_CONSOLE_STACK_FRAMES = 15;
+// The demo page function that calls console.error. Lite stacks must start there, not in the page hook.
+const CONSOLE_CALLER_FUNCTION = "logFromDeepStack";
 // 1x1 transparent PNG.
 const FIDELITY_IMAGE_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -140,7 +142,11 @@ export async function verifyCaptureFidelityArchive({
   const player = await WebBlackboxPlayer.open(new Uint8Array(await readFile(archivePath)), {
     passphrase
   });
-  const consoleCheck = checkConsoleEntry(player.query({}), scenario);
+  // Full mode still has the page hook wrapping `console`, so the CDP stack starts in `injected.js` (known
+  // since #9); only the lite page hook drops its own frames.
+  const consoleCheck = checkConsoleEntry(player.query({}), scenario, {
+    requireCallerOnTop: consoleOnly
+  });
 
   if (consoleOnly) {
     return { ok: consoleCheck.ok, console: consoleCheck };
@@ -214,7 +220,7 @@ export async function verifyPlayerRealtimePayload(playerClient, expectedChars, t
   return { ok: false, reason: "timeout", last };
 }
 
-function checkConsoleEntry(events, scenario) {
+function checkConsoleEntry(events, scenario, { requireCallerOnTop }) {
   const entry = events.find(
     (event) =>
       event.type === "console.entry" &&
@@ -222,21 +228,26 @@ function checkConsoleEntry(events, scenario) {
       event.data.text.includes(scenario.consoleMarker)
   );
   const text = entry?.data?.text ?? "";
-  const stackFrames =
-    typeof entry?.data?.stack === "string" ? entry.data.stack.split("\n").length : 0;
+  const stack = typeof entry?.data?.stack === "string" ? entry.data.stack.split("\n") : [];
+  const stackTop = typeof entry?.data?.stackTop === "string" ? entry.data.stackTop : null;
+  const startsAtCaller =
+    (stack[0]?.includes(CONSOLE_CALLER_FUNCTION) ?? false) &&
+    (stackTop?.includes(CONSOLE_CALLER_FUNCTION) ?? false);
 
   return {
     ok:
       Boolean(entry) &&
       text.length >= scenario.consoleChars &&
       entry.data.truncated !== true &&
-      stackFrames >= MIN_CONSOLE_STACK_FRAMES,
+      stack.length >= MIN_CONSOLE_STACK_FRAMES &&
+      (startsAtCaller || !requireCallerOnTop),
     found: Boolean(entry),
     textChars: text.length,
     expectedChars: scenario.consoleChars,
     truncated: entry?.data?.truncated === true,
-    stackFrames,
-    stackTop: entry?.data?.stackTop ?? null
+    stackFrames: stack.length,
+    stackTop,
+    startsAtCaller
   };
 }
 
