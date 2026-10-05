@@ -178,7 +178,6 @@ describe("FullBodyCapture", () => {
             : TEXT_RULE
     });
 
-    harness.capture.onLoadingFinished(finished("meta", null));
     harness.capture.onLoadingFinished(finished("big", { mimeType: "text/javascript" }, LIMIT * 3));
     harness.capture.onLoadingFinished(
       finished("policy", { url: "https://app.example/blocked/x", mimeType: "application/json" })
@@ -187,12 +186,11 @@ describe("FullBodyCapture", () => {
     await harness.capture.drain(1_000);
 
     expect(harness.skips.map((skip) => [skip.reqId, skip.reason])).toEqual([
-      ["meta", "fetch-failed"],
       ["big", "too-large"],
       ["policy", "filtered"],
       ["csv", "mime-not-allowed"]
     ]);
-    expect(harness.skips[1]).toMatchObject({ size: LIMIT * 3, limit: LIMIT });
+    expect(harness.skips[0]).toMatchObject({ size: LIMIT * 3, limit: LIMIT });
   });
 
   it("records read failures with the CDP error and empty bodies", async () => {
@@ -262,6 +260,16 @@ describe("FullBodyCapture", () => {
       ["zero", "empty", 0],
       ["streamed", "unavailable", 64]
     ]);
+  });
+
+  it("leaves responses it never saw to the archive's own record", async () => {
+    const harness = createHarness();
+
+    harness.capture.onLoadingFinished(finished("blob", null));
+    await harness.capture.drain(1_000);
+
+    expect(harness.reads).toEqual([]);
+    expect(harness.skips).toEqual([]);
   });
 
   it("does nothing when the policy does not ask for bodies", () => {

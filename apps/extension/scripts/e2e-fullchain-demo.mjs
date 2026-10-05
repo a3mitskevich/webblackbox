@@ -909,7 +909,9 @@ async function handleApiRequest(request, response, requestUrl, tasks) {
     return;
   }
 
-  if (pathname === "/api/large-response" && request.method === "GET") {
+  // `/api/large-response[/<source>]`: the source is in the path because recorded URLs drop the
+  // query string.
+  if (pathname.startsWith("/api/large-response") && request.method === "GET") {
     const rawBytes = Number(requestUrl.searchParams.get("bytes") ?? realWorldLargeResponseBytes);
     const size = Number.isFinite(rawBytes)
       ? Math.max(1024, Math.min(rawBytes, 4 * 1024 * 1024))
@@ -2596,7 +2598,7 @@ async function runRealWorldScenarioAddons({
         mark('iframe ready');
 
         if (${JSON.stringify(wantsIframeNetwork)}) {
-          const iframeResponse = await iframe.contentWindow?.fetch('/api/large-response?source=iframe&bytes=2048');
+          const iframeResponse = await iframe.contentWindow?.fetch('/api/large-response/iframe?bytes=2048');
           const iframeText = iframeResponse ? await iframeResponse.text() : '';
           result.iframeNetworkBytes = iframeText.length;
           mark('iframe network ' + result.iframeNetworkBytes);
@@ -2604,7 +2606,7 @@ async function runRealWorldScenarioAddons({
 
         if (${JSON.stringify(wantsChildTarget)}) {
           const workerResult = await new Promise((resolve) => {
-            const workerFetchUrl = new URL('/api/large-response?source=worker&bytes=2048', location.href).href;
+            const workerFetchUrl = new URL('/api/large-response/worker?bytes=2048', location.href).href;
             const workerSource = [
               'self.onmessage = async () => {',
               '  try {',
@@ -2799,12 +2801,13 @@ async function runRealWorldScenarioAddons({
     permissionMarker,
     multiTabMarker
   ].filter((marker) => typeof marker === "string" && marker.length > 0);
-  const expectedUrls = ["/api/large-response?bytes="];
+  // Recorded URLs keep the path but not the query string.
+  const expectedUrls = ["/api/large-response"];
   if (wantsIframeNetwork) {
-    expectedUrls.push("/api/large-response?source=iframe");
+    expectedUrls.push("/api/large-response/iframe");
   }
   if (wantsChildTarget) {
-    expectedUrls.push("/api/large-response?source=worker");
+    expectedUrls.push("/api/large-response/worker");
   }
 
   return {

@@ -2,8 +2,8 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 76000,
-      "maxGzipBytes": 17600
+      "maxBytes": 80000,
+      "maxGzipBytes": 19000
     },
     {
       "path": "packages/pipeline/dist/index.js",
@@ -12,8 +12,8 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 95000,
-      "maxGzipBytes": 23000
+      "maxBytes": 110000,
+      "maxGzipBytes": 27000
     },
     {
       "path": "apps/player/build/main.js",

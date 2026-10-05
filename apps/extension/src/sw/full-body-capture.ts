@@ -134,9 +134,9 @@ export class FullBodyCapture {
 
     const { meta } = response;
 
+    // No response event (e.g. `blob:` URLs, or events a child session sent before it was
+    // primed): the archive holds no textual response for it, so there is no body to account for.
     if (!meta) {
-      // The response event was never seen (or expired), so the body cannot be classified.
-      this.skip(response, "fetch-failed", { detail: "no response metadata" });
       return;
     }
 

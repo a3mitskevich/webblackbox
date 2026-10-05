@@ -418,7 +418,7 @@ function summarizeStorage(
 
   return {
     cookieSnapshots: cookies.length,
-    cookieValues: sum(cookies.map((data) => countWithValue(data?.entries))),
+    cookieValues: sum(cookies.map((data) => countWithValue(data?.cookies ?? data?.entries))),
     localSnapshots: local.length,
     localValues: sum(local.map((data) => countWithValue(data?.entries))),
     idbSnapshots: idb.length,

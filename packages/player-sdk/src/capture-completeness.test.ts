@@ -229,7 +229,7 @@ describe("capture completeness", () => {
       {
         type: "storage.cookie.snapshot",
         mono: 10,
-        data: { entries: [{ name: "sid", value: "abc" }, { name: "flag" }] }
+        data: { cookies: [{ name: "sid", value: "abc" }, { name: "flag" }] }
       },
       {
         type: "storage.idb.snapshot",
