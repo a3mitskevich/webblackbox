@@ -28,6 +28,18 @@ function installChromeStub(initial: Record<string, unknown> = {}) {
   return { data, set };
 }
 
+/** Keeps the profiles editor loading (it reads the managed policy) until the returned call. */
+function holdProfilesEditor(): () => void {
+  let release = (): void => undefined;
+  const pending = new Promise<Record<string, unknown>>((resolve) => {
+    release = () => resolve({});
+  });
+  const { storage } = (globalThis as unknown as { chrome: { storage: Record<string, unknown> } })
+    .chrome;
+  storage.managed = { get: () => pending };
+  return release;
+}
+
 async function flush(): Promise<void> {
   for (let index = 0; index < 6; index += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -686,6 +698,38 @@ describe("options page: unsaved changes", () => {
     saveButton().click();
     await flush();
 
+    expect(unloadPrevented()).toBe(false);
+  });
+
+  it("tracks edits typed before the profiles editor has loaded", async () => {
+    const storage = installChromeStub();
+    const releaseEditor = holdProfilesEditor();
+    await importOptionsModule();
+
+    expect(query("[data-options-section='profiles'] .wb-section__body").childElementCount).toBe(0);
+
+    await goTo("pointer");
+    typeNumber("scrollHz", "30");
+
+    expect(saveState()).toBe("Unsaved changes");
+    expect(navDirty("pointer")).toBe(true);
+    expect(unloadPrevented()).toBe(true);
+
+    await goTo("sampling");
+    await choose("leave-save");
+
+    // The save waits for the editor: the general options are folded into its Default profile.
+    expect(storage.data[STORAGE_KEY]).toBeUndefined();
+    expect(shownSection()).toBe("pointer");
+
+    releaseEditor();
+    await flush();
+
+    expect(storage.data[STORAGE_KEY]).toEqual(
+      expect.objectContaining({ sampling: expect.objectContaining({ scrollHz: 30 }) })
+    );
+    expect(shownSection()).toBe("sampling");
+    expect(saveState()).toMatch(/^Saved at /);
     expect(unloadPrevented()).toBe(false);
   });
 
