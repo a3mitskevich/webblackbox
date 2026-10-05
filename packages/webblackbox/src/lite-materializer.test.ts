@@ -414,6 +414,58 @@ describe("lite-materializer", () => {
     expect(idb?.payload).toMatchObject({ mode: "names-only", databaseNames: ["app-db"] });
     expect(cookies?.payload).toMatchObject({ mode: "names-only", names: ["theme"] });
     expect(putBlob).not.toHaveBeenCalled();
+
+    const cookieValues = await materializeLiteRawEvent(
+      createRawEvent("cookieSnapshot", {
+        count: 2,
+        cookies: [{ name: "theme", value: "dark" }, { name: "broken" }]
+      }),
+      withCategories({ cookies: "allow" })
+    );
+    const idbRecords = await materializeLiteRawEvent(
+      createRawEvent("indexedDbSnapshot", {
+        count: 1,
+        databaseNames: ["app-db"],
+        databases: [
+          {
+            name: "app-db",
+            version: 2,
+            stores: [{ name: "kv", count: 1, records: [{ key: "1", value: '{"a":1}', x: 1 }] }],
+            injected: "<script>"
+          }
+        ]
+      }),
+      withCategories({ indexedDb: "allow" })
+    );
+    // A page asking for more than the policy allows still gets names only.
+    const cookieNamesOnly = await materializeLiteRawEvent(
+      createRawEvent("cookieSnapshot", {
+        count: 1,
+        names: ["theme"],
+        cookies: [{ name: "theme", value: "dark" }]
+      }),
+      withCategories({ cookies: "names-only" })
+    );
+
+    expect(cookieValues?.payload).toMatchObject({
+      mode: "allow",
+      redacted: false,
+      cookies: [{ name: "theme", value: "dark" }]
+    });
+    expect(idbRecords?.payload).toEqual({
+      count: 1,
+      mode: "allow",
+      redacted: false,
+      databaseNames: ["app-db"],
+      databases: [
+        {
+          name: "app-db",
+          version: 2,
+          stores: [{ name: "kv", count: 1, records: [{ key: "1", value: '{"a":1}' }] }]
+        }
+      ]
+    });
+    expect(cookieNamesOnly?.payload).not.toHaveProperty("cookies");
   });
 
   it("treats a zero body-capture budget as disabled", async () => {
