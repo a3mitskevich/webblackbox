@@ -74,6 +74,8 @@ type PageState = {
   pendingSources: Map<string, Element>;
   generalHosts: Record<GeneralSectionId, HTMLElement>;
   editor?: ProfilesEditorHandle;
+  /** Settles once the profiles editor has loaded; a Save made before that waits for it. */
+  editorReady?: Promise<ProfilesEditorHandle>;
   status?: { text: string; error: boolean };
   saving: boolean;
 };
@@ -111,8 +113,12 @@ async function bootstrap(container: HTMLElement): Promise<void> {
   renderGeneral(page);
   container.replaceChildren(shell.root);
   shell.showSection(sectionFromHash(location.hash));
+  // The general fields are interactive from here: edits must count (and guard the tab) while the
+  // profiles editor is still loading.
+  bindPage(page);
+  refreshSaveBar(page);
 
-  page.editor = await mountProfilesEditor(
+  page.editorReady = mountProfilesEditor(
     shell.content,
     {
       chromeApi,
@@ -131,8 +137,7 @@ async function bootstrap(container: HTMLElement): Promise<void> {
       transfer: shell.bodies.transfer
     }
   );
-
-  bindPage(page);
+  page.editor = await page.editorReady;
   refreshSaveBar(page);
 }
 
@@ -297,19 +302,18 @@ function refreshSaveBar(page: PageState): void {
  * an existing store's Default profile, as before (no store is created behind the user's back).
  */
 async function saveAll(page: PageState): Promise<void> {
-  const editor = page.editor;
-
-  if (!editor || page.errors.size > 0 || page.saving) {
+  if (!page.editorReady || page.errors.size > 0 || page.saving) {
     return;
   }
 
-  const generalChanged = isStoredOptionsChanged(page.draft, page.baseline);
-  const archiveChanged = isArchiveChanged(page.draft, page.baseline);
-  const profilesChanged = editor.isDirty();
   page.saving = true;
   refreshSaveBar(page);
 
   try {
+    const editor = await page.editorReady;
+    const generalChanged = isStoredOptionsChanged(page.draft, page.baseline);
+    const archiveChanged = isArchiveChanged(page.draft, page.baseline);
+    const profilesChanged = editor.isDirty();
     // Nothing is written when the profiles draft cannot be saved, so a failed Save never leaves
     // the general options ahead of the Default profile they are folded into.
     const validation = profilesChanged ? editor.validate() : { ok: true as const };
