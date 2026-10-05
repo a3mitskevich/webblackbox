@@ -208,6 +208,8 @@ describe("WebBlackboxPlayer", () => {
     }
   });
 
+  // Builds and opens a 16 MiB archive: on shared CI runners this alone has taken over 4 s, so the
+  // default 5 s timeout is not a budget here (the bounds checked are memory, not time).
   it("keeps large archive player pressure paths bounded", async () => {
     const bytes = await createLargePressureArchive();
     const heapSamples = [process.memoryUsage().heapUsed];
@@ -243,7 +245,7 @@ describe("WebBlackboxPlayer", () => {
     expect(firstScreenshot?.bytes.byteLength).toBe(32 * 1024);
     expect(firstResponseBody?.bytes.byteLength).toBe(16 * 1024);
     expect(heapPeak - heapBaseline).toBeLessThan(512 * 1024 * 1024);
-  });
+  }, 30_000);
 
   it("opens archives with compressed chunk codecs", async () => {
     const codecs = supportedCompressedCodecsForTest();
