@@ -13,6 +13,8 @@ import {
 
 const WS_TEXT_OPCODE = 1;
 const MAX_TIMING_FIELDS = 32;
+/** Max `requestServedFromCache` marks waiting for their response/finish; the oldest go first. */
+export const MAX_TRACKED_CACHED_REQUESTS = 2048;
 
 type RequestBody = {
   size?: number;
@@ -47,7 +49,7 @@ export function normalizeCdpNetworkPayload(
     case "Network.loadingFinished":
       return stripUndefined({
         ...readEventIds(row),
-        encodedDataLength: asFiniteNumber(row.encodedDataLength) ?? undefined
+        encodedDataLength: readByteLength(row.encodedDataLength)
       });
     case "Network.loadingFailed":
       return stripUndefined({
@@ -64,6 +66,15 @@ export function normalizeCdpNetworkPayload(
         url: sanitizeOptionalUrl(asString(row.url)),
         initiator: normalizeInitiator(row.initiator)
       });
+    case "Network.eventSourceMessageReceived":
+      // Same shape as the page-hook `sse` message; `data` is gated like other inline bodies.
+      return stripUndefined({
+        ...readEventIds(row),
+        phase: "message",
+        eventType: asString(row.eventName),
+        lastEventId: asString(row.eventId),
+        data: asString(row.data)
+      });
     case "Network.webSocketFrameSent":
     case "Network.webSocketFrameReceived":
       return stripUndefined({
@@ -74,6 +85,82 @@ export function normalizeCdpNetworkPayload(
     default:
       return stripUndefined(readEventIds(row));
   }
+}
+
+/**
+ * Remembers `Network.requestServedFromCache` (which has no event of its own) and marks the request's
+ * `network.response` (`response.fromMemoryCache`) and `network.finished` (`fromMemoryCache`), so a
+ * memory-cache hit — including one that never gets `responseReceived` — closes as "from cache".
+ * Chrome sends it for memory-cache and data: URL hits; disk-cache hits carry `fromDiskCache` instead.
+ */
+export class CdpCacheTracker {
+  private readonly servedFromCache = new Set<string>();
+
+  /** Records a `requestServedFromCache` event. */
+  public remember(cdpSessionId: string | undefined, payload: unknown): void {
+    const requestId = asString(asRecord(payload)?.requestId);
+
+    if (!requestId) {
+      return;
+    }
+
+    const key = buildCacheKey(cdpSessionId, requestId);
+    this.servedFromCache.delete(key);
+    this.servedFromCache.add(key);
+
+    if (this.servedFromCache.size > MAX_TRACKED_CACHED_REQUESTS) {
+      const oldest = this.servedFromCache.values().next().value;
+
+      if (oldest !== undefined) {
+        this.servedFromCache.delete(oldest);
+      }
+    }
+  }
+
+  /** Adds the cache mark to a normalized response/finish payload; a finish or failure ends tracking. */
+  public annotate(
+    rawType: string,
+    cdpSessionId: string | undefined,
+    payload: Record<string, unknown>
+  ): Record<string, unknown> {
+    const requestId = asString(payload.requestId);
+
+    if (!requestId) {
+      return payload;
+    }
+
+    const key = buildCacheKey(cdpSessionId, requestId);
+
+    if (!this.servedFromCache.has(key)) {
+      return payload;
+    }
+
+    if (rawType === "Network.responseReceived") {
+      const response = asRecord(payload.response);
+      return response && response.fromDiskCache !== true
+        ? { ...payload, response: { ...response, fromMemoryCache: true } }
+        : payload;
+    }
+
+    if (rawType === "Network.loadingFinished" || rawType === "Network.loadingFailed") {
+      this.servedFromCache.delete(key);
+      return rawType === "Network.loadingFinished"
+        ? { ...payload, fromMemoryCache: true }
+        : payload;
+    }
+
+    return payload;
+  }
+}
+
+function buildCacheKey(cdpSessionId: string | undefined, requestId: string): string {
+  return `${cdpSessionId ?? ""}\u0000${requestId}`;
+}
+
+/** CDP uses -1 for "unknown" (e.g. blob: URLs); only real byte counts are kept. */
+function readByteLength(value: unknown): number | undefined {
+  const numeric = asFiniteNumber(value);
+  return numeric !== null && numeric >= 0 ? numeric : undefined;
 }
 
 function readEventIds(row: Record<string, unknown>): Record<string, unknown> {
@@ -137,7 +224,7 @@ function normalizeResponse(
       fromDiskCache: asBoolean(response.fromDiskCache),
       fromServiceWorker: asBoolean(response.fromServiceWorker),
       fromPrefetchCache: asBoolean(response.fromPrefetchCache),
-      encodedDataLength: asFiniteNumber(response.encodedDataLength) ?? undefined,
+      encodedDataLength: readByteLength(response.encodedDataLength),
       responseTime: asFiniteNumber(response.responseTime) ?? undefined,
       timing: normalizeTiming(response.timing)
     })

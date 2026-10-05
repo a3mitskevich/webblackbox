@@ -819,6 +819,22 @@ input[type="radio"] {
   font-size: 12px;
 }
 
+/* Profile notices: the recording stopped because its profile changed, or no profile exists. */
+.wb-popup__alert {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--wb-warn-border);
+  border-radius: var(--wb-radius-sm);
+  background: var(--wb-warn-soft);
+  color: var(--wb-warn-ink);
+  font-size: 12px;
+}
+
+.wb-popup__alert p {
+  margin: 0;
+}
+
 .wb-popup__footer {
   font-size: 10.5px;
   color: var(--wb-text-subtle);

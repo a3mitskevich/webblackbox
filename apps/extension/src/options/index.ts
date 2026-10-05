@@ -320,14 +320,16 @@ async function saveAll(page: PageState): Promise<void> {
 
     if (generalChanged) {
       const payload = toStoredOptionsPayload(page.draft);
+      // What the form showed: only the fields that differ from it are copied into Default.
+      const shown = toStoredOptionsPayload(page.baseline);
       await chromeApi?.storage?.local.set({ [STORAGE_KEY]: payload });
       page.baseline = { ...page.draft, archive: page.baseline.archive };
 
       if (profilesChanged) {
         // The editor's draft must not write the old Default values back on its save.
-        editor.applyGeneralOptions(payload);
+        editor.applyGeneralOptions(payload, shown);
       } else {
-        await syncSavedProfilesWithGeneralOptions(payload);
+        await syncSavedProfilesWithGeneralOptions(payload, shown);
       }
     }
 
@@ -416,7 +418,10 @@ function toLegacyGeneralFields(stored: unknown): Omit<GeneralDraft, "archive"> {
 }
 
 /** Once profiles are saved, the general form edits the Default profile's matching fields. */
-async function syncSavedProfilesWithGeneralOptions(payload: unknown): Promise<void> {
+async function syncSavedProfilesWithGeneralOptions(
+  payload: unknown,
+  shown: unknown
+): Promise<void> {
   const values = await chromeApi?.storage?.local.get(PROFILES_STORAGE_KEY);
   const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
 
@@ -426,7 +431,7 @@ async function syncSavedProfilesWithGeneralOptions(payload: unknown): Promise<vo
 
   await chromeApi?.storage?.local.set({
     [PROFILES_STORAGE_KEY]: serializeProfilesStore(
-      syncDefaultProfileWithLegacyOptions(parsed.store, payload)
+      syncDefaultProfileWithLegacyOptions(parsed.store, payload, shown)
     )
   });
 }

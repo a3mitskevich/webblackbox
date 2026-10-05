@@ -239,7 +239,9 @@ describe("rules editor", () => {
     document.querySelector<HTMLElement>("[data-confirm-accept]")?.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(ruleIds(container)).toEqual([]);
+    // The rule stays (the rule engine skips it) and is flagged until it gets a profile again.
+    expect(ruleIds(container)).toEqual(["a"]);
+    expect(container.querySelector("[data-rule-missing]")).not.toBeNull();
     expect(container.querySelector("[data-profile-id='mine']")).toBeNull();
   });
 

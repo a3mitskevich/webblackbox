@@ -1,8 +1,5 @@
 import type { ChromeApi } from "../shared/chrome-api.js";
-import {
-  normalizeEnterprisePolicy,
-  readManagedEnterprisePolicy
-} from "../shared/options-storage.js";
+import { readManagedEnterprisePolicy } from "../shared/options-storage.js";
 import { PROFILES_STORAGE_KEY, type RecordingProfilesStore } from "../shared/profiles/model.js";
 import {
   parseManagedProfilesPolicy,
@@ -19,16 +16,6 @@ export type EditorStorageDeps = {
   legacyOptionsKey: string;
   enterprisePolicyKey: string;
 };
-
-/** Managed-policy hosts where extended profiles may run (Test URL applies them too). */
-export async function loadEnterpriseSiteAllowlist(deps: EditorStorageDeps): Promise<string[]> {
-  const managedPolicy = await readManagedEnterprisePolicy(
-    deps.chromeApi?.storage?.managed,
-    deps.enterprisePolicyKey
-  );
-
-  return normalizeEnterprisePolicy(managedPolicy).siteAllowlist;
-}
 
 export async function loadProfilesState(deps: EditorStorageDeps): Promise<ProfilesState> {
   const local = await deps.chromeApi?.storage?.local

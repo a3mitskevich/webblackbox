@@ -37,8 +37,28 @@ export const EN_MESSAGES = {
   popupProfileExtended: "extended",
   popupProfileWillUse: "Records with {name}.",
   popupProfileByRule: "Records with {name} (rule: {rule}).",
-  popupProfileDowngraded: "{requested} is limited to allowed sites; {name} is used here.",
+  popupProfileEnterpriseCapped: "Your organization's policy limits: {categories}.",
   popupProfileRecommends: "Recommended start: {mode}.",
+  popupProfileRequiredTitle: "No recording profile",
+  popupProfileRequired:
+    "Recording needs at least one profile. Create one or restore the recommended profiles.",
+  popupOpenProfiles: "Open profiles",
+  popupProfileCancelTitle: "Recording stopped: the profile changed",
+  popupProfileCancelRuleChanged:
+    "It recorded with {started}, but the site rules pick {next} for this page.",
+  popupProfileCancelRuleChangedFix:
+    "To keep recording here with {started}, choose it in the profile list instead of Auto, or add a site rule for this site in Options → Profiles.",
+  popupProfileCancelMissing: "The profile {started} was deleted while recording.",
+  popupProfileCancelMissingFix:
+    "Choose another profile, or create or restore one in Options → Profiles, then start again.",
+  popupProfileCancelEdited: "The profile {started} was changed while recording.",
+  popupProfileCancelEditedFix: "Start a new recording to record with the new settings.",
+  popupProfileCancelPolicy: "Your organization's policy changed what {started} may record.",
+  popupProfileCancelPolicyFix:
+    "Start a new recording. Ask your administrator if you need more data.",
+  popupProfileCancelKept: "What was recorded before the change is kept: export or delete it.",
+  popupProfileCancelDismiss: "Dismiss",
+  popupProfileCancelAnotherProfile: "another profile",
   popupStop: "Stop",
   popupExport: "Export",
   popupSessions: "Sessions",
@@ -89,7 +109,7 @@ export const EN_MESSAGES = {
   optionsSave: "Save changes",
   optionsSavedAt: "Saved at {time}",
   optionsProfilesHint:
-    "Profiles decide what is recorded. Presets are read-only: duplicate one to edit it.",
+    "Profiles decide what is recorded. Presets are read-only: duplicate one to edit it. Any profile can be deleted except the ones from your organization's policy; recording needs at least one.",
   optionsProfilesManagedNotice: "Profiles named managed:* come from your organization's policy.",
   optionsProfilesIssues: "Some stored entries were ignored: {issues}",
   optionsProfileDefaultBadge: "default",
@@ -100,7 +120,7 @@ export const EN_MESSAGES = {
   optionsProfileDelete: "Delete",
   optionsProfileDeleteTitle: "Delete profile “{name}”?",
   optionsProfileDeleteRules:
-    "{count} site rule(s) use this profile and will be deleted with it. Discard brings them back until you save.",
+    "{count} site rule(s) use this profile. They are kept but skipped until you pick another profile for them or restore the recommended profiles.",
   optionsProfileMakeDefault: "Make default",
   optionsProfileName: "Name",
   optionsProfileBase: "Recommended start",
@@ -125,11 +145,17 @@ export const EN_MESSAGES = {
     "Value patterns, one per line: [bodies, dom, storage, inputs, console, urls] regex (no prefix: everywhere)",
   optionsProfileSave: "Apply",
   optionsProfileCancel: "Cancel",
-  optionsRulesHint: "Rules only pick a profile for a page; recording always starts manually.",
+  optionsRulesHint:
+    "Rules only pick a profile for a page; recording always starts manually. If the profile changes while recording, the recording stops.",
   optionsRuleAdd: "Add rule",
   optionsRuleName: "Name",
   optionsRuleProfile: "Profile",
   optionsRuleProfileMissing: "Missing profile: {id}",
+  optionsRuleProfileMissingHint:
+    "This rule points at a deleted profile and is skipped. Pick another profile or restore the recommended profiles.",
+  optionsProfilesRestore: "Restore recommended profiles",
+  optionsProfilesEmpty:
+    "No profiles left: recording is disabled until you create one or restore the recommended profiles.",
   optionsRulePriority: "Priority",
   optionsRuleEnabled: "Enabled",
   optionsRuleHosts: "Hosts",
@@ -143,7 +169,6 @@ export const EN_MESSAGES = {
   optionsRuleIncognitoAny: "any",
   optionsRuleIncognitoOnly: "only",
   optionsRuleIncognitoNever: "never",
-  optionsExtendedHosts: "Hosts allowed for extended profiles (besides rule hosts)",
   optionsProfilesSaved: "Profiles saved at {time}",
   optionsProfilesExport: "Export JSON",
   optionsProfilesImport: "Import JSON",
@@ -152,8 +177,7 @@ export const EN_MESSAGES = {
   optionsProfilesImportSummary:
     "Profiles: +{added} −{removed} ~{changed}. Rules: +{rulesAdded} −{rulesRemoved} ~{rulesChanged}.",
   optionsProfilesImportDefault: "Default profile: {from} → {to}",
-  optionsProfilesImportHosts:
-    "Hosts allowed for extended profiles: added {added}; removed {removed}",
+  optionsProfilesImportRemovedRecommended: "Deleted recommended profiles after import: {ids}",
   optionsProfilesImportChanged: "Changed: {items}",
   optionsProfilesError: "Error: {error}",
   optionsSandboxTitle: "Redaction sandbox",
@@ -373,7 +397,6 @@ export const EN_MESSAGES = {
   optionsRuleGroupUrl: "URL",
   optionsRuleGroupPage: "Page signals",
   optionsRulePriorityHint: "Reordering renumbers priorities.",
-  optionsExtendedHostsHint: "Besides rule hosts, extended profiles may run here.",
   optionsTestTitle: "Test a URL",
   optionsTestUrl: "URL",
   optionsTestPageTitle: "Page title",
@@ -383,7 +406,6 @@ export const EN_MESSAGES = {
   optionsTestProfile: "Profile:",
   optionsTestByRule: "Chosen by rule “{rule}” (priority {priority}) because it matched:",
   optionsTestNoRule: "No rule matches, so the default profile is used.",
-  optionsTestDowngraded: "{requested} is limited to allowed hosts; {name} runs here instead.",
   optionsTestUnchecked: "Not checked here (need the page's selector or meta tag): {rules}.",
   optionsTestConditionAny: "no conditions (matches every page)",
   optionsTestConditionHost: "host",

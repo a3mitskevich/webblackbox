@@ -518,4 +518,94 @@ describe("popup recording profiles", () => {
       visualCapture: "screenshots"
     });
   });
+
+  it("names the categories the enterprise policy caps", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    port.emit({
+      ...PREVIEW,
+      selection: { ...PREVIEW.selection, enterpriseCapped: ["console", "network"] }
+    });
+    await flushPopup();
+
+    expect(query("[data-profile-hint]").textContent).toBe(
+      "Records with QA (rule: Stage). Your organization's policy limits: console, network. Recommended start: Full."
+    );
+  });
+
+  it("requires a profile when every profile was deleted and links to the profiles page", async () => {
+    const port = new FakePort();
+    const chrome = installChromeStub(port);
+    vi.spyOn(window, "close").mockImplementation(() => undefined);
+
+    await importPopupModule();
+
+    expect(has("[data-profile-required]")).toBe(false);
+
+    port.emit({ kind: "sw.profile-preview", catalog: [], selection: null });
+    await flushPopup();
+
+    expect(query("[data-profile-required]").textContent).toBe(
+      "No recording profile" +
+        "Recording needs at least one profile. Create one or restore the recommended profiles." +
+        "Open profiles"
+    );
+    expect(has("[data-action='start']")).toBe(false);
+
+    query<HTMLButtonElement>("[data-profile-required] [data-action='open-profiles']").click();
+    await flushPopup();
+
+    expect(chrome.tabsCreate).toHaveBeenCalledWith({
+      url: "chrome-extension://test-extension/options.html#profiles",
+      active: true
+    });
+  });
+
+  it("explains a recording stopped by a profile change and acknowledges it", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    port.emit(PREVIEW);
+    port.emit({
+      kind: "sw.session-list",
+      sessions: [
+        {
+          ...stoppedSession("sid-cancelled"),
+          startedAt: Date.now() - 5_000,
+          stoppedAt: Date.now(),
+          profileName: "QA",
+          profileCancel: {
+            reason: "rule-changed",
+            at: Date.now(),
+            startedName: "QA",
+            nextName: "Default"
+          }
+        }
+      ]
+    });
+    await flushPopup();
+
+    const notice = query<HTMLElement>("[data-profile-cancel]");
+
+    expect(notice.getAttribute("role")).toBe("alert");
+    expect([...notice.querySelectorAll("strong, p")].map((node) => node.textContent)).toEqual([
+      "Recording stopped: the profile changed",
+      "It recorded with QA, but the site rules pick Default for this page.",
+      "To keep recording here with QA, choose it in the profile list instead of Auto, or add a site rule for this site in Options → Profiles.",
+      "What was recorded before the change is kept: export or delete it."
+    ]);
+    expect(getButton("export").disabled).toBe(false);
+    expect(getButton("start").disabled).toBe(false);
+
+    notice.querySelector<HTMLButtonElement>("[data-action='ack-profile-cancel']")?.click();
+    await flushPopup();
+
+    expect(port.postMessage).toHaveBeenCalledWith({
+      kind: "ui.ack-profile-cancel",
+      sid: "sid-cancelled"
+    });
+  });
 });

@@ -32,7 +32,6 @@ export type RulesViewOptions = {
   rules: readonly ProfileRule[];
   catalog: readonly RecordingProfile[];
   openRuleIds: ReadonlySet<string>;
-  extendedCaptureHosts: readonly string[];
   test: { url: string; title: string; incognito: boolean; result?: RuleTestResult };
   t: Translate;
 };
@@ -166,8 +165,8 @@ function createRuleBody(rule: ProfileRule, options: RulesViewOptions): HTMLEleme
 function createRuleRow(rule: ProfileRule, index: number, options: RulesViewOptions): HTMLElement {
   const { t } = options;
   const open = options.openRuleIds.has(rule.id);
-  const profileName =
-    options.catalog.find((profile) => profile.id === rule.profileId)?.name ?? rule.profileId;
+  const profile = options.catalog.find((entry) => entry.id === rule.profileId);
+  const profileName = profile?.name ?? t("optionsRuleProfileMissing", { id: rule.profileId });
   const grip = el(
     "span",
     {
@@ -217,6 +216,16 @@ function createRuleRow(rule: ProfileRule, index: number, options: RulesViewOptio
         }),
         iconButton(t("optionsRuleDelete"), "rule-delete", "trash", { danger: true })
       ]),
+      // A rule whose profile was deleted is skipped; say so even while the row is collapsed.
+      ...(profile
+        ? []
+        : [
+            el("p", {
+              className: "wb-notice wb-notice--error",
+              text: t("optionsRuleProfileMissingHint"),
+              dataset: { ruleMissing: "" }
+            })
+          ]),
       createRuleBody(rule, options)
     ]
   );
@@ -237,17 +246,7 @@ export function createRulesList(options: RulesViewOptions): HTMLElement {
       el("h3", { className: "wb-group__title", text: t("optionsRulesListTitle") }),
       button(t("optionsRuleAdd"), "rule-add", "surface", { small: true })
     ]),
-    list,
-    chipListField({
-      ...chipListOptions(t),
-      id: "extended-capture-hosts",
-      name: "extendedCaptureHosts",
-      label: t("optionsExtendedHosts"),
-      hint: t("optionsExtendedHostsHint"),
-      values: options.extendedCaptureHosts,
-      placeholder: t("optionsHostPlaceholder"),
-      validate: patternValidator(t)
-    })
+    list
   ]);
 }
 
@@ -306,6 +305,10 @@ export function describeTestResult(
     return [el("p", { className: "wb-tester__error", text: t("optionsTestInvalidUrl") })];
   }
 
+  if (result.kind === "no-profile") {
+    return [el("p", { className: "wb-tester__error", text: t("optionsProfilesEmpty") })];
+  }
+
   const lines: HTMLElement[] = [
     el("p", { className: "wb-tester__verdict" }, [
       t("optionsTestProfile"),
@@ -332,18 +335,6 @@ export function describeTestResult(
     );
   } else {
     lines.push(el("p", { text: t("optionsTestNoRule") }));
-  }
-
-  if (result.downgradedFrom) {
-    lines.push(
-      el("p", {
-        className: "wb-tester__warn",
-        text: t("optionsTestDowngraded", {
-          requested: result.downgradedFrom,
-          name: result.profileName
-        })
-      })
-    );
   }
 
   if (result.unchecked.length > 0) {

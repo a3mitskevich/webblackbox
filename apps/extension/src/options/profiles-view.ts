@@ -1,7 +1,7 @@
 import type { ExtensionMessageKey } from "../shared/i18n.js";
 import { CAPTURE_CATEGORY_KEYS, type CaptureCategoryKey } from "../shared/profiles/categories.js";
 import {
-  DEFAULT_PROFILE_ID,
+  isManagedProfileId,
   isReadOnlyProfileId,
   type RecordingProfile
 } from "../shared/profiles/model.js";
@@ -56,7 +56,8 @@ export function createProfileCard(options: {
     );
   }
 
-  if (!readOnly && profile.id !== DEFAULT_PROFILE_ID) {
+  // Any profile can be deleted, presets and Default included; policy profiles cannot.
+  if (!isManagedProfileId(profile.id)) {
     actions.append(button(t("optionsProfileDelete"), "profile-delete", "ghost", { small: true }));
   }
 
@@ -246,15 +247,13 @@ function describeImportDetails(diff: ProfilesDiff, t: Translate): string[] {
   const changed = [...diff.profiles.changed, ...diff.rules.changed].map(
     (entry) => `${entry.name} (${entry.fields.join(", ")})`
   );
-  const hosts = diff.extendedCaptureHosts;
 
   return [
     ...(diff.defaultProfileId ? [t("optionsProfilesImportDefault", diff.defaultProfileId)] : []),
-    ...(hosts.added.length > 0 || hosts.removed.length > 0
+    ...(diff.removedRecommendedProfileIds
       ? [
-          t("optionsProfilesImportHosts", {
-            added: hosts.added.join(", ") || "—",
-            removed: hosts.removed.join(", ") || "—"
+          t("optionsProfilesImportRemovedRecommended", {
+            ids: diff.removedRecommendedProfileIds.to.join(", ") || "—"
           })
         ]
       : []),

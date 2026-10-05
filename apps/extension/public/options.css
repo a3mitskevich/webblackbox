@@ -454,6 +454,11 @@
   gap: 8px;
 }
 
+.wb-profiles__list-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .wb-profiles__list {
   display: grid;
   gap: 8px;
@@ -669,6 +674,10 @@
 
 .wb-rule--off {
   opacity: 0.75;
+}
+
+.wb-rule > .wb-notice {
+  margin: 0 10px 8px;
 }
 
 .wb-rule--dragging {

@@ -1,4 +1,4 @@
-import type { PrivacyViolationSubject } from "@webblackbox/player-sdk";
+import type { NetworkCacheSource, PrivacyViolationSubject } from "@webblackbox/player-sdk";
 
 import { readStoredText, writeStoredText } from "./storage.js";
 
@@ -241,6 +241,10 @@ type PlayerMessages = {
   scopeSummaryMain: string;
   scopeSummaryIframe: string;
   realtimeNoPayload: string;
+  realtimePayloadLoading: string;
+  realtimePayloadTruncated: string;
+  realtimePayloadRecord: string;
+  realtimePayloadLoadFailed: string;
   noScreenshotEvents: string;
   screenshotBeforePlayhead: string;
   screenshotLoading: string;
@@ -298,6 +302,11 @@ type PlayerMessages = {
   networkInitiatorActionNumber: string;
   networkStatusPending: string;
   networkStatusPendingPlain: string;
+  networkStatusFromCache: string;
+  networkStatusFromCachePlain: string;
+  networkStatusNoResponse: string;
+  networkStatusNoResponsePlain: string;
+  networkCacheSources: Record<NetworkCacheSource, string>;
   markerKinds: Record<MarkerKind, string>;
   networkTypes: Record<NetworkType, string>;
   privacyHiddenByProfile: string;
@@ -305,6 +314,14 @@ type PlayerMessages = {
   summaryProfile: string;
   summaryProfileRule: string;
   summaryProfileDowngraded: string;
+  profileBannerCancelRuleChanged: string;
+  profileBannerCancelMissing: string;
+  profileBannerCancelEdited: string;
+  profileBannerCancelPolicy: string;
+  profileBannerCancelUnknown: string;
+  profileBannerDowngraded: string;
+  profileBannerCapped: string;
+  profileBannerUnknownProfile: string;
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;
@@ -533,6 +550,10 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     scopeSummaryMain: "main",
     scopeSummaryIframe: "iframe",
     realtimeNoPayload: "(no payload)",
+    realtimePayloadLoading: "Loading the full payload...",
+    realtimePayloadTruncated: "Cut at the recording profile's body size limit.",
+    realtimePayloadRecord: "Record {index} of {count}",
+    realtimePayloadLoadFailed: "Could not load the full payload: {reason}",
     noScreenshotEvents: "No screenshot events in this archive.",
     screenshotBeforePlayhead: "No screenshot available before this playhead.",
     screenshotLoading: "Loading screenshot...",
@@ -594,6 +615,16 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     networkInitiatorActionNumber: "action #{index}",
     networkStatusPending: "(pending)",
     networkStatusPendingPlain: "Pending",
+    networkStatusFromCache: "(from cache)",
+    networkStatusFromCachePlain: "From cache",
+    networkStatusNoResponse: "(no response)",
+    networkStatusNoResponsePlain: "No response",
+    networkCacheSources: {
+      memory: "(memory cache)",
+      disk: "(disk cache)",
+      prefetch: "(prefetch cache)",
+      "service-worker": "(ServiceWorker)"
+    },
     markerKinds: {
       error: "error",
       network: "network",
@@ -620,6 +651,20 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     summaryProfile: "profile {name}",
     summaryProfileRule: "profile {name} (rule {rule})",
     summaryProfileDowngraded: "profile {name} ({requested} not allowed on this site)",
+    profileBannerCancelRuleChanged:
+      "Recording stopped early: it recorded with {started}, but after a navigation the site rules picked {next}. Nothing after that point was recorded.",
+    profileBannerCancelMissing:
+      "Recording stopped early: the profile {started} was deleted while recording. Nothing after that point was recorded.",
+    profileBannerCancelEdited:
+      "Recording stopped early: the profile {started} was changed while recording. Nothing after that point was recorded.",
+    profileBannerCancelPolicy:
+      "Recording stopped early: the organization's policy changed what {started} may record. Nothing after that point was recorded.",
+    profileBannerCancelUnknown:
+      "Recording stopped early: the recording profile changed ({reason}).",
+    profileBannerDowngraded:
+      "Recorded with {name} instead of {requested}: {requested} was not allowed on this site, so data only {requested} records is missing.",
+    profileBannerCapped: "The organization's policy limited {name}: {categories}.",
+    profileBannerUnknownProfile: "an unknown profile",
     networkTypes: {
       document: "Document",
       fetch: "Fetch/XHR",
@@ -868,6 +913,10 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     scopeSummaryMain: "主页面",
     scopeSummaryIframe: "子框架",
     realtimeNoPayload: "（无载荷）",
+    realtimePayloadLoading: "正在加载完整载荷...",
+    realtimePayloadTruncated: "已按录制配置的正文大小上限截断。",
+    realtimePayloadRecord: "第 {index} 条，共 {count} 条",
+    realtimePayloadLoadFailed: "无法加载完整载荷：{reason}",
     noScreenshotEvents: "该归档中没有截图事件。",
     screenshotBeforePlayhead: "当前播放头之前没有可用截图。",
     screenshotLoading: "截图加载中...",
@@ -926,6 +975,16 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     networkInitiatorActionNumber: "动作 #{index}",
     networkStatusPending: "（等待中）",
     networkStatusPendingPlain: "等待中",
+    networkStatusFromCache: "（来自缓存）",
+    networkStatusFromCachePlain: "来自缓存",
+    networkStatusNoResponse: "（无响应）",
+    networkStatusNoResponsePlain: "无响应",
+    networkCacheSources: {
+      memory: "（内存缓存）",
+      disk: "（磁盘缓存）",
+      prefetch: "（预取缓存）",
+      "service-worker": "（ServiceWorker）"
+    },
     markerKinds: {
       error: "错误",
       network: "网络",
@@ -952,6 +1011,19 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     summaryProfile: "配置 {name}",
     summaryProfileRule: "配置 {name}（规则 {rule}）",
     summaryProfileDowngraded: "配置 {name}（{requested} 在此站点不可用）",
+    profileBannerCancelRuleChanged:
+      "录制提前停止：录制使用的是 {started}，但导航后站点规则选择了 {next}。此后的内容未被录制。",
+    profileBannerCancelMissing:
+      "录制提前停止：配置 {started} 在录制期间被删除。此后的内容未被录制。",
+    profileBannerCancelEdited:
+      "录制提前停止：配置 {started} 在录制期间被修改。此后的内容未被录制。",
+    profileBannerCancelPolicy:
+      "录制提前停止：组织策略更改了 {started} 允许录制的内容。此后的内容未被录制。",
+    profileBannerCancelUnknown: "录制提前停止：录制配置发生了变化（{reason}）。",
+    profileBannerDowngraded:
+      "使用 {name} 而不是 {requested} 录制：{requested} 在此站点不可用，因此缺少只有 {requested} 才会录制的数据。",
+    profileBannerCapped: "组织策略限制了 {name}：{categories}。",
+    profileBannerUnknownProfile: "未知配置",
     networkTypes: {
       document: "文档",
       fetch: "Fetch/XHR",

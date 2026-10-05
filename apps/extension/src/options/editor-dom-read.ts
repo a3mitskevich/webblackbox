@@ -1,9 +1,5 @@
 import { CAPTURE_CATEGORY_KEYS } from "../shared/profiles/categories.js";
-import type {
-  ProfileRule,
-  RecordingProfile,
-  RecordingProfilesStore
-} from "../shared/profiles/model.js";
+import type { ProfileRule, RecordingProfile } from "../shared/profiles/model.js";
 import { readCheckbox, readField } from "./dom.js";
 import { applyProfileFormValues, ruleFromFormValues } from "./profile-form-model.js";
 
@@ -36,14 +32,9 @@ export function readProfileForm(form: HTMLElement, profile: RecordingProfile): R
   });
 }
 
-/** Rule rows and the extended host list; `fallbackHosts` while the host field is not rendered. */
-export function readRulesFromDom(
-  root: ParentNode,
-  fallbackHosts: string[]
-): Pick<RecordingProfilesStore, "rules" | "extendedCaptureHosts"> {
-  const rules: ProfileRule[] = [
-    ...root.querySelectorAll<HTMLElement>(".wb-profiles__rule")
-  ].flatMap((row) => {
+/** Rule rows as typed in the page. */
+export function readRulesFromDom(root: ParentNode): ProfileRule[] {
+  return [...root.querySelectorAll<HTMLElement>(".wb-profiles__rule")].flatMap((row) => {
     const id = row.dataset.ruleId;
 
     return id
@@ -66,15 +57,4 @@ export function readRulesFromDom(
         ]
       : [];
   });
-  const hostsField = root.querySelector<HTMLInputElement>('[name="extendedCaptureHosts"]');
-
-  return {
-    rules,
-    extendedCaptureHosts: hostsField
-      ? hostsField.value
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-      : fallbackHosts
-  };
 }

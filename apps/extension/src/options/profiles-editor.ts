@@ -1,7 +1,8 @@
 import type { ChromeApi } from "../shared/chrome-api.js";
 import type { ExtensionMessageKey } from "../shared/i18n.js";
 import {
-  isReadOnlyProfileId,
+  isBuiltInProfileId,
+  isManagedProfileId,
   PROFILES_STORAGE_KEY,
   type ProfileRule,
   type RecordingProfile,
@@ -9,6 +10,9 @@ import {
 } from "../shared/profiles/model.js";
 import {
   describeIssues,
+  listStoreProfiles,
+  removeProfileFromStore,
+  restoreRecommendedProfiles,
   serializeProfilesStore,
   syncDefaultProfileWithLegacyOptions,
   type ProfilesState
@@ -16,7 +20,7 @@ import {
 import { previewProfilesImport, type ProfilesDiff } from "../shared/profiles/transfer.js";
 import { openConfirmDialog } from "../shared/ui/dialogs.js";
 import { preserveFocus } from "../shared/ui/focus.js";
-import { el, readField } from "./dom.js";
+import { button, el, readField } from "./dom.js";
 import {
   changedItemIds,
   comparableStoreJson,
@@ -28,11 +32,7 @@ import {
   type EditorCloseHost
 } from "./editor-close-guard.js";
 import { readProfileForm, readRulesFromDom } from "./editor-dom-read.js";
-import {
-  downloadProfilesExport,
-  loadEnterpriseSiteAllowlist,
-  loadProfilesState
-} from "./editor-storage.js";
+import { downloadProfilesExport, loadProfilesState } from "./editor-storage.js";
 import {
   blocksLeavingProfileForm,
   captureInvalidRangeInputs,
@@ -46,7 +46,6 @@ import { readSandboxInputs, runRedactionSandbox, type SandboxState } from "./san
 import { createProfileForm } from "./profile-form.js";
 import {
   createUniqueId,
-  deleteProfileFromStore,
   duplicateIntoStore,
   reorderRules,
   sortRulesForDisplay,
@@ -86,8 +85,8 @@ export type ProfilesEditorSlots = {
 export type ProfilesSaveResult = { ok: true } | { ok: false; error: string };
 
 export type ProfilesEditorHandle = {
-  /** Folds a general settings save into the draft's Default profile. */
-  applyGeneralOptions(payload: unknown): void;
+  /** Folds a general settings save (the fields changed from `shown`) into the draft's Default. */
+  applyGeneralOptions(payload: unknown, shown?: unknown): void;
   /** The draft (including open forms and rule rows) differs from what was loaded or saved. */
   isDirty(): boolean;
   /** Which settings sections (profiles, rules) hold the unsaved changes. */
@@ -115,8 +114,6 @@ type EditorState = {
   sandbox: SandboxState;
   openRuleIds: Set<string>;
   test: { url: string; title: string; incognito: boolean };
-  /** Managed-policy hosts where extended profiles may run (Test URL applies them too). */
-  enterpriseSiteAllowlist: readonly string[];
   /** The draft as last loaded/saved, after one DOM round trip: what "unsaved" compares with. */
   savedStore: RecordingProfilesStore;
   /** Stable JSON of the open profile as its form first rendered; later edits differ from it. */
@@ -144,7 +141,6 @@ export async function mountProfilesEditor(
 ): Promise<ProfilesEditorHandle> {
   const slots = providedSlots ?? createDefaultSlots(root);
   const profilesState = await loadProfilesState(deps);
-  const enterpriseSiteAllowlist = await loadEnterpriseSiteAllowlist(deps);
   const editor: Editor = {
     root,
     slots,
@@ -155,7 +151,6 @@ export async function mountProfilesEditor(
       sandbox: { profileId: profilesState.store.defaultProfileId, kind: "body", text: "" },
       openRuleIds: new Set(),
       test: { url: "", title: "", incognito: false },
-      enterpriseSiteAllowlist,
       savedStore: structuredClone(profilesState.store)
     }
   };
@@ -165,15 +160,18 @@ export async function mountProfilesEditor(
   bindEditor(editor);
 
   return {
-    applyGeneralOptions: (payload) => {
+    applyGeneralOptions: (payload, shown) => {
       syncDraftFromDom(editor);
       const { state } = editor;
-      state.draft = syncDefaultProfileWithLegacyOptions(state.draft, payload);
+      state.draft = syncDefaultProfileWithLegacyOptions(state.draft, payload, shown);
       // The general save is already stored; Cancel must not roll it back.
       const snapshot = state.editingSnapshot;
       state.editingSnapshot = snapshot
-        ? syncDefaultProfileWithLegacyOptions({ ...state.draft, profiles: [snapshot] }, payload)
-            .profiles[0]
+        ? syncDefaultProfileWithLegacyOptions(
+            { ...state.draft, profiles: [snapshot] },
+            payload,
+            shown
+          ).profiles[0]
         : undefined;
       // Not an edit made in the form: it must not make closing the form ask.
       state.formBaseline = undefined;
@@ -203,7 +201,6 @@ export async function mountProfilesEditor(
     save: () => saveEditor(editor),
     reload: async () => {
       editor.state.profilesState = await loadProfilesState(deps);
-      editor.state.enterpriseSiteAllowlist = await loadEnterpriseSiteAllowlist(deps);
       discardDraft(editor);
     },
     cancel: () => discardDraft(editor)
@@ -265,26 +262,37 @@ function refreshUnsavedMarks(editor: Editor): void {
   markUnsavedItems(editor.root, changedItemIds(editor.state.draft, editor.state.savedStore));
 }
 
+/** The draft's own profiles, then managed ones, then the presets the draft has not deleted. */
 function buildCatalog(state: EditorState): RecordingProfile[] {
-  const userIds = new Set(state.draft.profiles.map((profile) => profile.id));
-
   return [
     ...state.draft.profiles,
-    ...state.profilesState.catalog.filter(
-      (profile) => isReadOnlyProfileId(profile.id) && !userIds.has(profile.id)
-    )
+    ...state.profilesState.catalog.filter((profile) => isManagedProfileId(profile.id)),
+    ...listStoreProfiles(state.draft).filter((profile) => isBuiltInProfileId(profile.id))
   ];
 }
 
 function renderNotices(state: EditorState, catalog: RecordingProfile[], t: Translate) {
   const notices = [
-    ...(catalog.some((profile) => profile.id.startsWith("managed:"))
-      ? [t("optionsProfilesManagedNotice")]
-      : []),
-    ...(state.profilesState.issues.length > 0
-      ? [t("optionsProfilesIssues", { issues: describeIssues(state.profilesState.issues) })]
+    ...[
+      ...(catalog.some((profile) => profile.id.startsWith("managed:"))
+        ? [t("optionsProfilesManagedNotice")]
+        : []),
+      ...(state.profilesState.issues.length > 0
+        ? [t("optionsProfilesIssues", { issues: describeIssues(state.profilesState.issues) })]
+        : [])
+    ].map((text) => el("p", { className: "wb-notice", text })),
+    // Every profile was deleted: recording is off until one is created or restored.
+    ...(catalog.length === 0
+      ? [
+          el("p", {
+            className: "wb-notice wb-notice--error",
+            text: t("optionsProfilesEmpty"),
+            attrs: { role: "alert" },
+            dataset: { profilesEmpty: "" }
+          })
+        ]
       : [])
-  ].map((text) => el("p", { className: "wb-notice", text }));
+  ];
 
   return state.status
     ? [
@@ -320,7 +328,10 @@ function render(editor: Editor): void {
               t
             })
           )
-        )
+        ),
+        el("div", { className: "wb-profiles__list-actions" }, [
+          button(t("optionsProfilesRestore"), "profiles-restore", "ghost", { small: true })
+        ])
       ]),
       el(
         "div",
@@ -336,7 +347,6 @@ function render(editor: Editor): void {
     rules: sortRulesForDisplay(state.draft.rules),
     catalog,
     openRuleIds: state.openRuleIds,
-    extendedCaptureHosts: state.draft.extendedCaptureHosts,
     test: { ...state.test, result: runTester(editor, catalog) },
     t
   };
@@ -379,7 +389,6 @@ function runTester(editor: Editor, catalog = buildCatalog(editor.state)) {
         catalog,
         url: state.test.url,
         incognito: state.test.incognito,
-        enterpriseSiteAllowlist: state.enterpriseSiteAllowlist,
         ...(state.test.title.trim() ? { title: state.test.title } : {})
       })
     : undefined;
@@ -447,12 +456,16 @@ function handleAction(
       void confirmProfileDelete(editor, profileId).then((confirmed) => {
         if (confirmed) {
           update(() => {
-            state.draft = deleteProfileFromStore(state.draft, profileId);
+            state.draft = removeProfileFromStore(state.draft, profileId);
             closeProfileForm(state);
           });
         }
       });
       return;
+    case "profiles-restore":
+      return update(() => {
+        state.draft = restoreRecommendedProfiles(state.draft);
+      });
     case "profile-apply":
       return update(() => closeProfileForm(state));
     case "profile-cancel":
@@ -607,7 +620,7 @@ function closeGuardHost(editor: Editor, update: Update): EditorCloseHost {
 /** Rows that tell apart equal buttons ("Move up" of each rule) when focus is restored. */
 const FOCUS_SCOPES = ["data-rule-id", "data-profile-id"];
 
-/** Deleting a profile also deletes the rules that use it; those sit in another section. */
+/** Rules that use a deleted profile stay but are skipped; those sit in another section. */
 async function confirmProfileDelete(editor: Editor, profileId: string): Promise<boolean> {
   syncRulesFromDom(editor);
   const { state, deps } = editor;
@@ -617,7 +630,7 @@ async function confirmProfileDelete(editor: Editor, profileId: string): Promise<
     return true;
   }
 
-  const name = state.draft.profiles.find((profile) => profile.id === profileId)?.name ?? profileId;
+  const name = buildCatalog(state).find((profile) => profile.id === profileId)?.name ?? profileId;
 
   return openConfirmDialog({
     title: deps.t("optionsProfileDeleteTitle", { name }),
@@ -745,13 +758,10 @@ function syncOpenProfileForm(editor: Editor): void {
   };
 }
 
-/** Rule rows and the extended host list are plain inputs; fold them into the draft. */
+/** Rule rows are plain inputs; fold them into the draft. */
 function syncRulesFromDom(editor: Editor): void {
   const { state, root } = editor;
-  state.draft = {
-    ...state.draft,
-    ...readRulesFromDom(root, state.draft.extendedCaptureHosts)
-  };
+  state.draft = { ...state.draft, rules: readRulesFromDom(root) };
 }
 
 function newRule(state: EditorState): ProfileRule {

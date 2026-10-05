@@ -72,6 +72,12 @@ export type UiResolveProfileMessage = {
   profileId?: string;
 };
 
+/** Popup has shown a "recording stopped: profile changed" notice; the badge can go back. */
+export type UiAckProfileCancelMessage = {
+  kind: "ui.ack-profile-cancel";
+  sid: string;
+};
+
 export type ContentEventBatchMessage = {
   kind: "content.events";
   events: RawRecorderEvent[];
@@ -98,6 +104,7 @@ export type ExtensionInboundMessage =
   | UiDeleteSessionMessage
   | UiAnnotateSessionMessage
   | UiRequestSessionListMessage
+  | UiAckProfileCancelMessage
   | UiResolveProfileMessage
   | ContentEventBatchMessage
   | ContentMarkerMessage
@@ -143,8 +150,28 @@ export type SessionListItem = {
   sizeBytes?: number;
   tags?: string[];
   note?: string;
-  /** Name of the recording profile in effect (latest one if it changed mid-session). */
+  /** Name of the recording profile the session records with. */
   profileName?: string;
+  /** Set when the session was stopped because its recording profile changed. */
+  profileCancel?: ProfileCancelNotice;
+};
+
+/** Anchor of the profiles section of `options.html`; the popup links to it. */
+export const PROFILES_SECTION_ID = "profiles";
+
+/** Why a recording was stopped after its effective profile changed. */
+export type ProfileCancelReason =
+  | "rule-changed"
+  | "profile-missing"
+  | "profile-edited"
+  | "enterprise-policy";
+
+/** What the popup needs to explain a cancelled recording and how to fix it. */
+export type ProfileCancelNotice = {
+  reason: ProfileCancelReason;
+  at: number;
+  startedName: string;
+  nextName?: string;
 };
 
 export type SessionListMessage = {
@@ -181,9 +208,10 @@ export type ProfilePreviewResponse = {
     source: "explicit" | "rule" | "default";
     ruleName?: string;
     extended: boolean;
-    downgradedFrom?: string;
     /** Visual capture the profile pins; absent = the popup's choice applies. */
     visual?: FullModeVisualCapture;
+    /** Categories the enterprise policy caps below what the profile asks for. */
+    enterpriseCapped?: string[];
   } | null;
 };
 

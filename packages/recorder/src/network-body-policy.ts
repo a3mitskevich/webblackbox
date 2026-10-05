@@ -11,10 +11,16 @@ import { asRecord, asString, omitKeys } from "./normalizer-utils.js";
 export const MAX_INLINE_BODY_SCAN_CHARS = 64 * 1024;
 /** Max inline request body kept on `network.request` under the `body-allowlist` policy. */
 export const MAX_INLINE_REQUEST_BODY_CHARS = 64 * 1024;
-/** Max text kept from one WebSocket frame under the `body-allowlist` policy. */
+/**
+ * Text kept from one WebSocket frame under `body-allowlist` when the profile sets no body size
+ * (`sampling.bodyCaptureMaxBytes` = 0); otherwise frames are kept up to that many UTF-8 bytes.
+ */
 export const MAX_WS_FRAME_PREVIEW_CHARS = 512;
-/** Max text kept from one SSE message under the `body-allowlist` policy. */
+/** Same as {@link MAX_WS_FRAME_PREVIEW_CHARS}, for one SSE message. */
 export const MAX_SSE_DATA_CHARS = 800;
+
+/** Where a kept body is cut: a char count (legacy previews) or the profile's UTF-8 byte budget. */
+type BodyCap = { unit: "chars" | "bytes"; limit: number };
 
 type InlineBodySlot = "request" | "ws-frame" | "sse";
 
@@ -33,6 +39,8 @@ export type AttachNetworkBodyOptions = {
   capturePolicy: CapturePolicy | undefined;
   /** The profile's redaction rules: body key patterns and value patterns (none when off). */
   redaction: RedactionRules;
+  /** Profile body size (`sampling.bodyCaptureMaxBytes`); caps WebSocket frames and SSE messages. */
+  maxBodyBytes?: number;
   /** Extra gate on top of `body-allowlist` (e.g. site policies); called only when a body would be kept. */
   isBodyAllowed?: () => boolean;
 };
@@ -99,7 +107,11 @@ export function attachInlineNetworkBody(
 
   switch (body.slot) {
     case "request": {
-      const masked = maskBodyText(body.text, MAX_INLINE_REQUEST_BODY_CHARS, options);
+      const masked = maskBodyText(
+        body.text,
+        { unit: "chars", limit: MAX_INLINE_REQUEST_BODY_CHARS },
+        options
+      );
       return {
         ...row,
         request: {
@@ -110,7 +122,11 @@ export function attachInlineNetworkBody(
       };
     }
     case "ws-frame": {
-      const masked = maskBodyText(body.text, MAX_WS_FRAME_PREVIEW_CHARS, options);
+      const masked = maskBodyText(
+        body.text,
+        resolveStreamCap(options.maxBodyBytes, MAX_WS_FRAME_PREVIEW_CHARS),
+        options
+      );
       return {
         ...row,
         frame: {
@@ -121,7 +137,11 @@ export function attachInlineNetworkBody(
       };
     }
     case "sse": {
-      const masked = maskBodyText(body.text, MAX_SSE_DATA_CHARS, options);
+      const masked = maskBodyText(
+        body.text,
+        resolveStreamCap(options.maxBodyBytes, MAX_SSE_DATA_CHARS),
+        options
+      );
       return {
         ...row,
         data: masked.value,
@@ -186,18 +206,49 @@ function detachSseBody(row: Record<string, unknown>): DetachNetworkBodyResult {
   };
 }
 
+function resolveStreamCap(maxBodyBytes: number | undefined, legacyChars: number): BodyCap {
+  return maxBodyBytes !== undefined && Number.isFinite(maxBodyBytes) && maxBodyBytes > 0
+    ? { unit: "bytes", limit: Math.floor(maxBodyBytes) }
+    : { unit: "chars", limit: legacyChars };
+}
+
 function maskBodyText(
   text: string,
-  maxChars: number,
+  cap: BodyCap,
   options: AttachNetworkBodyOptions
 ): { value: string; truncated: boolean } {
-  const scanned = text.slice(0, MAX_INLINE_BODY_SCAN_CHARS);
+  // A byte budget never keeps more chars than bytes, so scanning `limit` chars covers it.
+  const scanned = text.slice(0, Math.max(MAX_INLINE_BODY_SCAN_CHARS, cap.limit));
   const masked = maskCapturedBodyText(scanned, options.redaction).value;
+  const value = cap.unit === "bytes" ? truncateUtf8(masked, cap.limit) : masked.slice(0, cap.limit);
 
   return {
-    value: masked.slice(0, maxChars),
-    truncated: text.length > scanned.length || masked.length > maxChars
+    value,
+    truncated: text.length > scanned.length || value.length < masked.length
   };
+}
+
+/** Longest prefix of `text` within `maxBytes` UTF-8 bytes, never splitting a character. */
+function truncateUtf8(text: string, maxBytes: number): string {
+  // UTF-8 needs at most 3 bytes per UTF-16 code unit, so short text fits without encoding.
+  if (text.length * 3 <= maxBytes) {
+    return text;
+  }
+
+  const bytes = new TextEncoder().encode(text);
+
+  if (bytes.byteLength <= maxBytes) {
+    return text;
+  }
+
+  let end = maxBytes;
+
+  // Step back over continuation bytes (10xxxxxx) to the start of the cut character.
+  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) {
+    end -= 1;
+  }
+
+  return new TextDecoder().decode(bytes.subarray(0, end));
 }
 
 function readText(value: unknown): string | undefined {

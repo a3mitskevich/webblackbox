@@ -3,13 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ChromeApi } from "../shared/chrome-api.js";
 import { DEFAULT_PROFILE_ID, PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
-import { BUILT_IN_PROFILE_IDS, createDefaultProfile } from "../shared/profiles/presets.js";
+import {
+  BUILT_IN_PROFILE_IDS,
+  createDefaultProfile,
+  RECOMMENDED_PROFILE_IDS
+} from "../shared/profiles/presets.js";
 import { selectRecordingProfile } from "../shared/profiles/resolve.js";
 import {
   buildProfilePreview,
+  capturedVisualsOf,
+  isTabLoading,
   loadProfilesState,
-  mergeCapturedVisuals,
-  NO_CAPTURED_VISUALS,
   parsePageSignals,
   readTabPageContext
 } from "./profile-runtime.js";
@@ -19,7 +23,7 @@ const KEYS = { legacyOptionsKey: "webblackbox.options", enterprisePolicyKey: "en
 function fakeChrome(options: {
   local?: Record<string, unknown>;
   managed?: Record<string, unknown> | Error;
-  tab?: { url?: string; title?: string; incognito?: boolean };
+  tab?: { url?: string; title?: string; incognito?: boolean; status?: string };
   probe?: unknown;
 }): { api: ChromeApi; executeScript: ReturnType<typeof vi.fn> } {
   const executeScript = vi.fn(async () => [{ result: options.probe }]);
@@ -135,6 +139,54 @@ describe("readTabPageContext", () => {
       url: "https://a.stage.test/"
     });
   });
+
+  it("returns null when the signals are required but the probe fails or times out", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const failing = fakeChrome({ tab: { url: "https://a.stage.test/" } });
+      failing.executeScript.mockRejectedValueOnce(new Error("Frame was removed"));
+      await expect(
+        readTabPageContext(failing.api, 3, [STAGE_RULE], { requireSignals: true })
+      ).resolves.toBeNull();
+
+      const hanging = fakeChrome({ tab: { url: "https://a.stage.test/" } });
+      hanging.executeScript.mockReturnValueOnce(new Promise(() => undefined));
+      const pending = readTabPageContext(hanging.api, 3, [STAGE_RULE], { requireSignals: true });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(pending).resolves.toBeNull();
+
+      const empty = fakeChrome({ tab: { url: "https://a.stage.test/" }, probe: undefined });
+      await expect(
+        readTabPageContext(empty.api, 3, [STAGE_RULE], { requireSignals: true })
+      ).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads the page when the signals are required and the probe answers", async () => {
+    const { api } = fakeChrome({
+      tab: { url: "https://a.stage.test/" },
+      probe: { metaTags: { environment: ["qa"] }, selectorsPresent: {} }
+    });
+
+    await expect(
+      readTabPageContext(api, 3, [STAGE_RULE], { requireSignals: true })
+    ).resolves.toMatchObject({ metaTags: { environment: ["qa"] } });
+  });
+});
+
+describe("isTabLoading", () => {
+  it("is true only while Chrome reports the tab as loading", async () => {
+    await expect(isTabLoading(fakeChrome({ tab: { status: "loading" } }).api, 1)).resolves.toBe(
+      true
+    );
+    await expect(isTabLoading(fakeChrome({ tab: { status: "complete" } }).api, 1)).resolves.toBe(
+      false
+    );
+    await expect(isTabLoading(null, 1)).resolves.toBe(false);
+  });
 });
 
 describe("parsePageSignals", () => {
@@ -175,13 +227,40 @@ describe("buildProfilePreview", () => {
       extended: true,
       readOnly: true
     });
+    // Extended profiles run on any host: no downgrade to Full.
     expect(preview.selection).toEqual({
-      id: BUILT_IN_PROFILE_IDS.full,
-      name: "Full",
+      id: BUILT_IN_PROFILE_IDS.qa,
+      name: "QA",
       base: "full",
       source: "explicit",
-      extended: false,
-      downgradedFrom: "QA"
+      extended: true
+    });
+    expect(buildProfilePreview(state, selection, ["console"]).selection?.enterpriseCapped).toEqual([
+      "console"
+    ]);
+  });
+
+  it("returns an empty catalog and no selection once every profile is deleted", async () => {
+    const { api } = fakeChrome({
+      local: {
+        [PROFILES_STORAGE_KEY]: {
+          schemaVersion: 2,
+          defaultProfileId: "default",
+          profiles: [],
+          rules: [],
+          extendedCaptureHosts: [],
+          removedRecommendedProfileIds: [...RECOMMENDED_PROFILE_IDS]
+        }
+      }
+    });
+    const state = await loadProfilesState(api, KEYS);
+    const selection = selectRecordingProfile({ state, page: { url: "https://a.example/" } });
+
+    expect(selection).toBeNull();
+    expect(buildProfilePreview(state, selection)).toEqual({
+      kind: "sw.profile-preview",
+      catalog: [],
+      selection: null
     });
   });
 
@@ -204,21 +283,22 @@ describe("buildProfilePreview", () => {
   });
 });
 
-describe("mergeCapturedVisuals", () => {
+describe("capturedVisualsOf", () => {
   const categories = (screenshots: "off" | "allow", screenRecordings: "off" | "allow") => ({
     capturePolicy: {
       categories: { ...DEFAULT_CAPTURE_POLICY.categories, screenshots, screenRecordings }
     }
   });
 
-  it("keeps visuals an earlier profile allowed after a switch turns them off", () => {
-    const started = mergeCapturedVisuals(NO_CAPTURED_VISUALS, categories("allow", "allow"));
-    const switched = mergeCapturedVisuals(started, categories("off", "off"));
-
-    expect(switched).toEqual({ screenshots: true, screenRecordings: true });
-    expect(mergeCapturedVisuals(NO_CAPTURED_VISUALS, categories("off", "off"))).toEqual(
-      NO_CAPTURED_VISUALS
-    );
-    expect(mergeCapturedVisuals(NO_CAPTURED_VISUALS, {})).toEqual(NO_CAPTURED_VISUALS);
+  it("reports the visuals the session's config allows", () => {
+    expect(capturedVisualsOf(categories("allow", "allow"))).toEqual({
+      screenshots: true,
+      screenRecordings: true
+    });
+    expect(capturedVisualsOf(categories("off", "off"))).toEqual({
+      screenshots: false,
+      screenRecordings: false
+    });
+    expect(capturedVisualsOf({})).toEqual({ screenshots: false, screenRecordings: false });
   });
 });
