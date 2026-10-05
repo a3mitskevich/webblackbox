@@ -364,10 +364,7 @@ describe("CDP exceptions under console: allow", () => {
 
 describe("CDP console object arguments", () => {
   function consoleObjectEvent(console: ConsolePolicy) {
-    const recorder = new WebBlackboxRecorder({
-      ...createConfig(console),
-      redaction: { ...DEFAULT_RECORDER_CONFIG.redaction, contentRedaction: false }
-    });
+    const recorder = new WebBlackboxRecorder(createConfig(console));
 
     return recorder.ingest({
       source: "cdp",
