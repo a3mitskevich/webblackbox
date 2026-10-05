@@ -79,11 +79,19 @@ async function main() {
       params?.exceptionDetails?.exception?.description ?? params?.exceptionDetails?.text
     );
   });
+  // Violations reach Node through a binding, so pages replaced by later navigations count too.
+  const cspViolations = [];
+  client.on("Runtime.bindingCalled", (params) => {
+    if (params?.name === "__wbCspViolation") {
+      cspViolations.push(JSON.parse(params.payload));
+    }
+  });
   await client.send("Runtime.enable");
+  await client.send("Runtime.addBinding", { name: "__wbCspViolation" });
   await client.send("DOM.enable");
   await client.send("Page.enable");
   await client.send("Page.addScriptToEvaluateOnNewDocument", {
-    source: `window.__csp = []; document.addEventListener("securitypolicyviolation", (e) => window.__csp.push([e.violatedDirective, e.blockedURI, e.sourceFile + ":" + e.lineNumber + ":" + e.columnNumber, e.sample].join(" ")));
+    source: `document.addEventListener("securitypolicyviolation", (e) => window.__wbCspViolation(JSON.stringify({ page: location.href, violation: [e.violatedDirective, e.blockedURI, e.sourceFile + ":" + e.lineNumber + ":" + e.columnNumber, e.sample].join(" ") })));
              window.__unloads = 0; window.addEventListener("beforeunload", () => { window.__unloads += 1; });`
   });
   await setViewport(client, 1440, 900);
@@ -93,6 +101,10 @@ async function main() {
 
   const results = {};
   results.empty = await verifyEmptyState(client, `${origin}/?ui=next&lang=en`);
+  assert(
+    await client.evaluate("typeof window.__wbCspViolation === 'function'"),
+    "CSP violation binding is missing; the CSP check would pass vacuously"
+  );
   results.open = await verifyEncryptedOpen(client, archivePath);
   results.layout = await verifyLoadedLayout(client);
   results.keyboard = await verifyKeyboard(client);
@@ -101,8 +113,6 @@ async function main() {
   results.theme = await verifyTheme(client);
   results.hash = await verifyHashRestore(client, origin, archivePath);
   results.responsive = await verifyNarrowLayout(client);
-  results.csp = await client.evaluate("window.__csp");
-  assert(results.csp.length === 0, "CSP violations in the React player", results.csp);
 
   if (screenshotsDir) {
     results.screenshots = await captureScreenshots(client, origin, archivePath, screenshotsDir);
@@ -111,6 +121,10 @@ async function main() {
   if (realArchive) {
     results.real = await verifyRealArchive(client, origin, realArchive, realPassphrase);
   }
+
+  // The classic player (screenshot mode) is not under test here.
+  results.csp = cspViolations.filter((entry) => entry.page.includes("ui=next"));
+  assert(results.csp.length === 0, "CSP violations in the React player", results.csp);
 
   assert(exceptions.length === 0, "Runtime exceptions in the player page", exceptions);
   console.log("Player next E2E passed:", JSON.stringify(results, null, 2));
@@ -371,14 +385,14 @@ async function verifyKeyboard(client) {
   await press(client, "l");
   const next = await waitForSnapshot(
     client,
-    (value) => value.selectedRow !== error.selectedRow,
+    (value) => value.selectedRow !== null && value.selectedRow !== error.selectedRow,
     "L did not select the next event"
   );
 
   await press(client, "Enter", { code: "Enter", keyCode: 13 });
   const details = await waitForSnapshot(
     client,
-    (value) => value.details.includes(next.selectedRow ?? "-"),
+    (value) => value.details.includes(`"${next.selectedRow}"`),
     "Enter did not open details"
   );
   await press(client, "Escape", { code: "Escape", keyCode: 27 });
@@ -591,11 +605,16 @@ async function verifyHashRestore(client, origin, archivePath) {
   );
   assert(restored.tab === "tab-network", "Hash tab was not restored", restored);
   await client.evaluate(`document.querySelector('${testId("tab-activity")}').click()`);
-  await sleep(600);
-  const rewritten = await readSnapshot(client);
+  // The hash is written after a debounce; wait for it instead of sleeping past it.
+  const rewritten = await waitForSnapshot(
+    client,
+    (value) => value.hash.includes("tab=activity") && value.hash.includes("t=10.89"),
+    "Hash was not rewritten"
+  );
+  // The selection only shows as a row on the Activity tab.
   assert(
-    rewritten.hash.includes("tab=activity") && rewritten.hash.includes("t=10.89"),
-    "Hash was not rewritten",
+    rewritten.selectedRow !== null && rewritten.hash.includes("sel=req%3A90080.1706"),
+    "Hash selection was not restored",
     rewritten
   );
   return { clock: restored.clock, hash: rewritten.hash };

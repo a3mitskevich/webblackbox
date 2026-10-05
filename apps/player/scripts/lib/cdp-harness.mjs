@@ -446,8 +446,13 @@ export function sleep(ms) {
     setTimeout(resolvePromise, ms);
   });
 }
+// `proc.killed` turns true once a signal is delivered, not when Chrome exits; check the exit instead.
+function hasExited(proc) {
+  return proc.exitCode !== null || proc.signalCode !== null;
+}
+
 export async function terminateChromeProcess(proc) {
-  if (!proc || proc.killed || proc.exitCode !== null) {
+  if (!proc || hasExited(proc)) {
     return;
   }
 
@@ -459,7 +464,7 @@ export async function terminateChromeProcess(proc) {
     sleep(5_000)
   ]);
 
-  if (proc.exitCode === null && !proc.killed) {
+  if (!hasExited(proc)) {
     proc.kill("SIGKILL");
     await Promise.race([
       new Promise((resolvePromise) => {
@@ -469,9 +474,14 @@ export async function terminateChromeProcess(proc) {
     ]);
   }
 }
+/** Bounds every CDP command, so a hung page (dialog, stuck renderer) fails the run instead of hanging it. */
+const CDP_COMMAND_TIMEOUT_MS = 30_000;
+const CDP_CONNECT_TIMEOUT_MS = 15_000;
+
 export class CdpClient {
-  constructor(wsUrl) {
+  constructor(wsUrl, commandTimeoutMs = CDP_COMMAND_TIMEOUT_MS) {
     this.wsUrl = wsUrl;
+    this.commandTimeoutMs = commandTimeoutMs;
     this.socket = null;
     this.sequence = 0;
     this.pending = new Map();
@@ -482,17 +492,24 @@ export class CdpClient {
     await new Promise((resolvePromise, reject) => {
       const socket = new WebSocket(this.wsUrl);
       this.socket = socket;
+      const timer = setTimeout(() => {
+        reject(new Error(`Timed out opening WebSocket: ${this.wsUrl}`));
+        socket.close();
+      }, CDP_CONNECT_TIMEOUT_MS);
 
       socket.addEventListener("open", () => {
+        clearTimeout(timer);
         resolvePromise();
       });
 
       socket.addEventListener("error", () => {
+        clearTimeout(timer);
         reject(new Error(`Failed to open WebSocket: ${this.wsUrl}`));
       });
 
       socket.addEventListener("close", () => {
         for (const pending of this.pending.values()) {
+          clearTimeout(pending.timer);
           pending.reject(new Error("CDP socket closed"));
         }
         this.pending.clear();
@@ -509,6 +526,7 @@ export class CdpClient {
           }
 
           this.pending.delete(payload.id);
+          clearTimeout(pending.timer);
 
           if (payload.error) {
             pending.reject(new Error(payload.error.message ?? JSON.stringify(payload.error)));
@@ -549,9 +567,14 @@ export class CdpClient {
     });
 
     return new Promise((resolvePromise, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP ${method} timed out after ${this.commandTimeoutMs} ms`));
+      }, this.commandTimeoutMs);
       this.pending.set(id, {
         resolve: resolvePromise,
-        reject
+        reject,
+        timer
       });
       this.socket.send(message);
     });
