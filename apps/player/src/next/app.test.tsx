@@ -110,6 +110,10 @@ describe("React player", () => {
     expect(
       document.querySelector('[aria-selected="true"][data-testid="event-row"]')
     ).toHaveAttribute("data-event-id", selected);
+    // The selected row is at the playhead: the present, not dimmed as the future.
+    expect(
+      document.querySelector('[aria-selected="true"][data-testid="event-row"]')
+    ).toHaveAttribute("data-future", "false");
 
     key("Enter");
     expect(screen.getByTestId("details-json")).toHaveTextContent(selected ?? "-");

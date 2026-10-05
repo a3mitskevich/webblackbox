@@ -99,13 +99,18 @@ export function EventList() {
   const selectedId = usePlayerState((state) =>
     state.archive ? resolveSelectedEventId(state.archive, state.selection) : null
   );
-  const nowBucket = usePlayerState((state) => Math.floor(state.playheadMono / NOW_BUCKET_MS));
+  // Exact while paused; while playing the list follows in NOW_BUCKET_MS steps, not every frame.
+  const nowMono = usePlayerState((state) =>
+    state.isPlaying
+      ? Math.floor(state.playheadMono / NOW_BUCKET_MS) * NOW_BUCKET_MS
+      : state.playheadMono
+  );
   const events = useMemo(
     () => (archive ? selectActivityEvents(archive, query) : []),
     [archive, query]
   );
-  // Rows up to the start of the current bucket are "past"; the label shows the exact playhead.
-  const nowIndex = upperBoundByMono(events, nowBucket * NOW_BUCKET_MS, (event) => event.mono);
+  // Rows at or before the playhead are the past; the label shows the exact playhead.
+  const nowIndex = upperBoundByMono(events, nowMono, (event) => event.mono);
   const selectedIndex = selectedId ? events.findIndex((event) => event.id === selectedId) : -1;
   const scrollTarget = isPlaying && follow ? Math.max(0, nowIndex - 1) : selectedIndex;
   const onSelect = useCallback(
