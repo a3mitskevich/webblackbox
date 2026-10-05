@@ -231,6 +231,13 @@ describe("React player", () => {
 
     key("?");
     expect(screen.getByTestId("shortcuts-dialog")).toBeInTheDocument();
+    key("Escape");
+    expect(screen.queryByTestId("shortcuts-dialog")).not.toBeInTheDocument();
+
+    // AltGr (Ctrl+Alt on Windows) is how some layouts type "?".
+    screen.getByTestId("scrubber").focus();
+    key("?", { ctrlKey: true, altKey: true, modifierAltGraph: true });
+    expect(screen.getByTestId("shortcuts-dialog")).toBeInTheDocument();
   });
 
   it("names each locale button by its visible label first (WCAG 2.5.3)", async () => {

@@ -89,9 +89,15 @@ function isOwnedElsewhere(event: KeyboardEvent): boolean {
   );
 }
 
-/** `?` matches the typed character with any modifier; Ctrl / Alt / Meta + `?` are not the sheet. */
+/**
+ * `?` matches the typed character with any modifier; Ctrl / Alt / Meta + `?` are not the sheet,
+ * but AltGr (reported as Ctrl+Alt on Windows) is how some layouts type `?`.
+ */
 function isCharacterKeyIgnored(event: KeyboardEvent): boolean {
-  return isOwnedElsewhere(event) || event.ctrlKey || event.altKey || event.metaKey;
+  const isAltGraph = event.getModifierState?.("AltGraph") === true;
+  return (
+    isOwnedElsewhere(event) || event.metaKey || (!isAltGraph && (event.ctrlKey || event.altKey))
+  );
 }
 
 function yieldsToTarget(event: KeyboardEvent, binding: KeyBinding): boolean {

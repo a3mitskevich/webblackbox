@@ -73,8 +73,21 @@ async function detailsPaneSplits(ctx) {
     dragged,
     reopened
   });
+
+  // "Reset layout" while the pane is closed: it reopens at the default size, not the dragged one.
   await ctx.press("Escape", { code: "Escape", keyCode: 27 });
-  return { initial, dragged, reopened };
+  await ctx.waitForSnapshot((value) => value.details === "", "Esc did not close the details");
+  await ctx.click("reset-layout");
+  await ctx.evaluate(`document.querySelector('${list}').focus()`);
+  await ctx.press("Enter", { code: "Enter", keyCode: 13 });
+  await ctx.waitForSelector(ctx.testId("details-panel"), "Enter did not reopen the details");
+  const afterReset = await height();
+  ctx.assert(Math.abs(afterReset - initial) <= 4, "Reset layout did not reset the closed pane", {
+    initial,
+    afterReset
+  });
+  await ctx.press("Escape", { code: "Escape", keyCode: 27 });
+  return { initial, dragged, reopened, afterReset };
 }
 
 export default {

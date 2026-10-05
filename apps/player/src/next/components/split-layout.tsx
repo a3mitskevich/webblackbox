@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Group,
   Panel,
@@ -129,13 +129,21 @@ export function ListDetailsSplit({ name, list, details }: ListDetailsSplitProps)
   const openLayout = defaultLayout ?? defaultDetailsLayout();
   const isOpenRef = useRef(isOpen);
   isOpenRef.current = isOpen;
+  // The group keeps the last open sizes in memory while the pane is closed, and the details panel
+  // is not registered then, so a reset made while closed starts a fresh group instead.
+  const [generation, setGeneration] = useState(0);
 
-  useLayoutReset(() =>
-    groupRef.current?.setLayout(isOpenRef.current ? defaultDetailsLayout() : LIST_ONLY_LAYOUT)
-  );
+  useLayoutReset(() => {
+    if (isOpenRef.current) {
+      groupRef.current?.setLayout(defaultDetailsLayout());
+    } else {
+      setGeneration((value) => value + 1);
+    }
+  });
 
   return (
     <Group
+      key={generation}
       className="split split-v"
       orientation="vertical"
       groupRef={groupRef}

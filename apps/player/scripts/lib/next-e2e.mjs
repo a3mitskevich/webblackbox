@@ -79,6 +79,10 @@ export async function openEncrypted(client, archivePath, passphrase) {
     "Passphrase dialog did not open"
   );
   // A click outside (on the backdrop) must not cancel the prompt and drop the file.
+  const hit = await client.evaluate(
+    `document.elementFromPoint(4, 4)?.classList.contains("dlg-backdrop") ?? false`
+  );
+  assert(hit, "The point clicked outside the passphrase dialog is not its backdrop");
   for (const type of ["mousePressed", "mouseReleased"]) {
     await client.send("Input.dispatchMouseEvent", {
       type,
