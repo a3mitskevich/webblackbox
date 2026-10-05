@@ -290,8 +290,107 @@ refs.pulseDom.addEventListener("click", () => {
   pulseDom();
 });
 
+const FIDELITY_CONSOLE_MARKER = "[wb-fidelity] long-console";
+const FIDELITY_SOCKET_PATH = "/ws/signalr";
+const FIDELITY_IMAGE_PATH = "/api/fidelity-image.png";
+const FIDELITY_SENT_FRAME_CHARS = 40_000;
+const FIDELITY_STACK_DEPTH = 16;
+const FIDELITY_SOCKET_TIMEOUT_MS = 5_000;
+
+/**
+ * Full-mode capture fidelity: a ~6 000-char console.error from a deep call stack, a SignalR socket
+ * exchange (the demo server pushes a ~10 KB lobby frame, the page sends a 40 KB batch) and an image
+ * loaded again by a same-origin iframe, which Chrome serves from its memory cache.
+ */
+async function runFidelityScenario() {
+  const consoleText = `${FIDELITY_CONSOLE_MARKER} ${"lobby state segment ".repeat(300)}`;
+  logFromDeepStack(FIDELITY_STACK_DEPTH, consoleText);
+
+  const socket = await exchangeSignalRFrames();
+  const image = await loadImageTwice(FIDELITY_IMAGE_PATH);
+
+  return {
+    ok: socket.ok && image.ok,
+    consoleMarker: FIDELITY_CONSOLE_MARKER,
+    consoleChars: consoleText.length,
+    ...socket,
+    ...image
+  };
+}
+
+function logFromDeepStack(depth, text) {
+  if (depth > 0) {
+    logFromDeepStack(depth - 1, text);
+    return;
+  }
+
+  console.error(text);
+}
+
+function buildSignalRBatch(minChars) {
+  const record = `${JSON.stringify({
+    type: 1,
+    target: "PlaceBet",
+    arguments: [{ gameId: 90000467807, stake: 1.5, odds: 2.35 }]
+  })}\u001e`;
+
+  return record.repeat(Math.ceil(minChars / record.length));
+}
+
+function exchangeSignalRFrames() {
+  return new Promise((resolve) => {
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(`${protocol}//${location.host}${FIDELITY_SOCKET_PATH}`);
+    const finish = (result) => {
+      clearTimeout(timer);
+      socket.close();
+      resolve(result);
+    };
+    const timer = setTimeout(
+      () => finish({ ok: false, reason: "socket-timeout" }),
+      FIDELITY_SOCKET_TIMEOUT_MS
+    );
+
+    socket.addEventListener("error", () => finish({ ok: false, reason: "socket-error" }));
+    socket.addEventListener(
+      "message",
+      (event) => {
+        const received = String(event.data);
+        const batch = buildSignalRBatch(FIDELITY_SENT_FRAME_CHARS);
+        socket.send(batch);
+        // Let the sent frame reach CDP before the socket closes.
+        setTimeout(
+          () => finish({ ok: true, receivedChars: received.length, sentChars: batch.length }),
+          300
+        );
+      },
+      { once: true }
+    );
+  });
+}
+
+async function loadImageTwice(src) {
+  const image = new Image();
+  image.src = src;
+  await image.decode();
+
+  const frame = document.createElement("iframe");
+  frame.style.cssText = "position:absolute;width:1px;height:1px;opacity:0;border:0";
+  frame.srcdoc = `<img src="${src}" alt="">`;
+  document.body.append(frame);
+
+  const cachedLoad = await waitForCondition(
+    () => frame.contentDocument?.querySelector("img")?.complete === true,
+    4000
+  );
+  frame.remove();
+
+  return cachedLoad ? { ok: true, imageLoads: 2 } : { ok: false, reason: "cached-image-timeout" };
+}
+
 window.__wbDemo = {
   runScenario,
+  runFidelityScenario,
   snapshot() {
     return {
       tasks: state.tasks.length,

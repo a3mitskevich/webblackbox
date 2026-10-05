@@ -2,19 +2,20 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 72000,
-      "maxGzipBytes": 16800,
-      "note": "Measured 69,867 / 16,314 B (+3%): pointer capture options (#13) on top of CDP allowlists, runtime error policy (#9) and per-profile redaction rules (#10)."
+      "maxBytes": 79800,
+      "maxGzipBytes": 18800,
+      "note": "Measured 77,392 / 18,203 B (+3%): full console detail, the CDP cache tracker and byte-capped stream bodies (#9), per-profile redaction rules (#10) and pointer capture options (#13)."
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 76000,
+      "maxBytes": 79000,
       "maxGzipBytes": 18000
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 105000,
-      "maxGzipBytes": 25000
+      "maxBytes": 108100,
+      "maxGzipBytes": 25900,
+      "note": "Measured 104,941 / 25,073 B (+3%): pointer timeline, rage/dead clicks and Playwright selectors (#13) plus realtime payloads and profile cancellation reads (#9, #10)."
     },
     {
       "path": "apps/player/build/main.js",
@@ -23,14 +24,15 @@
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 48000,
-      "maxGzipBytes": 13000
+      "maxBytes": 53400,
+      "maxGzipBytes": 14100,
+      "note": "Measured 51,816 / 13,675 B (+3%): content.js bundles the shared UI dictionary, which grew with the profile-change and profile-deletion strings; #14 moves the dictionary out of the content script."
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 876500,
-      "maxGzipBytes": 154600,
-      "note": "Measured 857,449 / 151,540 B with pointer capture (#13) on top of 850,791 / 150,067 B (+3%) for recording profiles, redaction rules and the linear regex engine (#10)."
+      "maxBytes": 896400,
+      "maxGzipBytes": 159400,
+      "note": "Measured 870,263 / 154,697 B (+3%): recording profiles with cancellation on change and deletion (#10), CDP allowlists and capture fidelity (#9) and pointer capture (#13)."
     }
   ]
 }

@@ -8,14 +8,10 @@ import {
 import type { FullModeVisualCapture } from "../messages.js";
 import { applyFullModeVisualCapture, resolveModeBaseConfig } from "../mode-profile.js";
 import { resolveModeRecorderConfig } from "../recorder-config.js";
-import {
-  clampCategoriesToCeiling,
-  findCategoriesAboveCeiling,
-  type CaptureCategoryKey
-} from "./categories.js";
+import { findCategoriesAboveCeiling, type CaptureCategoryKey } from "./categories.js";
 import { DEFAULT_PROFILE_ID, withoutRedactionUnmask, type RecordingProfile } from "./model.js";
-import { BUILT_IN_PROFILE_IDS, findBuiltInProfile, STANDARD_CAPTURE_CEILING } from "./presets.js";
-import { findMatchingRule, matchesHostPattern, type ProfilePageContext } from "./rules.js";
+import { STANDARD_CAPTURE_CEILING } from "./presets.js";
+import { findMatchingRule, type ProfilePageContext } from "./rules.js";
 import type { ProfilesState } from "./storage.js";
 
 /** `requestedProfileId` value meaning "let the site rules decide". */
@@ -24,15 +20,13 @@ export const AUTO_PROFILE_ID = "auto";
 export type ProfileSelectionSource = "explicit" | "rule" | "default";
 
 export type ProfileSelection = {
-  /** Effective profile (after the extended-capture host gate). */
+  /** Effective profile: exactly the one chosen, on any host. */
   profile: RecordingProfile;
   source: ProfileSelectionSource;
   rule?: { id: string; name?: string };
-  /** Effective profile captures more than the standard Full ceiling. */
+  /** Effective profile captures more than the standard Full ceiling (informational). */
   extended: boolean;
-  /** Set when an extended profile was replaced by Full on a host outside its allowlist. */
-  downgradedFrom?: { id: string; name: string; reason: "host-not-allowed" };
-  /** Effective profile is the v1-derived Default (no v2 store yet): no extra gates apply. */
+  /** Effective profile is the v1-derived Default (no v2 store yet). */
   legacy: boolean;
 };
 
@@ -44,21 +38,21 @@ export type ArchivedProfileInfo = {
   ruleId?: string;
   ruleName?: string;
   extended: boolean;
-  downgradedFrom?: { id: string; name: string; reason: string };
+  /** Categories the enterprise `dataCategoryCaps` lowered below what the profile asks for. */
+  enterpriseCapped?: CaptureCategoryKey[];
 };
 
 /**
- * Picks the profile for a page: an explicit choice wins, then the best matching site rule,
- * then the store default. Extended profiles only run on hosts their rules (or the allowlists)
- * cover; elsewhere they run as the built-in Full preset, keeping their own redaction and
- * retention settings and never more than Full captures.
+ * Picks the profile for a page: an explicit choice wins, then the best matching site rule, then
+ * the store default, then the first profile left. The chosen profile runs as it is on every host;
+ * enterprise data category caps are applied later, on the recorder config. Returns null when no
+ * profile exists at all: recording needs one.
  */
 export function selectRecordingProfile(input: {
   state: ProfilesState;
   page: ProfilePageContext;
   requestedProfileId?: string;
-  enterpriseSiteAllowlist?: readonly string[];
-}): ProfileSelection {
+}): ProfileSelection | null {
   const { state } = input;
   const byId = (id: string | undefined): RecordingProfile | undefined =>
     id ? state.catalog.find((profile) => profile.id === id) : undefined;
@@ -70,53 +64,28 @@ export function selectRecordingProfile(input: {
     ? undefined
     : findMatchingRule(state.rules, input.page, (candidate) => !!byId(candidate.profileId));
   const ruleProfile = byId(rule?.profileId);
-  const requested =
-    explicit ?? ruleProfile ?? byId(state.store.defaultProfileId) ?? byId(DEFAULT_PROFILE_ID);
+  const profile =
+    explicit ??
+    ruleProfile ??
+    byId(state.store.defaultProfileId) ??
+    byId(DEFAULT_PROFILE_ID) ??
+    state.catalog[0];
+
+  if (!profile) {
+    return null;
+  }
+
   const source: ProfileSelectionSource = explicit ? "explicit" : ruleProfile ? "rule" : "default";
-  const profile = requested ?? fullPreset();
   const legacy = state.legacy && profile.id === DEFAULT_PROFILE_ID;
-  const extended = !legacy && isExtendedCaptureProfile(profile);
   const ruleInfo =
     ruleProfile && rule ? { id: rule.id, ...(rule.name ? { name: rule.name } : {}) } : undefined;
 
-  const selection: ProfileSelection = {
+  return {
     profile,
     source,
     ...(ruleInfo ? { rule: ruleInfo } : {}),
-    extended,
+    extended: !legacy && isExtendedCaptureProfile(profile),
     legacy
-  };
-
-  if (
-    extended &&
-    !isHostAllowedForExtendedCapture({
-      url: input.page.url,
-      profileId: profile.id,
-      state,
-      enterpriseSiteAllowlist: input.enterpriseSiteAllowlist ?? []
-    })
-  ) {
-    return downgradeExtendedSelection(selection);
-  }
-
-  return selection;
-}
-
-/** The same selection running as the Full preset because the host is not allowed. */
-export function downgradeExtendedSelection(selection: ProfileSelection): ProfileSelection {
-  if (!selection.extended) {
-    return selection;
-  }
-
-  const { profile } = selection;
-
-  return {
-    profile: downgradeToFullPreset(profile),
-    source: selection.source,
-    ...(selection.rule ? { rule: { ...selection.rule } } : {}),
-    extended: false,
-    downgradedFrom: { id: profile.id, name: profile.name, reason: "host-not-allowed" },
-    legacy: false
   };
 }
 
@@ -138,33 +107,16 @@ export function listExtendedCategories(profile: RecordingProfile): CaptureCatego
 }
 
 /**
- * Extended capture is allowed on hosts named by enabled rules that target the profile, by the
- * store's `extendedCaptureHosts`, or by the enterprise site allowlist.
+ * Categories the enterprise caps lowered: what the profile's config asks for vs what runs. Shown
+ * in the popup and recorded in the archive so a capped recording never looks complete.
  */
-export function isHostAllowedForExtendedCapture(input: {
-  url: string;
-  profileId: string;
-  state: ProfilesState;
-  enterpriseSiteAllowlist: readonly string[];
-}): boolean {
-  let url: URL;
-
-  try {
-    url = new URL(input.url);
-  } catch {
-    return false;
-  }
-
-  const rulePatterns = input.state.rules
-    .filter((rule) => rule.enabled && rule.profileId === input.profileId)
-    .flatMap((rule) => rule.match.hosts ?? []);
-  const patterns = [
-    ...rulePatterns,
-    ...input.state.store.extendedCaptureHosts,
-    ...input.enterpriseSiteAllowlist
-  ];
-
-  return patterns.some((pattern) => matchesHostPattern(url, pattern));
+export function listEnterpriseCappedCategories(
+  requested: RecorderConfig,
+  effective: RecorderConfig
+): CaptureCategoryKey[] {
+  const wanted = requested.capturePolicy?.categories;
+  const running = effective.capturePolicy?.categories;
+  return wanted && running ? findCategoriesAboveCeiling(wanted, running) : [];
 }
 
 /**
@@ -196,7 +148,7 @@ export function buildProfileRecorderConfig(input: {
 
 /** v1-shaped options record equivalent to a profile (only the keys the merge reads). */
 export function toLegacyOptionsRecord(profile: RecordingProfile): Record<string, unknown> {
-  // `profile.unmaskSelectors` is the only unmask source: the extended-capture gate reads it.
+  // `profile.unmaskSelectors` is the only unmask source: `isExtendedCaptureProfile` reads it.
   const redaction = {
     ...withoutRedactionUnmask(profile.redaction),
     ...(profile.unmaskSelectors.length > 0 ? { unmaskSelectors: [...profile.unmaskSelectors] } : {})
@@ -225,7 +177,10 @@ export function toLegacyOptionsRecord(profile: RecordingProfile): Record<string,
   };
 }
 
-export function toArchivedProfileInfo(selection: ProfileSelection): ArchivedProfileInfo {
+export function toArchivedProfileInfo(
+  selection: ProfileSelection,
+  enterpriseCapped: readonly CaptureCategoryKey[] = []
+): ArchivedProfileInfo {
   return {
     id: selection.profile.id,
     name: selection.profile.name,
@@ -233,50 +188,6 @@ export function toArchivedProfileInfo(selection: ProfileSelection): ArchivedProf
     ...(selection.rule ? { ruleId: selection.rule.id } : {}),
     ...(selection.rule?.name ? { ruleName: selection.rule.name } : {}),
     extended: selection.extended,
-    ...(selection.downgradedFrom ? { downgradedFrom: { ...selection.downgradedFrom } } : {})
+    ...(enterpriseCapped.length > 0 ? { enterpriseCapped: [...enterpriseCapped] } : {})
   };
-}
-
-/** Same profile, rule and gate outcome: no need to reconfigure the recorder. */
-export function isSameProfileSelection(left: ProfileSelection, right: ProfileSelection): boolean {
-  return (
-    left.profile.id === right.profile.id &&
-    left.rule?.id === right.rule?.id &&
-    left.downgradedFrom?.id === right.downgradedFrom?.id
-  );
-}
-
-/**
- * The Full preset for an extended profile on a host outside its allowlist. Categories are the
- * lower of the two levels, so nothing the profile turned down is turned back on, and the
- * profile's redaction lists, sampling, retention, site policies and export rules are kept.
- * Body filters, pointer rate, visuals and unmask selectors come from Full.
- */
-function downgradeToFullPreset(profile: RecordingProfile): RecordingProfile {
-  const full = fullPreset();
-
-  return {
-    ...full,
-    categories: clampCategoriesToCeiling(profile.categories, full.categories),
-    // Masking off or without the built-in heuristics is extended capture: the Full preset's rules
-    // apply instead (the profile's own lists may have been emptied).
-    redaction: usesBuiltInHeuristics(profile.redaction)
-      ? withoutRedactionUnmask(profile.redaction)
-      : structuredClone(full.redaction),
-    sampling: { ...profile.sampling },
-    recorder: { ...profile.recorder },
-    sitePolicies: profile.sitePolicies,
-    ...(profile.basePolicy ? { basePolicy: profile.basePolicy } : {}),
-    export: { ...profile.export }
-  };
-}
-
-function fullPreset(): RecordingProfile {
-  const preset = findBuiltInProfile(BUILT_IN_PROFILE_IDS.full);
-
-  if (!preset) {
-    throw new Error("Built-in Full profile is missing.");
-  }
-
-  return preset;
 }

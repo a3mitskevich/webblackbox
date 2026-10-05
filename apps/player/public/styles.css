@@ -1193,6 +1193,20 @@ input[type="file"],
   gap: 4px;
 }
 
+.summary-alert {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--sys-color-yellow);
+  border-radius: 8px;
+  background: var(--sys-color-yellow-container);
+  color: var(--sys-color-on-surface);
+  font-size: 11px;
+}
+
+.summary-alert p {
+  margin: 0;
+}
+
 .summary-triage {
   width: 100%;
   display: flex;
@@ -1701,6 +1715,33 @@ input[type="file"],
   min-width: 0;
   flex: 1;
   color: var(--sys-color-on-surface-subtle);
+}
+
+.signal-expandable {
+  display: block;
+}
+
+.realtime-entry > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style-position: outside;
+}
+
+.realtime-payload {
+  max-height: 360px;
+  margin: 4px 0 2px;
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--sys-color-divider);
+  border-radius: 4px;
+  font-family: var(--mono-font-family);
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--sys-color-on-surface);
 }
 
 .network-toolbar {
