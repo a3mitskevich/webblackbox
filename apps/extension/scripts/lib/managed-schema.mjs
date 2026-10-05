@@ -15,8 +15,8 @@ export const MANAGED_CATEGORY_LEVELS = {
   console: ["off", "metadata", "sanitized", "allow"],
   network: ["metadata", "headers-allowlist", "body-allowlist"],
   storage: ["off", "counts-only", "names-only", "lengths-only", "allow"],
-  indexedDb: ["off", "counts-only", "names-only"],
-  cookies: ["off", "count-only", "names-only"],
+  indexedDb: ["off", "counts-only", "names-only", "allow"],
+  cookies: ["off", "count-only", "names-only", "allow"],
   cdp: ["off", "safe-subset", "full"],
   heapProfiles: ["off", "lab-only"]
 };

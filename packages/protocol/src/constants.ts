@@ -95,3 +95,12 @@ export const MESSAGE_TYPES = [
 export const FREEZE_REASONS = ["error", "network", "marker", "perf", "manual"] as const;
 
 export const STORAGE_SNAPSHOT_MODES = ["schema-only", "sample", "full"] as const;
+
+/**
+ * Ceiling for one console entry kept in full under the `console: allow` policy: its text, and all
+ * of its arguments together. Shared by the CDP (full) and page-hook (lite) transports.
+ */
+export const CONSOLE_FULL_ENTRY_MAX_CHARS = 64 * 1024;
+
+/** Max call frames kept in a full console/exception stack (Chrome captures up to 200). */
+export const CONSOLE_FULL_STACK_MAX_FRAMES = 200;
