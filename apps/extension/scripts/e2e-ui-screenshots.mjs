@@ -69,7 +69,14 @@ const CATALOG = [
 const PREVIEW_DEFAULT = {
   kind: "sw.profile-preview",
   catalog: CATALOG,
-  selection: { id: "default", name: "Default", base: "lite", source: "default", extended: false }
+  selection: {
+    id: "default",
+    name: "Default",
+    base: "lite",
+    source: "default",
+    extended: false,
+    requiresFull: false
+  }
 };
 const PREVIEW_RULE = {
   kind: "sw.profile-preview",
@@ -80,7 +87,9 @@ const PREVIEW_RULE = {
     base: "full",
     source: "rule",
     ruleName: "Stage",
-    extended: true
+    extended: true,
+    // QA records bodies and screenshots: the popup locks the engine to Full.
+    requiresFull: true
   }
 };
 /** Every profile was deleted: the popup asks for one instead of offering Start. */
