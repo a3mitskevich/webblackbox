@@ -68,6 +68,14 @@ export type ChromeApi = {
   i18n?: {
     getUILanguage(): string;
   };
+  /** Persisted timers: they fire after the service worker was stopped and restarted. */
+  alarms?: {
+    create(name: string, alarmInfo: { when: number }): Promise<void> | void;
+    clear(name: string): Promise<boolean> | void;
+    onAlarm: {
+      addListener(callback: (alarm: { name: string }) => void): void;
+    };
+  };
   offscreen?: {
     createDocument(options: {
       url: string;

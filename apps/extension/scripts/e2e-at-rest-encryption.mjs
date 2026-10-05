@@ -6,10 +6,13 @@
 //    and blob carries the AES-GCM frame, session rows hold only ids and timestamps. The key's
 //    chrome.storage.session area is out of reach of the content script.
 // 2. The export still decrypts to the raw secrets, and the recording is deleted after it.
-// 3. A second, unexported recording survives in IndexedDB until Chrome is restarted on the same
-//    user data dir: then the database is gone and the Sessions page is empty.
+// 3. Stopped, unexported recordings survive a service worker restart (Chrome stops idle workers):
+//    after the worker target is closed and more than 30 s pass, they are still listed, still in
+//    IndexedDB, and one of them exports with its secrets.
+// 4. The other one survives until Chrome is restarted on the same user data dir: then the
+//    database is gone and the Sessions page is empty.
 
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -38,9 +41,10 @@ const SECRETS = {
   responseBody: "AR-RESPONSE-BODY-1",
   password: "AR-PASSWORD-1"
 };
-const SECOND_SECRETS = Object.fromEntries(
-  Object.entries(SECRETS).map(([kind, value]) => [kind, value.replace("-1", "-2")])
-);
+const SECOND_SECRETS = withSecretSuffix("-2");
+const THIRD_SECRETS = withSecretSuffix("-3");
+/** Longer than Chrome's 30 s idle timeout of an extension service worker. */
+const WORKER_IDLE_WAIT_MS = 35_000;
 const FULL_CAPTURE_RULE = {
   id: "e2e-at-rest-full-capture",
   name: "Local full capture",
@@ -162,20 +166,13 @@ async function main() {
   assert(exported?.ok === true, "Encrypted export failed", exported);
 
   const archivePath = await harness.waitForDownload();
-  const bytes = new Uint8Array(await readFile(archivePath));
-  const player = await WebBlackboxPlayer.open(bytes, { passphrase });
-  const events = player.query();
-  const blobTexts = await Promise.all(
-    events
-      .filter((event) => typeof event.data?.contentHash === "string")
-      .map(async (event) => {
-        const blob = await player.getBlob(event.data.contentHash);
-        return blob ? new TextDecoder().decode(blob.bytes) : "";
-      })
+  const { bytes, events, missing } = await readExportedArchive(
+    WebBlackboxPlayer,
+    archivePath,
+    SECRETS
   );
-  const recorded = `${JSON.stringify(events)}\n${blobTexts.join("\n")}`;
-  const missing = Object.entries(SECRETS).filter(([, secret]) => !recorded.includes(secret));
   assert(missing.length === 0, "The export lacks recorded secrets", missing);
+  await rm(archivePath);
 
   await waitFor(
     async () => ((await listSessionSids(popup)).includes(sid) ? null : true),
@@ -188,15 +185,79 @@ async function main() {
     "The exported recording is still in IndexedDB"
   );
 
-  // 3. An unexported recording, then a browser restart on the same profile.
+  // 3. Two stopped, unexported recordings, then a service worker restart.
   const secondSid = await recordSession(first, tabId, SECOND_SECRETS);
+  const thirdSid = await recordSession(first, tabId, THIRD_SECRETS);
+  const swTarget = (await harness.listTargets()).find(
+    (target) => target.type === "service_worker" && target.url === `${origin}/sw.js`
+  );
+  assert(swTarget, "Extension service worker target not found");
+  assert(first.swExceptions.length === 0, "Service worker threw", first.swExceptions);
+  await first.browser.send("Target.closeTarget", { targetId: swTarget.id });
+  await waitFor(
+    async () =>
+      (await harness.listTargets()).some((target) => target.id === swTarget.id) ? null : true,
+    10_000,
+    "The service worker did not stop"
+  );
+  await sleep(WORKER_IDLE_WAIT_MS);
+
+  const listedAfterWorkerRestart = await listSessionSids(popup);
+  assert(
+    listedAfterWorkerRestart.includes(secondSid) && listedAfterWorkerRestart.includes(thirdSid),
+    "Stopped recordings are not listed after the service worker restart",
+    { listedAfterWorkerRestart, secondSid, thirdSid }
+  );
+  const keyAfterWorkerRestart = await readSessionKey(popup);
+  assert(
+    keyAfterWorkerRestart?.keyId === firstKey.keyId,
+    "The service worker restart replaced the at-rest key"
+  );
+  const storedAfterWorkerRestart = summarizeRows((await dumpPipelineDb(origin)) ?? {});
+  assert(
+    [secondSid, thirdSid].every((stored) =>
+      storedAfterWorkerRestart.sessions.some((row) => row.value?.sid === stored)
+    ),
+    "Stopped recordings left IndexedDB after the service worker restart",
+    storedAfterWorkerRestart.counts
+  );
+
+  const exportedAfterWorkerRestart = await popup.evaluate(`
+    chrome.runtime.sendMessage({
+      kind: "ui.export",
+      sid: ${JSON.stringify(secondSid)},
+      passphrase: ${JSON.stringify(passphrase)},
+      saveAs: false
+    })
+  `);
+  assert(
+    exportedAfterWorkerRestart?.ok === true,
+    "Export after the service worker restart failed",
+    exportedAfterWorkerRestart
+  );
+  const restoredArchive = await readExportedArchive(
+    WebBlackboxPlayer,
+    await harness.waitForDownload(),
+    SECOND_SECRETS
+  );
+  assert(
+    restoredArchive.missing.length === 0,
+    "The export after the worker restart lacks recorded secrets",
+    restoredArchive.missing
+  );
+
+  // 4. The unexported recording, then a browser restart on the same profile.
+  await waitFor(
+    async () => ((await listSessionSids(popup)).includes(secondSid) ? null : true),
+    10_000,
+    "The recording exported after the worker restart is still listed"
+  );
   const beforeRestart = summarizeRows((await dumpPipelineDb(origin)) ?? {});
   assert(
-    beforeRestart.sessions.some((row) => row.value?.sid === secondSid),
+    beforeRestart.sessions.some((row) => row.value?.sid === thirdSid),
     "The unexported recording is not in IndexedDB before the restart",
     beforeRestart.counts
   );
-  assert(first.swExceptions.length === 0, "Service worker threw", first.swExceptions);
 
   await sleep(1_500);
   await harness.stopBrowser();
@@ -242,12 +303,40 @@ async function main() {
   assert(second.swExceptions.length === 0, "Service worker threw", second.swExceptions);
 
   console.log(`IndexedDB before export: ${JSON.stringify(rows.counts)}`);
+  console.log(
+    `IndexedDB after the worker restart: ${JSON.stringify(storedAfterWorkerRestart.counts)}`
+  );
   console.log(`IndexedDB after restart: ${JSON.stringify(afterRestart)}`);
   console.log(`Archive: ${archivePath} (${bytes.byteLength} bytes, ${events.length} events)`);
   console.log(`Chrome log: ${harness.chromeLogPath}`);
   console.log("At-rest encryption E2E passed.");
 
   await harness.cleanup();
+}
+
+function withSecretSuffix(suffix) {
+  return Object.fromEntries(
+    Object.entries(SECRETS).map(([kind, value]) => [kind, value.replace("-1", suffix)])
+  );
+}
+
+/** Decrypts an exported archive and lists the `secrets` it does not contain. */
+async function readExportedArchive(WebBlackboxPlayer, archivePath, secrets) {
+  const bytes = new Uint8Array(await readFile(archivePath));
+  const player = await WebBlackboxPlayer.open(bytes, { passphrase });
+  const events = player.query();
+  const blobTexts = await Promise.all(
+    events
+      .filter((event) => typeof event.data?.contentHash === "string")
+      .map(async (event) => {
+        const blob = await player.getBlob(event.data.contentHash);
+        return blob ? new TextDecoder().decode(blob.bytes) : "";
+      })
+  );
+  const recorded = `${JSON.stringify(events)}\n${blobTexts.join("\n")}`;
+  const missing = Object.entries(secrets).filter(([, secret]) => !recorded.includes(secret));
+
+  return { bytes, events, missing };
 }
 
 /** Starts a Full capture recording, plants `secrets`, stops it and returns its sid. */

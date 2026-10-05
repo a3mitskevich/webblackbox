@@ -289,7 +289,7 @@ Page World          Extension World         Background
 - Sensitive headers are redacted before entering the pipeline
 - Content masking follows each profile's redaction rules (best effort, no guarantee): body keys and value patterns, blocked selectors, header/cookie/query/storage rules, and the optional built-in heuristics; `contentRedaction: false` records content as captured
 - Every archive is encrypted with AES-GCM
-- In the extension, everything in the pipeline IndexedDB (chunks, blobs, indexes, integrity, session metadata) is encrypted with AES-GCM under a per-browser-session key held only in `chrome.storage.session`; the offscreen document imports it non-extractable. Each service worker start deletes the database (a new key after a browser or extension restart; otherwise the leftovers of an earlier worker). See [PRIVACY.md](PRIVACY.md#local-storage).
+- In the extension, everything in the pipeline IndexedDB (chunks, blobs, indexes, integrity, session metadata) is encrypted with AES-GCM under a per-browser-session key held only in `chrome.storage.session`; the offscreen document imports it non-extractable. A new key (browser or extension restart) deletes the database. Stopped recordings survive service worker restarts: a snapshot in `chrome.storage.session` lets a new worker rebuild them, and a `chrome.alarms` alarm deletes them when their retention ends. See [PRIVACY.md](PRIVACY.md#local-storage).
 
 ### Encryption Details
 

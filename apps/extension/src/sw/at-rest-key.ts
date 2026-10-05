@@ -96,17 +96,17 @@ export async function loadOrCreateAtRestKey(
 }
 
 export type AtRestKeyBootstrap = AtRestKeyState & {
-  database: "deleted" | "blocked" | "unavailable";
+  /** `"kept"`: the key was restored, so the stored recordings are still readable. */
+  database: "deleted" | "blocked" | "unavailable" | "kept";
 };
 
 /**
- * Readies at-rest storage when a service worker instance starts: pins `storage.session`, loads or
- * mints the key, then deletes the pipeline database, before any offscreen document can open it.
- * Nothing in the database is reachable from a new worker. A fresh key means everything was
- * written under a lost key. A restored key means an earlier worker instance stopped, and this
- * build does not recover sessions across worker restarts, so its recordings can no longer be
- * listed or exported. Chrome may stop an idle worker 30 seconds after the last recording
- * stops, before the in-memory retention timer fires, and this purge is what bounds those leftovers.
+ * Readies at-rest storage when a service worker instance starts: pins `storage.session`, then loads
+ * the key or mints one. A minted key means a new browser session (or an extension reload): what
+ * the pipeline database holds was written under a lost key, so the database is deleted before any
+ * offscreen document can open it. A restored key means only the worker restarted (Chrome stops
+ * idle workers); the recordings stay readable and are kept until the browser closes or their
+ * retention ends. Rows written under another key are purged by the offscreen document.
  */
 export async function bootstrapAtRestKey(
   area: SessionStorageAreaLike | undefined,
@@ -119,7 +119,7 @@ export async function bootstrapAtRestKey(
   });
 
   const state = await loadOrCreateAtRestKey(area);
-  const database = await deletePipelineDatabase(indexedDb, dbName);
+  const database = state.fresh ? await deletePipelineDatabase(indexedDb, dbName) : "kept";
 
   return { ...state, database };
 }

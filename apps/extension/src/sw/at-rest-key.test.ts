@@ -181,14 +181,29 @@ describe("bootstrapAtRestKey", () => {
     expect(area.setAccessLevel).toHaveBeenCalledWith({ accessLevel: "TRUSTED_CONTEXTS" });
   });
 
-  it("deletes what an earlier worker of this browser session left, keeping its key", async () => {
+  it("keeps the database and the key across a worker restart in the same browser session", async () => {
     const record = createAtRestKeyRecord(1);
     const area = createSessionArea({ [AT_REST_KEY_STORAGE_KEY]: record });
-    const { factory, deleted } = createStubFactory("blocked");
+    const { factory, deleted } = createStubFactory("success");
 
     const boot = await bootstrapAtRestKey(area, factory, "db");
+    const again = await bootstrapAtRestKey(area, factory, "db");
 
-    expect(boot).toEqual({ record, fresh: false, database: "blocked" });
+    expect(boot).toEqual({ record, fresh: false, database: "kept" });
+    expect(again).toEqual(boot);
+    expect(deleted).toEqual([]);
+    expect(area.set).not.toHaveBeenCalled();
+  });
+
+  it("deletes the database once per browser session: the first worker mints, later ones reuse", async () => {
+    const area = createSessionArea();
+    const { factory, deleted } = createStubFactory("blocked");
+
+    const first = await bootstrapAtRestKey(area, factory, "db");
+    const restarted = await bootstrapAtRestKey(area, factory, "db");
+
+    expect(first).toMatchObject({ fresh: true, database: "blocked" });
+    expect(restarted).toEqual({ record: first.record, fresh: false, database: "kept" });
     expect(deleted).toEqual(["db"]);
   });
 
