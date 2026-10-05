@@ -6,6 +6,13 @@ import {
 } from "@webblackbox/protocol";
 
 import { capStorageValue } from "./capture-scope.js";
+import {
+  captureCallerStack,
+  type ConsoleTextBudget,
+  createConsoleTextBudget,
+  FULL_CONSOLE_MAX_ARGS,
+  readTopFrame
+} from "./console-capture.js";
 
 type CapturePayload = Record<string, unknown>;
 
@@ -148,7 +155,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
   let bodyWindowStartedAt = Date.now();
   let bodyWindowCount = 0;
   let bodyWindowBytes = 0;
-  let emitFlushTimer = 0;
+  let isFlushScheduled = false;
   let captureActive = options.active !== false;
   let bridgeNonce: string | null = null;
   let storageOnly = false;
@@ -294,22 +301,21 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
     });
   }
 
+  /**
+   * Posts the batch at the end of the current task. A timer would wait for seconds in a hidden
+   * tab, where Chrome throttles them, and Stop then lost every event still waiting.
+   */
   function schedulePendingCaptureFlush(): void {
-    if (emitFlushTimer > 0) {
+    if (isFlushScheduled) {
       return;
     }
 
-    emitFlushTimer = window.setTimeout(() => {
-      emitFlushTimer = 0;
-      flushPendingCaptureEvents();
-    }, 0);
+    isFlushScheduled = true;
+    queueMicrotask(flushPendingCaptureEvents);
   }
 
   function flushPendingCaptureEvents(): void {
-    if (emitFlushTimer > 0) {
-      clearTimeout(emitFlushTimer);
-      emitFlushTimer = 0;
-    }
+    isFlushScheduled = false;
 
     if (pendingCaptureEvents.length === 0) {
       return;
@@ -402,7 +408,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
         continue;
       }
 
-      consoleRecord[method] = (...args: unknown[]) => {
+      const wrapper = (...args: unknown[]): unknown => {
         if (method === "assert" && Boolean(args[0])) {
           return Reflect.apply(original, console, args);
         }
@@ -444,9 +450,23 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
           return Reflect.apply(original, console, args);
         }
 
-        const serializedArgs = args.slice(0, 10).map((value) => safeSerialize(value));
         const includeStack =
           method === "error" || method === "warn" || method === "assert" || method === "trace";
+
+        if (capturePolicy.categories.console === "allow") {
+          // Called right here: the stack capture skips this wrapper and everything above it.
+          const stack = includeStack ? captureCallerStack(wrapper) : undefined;
+
+          emit("console", {
+            ...basePayload,
+            ...serializeFullConsoleArgs(args),
+            stackTop: readTopFrame(stack),
+            stack
+          });
+          return Reflect.apply(original, console, args);
+        }
+
+        const serializedArgs = args.slice(0, 10).map((value) => safeSerialize(value));
 
         emit("console", {
           ...basePayload,
@@ -457,7 +477,24 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
 
         return Reflect.apply(original, console, args);
       };
+
+      consoleRecord[method] = wrapper;
     }
+  }
+
+  /** Arguments and text of one console entry under `console: allow`, held to the full-detail ceiling. */
+  function serializeFullConsoleArgs(args: unknown[]): CapturePayload {
+    const budget = createConsoleTextBudget();
+    const serializedArgs = args
+      .slice(0, FULL_CONSOLE_MAX_ARGS)
+      .map((value) => safeSerialize(value, 0, budget));
+    const text = budget.cutText(joinConsoleText(serializedArgs, FULL_CONSOLE_MAX_ARGS));
+
+    return {
+      args: serializedArgs,
+      text,
+      ...(budget.isTruncated() ? { truncated: true } : {})
+    };
   }
 
   function consoleMethodToLevel(method: string): "log" | "info" | "warn" | "error" | "debug" {
@@ -481,16 +518,16 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
   }
 
   function formatConsoleText(args: unknown[]): string {
-    if (args.length === 0) {
-      return "";
-    }
-
-    const parts = args
-      .slice(0, 8)
-      .map((entry) => stringifyValue(entry))
-      .filter((entry) => entry.length > 0);
-    const joined = parts.join(" ");
+    const joined = joinConsoleText(args, 8);
     return joined.length > 600 ? `${joined.slice(0, 597)}...` : joined;
+  }
+
+  function joinConsoleText(args: unknown[], maxArgs: number): string {
+    return args
+      .slice(0, maxArgs)
+      .map((entry) => stringifyValue(entry))
+      .filter((entry) => entry.length > 0)
+      .join(" ");
   }
 
   function stringifyValue(value: unknown): string {
@@ -560,12 +597,29 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
         return;
       }
 
+      const stack = event.error instanceof Error ? event.error.stack : undefined;
+
+      if (capturePolicy.categories.console === "allow") {
+        // The page's own `Error.stackTraceLimit` decides how deep `error.stack` goes.
+        const budget = createConsoleTextBudget();
+
+        emit("pageError", {
+          message: budget.cutText(event.message),
+          filename: sanitizeOptionalUrl(event.filename),
+          lineno: event.lineno,
+          colno: event.colno,
+          stack: stack === undefined ? undefined : budget.cutText(stack),
+          ...(budget.isTruncated() ? { truncated: true } : {})
+        });
+        return;
+      }
+
       emit("pageError", {
         message: event.message,
         filename: sanitizeOptionalUrl(event.filename),
         lineno: event.lineno,
         colno: event.colno,
-        stack: event.error instanceof Error ? event.error.stack : undefined
+        stack
       });
     });
 
@@ -582,6 +636,16 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
       if (capturePolicy.categories.console === "metadata") {
         emit("unhandledrejection", {
           reasonRedacted: true
+        });
+        return;
+      }
+
+      if (capturePolicy.categories.console === "allow") {
+        const budget = createConsoleTextBudget();
+
+        emit("unhandledrejection", {
+          reason: safeSerialize(event.reason, 0, budget),
+          ...(budget.isTruncated() ? { truncated: true } : {})
         });
         return;
       }
@@ -1496,7 +1560,9 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
 
     indexedDB.open = (name: string, version?: number) => {
       if (captureActive) {
-        const showsName = capturePolicy.categories.indexedDb === "names-only";
+        const showsName =
+          capturePolicy.categories.indexedDb === "names-only" ||
+          capturePolicy.categories.indexedDb === "allow";
 
         emit("indexedDbOp", {
           op: "open",
@@ -1544,7 +1610,11 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
     return sanitized.length > 0 ? sanitized : undefined;
   }
 
-  function safeSerialize(value: unknown, depth = 0): unknown {
+  /**
+   * Serializes a page value for a capture event. With a `budget` (`console: allow`) strings and
+   * error texts draw from it instead of the per-string {@link SAFE_SERIALIZE_MAX_STRING_CHARS} cap.
+   */
+  function safeSerialize(value: unknown, depth = 0, budget?: ConsoleTextBudget): unknown {
     if (depth >= SAFE_SERIALIZE_MAX_DEPTH) {
       return summarizeValue(value);
     }
@@ -1559,7 +1629,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
     }
 
     if (typeof value === "string") {
-      return compactString(value, SAFE_SERIALIZE_MAX_STRING_CHARS);
+      return budget ? budget.take(value) : compactString(value, SAFE_SERIALIZE_MAX_STRING_CHARS);
     }
 
     if (typeof value === "bigint") {
@@ -1569,8 +1639,8 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
     if (value instanceof Error) {
       return {
         name: value.name,
-        message: value.message,
-        stack: value.stack
+        message: budget ? budget.take(value.message) : value.message,
+        stack: budget && value.stack !== undefined ? budget.take(value.stack) : value.stack
       };
     }
 
@@ -1588,20 +1658,25 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
     }
 
     if (Array.isArray(value)) {
-      return value.slice(0, 20).map((entry) => safeSerialize(entry, depth + 1));
+      return value.slice(0, 20).map((entry) => safeSerialize(entry, depth + 1, budget));
     }
 
     if (value instanceof Map) {
       return {
         map: [...value.entries()]
           .slice(0, 20)
-          .map(([key, entry]) => [safeSerialize(key, depth + 1), safeSerialize(entry, depth + 1)])
+          .map(([key, entry]) => [
+            safeSerialize(key, depth + 1, budget),
+            safeSerialize(entry, depth + 1, budget)
+          ])
       };
     }
 
     if (value instanceof Set) {
       return {
-        set: [...value.values()].slice(0, 20).map((entry) => safeSerialize(entry, depth + 1))
+        set: [...value.values()]
+          .slice(0, 20)
+          .map((entry) => safeSerialize(entry, depth + 1, budget))
       };
     }
 
@@ -1645,7 +1720,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
         }
 
         try {
-          output[key] = safeSerialize((value as Record<string, unknown>)[key], depth + 1);
+          output[key] = safeSerialize((value as Record<string, unknown>)[key], depth + 1, budget);
         } catch {
           output[key] = "[Unreadable]";
         }

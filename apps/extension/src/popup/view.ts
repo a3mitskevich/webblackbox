@@ -307,6 +307,8 @@ export function createStartPanel(options: {
   engine: CaptureMode;
   visualCapture: FullModeVisualCapture;
   pinnedVisual?: FullModeVisualCapture;
+  /** The profile needs Full: the switch shows Full, disabled; the profile hint says why. */
+  engineLocked: boolean;
   pending: boolean;
 }): HTMLElement {
   const { t } = options;
@@ -316,7 +318,7 @@ export function createStartPanel(options: {
       label: t("popupEngineLabel"),
       name: "capture-mode",
       value: options.engine,
-      disabled: options.pending,
+      disabled: options.pending || options.engineLocked,
       segments: [
         { value: "lite", label: t("modeLite") },
         { value: "full", label: t("modeFull") }

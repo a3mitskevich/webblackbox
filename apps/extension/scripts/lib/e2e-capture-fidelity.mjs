@@ -2,6 +2,7 @@
 // WebSocket frames (a ~10 KB lobby update in, a 40 KB batch out) and an image served from the memory
 // cache. The demo page runs the scenario (`window.__wbDemo.runFidelityScenario`); this module serves
 // the socket and the cacheable image, and checks the exported archive with the built player-sdk.
+// Lite mode runs and checks only the console part (`consoleOnly`): the page hook records it.
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -14,6 +15,8 @@ const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const SIGNALR_RECORD_SEPARATOR = "\u001e";
 const LOBBY_FRAME_MIN_CHARS = 10_500;
 const MIN_CONSOLE_STACK_FRAMES = 15;
+// The demo page function that calls console.error. Lite stacks must start there, not in the page hook.
+const CONSOLE_CALLER_FUNCTION = "logFromDeepStack";
 // 1x1 transparent PNG.
 const FIDELITY_IMAGE_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -103,15 +106,19 @@ export function serveFidelityImage(pathname, response) {
   return true;
 }
 
-export async function runCaptureFidelityScenario(demoClient) {
+export async function runCaptureFidelityScenario(demoClient, { consoleOnly = false } = {}) {
+  const scenarioName = consoleOnly ? "runConsoleFidelityScenario" : "runFidelityScenario";
+
   return demoClient.evaluate(`
     (async () => {
-      if (!window.__wbDemo || typeof window.__wbDemo.runFidelityScenario !== 'function') {
+      const scenario = window.__wbDemo?.[${JSON.stringify(scenarioName)}];
+
+      if (typeof scenario !== 'function') {
         return { ok: false, reason: 'fidelity-scenario-missing' };
       }
 
       try {
-        return await window.__wbDemo.runFidelityScenario();
+        return await scenario();
       } catch (error) {
         return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
@@ -121,19 +128,30 @@ export async function runCaptureFidelityScenario(demoClient) {
 
 /**
  * Opens the exported (encrypted) archive with the built player-sdk and checks that the console line,
- * both WebSocket frames and the cached image survived in full.
+ * both WebSocket frames and the cached image survived in full (only the console line with
+ * `consoleOnly`).
  */
 export async function verifyCaptureFidelityArchive({
   archivePath,
   passphrase,
   playerSdkEntry,
-  scenario
+  scenario,
+  consoleOnly = false
 }) {
   const { WebBlackboxPlayer } = await import(pathToFileURL(playerSdkEntry).href);
   const player = await WebBlackboxPlayer.open(new Uint8Array(await readFile(archivePath)), {
     passphrase
   });
-  const consoleCheck = checkConsoleEntry(player.query({}), scenario);
+  // Full mode still has the page hook wrapping `console`, so the CDP stack starts in `injected.js` (known
+  // since #9); only the lite page hook drops its own frames.
+  const consoleCheck = checkConsoleEntry(player.query({}), scenario, {
+    requireCallerOnTop: consoleOnly
+  });
+
+  if (consoleOnly) {
+    return { ok: consoleCheck.ok, console: consoleCheck };
+  }
+
   const socketCheck = await checkSocketFrames(player, scenario);
   const cacheCheck = checkCachedImage(player.getNetworkWaterfall());
 
@@ -145,64 +163,7 @@ export async function verifyCaptureFidelityArchive({
   };
 }
 
-/**
- * Expands the sent 40 KB frame in the player's realtime panel and waits for the full payload.
- * The panel lists only frames up to the playhead, and earlier checks leave the playhead on a
- * screenshot (the marker check seeks to the newest one with a pointer marker, which can predate the
- * fidelity scenario), so the playhead is first moved to the end with the player's End shortcut.
- */
-export async function verifyPlayerRealtimePayload(playerClient, expectedChars, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let last = null;
-
-  await playerClient.evaluate(`
-    (() => {
-      document.body.dispatchEvent(
-        new KeyboardEvent('keydown', { code: 'End', key: 'End', bubbles: true, cancelable: true })
-      );
-    })()
-  `);
-
-  while (Date.now() < deadline) {
-    last = await playerClient.evaluate(`
-      (() => {
-        const rows = [...document.querySelectorAll('#realtime-list details.realtime-entry')];
-        const sent = rows.find((row) => (row.querySelector('summary')?.textContent ?? '').includes('sent '));
-
-        if (!sent) {
-          return {
-            ok: false,
-            reason: 'sent-frame-row-missing',
-            rows: rows.length,
-            playhead: document.getElementById('playback-current')?.textContent ?? null,
-            duration: document.getElementById('playback-total')?.textContent ?? null
-          };
-        }
-
-        if (!sent.open) {
-          sent.open = true;
-        }
-
-        const text = sent.querySelector('pre')?.textContent ?? '';
-        return {
-          ok: text.length >= ${Number(expectedChars)} && text.includes('Record 1 of'),
-          chars: text.length,
-          head: text.slice(0, 120)
-        };
-      })()
-    `);
-
-    if (last?.ok) {
-      return last;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-
-  return { ok: false, reason: "timeout", last };
-}
-
-function checkConsoleEntry(events, scenario) {
+function checkConsoleEntry(events, scenario, { requireCallerOnTop }) {
   const entry = events.find(
     (event) =>
       event.type === "console.entry" &&
@@ -210,21 +171,26 @@ function checkConsoleEntry(events, scenario) {
       event.data.text.includes(scenario.consoleMarker)
   );
   const text = entry?.data?.text ?? "";
-  const stackFrames =
-    typeof entry?.data?.stack === "string" ? entry.data.stack.split("\n").length : 0;
+  const stack = typeof entry?.data?.stack === "string" ? entry.data.stack.split("\n") : [];
+  const stackTop = typeof entry?.data?.stackTop === "string" ? entry.data.stackTop : null;
+  const startsAtCaller =
+    (stack[0]?.includes(CONSOLE_CALLER_FUNCTION) ?? false) &&
+    (stackTop?.includes(CONSOLE_CALLER_FUNCTION) ?? false);
 
   return {
     ok:
       Boolean(entry) &&
       text.length >= scenario.consoleChars &&
       entry.data.truncated !== true &&
-      stackFrames >= MIN_CONSOLE_STACK_FRAMES,
+      stack.length >= MIN_CONSOLE_STACK_FRAMES &&
+      (startsAtCaller || !requireCallerOnTop),
     found: Boolean(entry),
     textChars: text.length,
     expectedChars: scenario.consoleChars,
     truncated: entry?.data?.truncated === true,
-    stackFrames,
-    stackTop: entry?.data?.stackTop ?? null
+    stackFrames: stack.length,
+    stackTop,
+    startsAtCaller
   };
 }
 
