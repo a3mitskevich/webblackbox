@@ -93,7 +93,9 @@ export function normalizeCdpConsolePayload(
   const row = asRecord(payload);
   const method = asString(row?.type) ?? "log";
   const shape = resolveShape(detail);
-  const args = asArray(row?.args).map((entry) => normalizeCdpRemoteObject(entry, shape, limiter));
+  const args = asArray(row?.args).map((entry) =>
+    normalizeCdpRemoteObject(entry, shape, limiter, detail === "full")
+  );
   const text = readEntryText(asString(row?.text), args, detail, limiter);
   const stackTrace = asRecord(row?.stackTrace);
 
@@ -236,7 +238,8 @@ function normalizeConsoleLevel(rawLevel: string): ConsoleLevel {
 function normalizeCdpRemoteObject(
   value: unknown,
   shape: SerializeShape,
-  limiter: TextLimiter
+  limiter: TextLimiter,
+  withPreview = false
 ): unknown {
   const row = asRecord(value);
 
@@ -252,6 +255,16 @@ function normalizeCdpRemoteObject(
     return sanitizeSerializable(row.value, 0, shape, limiter);
   }
 
+  // Under `console: allow`, an object or array argument keeps what CDP's preview shows of it
+  // (the page logged `{ ... }`, not the word "Object").
+  const preview = withPreview
+    ? readCdpObjectPreview(asRecord(row.preview), 0, shape, limiter)
+    : null;
+
+  if (preview !== null) {
+    return preview;
+  }
+
   const description = asString(row.description);
 
   if (description) {
@@ -263,6 +276,62 @@ function normalizeCdpRemoteObject(
     subtype: asString(row.subtype),
     className: asString(row.className)
   });
+}
+
+/**
+ * An object or array built from a CDP `ObjectPreview` (`properties` with string `value`s, nested
+ * previews in `valuePreview`); `"…": true` marks a preview CDP cut (`overflow`). Null when the
+ * preview carries no properties.
+ */
+function readCdpObjectPreview(
+  preview: Record<string, unknown> | null,
+  depth: number,
+  shape: SerializeShape,
+  limiter: TextLimiter
+): unknown {
+  const properties = asArray(preview?.properties);
+
+  if (!preview || properties.length === 0 || depth > shape.maxDepth) {
+    return null;
+  }
+
+  const isArray = preview.subtype === "array";
+  const entries = properties
+    .slice(0, isArray ? shape.maxArrayItems : shape.maxObjectKeys)
+    .flatMap((entry) => {
+      const property = asRecord(entry);
+      const name = asString(property?.name);
+
+      if (!property || name === undefined) {
+        return [];
+      }
+
+      const nested = readCdpObjectPreview(
+        asRecord(property.valuePreview),
+        depth + 1,
+        shape,
+        limiter
+      );
+      const text = asString(property.value);
+      const value =
+        nested ??
+        (property.type === "number" && text !== undefined && Number.isFinite(Number(text))
+          ? Number(text)
+          : property.type === "boolean" && (text === "true" || text === "false")
+            ? text === "true"
+            : text === undefined
+              ? null
+              : limiter.cutString(text));
+      return [[name, value] as const];
+    });
+
+  if (isArray) {
+    const items: unknown[] = entries.map(([, value]) => value);
+    return preview.overflow === true ? [...items, "…"] : items;
+  }
+
+  const output: Record<string, unknown> = Object.fromEntries(entries);
+  return preview.overflow === true ? { ...output, "…": true } : output;
 }
 
 function sanitizeSerializable(
