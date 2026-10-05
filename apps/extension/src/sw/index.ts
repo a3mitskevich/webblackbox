@@ -46,6 +46,7 @@ import { shouldInjectPageHooksForMode } from "../shared/mode-profile.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
   ENTERPRISE_POLICY_STORAGE_KEY,
+  getSessionStartBlockReason,
   isEnterpriseOriginAllowed,
   normalizeEnterprisePolicy,
   type EnterpriseRecorderPolicy
@@ -87,6 +88,7 @@ import {
   parseStorageSnapshotMeta,
   type LocalStorageSnapshotMode
 } from "./storage-snapshot.js";
+import { resolveUiActionTabId } from "./ui-action-target.js";
 
 type SessionRuntime = {
   sid: string;
@@ -645,7 +647,7 @@ async function handleInboundMessage(
   senderFrameId?: number
 ): Promise<unknown> {
   if (message.kind === "ui.start") {
-    const tabId = await resolveUiActionTabId(message.tabId);
+    const tabId = await resolveUiActionTarget(message.tabId, senderTabId);
 
     if (typeof tabId !== "number") {
       return;
@@ -666,7 +668,7 @@ async function handleInboundMessage(
   }
 
   if (message.kind === "ui.stop") {
-    const tabId = await resolveUiActionTabId(message.tabId);
+    const tabId = await resolveUiActionTarget(message.tabId, senderTabId);
 
     if (typeof tabId !== "number") {
       return;
@@ -850,8 +852,10 @@ async function startSession(
   const sessionOrigin = resolveUrlOrigin(sanitizeUrlForPrivacy(tabMetadata.url)) ?? "";
   const enterprisePolicy = await loadEnterprisePolicy();
 
-  if (!isEnterpriseOriginAllowed(sessionOrigin, enterprisePolicy)) {
-    throw new Error("Recording is blocked by enterprise site policy.");
+  const startBlockReason = getSessionStartBlockReason(sessionOrigin, enterprisePolicy);
+
+  if (startBlockReason) {
+    throw new Error(startBlockReason);
   }
 
   const loadedRecorderConfig = applyFullModeVisualCapture(
@@ -5064,19 +5068,20 @@ async function relayMarkerCommand(): Promise<void> {
   await chromeApi?.tabs?.sendMessage(tabId, { kind: "sw.marker-command" }).catch(() => undefined);
 }
 
-async function resolveUiActionTabId(tabId?: number): Promise<number | undefined> {
-  if (typeof tabId === "number") {
-    return tabId;
-  }
-
-  const activeTabs = (await chromeApi?.tabs?.query?.({ active: true, currentWindow: true })) ?? [];
-  const activeTabId = activeTabs[0]?.id;
-
-  if (typeof activeTabId === "number") {
-    return activeTabId;
-  }
-
-  return sessionsByTab.keys().next().value;
+function resolveUiActionTarget(
+  requestedTabId: number | undefined,
+  senderTabId: number | undefined
+): Promise<number | undefined> {
+  return resolveUiActionTabId({
+    requestedTabId,
+    senderTabId,
+    queryActiveTabId: async () => {
+      const activeTabs =
+        (await chromeApi?.tabs?.query?.({ active: true, currentWindow: true })) ?? [];
+      return activeTabs[0]?.id;
+    },
+    fallbackTabId: () => sessionsByTab.keys().next().value
+  });
 }
 
 function parseInboundMessage(message: unknown): ExtensionInboundMessage | null {

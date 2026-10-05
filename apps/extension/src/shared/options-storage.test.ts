@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyEnterprisePolicyToRecorderConfig,
+  getSessionStartBlockReason,
   isEnterpriseOriginAllowed,
   migrateStoredRecorderConfig,
   normalizeEnterprisePolicy,
@@ -67,6 +68,22 @@ describe("enterprise recorder policy", () => {
       cdp: "full"
     });
     expect(policy.retention.localTtlMs).toBe(3600000);
+  });
+
+  it("reports a tab without a web origin separately from an enterprise policy block", () => {
+    const noPolicy = normalizeEnterprisePolicy({});
+    const policy = normalizeEnterprisePolicy({ siteDenylist: ["https://admin.example"] });
+
+    expect(getSessionStartBlockReason("https://app.example", noPolicy)).toBeNull();
+    expect(getSessionStartBlockReason("", noPolicy)).toBe(
+      "This tab has no web origin to record; open an http(s) page first."
+    );
+    expect(getSessionStartBlockReason("  ", policy)).toBe(
+      "This tab has no web origin to record; open an http(s) page first."
+    );
+    expect(getSessionStartBlockReason("https://admin.example", policy)).toBe(
+      "Recording is blocked by enterprise site policy."
+    );
   });
 
   it("applies managed caps and disables lab-only capture", () => {
