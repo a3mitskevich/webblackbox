@@ -12,6 +12,10 @@
       "width": 360,
       "height": 600
     },
+    "popup-no-profile": {
+      "width": 360,
+      "height": 600
+    },
     "popup-ready-rule": {
       "width": 360,
       "height": 600
@@ -85,6 +89,22 @@
       "height": 900
     },
     "sessions-1440": {
+      "width": 1440,
+      "height": 900
+    },
+    "options-1440-profile-delete-prompt": {
+      "width": 1440,
+      "height": 900
+    },
+    "options-1440-profiles-last": {
+      "width": 1440,
+      "height": 900
+    },
+    "options-1440-rules-orphaned": {
+      "width": 1440,
+      "height": 900
+    },
+    "options-1440-profiles-empty": {
       "width": 1440,
       "height": 900
     }

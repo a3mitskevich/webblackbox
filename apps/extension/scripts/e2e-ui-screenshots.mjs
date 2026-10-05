@@ -25,7 +25,8 @@
  *   WB_UI_SHOTS_LANG        UI language (default en-US)
  *   WB_UI_SHOTS_DARK=1      emulate prefers-color-scheme: dark (names get a -dark suffix; no
  *                           baselines are kept for it, use with WB_UI_SHOTS_COMPARE=0)
- *   WB_UI_GUARD=0           skip the options unsaved-changes guard checks (run after the shots)
+ *   WB_UI_GUARD=0           skip the options unsaved-changes guard and profile deletion checks
+ *                           (run after the shots; the profile checks add their own shots)
  */
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -34,6 +35,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runOptionsGuardChecks } from "./lib/options-guard-e2e.mjs";
+import { runOptionsProfilesChecks } from "./lib/options-profiles-e2e.mjs";
 import { connectBrowser, launchChrome, resolveExtensionId } from "./lib/ui-shots-chrome.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -81,6 +83,8 @@ const PREVIEW_RULE = {
     extended: true
   }
 };
+/** Every profile was deleted: the popup asks for one instead of offering Start. */
+const PREVIEW_NO_PROFILE = { kind: "sw.profile-preview", catalog: [], selection: null };
 const SESSION_BASE = {
   sid: "wb-1790001234-a1b2c3d4",
   tabId: TAB.id,
@@ -163,6 +167,7 @@ const LITE_ENGINE_SELECTORS = ["input[name='capture-mode'][value='lite']"];
 
 const POPUP_STATES = [
   { name: "popup-idle", sessions: [], preview: PREVIEW_DEFAULT },
+  { name: "popup-no-profile", sessions: [STOPPED_SESSION], preview: PREVIEW_NO_PROFILE },
   { name: "popup-ready-rule", sessions: [STOPPED_SESSION], preview: PREVIEW_RULE },
   { name: "popup-recording", sessions: [ACTIVE_SESSION], preview: PREVIEW_RULE },
   {
@@ -294,16 +299,16 @@ async function main() {
       results.push(await capturePage(browser, extensionId, shot, outDir));
     }
 
-    // Last: the guard checks save settings into this browser profile.
+    // Last: the guard and profile checks save settings into this browser profile.
     if (runGuardChecks) {
+      const deps = { browser, extensionId, openPage, navigate, waitForEvent, sleep };
+      failures.push(...(await runOptionsGuardChecks(deps)));
       failures.push(
-        ...(await runOptionsGuardChecks({
-          browser,
-          extensionId,
-          openPage,
-          navigate,
-          waitForEvent,
-          sleep
+        ...(await runOptionsProfilesChecks({
+          ...deps,
+          capture: async (page, name) => {
+            results.push(await screenshot(page, name, 1440, 900, outDir));
+          }
         }))
       );
     }
@@ -661,7 +666,12 @@ function buildStubSource(fixture) {
     define(chromeApi.tabs, "query", async () => [
       { id: ${TAB.id}, active: true, url: ${JSON.stringify(TAB.url)}, title: ${JSON.stringify(TAB.title)}, lastAccessed: fixedNow }
     ]);
-    define(chromeApi.tabs, "create", async () => ({ id: 99 }));
+    // Opened pages are recorded instead (the popup then closes itself; keep it for the checks).
+    define(chromeApi.tabs, "create", async (properties) => {
+      globalThis.__wbCreatedTabs = [...(globalThis.__wbCreatedTabs ?? []), properties];
+      return { id: 99 };
+    });
+    define(globalThis, "close", () => undefined);
     define(chromeApi.tabs, "sendMessage", async () => undefined);
   }
 })();`;

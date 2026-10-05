@@ -155,7 +155,7 @@ async function checkProfileCloseGuard(deps, page, optionsUrl, check) {
 }
 
 /** Starts leaving the page; true when Chrome showed the beforeunload prompt (then cancelled). */
-async function unloadPrompts(deps, page) {
+export async function unloadPrompts(deps, page) {
   const opening = deps.waitForEvent(page, "Page.javascriptDialogOpening", NO_PROMPT_WAIT_MS * 2);
   // Renderer-initiated, as a link or the address bar would be; the prompt blocks it.
   await page.evaluate(`setTimeout(() => { location.href = "about:blank"; }, 0), true`);
@@ -171,23 +171,23 @@ async function unloadPrompts(deps, page) {
   return false;
 }
 
-function q(selector) {
+export function q(selector) {
   return `document.querySelector(${JSON.stringify(selector)})`;
 }
 
-function exists(selector) {
+export function exists(selector) {
   return `Boolean(${q(selector)})`;
 }
 
-function savebarDirty() {
+export function savebarDirty() {
   return `${q(".wb-savebar")}?.dataset.dirty === "true"`;
 }
 
-function shownSection(section) {
+export function shownSection(section) {
   return `${q(`[data-options-section='${section}']`)}?.hidden === false`;
 }
 
-async function isTrue(page, expression) {
+export async function isTrue(page, expression) {
   return (
     (await page.evaluate(
       `(() => { try { return Boolean(${expression}); } catch { return false; } })()`
@@ -195,7 +195,7 @@ async function isTrue(page, expression) {
   );
 }
 
-async function waitUntil(page, expression, timeoutMs) {
+export async function waitUntil(page, expression, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -210,7 +210,7 @@ async function waitUntil(page, expression, timeoutMs) {
 }
 
 /** A real mouse click at the element's centre (gives the page user activation). */
-async function click(page, selector) {
+export async function click(page, selector) {
   const point = await page.evaluate(`(() => {
     const element = ${q(selector)};
 
@@ -241,7 +241,7 @@ async function click(page, selector) {
 }
 
 /** Focuses the field with a click, selects its text and types over it. */
-async function typeText(page, selector, text) {
+export async function typeText(page, selector, text) {
   await click(page, selector);
   await page.evaluate(`${q(selector)}?.select?.()`);
   await page.send("Input.insertText", { text });
