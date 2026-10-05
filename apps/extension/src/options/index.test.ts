@@ -372,6 +372,9 @@ describe("options page", () => {
 
     // Cancel on the form discards the typed value together with its error.
     query<HTMLElement>("[data-action='profile-cancel']").click();
+    await flush();
+    query<HTMLElement>("[data-confirm-accept]").click();
+    await flush();
 
     expect(document.querySelector("#pf-mousemoveHz")).toBeNull();
     expect(saveState()).toBe("Unsaved changes");
@@ -399,6 +402,10 @@ describe("options page", () => {
 
     typeText("#pf-mousemoveHz", "60");
     query<HTMLElement>("[data-action='profile-duplicate']").click();
+    await flush();
+    // The form now has edits: leaving it asks first.
+    query<HTMLElement>("[role='dialog'] [data-action='editor-close-discard']").click();
+    await flush();
 
     // The new profile's form starts from its own values, never from the typed one.
     expect(query<HTMLElement>("[data-profile-form]").dataset.profileForm).not.toBe("default");
@@ -456,5 +463,210 @@ describe("options page", () => {
     expect(query<HTMLInputElement>("#ringBufferMinutes").value).toBe("30");
     expect(query<HTMLInputElement>("#budgetLcpWarnMs").value).toBe("2500");
     expect(saveState()).toBe("All changes saved");
+  });
+});
+
+describe("options page: unsaved changes", () => {
+  beforeEach(() => {
+    document.body.innerHTML = `<main id="options-root"></main>`;
+    localStorage.clear();
+    location.hash = "";
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(globalThis, "chrome");
+    document.body.innerHTML = "";
+    localStorage.clear();
+  });
+
+  const navLink = (section: string) => query<HTMLAnchorElement>(`[data-section-link='${section}']`);
+  const navDirty = (section: string) => navLink(section).dataset.dirty === "true";
+  const headerDirty = (section: string) =>
+    query<HTMLElement>(`[data-options-section='${section}'] [data-section-unsaved]`).hidden ===
+    false;
+  const shownSection = () =>
+    document.querySelector<HTMLElement>("[data-options-section]:not([hidden])")?.dataset
+      .optionsSection;
+  const dialog = () => document.querySelector<HTMLElement>("[role='dialog']");
+  const choose = async (action: string): Promise<void> => {
+    query<HTMLElement>(`[role='dialog'] [data-action='${action}']`).click();
+    await flush();
+  };
+  const goTo = async (section: string): Promise<void> => {
+    navLink(section).click();
+    await flush();
+  };
+  const unloadPrevented = (): boolean => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  it("marks the changed sections in the navigation, their headers and the save bar", async () => {
+    installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
+    await importOptionsModule();
+
+    expect(navDirty("pointer")).toBe(false);
+    expect(headerDirty("pointer")).toBe(false);
+    expect(query("[data-save-detail]").textContent).toBe("");
+
+    typeNumber("scrollHz", "30");
+    typeText("[data-rule-id='stage'] [name='ruleName']", "Stage QA");
+
+    expect(navDirty("pointer")).toBe(true);
+    expect(navDirty("rules")).toBe(true);
+    expect(navDirty("sampling")).toBe(false);
+    expect(headerDirty("pointer")).toBe(true);
+    expect(headerDirty("rules")).toBe(true);
+    expect(headerDirty("sampling")).toBe(false);
+    expect(navLink("pointer").textContent).toContain("unsaved changes");
+    expect(query("[data-save-detail]").textContent).toBe("In: Site rules, Pointer & input");
+    expect(query<HTMLElement>(".wb-savebar").dataset.dirty).toBe("true");
+
+    saveButton().click();
+    await flush();
+
+    expect(navDirty("pointer")).toBe(false);
+    expect(navDirty("rules")).toBe(false);
+    expect(headerDirty("rules")).toBe(false);
+    expect(query("[data-save-detail]").textContent).toBe("");
+  });
+
+  it("marks a section that holds an invalid value", async () => {
+    installChromeStub();
+    await importOptionsModule();
+
+    typeNumber("mousemoveHz", "999");
+
+    expect(navDirty("pointer")).toBe(true);
+  });
+
+  it("switches sections without asking while nothing is unsaved", async () => {
+    installChromeStub();
+    await importOptionsModule();
+
+    await goTo("sampling");
+
+    expect(dialog()).toBeNull();
+    expect(shownSection()).toBe("sampling");
+  });
+
+  it("asks before leaving a section with unsaved changes; Stay keeps them", async () => {
+    installChromeStub();
+    await importOptionsModule();
+
+    await goTo("pointer");
+    typeNumber("scrollHz", "30");
+    await goTo("sampling");
+
+    expect(dialog()?.textContent).toContain("Pointer & input");
+    expect(shownSection()).toBe("pointer");
+
+    await choose("leave-stay");
+
+    expect(dialog()).toBeNull();
+    expect(shownSection()).toBe("pointer");
+    expect(query<HTMLInputElement>("#scrollHz").value).toBe("30");
+    expect(saveState()).toBe("Unsaved changes");
+  });
+
+  it("discards the changes and switches section from the leave prompt", async () => {
+    installChromeStub();
+    await importOptionsModule();
+
+    await goTo("pointer");
+    typeNumber("scrollHz", "30");
+    await goTo("sampling");
+    await choose("leave-discard");
+
+    expect(shownSection()).toBe("sampling");
+    expect(query<HTMLInputElement>("#scrollHz").value).not.toBe("30");
+    expect(saveState()).toBe("All changes saved");
+  });
+
+  it("saves and then switches section from the leave prompt", async () => {
+    const storage = installChromeStub();
+    await importOptionsModule();
+
+    await goTo("pointer");
+    typeNumber("scrollHz", "30");
+    await goTo("sampling");
+    await choose("leave-save");
+
+    expect(storage.data[STORAGE_KEY]).toEqual(
+      expect.objectContaining({ sampling: expect.objectContaining({ scrollHz: 30 }) })
+    );
+    expect(shownSection()).toBe("sampling");
+    expect(saveState()).toMatch(/^Saved at /);
+  });
+
+  it("offers no Save in the leave prompt while a field is invalid", async () => {
+    installChromeStub();
+    await importOptionsModule();
+
+    await goTo("pointer");
+    typeNumber("mousemoveHz", "999");
+    await goTo("sampling");
+
+    expect(dialog()).not.toBeNull();
+    expect(document.querySelector("[data-action='leave-save']")).toBeNull();
+
+    await choose("leave-stay");
+  });
+
+  it("asks back/forward navigation to a section too", async () => {
+    installChromeStub();
+    await importOptionsModule();
+
+    await goTo("pointer");
+    typeNumber("scrollHz", "30");
+    location.hash = "#budgets";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await flush();
+
+    expect(dialog()).not.toBeNull();
+    expect(shownSection()).toBe("pointer");
+    expect(location.hash).toBe("#pointer");
+
+    await choose("leave-discard");
+
+    expect(shownSection()).toBe("budgets");
+  });
+
+  it("asks before the tab closes only while there are unsaved changes", async () => {
+    installChromeStub();
+    await importOptionsModule();
+
+    expect(unloadPrevented()).toBe(false);
+
+    typeNumber("scrollHz", "30");
+
+    expect(unloadPrevented()).toBe(true);
+
+    saveButton().click();
+    await flush();
+
+    expect(unloadPrevented()).toBe(false);
+  });
+
+  it("saves the whole page from a rule's close prompt", async () => {
+    const storage = installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
+    await importOptionsModule();
+
+    query<HTMLElement>("[data-rule-id='stage'] [data-action='rule-toggle']").click();
+    typeText("[data-rule-id='stage'] [name='ruleName']", "Stage QA");
+    typeNumber("scrollHz", "30");
+    query<HTMLElement>("[data-rule-id='stage'] [data-action='rule-toggle']").click();
+    await flush();
+    await choose("editor-close-save");
+
+    expect(storage.data[STORAGE_KEY]).toEqual(
+      expect.objectContaining({ sampling: expect.objectContaining({ scrollHz: 30 }) })
+    );
+    expect((storage.data[PROFILES_KEY] as { rules: Array<{ name?: string }> }).rules[0]?.name).toBe(
+      "Stage QA"
+    );
+    expect(saveState()).toMatch(/^Saved at /);
   });
 });

@@ -36,7 +36,12 @@
 }
 
 .wb-settings__nav-link {
-  display: block;
+  /* Contains its screen-reader text, which would otherwise widen the page on narrow tabs. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 7px 10px;
   border-radius: var(--wb-radius-sm);
   font-size: 13px;
@@ -58,6 +63,28 @@
   color: var(--wb-brand-ink);
   background: var(--wb-brand-soft);
   border-left-color: var(--wb-brand);
+}
+
+/* Unsaved changes in the section: a dot at the end of its nav link. */
+.wb-settings__nav-dirty {
+  display: inline-flex;
+  flex: none;
+}
+
+.wb-settings__nav-dirty[hidden] {
+  display: none;
+}
+
+.wb-settings__nav-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wb-warn);
+  box-shadow: 0 0 0 2px var(--wb-warn-soft);
+}
+
+.wb-settings__nav-link[data-dirty="true"] {
+  color: var(--wb-text);
 }
 
 .wb-settings__content {
@@ -94,6 +121,29 @@
   display: grid;
   gap: 3px;
   min-width: 0;
+}
+
+.wb-section__title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.wb-badge--unsaved {
+  color: var(--wb-warn-ink);
+  background: var(--wb-warn-soft);
+  border-color: var(--wb-warn-border);
+}
+
+.wb-badge--unsaved::before {
+  background: var(--wb-warn);
+  opacity: 1;
+}
+
+/* Badges toggled with the hidden attribute: .wb-badge's display would otherwise win. */
+.wb-badge--unsaved[hidden] {
+  display: none;
 }
 
 .wb-section__title {
@@ -460,6 +510,23 @@
   gap: 8px;
 }
 
+.wb-profiles__list-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.wb-profiles__restore {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.wb-profiles__restore .wb-field__hint {
+  flex: 1 1 200px;
+  margin: 0;
+}
+
 .wb-profiles__list {
   display: grid;
   gap: 8px;
@@ -645,6 +712,7 @@
 
 .wb-rules-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-width: 0;
 }
@@ -656,8 +724,10 @@
   gap: 8px;
 }
 
+/* One column that may shrink: a long rule bar must not widen the panel on narrow screens. */
 .wb-rules {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   margin: 0;
   padding: 0;
@@ -672,6 +742,31 @@
 
 .wb-rule--off {
   opacity: 0.75;
+}
+
+.wb-rule > .wb-notice {
+  margin: 0 10px 8px;
+}
+
+/* Its profile was deleted: the rule engine skips it until it gets one again. */
+.wb-rule--orphan {
+  border-color: color-mix(in srgb, var(--wb-danger) 35%, var(--wb-border));
+  box-shadow: inset 3px 0 0 var(--wb-danger);
+}
+
+.wb-rules__orphaned,
+.wb-profiles__empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+}
+
+.wb-rules__orphaned p,
+.wb-profiles__empty p {
+  margin: 0;
+  flex: 1 1 220px;
 }
 
 .wb-rule--dragging {
@@ -866,49 +961,106 @@
 
 /* ---------- Save bar ---------- */
 
+/* Sticky save bar: quiet while everything is saved, a warning band while anything is not. */
 .wb-savebar {
   position: sticky;
   bottom: 0;
   z-index: 10;
   border-top: 1px solid var(--wb-border);
-  background: color-mix(in srgb, var(--wb-surface) 92%, transparent);
+  background: color-mix(in srgb, var(--wb-surface) 94%, transparent);
   backdrop-filter: blur(6px);
+  transition:
+    background-color 160ms var(--wb-ease),
+    border-color 160ms var(--wb-ease);
+}
+
+.wb-savebar[data-dirty="true"] {
+  border-top: 2px solid var(--wb-warn-border);
+  background: var(--wb-warn-soft);
+  box-shadow: 0 -6px 18px rgba(20, 33, 61, 0.12);
 }
 
 .wb-savebar__inner {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
+  gap: 12px 16px;
   max-width: 1360px;
   margin: 0 auto;
-  padding: 10px 24px;
+  padding: 12px 24px;
+}
+
+.wb-savebar__status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.wb-savebar__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--wb-teal);
+}
+
+.wb-savebar[data-dirty="true"] .wb-savebar__dot {
+  background: var(--wb-warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wb-warn) 25%, transparent);
+}
+
+.wb-savebar:has(.wb-savebar__state--error) .wb-savebar__dot {
+  background: var(--wb-danger);
+}
+
+.wb-savebar__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .wb-savebar__state {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-right: auto;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--wb-text-subtle);
 }
 
-.wb-savebar[data-dirty="true"] .wb-savebar__state::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--wb-accent);
-}
-
 .wb-savebar[data-dirty="true"] .wb-savebar__state {
-  color: var(--wb-text);
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--wb-warn-ink);
 }
 
 .wb-savebar__state--error {
   color: var(--wb-danger) !important;
+}
+
+.wb-savebar__detail {
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--wb-warn-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-savebar__detail:empty {
+  display: none;
+}
+
+.wb-savebar__actions {
+  display: flex;
+  flex: none;
+  gap: 10px;
+}
+
+.wb-btn--large {
+  min-height: 40px;
+  padding: 8px 18px;
+  font-size: 14px;
+}
+
+.wb-savebar__save {
+  min-width: 168px;
 }
 
 /* ---------- Narrow screens: nav becomes scrolling tabs ---------- */
@@ -975,7 +1127,17 @@
   }
 
   .wb-savebar__inner {
-    padding: 8px 12px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+  }
+
+  .wb-savebar__actions {
+    flex: 1 1 100%;
+  }
+
+  .wb-savebar__actions .wb-btn {
+    flex: 1;
+    min-width: 0;
   }
 
   .wb-sandbox__panes,

@@ -98,7 +98,7 @@ WebBlackbox currently records 57 event types across 13 categories, including:
 - Cookies, localStorage, sessionStorage, IndexedDB, Cache, and service worker lifecycle
 - Web Vitals, long tasks, traces, CPU profiles, and heap snapshots
 
-How much of each category is kept depends on the recording profile. The default profile records metadata only (no console text, bodies or input values); the `QA` and `Full capture` presets record console text, bodies and more on the hosts you allow, and `Full capture` records content raw (no masking). See [Privacy Model](docs/PRIVACY.md).
+How much of each category is kept depends on the recording profile. The default profile records metadata only (no console text, bodies or input values); the `QA` and `Full capture` presets record console text, bodies and more, and `Full capture` records content raw (no masking), the raw DOM included. A recording stops if its profile changes after Start. See [Privacy Model](docs/PRIVACY.md).
 
 For the full event schema, defaults, and message types, see [packages/protocol/README.md](packages/protocol/README.md).
 

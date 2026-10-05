@@ -548,14 +548,31 @@ export function sectionHeader(options: {
   title: string;
   hint: string;
   resetLabel?: string;
+  /** Text of the badge shown while the section has unsaved changes (hidden until then). */
+  unsavedLabel?: string;
 }): HTMLElement {
+  const unsaved = options.unsavedLabel
+    ? el("span", {
+        className: "wb-badge wb-badge--unsaved",
+        text: options.unsavedLabel,
+        dataset: { sectionUnsaved: "" }
+      })
+    : null;
+
+  if (unsaved) {
+    unsaved.hidden = true;
+  }
+
   return el("header", { className: "wb-section__header" }, [
     el("div", { className: "wb-section__heading" }, [
-      el("h2", {
-        className: "wb-section__title",
-        text: options.title,
-        attrs: { id: `${options.id}-title` }
-      }),
+      el("div", { className: "wb-section__title-row" }, [
+        el("h2", {
+          className: "wb-section__title",
+          text: options.title,
+          attrs: { id: `${options.id}-title` }
+        }),
+        ...(unsaved ? [unsaved] : [])
+      ]),
       el("p", { className: "wb-section__hint", text: options.hint })
     ]),
     ...(options.resetLabel

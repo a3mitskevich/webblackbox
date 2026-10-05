@@ -14,7 +14,8 @@ const ICON_PATHS = {
   down: ["M4 6l4 4 4-4"],
   grip: ["M6 4h.01", "M10 4h.01", "M6 8h.01", "M10 8h.01", "M6 12h.01", "M10 12h.01"],
   trash: ["M3 4.5h10", "M6.5 4.5V3h3v1.5", "M4.5 4.5l.7 9h5.6l.7-9"],
-  close: ["M4 4l8 8", "M12 4l-8 8"]
+  close: ["M4 4l8 8", "M12 4l-8 8"],
+  check: ["M3 8.5l3.2 3.2L13 4.8"]
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;

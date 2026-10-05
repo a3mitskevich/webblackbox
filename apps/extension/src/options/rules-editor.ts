@@ -1,8 +1,17 @@
 import type { ExtensionMessageKey } from "../shared/i18n.js";
 import type { ProfileRule, RecordingProfile } from "../shared/profiles/model.js";
-import { MAX_RULE_PRIORITY, MIN_RULE_PRIORITY } from "../shared/profiles/model.js";
+import {
+  DEFAULT_PROFILE_ID,
+  MAX_RULE_PRIORITY,
+  MIN_RULE_PRIORITY
+} from "../shared/profiles/model.js";
+import {
+  createDefaultProfile,
+  findBuiltInProfile,
+  isRecommendedProfileId
+} from "../shared/profiles/presets.js";
 import { icon } from "../shared/ui/icons.js";
-import { button, el, iconButton } from "./dom.js";
+import { button, el, iconButton, unsavedItemBadge } from "./dom.js";
 import {
   chipListField,
   fieldGroup,
@@ -32,7 +41,6 @@ export type RulesViewOptions = {
   rules: readonly ProfileRule[];
   catalog: readonly RecordingProfile[];
   openRuleIds: ReadonlySet<string>;
-  extendedCaptureHosts: readonly string[];
   test: { url: string; title: string; incognito: boolean; result?: RuleTestResult };
   t: Translate;
 };
@@ -48,10 +56,7 @@ function profileOptions(
   // selectable so the next sync does not blank it and block saving.
   return catalog.some((profile) => profile.id === rule.profileId)
     ? options
-    : [
-        ...options,
-        { value: rule.profileId, label: t("optionsRuleProfileMissing", { id: rule.profileId }) }
-      ];
+    : [...options, { value: rule.profileId, label: missingProfileLabel(rule.profileId, t) }];
 }
 
 function describeRuleSummary(rule: ProfileRule, t: Translate): string {
@@ -166,8 +171,8 @@ function createRuleBody(rule: ProfileRule, options: RulesViewOptions): HTMLEleme
 function createRuleRow(rule: ProfileRule, index: number, options: RulesViewOptions): HTMLElement {
   const { t } = options;
   const open = options.openRuleIds.has(rule.id);
-  const profileName =
-    options.catalog.find((profile) => profile.id === rule.profileId)?.name ?? rule.profileId;
+  const profile = options.catalog.find((entry) => entry.id === rule.profileId);
+  const profileName = profile?.name ?? missingProfileLabel(rule.profileId, t);
   const grip = el(
     "span",
     {
@@ -178,45 +183,94 @@ function createRuleRow(rule: ProfileRule, index: number, options: RulesViewOptio
     [icon("grip")]
   );
 
+  const className = [
+    "wb-rule",
+    ...(rule.enabled ? [] : ["wb-rule--off"]),
+    ...(profile ? [] : ["wb-rule--orphan"]),
+    "wb-profiles__rule"
+  ].join(" ");
+
+  return el("li", { className, dataset: { ruleId: rule.id, ruleIndex: String(index) } }, [
+    el("div", { className: "wb-rule__bar" }, [
+      grip,
+      el("span", { className: "wb-rule__rank", text: String(index + 1) }),
+      el(
+        "button",
+        {
+          className: "wb-rule__toggle",
+          attrs: {
+            type: "button",
+            "aria-expanded": String(open),
+            "aria-controls": `${rule.id}-body`
+          },
+          dataset: { action: "rule-toggle" }
+        },
+        [
+          el("strong", { text: ruleLabel(rule) }),
+          el("span", { className: "wb-rule__arrow", text: `→ ${profileName}` }),
+          el("span", { className: "wb-rule__summary", text: describeRuleSummary(rule, t) })
+        ]
+      ),
+      unsavedItemBadge(t("optionsItemUnsaved")),
+      ...(rule.enabled
+        ? []
+        : [el("span", { className: "wb-badge", text: t("optionsRuleDisabledBadge") })]),
+      ...(profile
+        ? []
+        : [
+            el("span", {
+              className: "wb-badge wb-badge--alert",
+              text: t("optionsRuleSkippedBadge"),
+              dataset: { ruleSkipped: "" }
+            })
+          ]),
+      iconButton(t("optionsRuleMoveUp"), "rule-up", "up", { disabled: index === 0 }),
+      iconButton(t("optionsRuleMoveDown"), "rule-down", "down", {
+        disabled: index === options.rules.length - 1
+      }),
+      iconButton(t("optionsRuleDelete"), "rule-delete", "trash", { danger: true })
+    ]),
+    // A rule whose profile was deleted is skipped; say so even while the row is collapsed.
+    ...(profile ? [] : [createMissingProfileNotice(rule, t)]),
+    createRuleBody(rule, options)
+  ]);
+}
+
+/** "Missing profile: QA": a deleted Default or preset by its name, anything else by its id. */
+function missingProfileLabel(profileId: string, t: Translate): string {
+  const recommended =
+    profileId === DEFAULT_PROFILE_ID ? createDefaultProfile() : findBuiltInProfile(profileId);
+
+  return t("optionsRuleProfileMissing", { id: recommended?.name ?? profileId });
+}
+
+/** Why the rule is skipped and how to fix it: Restore brings back a deleted Default or preset. */
+function createMissingProfileNotice(rule: ProfileRule, t: Translate): HTMLElement {
+  return el("p", {
+    className: "wb-notice wb-notice--error",
+    text: t(
+      isRecommendedProfileId(rule.profileId)
+        ? "optionsRuleProfileMissingHint"
+        : "optionsRuleProfileMissingHintOwn"
+    ),
+    dataset: { ruleMissing: "" }
+  });
+}
+
+/** How many rules are skipped, with one Restore when that brings any of their profiles back. */
+function createOrphanedRulesNotice(orphaned: readonly ProfileRule[], t: Translate): HTMLElement {
   return el(
-    "li",
+    "div",
     {
-      className: rule.enabled
-        ? "wb-rule wb-profiles__rule"
-        : "wb-rule wb-rule--off wb-profiles__rule",
-      dataset: { ruleId: rule.id, ruleIndex: String(index) }
+      className: "wb-notice wb-notice--error wb-rules__orphaned",
+      attrs: { role: "status" },
+      dataset: { rulesOrphaned: "" }
     },
     [
-      el("div", { className: "wb-rule__bar" }, [
-        grip,
-        el("span", { className: "wb-rule__rank", text: String(index + 1) }),
-        el(
-          "button",
-          {
-            className: "wb-rule__toggle",
-            attrs: {
-              type: "button",
-              "aria-expanded": String(open),
-              "aria-controls": `${rule.id}-body`
-            },
-            dataset: { action: "rule-toggle" }
-          },
-          [
-            el("strong", { text: ruleLabel(rule) }),
-            el("span", { className: "wb-rule__arrow", text: `→ ${profileName}` }),
-            el("span", { className: "wb-rule__summary", text: describeRuleSummary(rule, t) })
-          ]
-        ),
-        ...(rule.enabled
-          ? []
-          : [el("span", { className: "wb-badge", text: t("optionsRuleDisabledBadge") })]),
-        iconButton(t("optionsRuleMoveUp"), "rule-up", "up", { disabled: index === 0 }),
-        iconButton(t("optionsRuleMoveDown"), "rule-down", "down", {
-          disabled: index === options.rules.length - 1
-        }),
-        iconButton(t("optionsRuleDelete"), "rule-delete", "trash", { danger: true })
-      ]),
-      createRuleBody(rule, options)
+      el("p", { text: t("optionsRulesOrphaned", { count: orphaned.length }) }),
+      ...(orphaned.some((rule) => isRecommendedProfileId(rule.profileId))
+        ? [button(t("optionsProfilesRestore"), "profiles-restore", "surface", { small: true })]
+        : [])
     ]
   );
 }
@@ -224,6 +278,9 @@ function createRuleRow(rule: ProfileRule, index: number, options: RulesViewOptio
 export function createRulesList(options: RulesViewOptions): HTMLElement {
   const { t } = options;
   const list = el("ol", { className: "wb-rules" });
+  const orphaned = options.rules.filter(
+    (rule) => !options.catalog.some((profile) => profile.id === rule.profileId)
+  );
 
   if (options.rules.length === 0) {
     list.append(el("li", { className: "wb-empty", text: t("optionsRulesEmpty") }));
@@ -236,17 +293,8 @@ export function createRulesList(options: RulesViewOptions): HTMLElement {
       el("h3", { className: "wb-group__title", text: t("optionsRulesListTitle") }),
       button(t("optionsRuleAdd"), "rule-add", "surface", { small: true })
     ]),
-    list,
-    chipListField({
-      ...chipListOptions(t),
-      id: "extended-capture-hosts",
-      name: "extendedCaptureHosts",
-      label: t("optionsExtendedHosts"),
-      hint: t("optionsExtendedHostsHint"),
-      values: options.extendedCaptureHosts,
-      placeholder: t("optionsHostPlaceholder"),
-      validate: patternValidator(t)
-    })
+    ...(orphaned.length > 0 ? [createOrphanedRulesNotice(orphaned, t)] : []),
+    list
   ]);
 }
 
@@ -305,6 +353,10 @@ export function describeTestResult(
     return [el("p", { className: "wb-tester__error", text: t("optionsTestInvalidUrl") })];
   }
 
+  if (result.kind === "no-profile") {
+    return [el("p", { className: "wb-tester__error", text: t("optionsProfilesEmpty") })];
+  }
+
   const lines: HTMLElement[] = [
     el("p", { className: "wb-tester__verdict" }, [
       t("optionsTestProfile"),
@@ -331,18 +383,6 @@ export function describeTestResult(
     );
   } else {
     lines.push(el("p", { text: t("optionsTestNoRule") }));
-  }
-
-  if (result.downgradedFrom) {
-    lines.push(
-      el("p", {
-        className: "wb-tester__warn",
-        text: t("optionsTestDowngraded", {
-          requested: result.downgradedFrom,
-          name: result.profileName
-        })
-      })
-    );
   }
 
   if (result.unchecked.length > 0) {

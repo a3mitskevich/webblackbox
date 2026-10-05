@@ -1,7 +1,11 @@
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import { describe, expect, it } from "vitest";
 
-import { describePrivacyViolation, readRecordingProfiles } from "./recording-profile.js";
+import {
+  describePrivacyViolation,
+  readProfileCancellation,
+  readRecordingProfiles
+} from "./recording-profile.js";
 
 function event(type: WebBlackboxEvent["type"], data: unknown, t = 1): WebBlackboxEvent {
   return { v: 1, sid: "S", tab: 1, t, mono: t, type, id: `E-${t}`, data };
@@ -102,5 +106,64 @@ describe("readRecordingProfiles", () => {
         }
       }
     ]);
+  });
+});
+
+describe("readRecordingProfiles — enterprise caps", () => {
+  it("keeps the categories the enterprise policy capped, as strings only", () => {
+    const [entry] = readRecordingProfiles([
+      event("meta.config", {
+        profile: {
+          id: "builtin:full-capture",
+          name: "Full capture",
+          enterpriseCapped: ["console", 7, "network", "x".repeat(500)]
+        }
+      })
+    ]);
+
+    expect(entry?.enterpriseCapped).toEqual(["console", "network", "x".repeat(200)]);
+  });
+});
+
+describe("readProfileCancellation", () => {
+  it("reads why a recording was stopped after its profile changed", () => {
+    const events = [
+      event("meta.config", { profile: { id: "builtin:qa", name: "QA" } }, 1),
+      event(
+        "meta.config",
+        {
+          profile: { id: "builtin:qa", name: "QA" },
+          profileCancel: {
+            reason: "rule-changed",
+            trigger: "navigation",
+            at: 1_700_000_000_000,
+            started: { id: "builtin:qa", name: "QA", ruleName: "Stage" },
+            next: { id: "default", name: "Default" }
+          }
+        },
+        9
+      )
+    ];
+
+    expect(readProfileCancellation(events)).toEqual({
+      t: 9,
+      mono: 9,
+      reason: "rule-changed",
+      trigger: "navigation",
+      started: { id: "builtin:qa", name: "QA" },
+      next: { id: "default", name: "Default" }
+    });
+  });
+
+  it("returns null for archives without a cancellation and tolerates junk", () => {
+    expect(readProfileCancellation([event("meta.config", { profile: { id: "a" } })])).toBeNull();
+    expect(
+      readProfileCancellation([event("meta.config", { profileCancel: { reason: 5 } })])
+    ).toBeNull();
+    expect(
+      readProfileCancellation([
+        event("meta.config", { profileCancel: { reason: "rule-changed", started: "junk" } })
+      ])
+    ).toEqual({ t: 1, mono: 1, reason: "rule-changed" });
   });
 });

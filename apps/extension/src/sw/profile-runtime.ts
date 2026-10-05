@@ -21,6 +21,10 @@ import {
 } from "../shared/profiles/storage.js";
 
 const PAGE_SIGNAL_PROBE_TIMEOUT_MS = 1_500;
+
+/** Start refused because every profile was deleted; the popup asks the user to create one. */
+export const NO_RECORDING_PROFILE_ERROR =
+  "No recording profile exists. Create or restore one in Options → Profiles, then start again.";
 const MAX_META_VALUES = 10;
 const MAX_META_VALUE_LENGTH = 500;
 
@@ -56,7 +60,12 @@ export async function loadProfilesState(
 export async function readTabPageContext(
   chromeApi: ChromeApi | null,
   tabId: number,
-  rules: readonly ProfileRule[]
+  rules: readonly ProfileRule[],
+  /**
+   * Null when the page probe fails or times out. Without it such a page has no signals: DOM rules
+   * simply do not match (restricted pages such as chrome:// cannot be probed at all).
+   */
+  options: { requireSignals?: boolean } = {}
 ): Promise<ProfilePageContext | null> {
   const tab = await chromeApi?.tabs?.get(tabId).catch(() => undefined);
   const url = typeof tab?.url === "string" ? tab.url : "";
@@ -71,6 +80,10 @@ export async function readTabPageContext(
       ? await probePageSignals(chromeApi, tabId, request)
       : {};
 
+  if (!signals && options.requireSignals) {
+    return null;
+  }
+
   return {
     url,
     title: typeof tab?.title === "string" ? tab.title : undefined,
@@ -79,10 +92,17 @@ export async function readTabPageContext(
   };
 }
 
+/** The tab is still loading its document (title, meta tags and DOM may not be there yet). */
+export async function isTabLoading(chromeApi: ChromeApi | null, tabId: number): Promise<boolean> {
+  const tab = await chromeApi?.tabs?.get(tabId).catch(() => undefined);
+  return tab?.status === "loading";
+}
+
 /** Popup preview: every selectable profile plus what Start would pick for the tab. */
 export function buildProfilePreview(
   state: ProfilesState,
-  selection: ProfileSelection | null
+  selection: ProfileSelection | null,
+  enterpriseCapped: readonly string[] = []
 ): ProfilePreviewResponse {
   const catalog: ProfileCatalogEntry[] = state.catalog.map((profile) => ({
     id: profile.id,
@@ -103,31 +123,24 @@ export function buildProfilePreview(
           source: selection.source,
           ...(selection.rule?.name ? { ruleName: selection.rule.name } : {}),
           extended: selection.extended,
-          ...(selection.downgradedFrom ? { downgradedFrom: selection.downgradedFrom.name } : {}),
-          ...(selection.profile.visual ? { visual: selection.profile.visual } : {})
+          ...(selection.profile.visual ? { visual: selection.profile.visual } : {}),
+          ...(enterpriseCapped.length > 0 ? { enterpriseCapped: [...enterpriseCapped] } : {})
         }
       : null
   };
 }
 
-/** Visual data a session captured under any of its profiles. */
+/** Visual data a session's profile allowed; the export includes what was captured. */
 export type CapturedVisuals = { screenshots: boolean; screenRecordings: boolean };
 
-export const NO_CAPTURED_VISUALS: CapturedVisuals = { screenshots: false, screenRecordings: false };
-
-/**
- * Adds what `config` allows to what the session already captured. The export keeps visuals
- * recorded while an earlier profile allowed them, even after a switch turned them off.
- */
-export function mergeCapturedVisuals(
-  previous: CapturedVisuals,
-  config: { capturePolicy?: { categories: CapturePolicy["categories"] } }
-): CapturedVisuals {
+export function capturedVisualsOf(config: {
+  capturePolicy?: { categories: CapturePolicy["categories"] };
+}): CapturedVisuals {
   const categories = config.capturePolicy?.categories;
 
   return {
-    screenshots: previous.screenshots || (categories ? categories.screenshots !== "off" : false),
-    screenRecordings: previous.screenRecordings || categories?.screenRecordings === "allow"
+    screenshots: categories ? categories.screenshots !== "off" : false,
+    screenRecordings: categories?.screenRecordings === "allow"
   };
 }
 
@@ -164,11 +177,11 @@ async function probePageSignals(
   chromeApi: ChromeApi | null,
   tabId: number,
   request: ProfilePageSignalRequest
-): Promise<Pick<ProfilePageContext, "metaTags" | "selectorsPresent">> {
+): Promise<Pick<ProfilePageContext, "metaTags" | "selectorsPresent"> | null> {
   const scripting = chromeApi?.scripting;
 
   if (!scripting) {
-    return {};
+    return null;
   }
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -186,10 +199,12 @@ async function probePageSignals(
       })
     ]);
 
-    return parsePageSignals(Array.isArray(results) ? results[0]?.result : undefined, request);
+    const result = Array.isArray(results) ? results[0]?.result : undefined;
+    // A timeout or an empty answer: the page could not be read.
+    return result === undefined ? null : parsePageSignals(result, request);
   } catch {
-    // Restricted pages (chrome://, web store) cannot be probed: DOM rules simply do not match.
-    return {};
+    // Restricted pages (chrome://, web store) cannot be probed.
+    return null;
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);

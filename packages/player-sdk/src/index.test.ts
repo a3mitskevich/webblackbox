@@ -243,7 +243,9 @@ describe("WebBlackboxPlayer", () => {
     expect(firstScreenshot?.bytes.byteLength).toBe(32 * 1024);
     expect(firstResponseBody?.bytes.byteLength).toBe(16 * 1024);
     expect(heapPeak - heapBaseline).toBeLessThan(512 * 1024 * 1024);
-  });
+    // Bounds, not speed: building and reading a 16 MB, 30k-event archive takes 3-5 s on shared CI
+    // runners, past vitest's default 5 s timeout.
+  }, 30_000);
 
   it("opens archives with compressed chunk codecs", async () => {
     const codecs = supportedCompressedCodecsForTest();

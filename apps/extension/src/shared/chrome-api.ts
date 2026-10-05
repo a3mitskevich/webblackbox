@@ -267,6 +267,7 @@ export type ChromeApi = {
       title?: string;
       incognito?: boolean;
       lastAccessed?: number;
+      status?: "unloaded" | "loading" | "complete";
     }>;
     query(queryInfo: {
       active?: boolean;

@@ -25,6 +25,7 @@ import { sha256Hex } from "./hash.js";
 import { EventIndexer } from "./indexer.js";
 import { buildPrivacyManifest } from "./privacy.js";
 import type { PipelineStorage, StoredBlob, StoredChunk } from "./storage.js";
+import { externalizeStreamPayload } from "./stream-payload.js";
 
 export type FlightRecorderPipelineOptions = {
   session: SessionMetadata;
@@ -101,7 +102,7 @@ export class FlightRecorderPipeline {
 
   public async ingest(event: WebBlackboxEvent): Promise<void> {
     assertPrivacyClassifiedEvent(event);
-    const chunk = await this.chunker.append(event);
+    const chunk = await this.chunker.append(await this.externalizeLargePayload(event));
 
     if (!chunk) {
       return;
@@ -126,7 +127,7 @@ export class FlightRecorderPipeline {
     }
 
     for (const event of events) {
-      const chunk = await this.chunker.append(event);
+      const chunk = await this.chunker.append(await this.externalizeLargePayload(event));
 
       if (!chunk) {
         continue;
@@ -164,6 +165,11 @@ export class FlightRecorderPipeline {
     if (options.purge) {
       await this.options.storage.deleteSession(this.options.session.sid);
     }
+  }
+
+  /** Large WebSocket/SSE text goes to a blob so event chunks stay small (see `stream-payload.ts`). */
+  private externalizeLargePayload(event: WebBlackboxEvent): Promise<WebBlackboxEvent> {
+    return externalizeStreamPayload(event, (mime, bytes) => this.putBlob(mime, bytes));
   }
 
   public async putBlob(mime: string, bytes: Uint8Array): Promise<string> {

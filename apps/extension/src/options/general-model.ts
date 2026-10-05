@@ -475,3 +475,23 @@ export function isArchiveChanged(draft: GeneralDraft, baseline: GeneralDraft): b
 export function isInjectionChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
   return draft.injection !== baseline.injection;
 }
+
+const GENERAL_SECTION_IDS: readonly GeneralSectionId[] = [
+  "sensitivity",
+  "pointer",
+  "sampling",
+  "budgets",
+  "export"
+];
+
+/** Sections with a field whose draft value differs from the baseline's. */
+export function changedGeneralSections(
+  draft: GeneralDraft,
+  baseline: GeneralDraft
+): GeneralSectionId[] {
+  return GENERAL_SECTION_IDS.filter((section) =>
+    fieldsOfSection(section).some(
+      (spec) => JSON.stringify(spec.get(draft)) !== JSON.stringify(spec.get(baseline))
+    )
+  );
+}

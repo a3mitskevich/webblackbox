@@ -239,8 +239,61 @@ describe("rules editor", () => {
     document.querySelector<HTMLElement>("[data-confirm-accept]")?.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(ruleIds(container)).toEqual([]);
+    // The rule stays (the rule engine skips it) and is flagged until it gets a profile again.
+    expect(ruleIds(container)).toEqual(["a"]);
+    expect(container.querySelector("[data-rule-missing]")).not.toBeNull();
     expect(container.querySelector("[data-profile-id='mine']")).toBeNull();
+  });
+
+  it("marks rules to deleted profiles as skipped and offers Restore for recommended ones", async () => {
+    const { container } = await mount([
+      { ...rule("a", 10), profileId: BUILT_IN_PROFILE_IDS.qa },
+      { ...rule("b", 5), profileId: "gone" },
+      rule("c", 1)
+    ]);
+    const row = (id: string) =>
+      container.querySelector<HTMLElement>(`[data-rule-id='${id}']`) ??
+      document.createElement("li");
+    const summary = () => container.querySelector("[data-rules-orphaned] p")?.textContent;
+
+    container
+      .querySelector<HTMLElement>(
+        `[data-profile-id='${BUILT_IN_PROFILE_IDS.qa}'] [data-action='profile-delete']`
+      )
+      ?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    document.querySelector<HTMLElement>("[data-confirm-accept]")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(summary()).toBe(t("optionsRulesOrphaned", { count: 2 }));
+    expect(["a", "b", "c"].map((id) => row(id).classList.contains("wb-rule--orphan"))).toEqual([
+      true,
+      true,
+      false
+    ]);
+    expect(row("a").querySelector("[data-rule-skipped]")?.textContent).toBe(
+      t("optionsRuleSkippedBadge")
+    );
+    // A deleted preset is named and comes back with Restore; a deleted own profile does not.
+    expect(row("a").querySelector(".wb-rule__arrow")?.textContent).toBe(
+      `→ ${t("optionsRuleProfileMissing", { id: "QA" })}`
+    );
+    expect(row("a").querySelector("[data-rule-missing]")?.textContent).toBe(
+      t("optionsRuleProfileMissingHint")
+    );
+    expect(row("b").querySelector("[data-rule-missing]")?.textContent).toBe(
+      t("optionsRuleProfileMissingHintOwn")
+    );
+    container
+      .querySelector<HTMLElement>("[data-rules-orphaned] [data-action='profiles-restore']")
+      ?.click();
+
+    expect(row("a").classList.contains("wb-rule--orphan")).toBe(false);
+    expect(summary()).toBe(t("optionsRulesOrphaned", { count: 1 }));
+    // Only the own profile's rule is left: Restore would not help it.
+    expect(
+      container.querySelector("[data-rules-orphaned] [data-action='profiles-restore']")
+    ).toBeNull();
   });
 
   it("keeps typed sandbox input when another editor action re-renders", async () => {

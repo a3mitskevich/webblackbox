@@ -1,4 +1,5 @@
 export * from "./action-span.js";
+export type { ConsoleDetail } from "./console-normalizer.js";
 export * from "./freeze.js";
 export type { InlineNetworkBodyContext } from "./network-body-policy.js";
 export * from "./normalizer.js";

@@ -56,10 +56,21 @@ export type SettingsShell = {
   content: HTMLElement;
   bodies: Record<SettingsSectionId, HTMLElement>;
   saveState: HTMLElement;
+  /** Second line of the save bar: which sections hold unsaved changes. */
+  saveDetail: HTMLElement;
   saveButton: HTMLButtonElement;
   cancelButton: HTMLButtonElement;
   showSection(id: SettingsSectionId): void;
+  currentSection(): SettingsSectionId;
+  /** Marks sections with unsaved changes in the navigation, their headers and the save bar. */
+  setDirtySections(sections: ReadonlySet<SettingsSectionId>): void;
 };
+
+/** Section title for messages such as "Unsaved changes in {section}". */
+export function sectionTitle(t: Translate, id: SettingsSectionId): string {
+  const spec = SETTINGS_SECTIONS.find((section) => section.id === id);
+  return spec ? t(spec.title) : id;
+}
 
 function createTopBar(t: Translate, version: string): HTMLElement {
   return el("header", { className: "wb-page-topbar" }, [
@@ -89,15 +100,28 @@ export function createSettingsShell(t: Translate, version: string): SettingsShel
   const content = el("div", { className: "wb-settings__content" });
   const bodies = {} as Record<SettingsSectionId, HTMLElement>;
   const links = new Map<SettingsSectionId, HTMLAnchorElement>();
+  const navMarks = new Map<SettingsSectionId, HTMLElement>();
+  const headerMarks = new Map<SettingsSectionId, HTMLElement>();
   const sections = new Map<SettingsSectionId, HTMLElement>();
+  let current: SettingsSectionId = DEFAULT_SECTION;
 
   for (const spec of SETTINGS_SECTIONS) {
-    const link = el("a", {
-      className: "wb-settings__nav-link",
-      text: t(spec.title),
-      attrs: { href: `#${spec.id}` },
-      dataset: { sectionLink: spec.id }
-    });
+    // The dot is decorative; screen readers get the text next to it.
+    const mark = el("span", { className: "wb-settings__nav-dirty" }, [
+      el("span", { className: "wb-settings__nav-dot", attrs: { "aria-hidden": "true" } }),
+      el("span", { className: "wb-sr-only", text: `(${t("optionsNavUnsaved")})` })
+    ]);
+    mark.hidden = true;
+    navMarks.set(spec.id, mark);
+    const link = el(
+      "a",
+      {
+        className: "wb-settings__nav-link",
+        attrs: { href: `#${spec.id}` },
+        dataset: { sectionLink: spec.id, dirty: "false" }
+      },
+      [el("span", { className: "wb-settings__nav-text", text: t(spec.title) }), " ", mark]
+    );
     links.set(spec.id, link);
     nav.append(el("li", {}, [link]));
 
@@ -115,11 +139,18 @@ export function createSettingsShell(t: Translate, version: string): SettingsShel
           id: spec.id,
           title: t(spec.title),
           hint: t(spec.hint),
+          unsavedLabel: t("optionsUnsavedChanges"),
           ...(spec.resettable ? { resetLabel: t("optionsResetSection") } : {})
         }),
         body
       ]
     );
+    const headerMark = section.querySelector<HTMLElement>("[data-section-unsaved]");
+
+    if (headerMark) {
+      headerMarks.set(spec.id, headerMark);
+    }
+
     section.hidden = true;
     sections.set(spec.id, section);
     content.append(section);
@@ -130,18 +161,22 @@ export function createSettingsShell(t: Translate, version: string): SettingsShel
     attrs: { role: "status", "aria-live": "polite" },
     dataset: { saveState: "" }
   });
+  const saveDetail = el("span", { className: "wb-savebar__detail", dataset: { saveDetail: "" } });
   const cancelButton = el("button", {
-    className: "wb-btn wb-btn--muted",
+    className: "wb-btn wb-btn--muted wb-btn--large",
     text: t("optionsCancel"),
     attrs: { type: "button", id: "resetConfig" },
     dataset: { action: "settings-cancel" }
   });
-  const saveButton = el("button", {
-    className: "wb-btn wb-btn--brand",
-    text: t("optionsSave"),
-    attrs: { type: "button", id: "saveConfig" },
-    dataset: { action: "settings-save" }
-  });
+  const saveButton = el(
+    "button",
+    {
+      className: "wb-btn wb-btn--brand wb-btn--large wb-savebar__save",
+      attrs: { type: "button", id: "saveConfig" },
+      dataset: { action: "settings-save" }
+    },
+    [icon("check"), t("optionsSave")]
+  );
 
   const root = el("div", { className: "wb-settings" }, [
     createTopBar(t, version),
@@ -157,11 +192,36 @@ export function createSettingsShell(t: Translate, version: string): SettingsShel
         className: "wb-savebar",
         attrs: { role: "region", "aria-label": t("optionsSaveBarLabel") }
       },
-      [el("div", { className: "wb-savebar__inner" }, [saveState, cancelButton, saveButton])]
+      [
+        el("div", { className: "wb-savebar__inner" }, [
+          el("div", { className: "wb-savebar__status" }, [
+            el("span", { className: "wb-savebar__dot", attrs: { "aria-hidden": "true" } }),
+            el("div", { className: "wb-savebar__text" }, [saveState, saveDetail])
+          ]),
+          el("div", { className: "wb-savebar__actions" }, [cancelButton, saveButton])
+        ])
+      ]
     )
   ]);
 
+  const setDirtySections = (dirty: ReadonlySet<SettingsSectionId>): void => {
+    for (const spec of SETTINGS_SECTIONS) {
+      const isDirty = dirty.has(spec.id);
+      links.get(spec.id)?.setAttribute("data-dirty", String(isDirty));
+      navMarks.get(spec.id)?.toggleAttribute("hidden", !isDirty);
+      headerMarks.get(spec.id)?.toggleAttribute("hidden", !isDirty);
+    }
+
+    const names = SETTINGS_SECTIONS.filter((spec) => dirty.has(spec.id)).map((spec) =>
+      t(spec.title)
+    );
+    saveDetail.textContent =
+      names.length > 0 ? t("optionsUnsavedIn", { sections: names.join(", ") }) : "";
+  };
+
   const showSection = (id: SettingsSectionId): void => {
+    current = id;
+
     for (const [sectionId, section] of sections) {
       section.hidden = sectionId !== id;
       const link = links.get(sectionId);
@@ -174,5 +234,16 @@ export function createSettingsShell(t: Translate, version: string): SettingsShel
     }
   };
 
-  return { root, content, bodies, saveState, saveButton, cancelButton, showSection };
+  return {
+    root,
+    content,
+    bodies,
+    saveState,
+    saveDetail,
+    saveButton,
+    cancelButton,
+    showSection,
+    currentSection: () => current,
+    setDirtySections
+  };
 }
