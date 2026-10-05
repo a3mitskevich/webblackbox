@@ -1,0 +1,151 @@
+# Player rewrite in React — feature parity
+
+The Player is being rewritten in React (design direction **B · Replay**, `design/player/PROPOSAL.md`).
+The new UI ships behind `?ui=next` until stage R5, when it becomes the only UI and the imperative
+`src/main.ts` and the static `src/shell.tsx` are deleted.
+
+This file lists **every feature of the classic Player** (walked from `src/main.ts`, `src/shell.tsx`,
+`src/lib/*` and `scripts/e2e-playback-regression.mjs`) and the stage that re-implements it in React,
+plus the new features the redesign adds. Every stage updates this file; R5 checks every row or
+records why it was dropped.
+
+Status: ✅ done in React · ⏳ planned for the stage · ➖ dropped (reason given) · 🆕 new in the redesign.
+
+| Stage | Scope (`/home/deathsmell/webblackbox-agents/player/r*.md`)                                                                                                                                                         |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| R1    | Foundation: app root, store, URL hash, themes, fonts, i18n without reload, keyboard map, layout skeleton, open/decrypt flow, non-UI logic in `src/core/`, e2e harness                                              |
+| R2    | Activity feed (action → consequences), problems strip (SDK grouping, third-party, console error by `data.level`)                                                                                                   |
+| R3    | Network rail: dense table, full-width rail (`F`), request details, WebSocket/SSE conversation, curl/fetch/replay                                                                                                   |
+| R4    | Console with symbolicated stacks, Storage, Tabs, Perf, Compare + regressions, share links                                                                                                                          |
+| R5    | Event inspector, Generate (Playwright by range, bug report, HAR, GitHub/Jira), dialogs, "what is in the archive", Expand lanes, profile banners, accessibility pass, long-archive bench, React becomes the only UI |
+
+## Archive loading
+
+| Feature (classic)                                                                                                                                                          | Where in the classic code                                         | Stage | Status                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ----- | --------------------------------------------------------------------------------------------------- |
+| Open an archive from a file input (`.webblackbox`, `.zip`)                                                                                                                 | `#archive-input`, `handlePrimaryArchiveChange`                    | R1    | ✅ header "Open archive" + empty state (`ArchiveInput`)                                             |
+| Drag & drop an archive anywhere, overlay while dragging                                                                                                                    | `bindArchiveDropTarget`, `lib/archive-files.ts`                   | R1    | ✅ `useArchiveDropTarget`, `DropOverlay`                                                            |
+| Encrypted archives: passphrase dialog, passphrase never stored                                                                                                             | `openArchiveWithPassphraseFallback`, `#archive-passphrase-dialog` | R1    | ✅ `core/archive-open.ts` + `PassphraseDialog`; 🆕 a wrong passphrase asks again instead of failing |
+| Load success / failure feedback                                                                                                                                            | `setFeedback`, `feedbackArchiveLoaded*`                           | R1    | ✅ status line + polite live region                                                                 |
+| "Loaded without playback events" warning                                                                                                                                   | `hasPlaybackEvents` (`lib/archive-health.ts`)                     | R5    | ⏳ part of "what is in the archive"                                                                 |
+| Archive model: playback clock normalization (mixed mono/wall clock), scopes, search text, prefix counts, screenshots, recordings, pointers, waterfall/action normalization | `buildArchiveModel` + helpers                                     | R1    | ✅ moved verbatim to `core/archive-model.ts` (classic `main.ts` imports it)                         |
+| Compare archive (`#compare-input`)                                                                                                                                         | `handleCompareArchiveChange`                                      | R4    | ⏳                                                                                                  |
+
+## Share links
+
+| Feature                                                                                                       | Where                                                    | Stage | Status |
+| ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ----- | ------ |
+| Upload to a share server: server URL, API key, upload progress, copy share URL                                | `shareLoadedArchive`, `lib/share-upload.ts`              | R4    | ⏳     |
+| Privacy preflight before upload (redaction profile, detected signals, sensitive preview, "reviewed" checkbox) | `renderSharePrivacyPreflight`                            | R4    | ⏳     |
+| Client share summary header (`x-webblackbox-share-summary`)                                                   | `buildClientShareSummary`                                | R4    | ⏳     |
+| Load a shared archive by reference                                                                            | `loadArchiveFromSharePrompt`                             | R4    | ⏳     |
+| `?share=` auto-load; untrusted origins need confirmation and never change saved settings                      | `maybeAutoLoadSharedArchiveFromLocation`, `lib/share.ts` | R4    | ⏳     |
+| API keys per share-server origin (+ legacy key migration)                                                     | `lib/share-api-key.ts`, `readStoredShareServerApiKeys`   | R4    | ⏳     |
+
+## Playback
+
+| Feature                                                                             | Where                                               | Stage | Status                                                                                         |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------- |
+| Play / pause (button, Space, click on the stage); restart from the start at the end | `togglePlayback`, `#playback-toggle`, preview click | R1    | ✅ `core/playback-clock.ts` + `Transport`, stage click                                         |
+| Playback loop on `requestAnimationFrame`, stops at the end                          | `playbackTick`, `setPlayhead`                       | R1    | ✅ `createFrameLoop`, `advancePlayhead`                                                        |
+| ±1 s step (buttons, ← / →), Home / End                                              | `#playback-back/forward`, keydown                   | R1    | ✅ ← / → (Shift ±5 s), Home / End; transport buttons now step to the previous/next event (J/L) |
+| Speed 0.5× / 1× / 1.5× / 2× / 4×                                                    | `#playback-rate`                                    | R1    | ✅                                                                                             |
+| Panel re-render throttling while playing (120 ms buckets)                           | `PANEL_RENDER_BUCKET_MS`                            | R1    | ✅ list "now" bucket (`NOW_BUCKET_MS`)                                                         |
+| 🆕 Skip idle (×8 between events)                                                    | PROPOSAL §4                                         | R1    | ✅ `findIdleGaps`                                                                              |
+| 🆕 Follow playhead (lists scroll with the playhead)                                 | PROPOSAL §4                                         | R1    | ✅ Activity list; other lists as they arrive                                                   |
+| 🆕 ±1 video frame (`,` / `.`)                                                       | PROPOSAL §4                                         | R1    | ✅                                                                                             |
+
+## Scrubber / timeline
+
+| Feature                                                                                          | Where                                                              | Stage   | Status                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Progress slider with the playhead                                                                | `#playback-progress`, `#playback-playhead`                         | R1      | ✅ multi-lane timeline with a `role="slider"` scrub surface (drag to seek, `aria-valuetext`)                                                                                                                   |
+| Markers: error, network, screenshot, recording, action, tabs; click jumps and switches the panel | `buildProgressMarkers`, `renderProgressMarkers`, `lib/progress.ts` | R1 / R5 | ✅ lanes Actions, Errors, Network (density), Realtime (click picks the nearest item); 🆕 route chapters lane (`buildRouteChapters` in player-sdk). ⏳ screenshot/recording/tabs lanes with "Expand lanes" (R5) |
+| Pointer lane (clicks, rage/dead clicks)                                                          | `renderPointerLane`, `lib/pointer-overlay.ts`                      | R5      | ⏳ "Expand lanes"                                                                                                                                                                                              |
+| Hover card: thumbnail, time, summary, clickable tags                                             | `showProgressHover`, `buildProgressHoverTags`                      | R2      | ⏳                                                                                                                                                                                                             |
+| Hover response preview: JSON highlight, expand/collapse, copy, "Mask response preview"           | `renderProgressHoverResponse`, `lib/response-*.ts`                 | R3      | ⏳ moves to request details                                                                                                                                                                                    |
+| Status bar: window time, visible counts, panel + selection readout                               | `renderPlaybackReadout`                                            | R1 / R5 | ✅ clock and tab counts; ⏳ selection readout in the inspector (R5)                                                                                                                                            |
+
+## Stage
+
+| Feature                                                                                  | Where                                                              | Stage   | Status                                                               |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------- | -------------------------------------------------------------------- |
+| Screenshot at the playhead, loading / missing / decode-failure states                    | `syncScreenshotForPlayhead`                                        | R1      | ✅ `Stage` (previous frame stays until the next loads)               |
+| Tab recording (`screen.recording.*` chunks) synced to the playhead with drift correction | `syncScreenRecordingForPlayhead`, `syncRecordingElementToPlayhead` | R1      | ✅ `RecordingView` (same drift thresholds)                           |
+| Pointer overlay: cursor, 3.5 s trail, click ripples (double/right/middle/hold/drag/dnd)  | `renderScreenshotOverlay`, `lib/pointer-overlay.ts`                | R1      | ✅ SVG in recorded viewport coordinates; ⏳ ripple labels (R5)       |
+| Object-URL caches with TTL, revoked on archive change                                    | `getScreenshotUrlByShotId`, `getScreenRecordingUrl`                | R1      | ✅ `core/media-cache.ts`                                             |
+| Screenshot / recording meta line                                                         | `describeScreenshotMeta`, `describeScreenRecordingMeta`            | R1 / R5 | ✅ media kind + size; ⏳ full meta in "what is in the archive"       |
+| Filmstrip (buttons per screenshot)                                                       | `renderFilmstripList`                                              | R5      | ⏳ screenshots lane in "Expand lanes"                                |
+| Stage height splitter (drag, keyboard, persisted)                                        | `bindStageSplitter`                                                | R3      | ⏳ with rail width and full-width rail (`F`); persisted with a reset |
+| 🆕 URL pill (current route) on the stage                                                 | mockup                                                             | R1      | ✅                                                                   |
+
+## Lists and panels
+
+| Feature                                                                                     | Where                                                              | Stage   | Status                                                                                                               |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| Panel tabs with counts, keys `1`…`8`                                                        | `renderPanelTabs`, `PANEL_SHORTCUT_BY_CODE`                        | R1      | ✅ rail tabs Activity · Network · Console · Realtime · Storage · Tabs · Perf, `role="tablist"`, arrows, keys `1`…`7` |
+| Event timeline list: virtualization (> 1200 rows), text filter, row selection               | `renderTimeline`, `renderTimelineWindow`                           | R1      | ✅ Activity tab (virtualized `VirtualList`, filter + header search, "now" line, future dimmed)                       |
+| Type filter (errors / network / storage / console) and frame scope filter (main / iframe)   | `#type-filter`, `#scope-filter`, `core/filters.ts`                 | R2      | ⏳ "Errors only", scope chips; logic already in `core/filters.ts`                                                    |
+| Event details (raw JSON with scope, CDP session, frame, tabs open after)                    | `renderEventDetails`                                               | R1 / R5 | ✅ Enter / Esc details panel (raw JSON); ⏳ event inspector (R5)                                                     |
+| Actions panel: cards with metrics, network/error previews, replay diagnostics               | `renderActionCard`, `renderActionRootCauseDetails`                 | R2 / R5 | ⏳ Activity feed (R2), inspector "what it caused" (R5)                                                               |
+| Network waterfall: columns, sort, method/status/type/scope filters, summary, row cap        | `renderWaterfall`, `lib/network-*.ts`                              | R3      | ⏳                                                                                                                   |
+| Request details + linked events                                                             | `renderWaterfall` (details)                                        | R3      | ⏳ Headers / Payload / Response / Timing / Initiator                                                                 |
+| Copy as curl / fetch, replay request with status/body diff                                  | `copySelectedRequestAs*`, `replaySelectedRequest`, `lib/replay.ts` | R3      | ⏳                                                                                                                   |
+| Console list: privacy-violation text, scope and source tags, symbolicated top frame, filter | `renderConsoleSignals`, `renderSignalEvents`                       | R4      | ⏳                                                                                                                   |
+| Realtime list with expandable full payload (blob), SignalR record split, truncation note    | `renderRealtimeSignals`, `lib/realtime-payload.ts`                 | R3      | ⏳ WebSocket conversation                                                                                            |
+| Storage list                                                                                | `renderStorageSignals`                                             | R4      | ⏳                                                                                                                   |
+| Performance list                                                                            | `renderPerfSignals`                                                | R4      | ⏳                                                                                                                   |
+| Source-map stack view (Original/Minified, symbol server)                                    | `lib/stack-view.ts`, `createStackViewController`                   | R4      | ⏳                                                                                                                   |
+| Log grid splitter (two panels side by side)                                                 | `bindLogGridSplitter`                                              | R3      | ⏳ replaced by the rail layout (split list/details)                                                                  |
+
+## Triage and summary
+
+| Feature                                                                                                | Where                                          | Stage   | Status                                                                                |
+| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------- | ------- | ------------------------------------------------------------------------------------- |
+| Quick Triage panel (errors, failed/slow requests, screenshots, actions)                                | `showQuickTriagePanel`, `lib/triage.ts`        | R2      | ⏳ persistent problems strip                                                          |
+| Quick Triage auto-dismiss seconds setting                                                              | `#quick-triage-dismiss-seconds`                | —       | ➖ the problems strip never hides (PROPOSAL §2.2: the auto-hide made the layout jump) |
+| Jump to first error                                                                                    | `jumpToFirstError`                             | R1 / R2 | ✅ `E` / `Shift+E` (live-region announcement); ⏳ problems strip                      |
+| Jump to slowest request                                                                                | `jumpToSlowestRequest`                         | R3      | ⏳                                                                                    |
+| Summary pills: mode, origin                                                                            | `renderSummary`                                | R1      | ✅ session header (host, duration, mode, date, file)                                  |
+| Summary pills: visible counts (main / iframe events and requests, actions, screenshots), compare delta | `renderSummary`                                | R2 / R4 | ⏳                                                                                    |
+| Recording profile summary and banners (downgraded, cancelled, unknown, capped)                         | `lib/recording-profile-view.ts`                | R5      | ⏳ next to "Encrypted" in the header                                                  |
+| Parallel tabs badge + jump to the snapshot                                                             | `buildParallelTabsBadge`, `jumpToParallelTabs` | R1 / R4 | ✅ "Other tabs open" chip selects the snapshot; ⏳ Tabs panel (R4)                    |
+
+## Code generation and exports
+
+| Feature                                                                              | Where                                                     | Stage | Status                               |
+| ------------------------------------------------------------------------------------ | --------------------------------------------------------- | ----- | ------------------------------------ |
+| Bug report (Markdown download, copy from triage)                                     | `#export-report`, `copyBugReportFromQuickTriage`          | R5    | ⏳ Generate menu                     |
+| HAR export                                                                           | `#export-har`                                             | R5    | ⏳                                   |
+| Playwright preview dialog (range, max actions, HAR replay; regenerate/copy/download) | `openPlaywrightPreviewDialog`, `lib/playwright-script.ts` | R5    | ⏳ range from the timeline selection |
+| Playwright with mocks                                                                | `exportPlaywrightMocks`                                   | R5    | ⏳                                   |
+| GitHub issue / Jira templates                                                        | `#export-github-issue`, `#export-jira-issue`              | R5    | ⏳                                   |
+
+## Platform
+
+| Feature                                            | Where                                                    | Stage | Status                                                                                                                                                 |
+| -------------------------------------------------- | -------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| EN / RU / 中文 dictionaries with key-parity test   | `lib/i18n.ts`, `lib/locales/*.json`                      | R1    | ✅ React strings in the `next` namespace (same parity test)                                                                                            |
+| Language switch                                    | `#player-locale` (reloads the page)                      | R1    | ✅ 🆕 live switch without reload (BACKLOG item 5): archive, playhead, selection, tab and filters stay; `lang`, Intl formats and `localStorage` updated |
+| Locale detection (`?lang`, stored choice, browser) | `detectPlayerLocale`                                     | R1    | ✅                                                                                                                                                     |
+| Intl number / byte / time formatting               | `createPlayerI18n`                                       | R1    | ✅ + `core/format.ts` (clock `m:ss.cc`)                                                                                                                |
+| Strict CSP (no inline scripts)                     | `public/index.html`, `csp.test.ts`                       | R1    | ✅ no inline scripts; Zod runs jitless (no `eval` probe, `src/zod-config.ts`)                                                                          |
+| Light theme only                                   | `public/styles.css`                                      | R1    | ✅ 🆕 system / light / dark (`data-theme`, stored)                                                                                                     |
+| Fonts                                              | system fonts                                             | R1    | ✅ 🆕 self-hosted Onest 400/500/600 + JetBrains Mono 400/600 (latin + cyrillic, OFL)                                                                   |
+| Player version and GitHub repo link in the toolbar | `shell.tsx`                                              | R5    | ⏳ header menu                                                                                                                                         |
+| GitHub Pages build / deploy                        | `scripts/prepare-pages-build.mjs`, `deploy-gh-pages.mjs` | R1    | ✅ unchanged; the bundle entry is `src/boot.ts` (both UIs)                                                                                             |
+| Example iframe pages                               | `public/examples/*`                                      | —     | ✅ unchanged static assets                                                                                                                             |
+| Classic e2e (`e2e:playback`)                       | `scripts/e2e-playback-regression.mjs`                    | R5    | ⏳ rewritten for the React UI; R1 adds `e2e:player-next`                                                                                               |
+
+## New in the redesign
+
+| Feature                                                                                                                                                                      | Stage   | Status                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------- |
+| One player-wide selection (time + object)                                                                                                                                    | R1      | ✅ `core/navigation.ts`, store `selection`                                             |
+| URL hash state `#t=…&sel=…&tab=…` (link to a moment; restored after reload)                                                                                                  | R1      | ✅ `core/url-hash.ts`, `useHashSync`                                                   |
+| Keyboard map (Space/K, ←/→, Shift, `,`/`.`, J/L, E/Shift+E, A, `/`, Ctrl+K, 1…7, Enter/Esc, ?)                                                                               | R1      | ✅ `core/keymap.ts`, shortcut sheet; ⏳ `[` / `]` range (R5), `F` full-width rail (R3) |
+| Responsive layout (≥ 1800 rail 680 px, 1280–1800 520 px, < 1280 compact header, < 900 one column, no horizontal scroll at 390 px)                                            | R1      | ✅                                                                                     |
+| Accessibility basics: one `<main>`, tabs roles, slider, listbox with `aria-selected`, live region, modal dialogs returning focus, `:focus-visible`, `prefers-reduced-motion` | R1 / R5 | ✅ basics; ⏳ full pass (R5)                                                           |
+| Problems strip, Errors only, Hide third-party (default on)                                                                                                                   | R2      | ⏳                                                                                     |
+| WebSocket / SSE conversation, full-width rail (`F`)                                                                                                                          | R3      | ⏳                                                                                     |
+| Event inspector, "what is in the archive", Expand lanes, timeline range selection                                                                                            | R5      | ⏳                                                                                     |
