@@ -270,6 +270,19 @@ describe("profile deletion and restore", () => {
     expect(restoreButton(container).disabled).toBe(true);
   });
 
+  it("marks Profiles unsaved when a preset that is not the default is deleted, and clean after Restore", async () => {
+    const { container, handle } = await mount(createStorage());
+
+    await deleteProfile(container, BUILT_IN_PROFILE_IDS.qa);
+
+    expect(handle.changedSections()).toEqual({ profiles: true, rules: false });
+
+    restoreButton(container).click();
+    await flush();
+
+    expect(handle.changedSections()).toEqual({ profiles: false, rules: false });
+  });
+
   it("keeps another profile's open form and its typed edits when a profile is deleted", async () => {
     const mine = duplicateProfile(createDefaultProfile(), { id: "mine", name: "Mine" });
     const { container } = await mount(createStorage({ profiles: [mine] }));

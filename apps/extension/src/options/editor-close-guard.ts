@@ -44,15 +44,23 @@ export function comparableStoreJson(store: RecordingProfilesStore): string {
   return stableJson({ ...store, profiles: store.profiles.map(comparableProfile) });
 }
 
-/** `saved` is the store as loaded or saved, after the same DOM read-back as the draft. */
+/**
+ * `saved` is the store as loaded or saved, after the same DOM read-back as the draft. A deleted
+ * preset only shows in `removedRecommendedProfileIds`, so it is part of the Profiles section.
+ */
 export function diffEditorSections(
   draft: RecordingProfilesStore,
   saved: RecordingProfilesStore
 ): EditorChanges {
+  const profilesPart = (store: RecordingProfilesStore) =>
+    stableJson([
+      store.defaultProfileId,
+      store.profiles.map(comparableProfile),
+      store.removedRecommendedProfileIds ?? []
+    ]);
+
   return {
-    profiles:
-      stableJson([draft.defaultProfileId, draft.profiles.map(comparableProfile)]) !==
-      stableJson([saved.defaultProfileId, saved.profiles.map(comparableProfile)]),
+    profiles: profilesPart(draft) !== profilesPart(saved),
     rules:
       stableJson([draft.rules, draft.extendedCaptureHosts]) !==
       stableJson([saved.rules, saved.extendedCaptureHosts])

@@ -204,6 +204,17 @@ async function checkOrphanedRulesAndRestore(deps, page, check) {
 
 /** Item 1's guard keeps working: deleting another profile keeps the open form and its edits. */
 async function checkOpenFormSurvivesDelete(deps, page, check) {
+  // A deleted preset that is not the default changes only the deleted-preset list.
+  await click(page, deleteOf("builtin:qa"));
+  check(await waitUntil(page, exists(DIALOG), WAIT_MS), "deleting QA: no prompt");
+  await acceptDelete(page, "builtin:qa", check);
+  check(
+    await isTrue(page, `${q("[data-section-link='profiles']")}?.dataset.dirty === "true"`),
+    "deleting a preset that is not the default did not mark the Profiles nav link"
+  );
+  await click(page, "[data-action='settings-cancel']");
+  check(await waitUntil(page, `!(${savebarDirty()})`, WAIT_MS), "Discard left the page unsaved");
+
   await click(page, "[data-profile-id='builtin:lite'] [data-action='profile-duplicate']");
   check(await waitUntil(page, exists("[data-profile-form]"), WAIT_MS), "Duplicate opened no form");
   await typeText(page, "#pf-name", "Lite copy edited");
