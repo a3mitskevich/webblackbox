@@ -140,7 +140,8 @@ export function collectScriptSourceMaps(
 /**
  * Stack frames carried by an error or console event: an `Error.stack`-style text (page errors,
  * rejections, CDP exception descriptions, logged errors), else CDP structured call frames, else
- * the console `stackTop`, else a page error's filename/line/column.
+ * the console `stackTop`, else a page error's filename/line/column. On a console entry a logged
+ * error's own stack wins over the entry's `stack`, which is where the console method was called.
  */
 export function extractEventStack(event: WebBlackboxEvent): StackFrame[] {
   const data = asRecord(event.data);
@@ -149,7 +150,7 @@ export function extractEventStack(event: WebBlackboxEvent): StackFrame[] {
     return [];
   }
 
-  for (const text of collectStackTexts(data)) {
+  for (const text of collectStackTexts(data, event.type === "console.entry")) {
     const frames = parseStackTrace(text);
 
     if (frames.length > 0) {
@@ -440,16 +441,19 @@ export function createArchiveSymbolicator(
   });
 }
 
-function collectStackTexts(data: Record<string, unknown>): string[] {
+function collectStackTexts(data: Record<string, unknown>, isConsoleEntry: boolean): string[] {
   const exception = asRecord(asRecord(data.exceptionDetails)?.exception);
   const args = Array.isArray(data.args) ? data.args.slice(0, MAX_STACK_ARGS) : [];
-  const candidates = [
-    data.stack,
-    asRecord(data.reason)?.stack,
-    asRecord(data.error)?.stack,
-    exception?.description,
-    ...args.map((arg) => (typeof arg === "string" ? arg : asRecord(arg)?.stack))
-  ];
+  const argStacks = args.map((arg) => (typeof arg === "string" ? arg : asRecord(arg)?.stack));
+  const candidates = isConsoleEntry
+    ? [...argStacks, data.stack]
+    : [
+        data.stack,
+        asRecord(data.reason)?.stack,
+        asRecord(data.error)?.stack,
+        exception?.description,
+        ...argStacks
+      ];
 
   return candidates.filter((value): value is string => typeof value === "string" && !!value);
 }

@@ -365,6 +365,23 @@ describe("extractEventStack", () => {
     ).toMatchObject({ line: 3, column: 4 });
     expect(extractEventStack(event("error.exception", "nope"))).toEqual([]);
   });
+
+  it("prefers a logged error's own stack over the console call site", () => {
+    const logged = "RangeError: bad\n    at n (https://x.test/app.min.js:1:75)";
+    const callSite =
+      "    at log (chrome-extension://id/injected.js:5:3)\n    at (anonymous) ((unknown):1:1)";
+
+    expect(
+      extractEventStack(
+        event("console.entry", { source: "cdp.runtime", args: [logged], stack: callSite })
+      )[0]
+    ).toMatchObject({ url: "https://x.test/app.min.js", line: 1, column: 75 });
+    expect(
+      extractEventStack(
+        event("console.entry", { source: "cdp.runtime", args: ["plain text"], stack: callSite })
+      )[0]?.url
+    ).toBe("chrome-extension://id/injected.js");
+  });
 });
 
 function scriptEvent(data: Record<string, unknown>): WebBlackboxEvent {
