@@ -1,4 +1,4 @@
-import { isTextualMimeType } from "@webblackbox/protocol";
+import { isBodySkipReason, isTextualMimeType } from "@webblackbox/protocol";
 
 import {
   asArray,
@@ -196,6 +196,11 @@ function normalizeRequestWillBeSent(row: Record<string, unknown>): Record<string
         headers,
         hasPostData,
         postData: body.text,
+        // Set by the host when it could not read a body CDP left out of the event.
+        postDataSkipped:
+          body.text === undefined && isBodySkipReason(request.postDataSkipped)
+            ? request.postDataSkipped
+            : undefined,
         initialPriority: asString(request.initialPriority),
         referrerPolicy: asString(request.referrerPolicy)
       })
