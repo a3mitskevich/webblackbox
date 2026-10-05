@@ -71,3 +71,26 @@ export function omitKeys(
 ): Record<string, unknown> {
   return Object.fromEntries(Object.entries(row).filter(([key]) => !keys.includes(key)));
 }
+
+/**
+ * Formats CDP call frames (0-based positions) as V8 `Error.stack` lines (`    at fn (url:line:col)`,
+ * 1-based), the text shape stack parsers and the source-map symbolicator read.
+ */
+export function formatV8CallFrames(callFrames: unknown[], maxFrames: number): string | undefined {
+  const lines = callFrames
+    .slice(0, maxFrames)
+    .map((entry) => asRecord(entry))
+    .filter((frame): frame is Record<string, unknown> => frame !== null)
+    .map((frame) => {
+      const functionName = asString(frame.functionName) || "(anonymous)";
+      const url = sanitizeOptionalUrl(asString(frame.url)) ?? "(unknown)";
+      return `    at ${functionName} (${url}:${toOneBased(frame.lineNumber) ?? 0}:${toOneBased(frame.columnNumber) ?? 0})`;
+    });
+
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+export function toOneBased(value: unknown): number | undefined {
+  const numeric = asFiniteNumber(value);
+  return numeric === null ? undefined : numeric + 1;
+}

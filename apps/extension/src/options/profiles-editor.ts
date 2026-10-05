@@ -1,11 +1,13 @@
 import type { ChromeApi } from "../shared/chrome-api.js";
 import type { ExtensionMessageKey } from "../shared/i18n.js";
+import { PROFILES_SECTION_ID } from "../shared/messages.js";
 import { readManagedEnterprisePolicy } from "../shared/options-storage.js";
 import { previewRedaction, type RedactionSandboxKind } from "../shared/redaction-sandbox.js";
 import { CAPTURE_CATEGORY_KEYS, CAPTURE_CATEGORY_LEVELS } from "../shared/profiles/categories.js";
 import { resolveLocalDataSettings } from "../shared/profiles/local-data.js";
 import {
-  DEFAULT_PROFILE_ID,
+  isBuiltInProfileId,
+  isManagedProfileId,
   isReadOnlyProfileId,
   PROFILES_STORAGE_KEY,
   type ProfileRule,
@@ -15,8 +17,11 @@ import {
 import { isExtendedCaptureProfile } from "../shared/profiles/resolve.js";
 import {
   describeIssues,
+  listStoreProfiles,
   parseManagedProfilesPolicy,
+  removeProfileFromStore,
   resolveProfilesState,
+  restoreRecommendedProfiles,
   serializeProfilesStore,
   syncDefaultProfileWithLegacyOptions,
   type ProfilesState
@@ -40,7 +45,6 @@ import {
   applyProfileFormValues,
   createUniqueId,
   formatValuePatternLines,
-  deleteProfileFromStore,
   duplicateIntoStore,
   formatQueryLines,
   joinLines,
@@ -58,8 +62,8 @@ export type ProfilesEditorDeps = {
 };
 
 export type ProfilesEditorHandle = {
-  /** Folds a general settings save into the draft's Default profile. */
-  applyGeneralOptions(payload: unknown): void;
+  /** Folds a general settings save (the fields changed from `shown`) into the draft's Default. */
+  applyGeneralOptions(payload: unknown, shown?: unknown): void;
 };
 
 type EditorState = {
@@ -99,19 +103,22 @@ export async function mountProfilesEditor(
   rerender();
 
   return {
-    applyGeneralOptions: (payload) => {
+    applyGeneralOptions: (payload, shown) => {
       const card = container.querySelector<HTMLElement>(".wb-profiles");
 
       if (card) {
         syncDraftFromDom(card, editor);
       }
 
-      editor.draft = syncDefaultProfileWithLegacyOptions(editor.draft, payload);
+      editor.draft = syncDefaultProfileWithLegacyOptions(editor.draft, payload, shown);
       // The general save is already stored; Cancel must not roll it back.
       const snapshot = editor.editingSnapshot;
       editor.editingSnapshot = snapshot
-        ? syncDefaultProfileWithLegacyOptions({ ...editor.draft, profiles: [snapshot] }, payload)
-            .profiles[0]
+        ? syncDefaultProfileWithLegacyOptions(
+            { ...editor.draft, profiles: [snapshot] },
+            payload,
+            shown
+          ).profiles[0]
         : undefined;
       rerender();
     }
@@ -142,7 +149,10 @@ function render(
 ): void {
   const { t } = deps;
   const catalog = buildCatalog(editor);
-  const card = el("section", { className: "card wb-options-card wb-profiles" });
+  const card = el("section", {
+    className: "card wb-options-card wb-profiles",
+    attrs: { id: PROFILES_SECTION_ID }
+  });
 
   card.append(
     el("h2", { className: "wb-options-section-title", text: t("optionsProfilesTitle") }),
@@ -163,6 +173,22 @@ function render(
   }
 
   card.append(createProfileList(editor, catalog, t));
+
+  if (catalog.length === 0) {
+    card.append(
+      el("p", {
+        className: "wb-options-status wb-options-status--error",
+        text: t("optionsProfilesEmpty"),
+        dataset: { profilesEmpty: "" }
+      })
+    );
+  }
+
+  card.append(
+    el("div", { className: "wb-options-actions" }, [
+      button(t("optionsProfilesRestore"), "profiles-restore")
+    ])
+  );
 
   const editing = editor.draft.profiles.find((profile) => profile.id === editor.editingId);
 
@@ -189,14 +215,12 @@ function render(
   bindEditor(card, editor, deps, rerender);
 }
 
+/** The draft's own profiles, then managed ones, then the presets the draft has not deleted. */
 function buildCatalog(editor: EditorState): RecordingProfile[] {
-  const userIds = new Set(editor.draft.profiles.map((profile) => profile.id));
-
   return [
     ...editor.draft.profiles,
-    ...editor.profilesState.catalog.filter(
-      (profile) => isReadOnlyProfileId(profile.id) && !userIds.has(profile.id)
-    )
+    ...editor.profilesState.catalog.filter((profile) => isManagedProfileId(profile.id)),
+    ...listStoreProfiles(editor.draft).filter((profile) => isBuiltInProfileId(profile.id))
   ];
 }
 
@@ -226,7 +250,8 @@ function createProfileList(
       actions.append(button(t("optionsProfileMakeDefault"), "profile-default"));
     }
 
-    if (!readOnly && profile.id !== DEFAULT_PROFILE_ID) {
+    // Any profile can be deleted, presets and Default included; policy profiles cannot.
+    if (!isManagedProfileId(profile.id)) {
       actions.append(button(t("optionsProfileDelete"), "profile-delete", "muted"));
     }
 
@@ -391,7 +416,8 @@ function createRulesSection(
   for (const rule of editor.draft.rules) {
     // A rule may target a profile that was deleted or dropped from managed policy; keep its id
     // selectable so the next sync does not blank it and block saving.
-    const ruleProfileOptions = catalog.some((profile) => profile.id === rule.profileId)
+    const profileExists = catalog.some((profile) => profile.id === rule.profileId);
+    const ruleProfileOptions = profileExists
       ? profileOptions
       : [
           ...profileOptions,
@@ -421,19 +447,21 @@ function createRulesSection(
             { value: "never", label: t("optionsRuleIncognitoNever") }
           ]
         ),
+        ...(profileExists
+          ? []
+          : [
+              el("p", {
+                className: "wb-options-status wb-options-status--error",
+                text: t("optionsRuleProfileMissingHint"),
+                dataset: { ruleMissing: "" }
+              })
+            ]),
         button(t("optionsProfileDelete"), "rule-delete", "muted")
       ])
     );
   }
 
-  section.append(
-    button(t("optionsRuleAdd"), "rule-add"),
-    labeledTextarea(
-      t("optionsExtendedHosts"),
-      "extendedCaptureHosts",
-      joinLines(editor.draft.extendedCaptureHosts)
-    )
-  );
+  section.append(button(t("optionsRuleAdd"), "rule-add"));
 
   return section;
 }
@@ -480,15 +508,13 @@ function describeImportDetails(diff: ProfilesDiff, t: Translate): string[] {
   const changed = [...diff.profiles.changed, ...diff.rules.changed].map(
     (entry) => `${entry.name} (${entry.fields.join(", ")})`
   );
-  const hosts = diff.extendedCaptureHosts;
 
   return [
     ...(diff.defaultProfileId ? [t("optionsProfilesImportDefault", diff.defaultProfileId)] : []),
-    ...(hosts.added.length > 0 || hosts.removed.length > 0
+    ...(diff.removedRecommendedProfileIds
       ? [
-          t("optionsProfilesImportHosts", {
-            added: hosts.added.join(", ") || "—",
-            removed: hosts.removed.join(", ") || "—"
+          t("optionsProfilesImportRemovedRecommended", {
+            ids: diff.removedRecommendedProfileIds.to.join(", ") || "—"
           })
         ]
       : []),
@@ -584,8 +610,12 @@ function bindEditor(
         });
       case "profile-delete":
         return update(() => {
-          editor.draft = deleteProfileFromStore(editor.draft, profileIdOf(target));
+          editor.draft = removeProfileFromStore(editor.draft, profileIdOf(target));
           closeProfileForm(editor);
+        });
+      case "profiles-restore":
+        return update(() => {
+          editor.draft = restoreRecommendedProfiles(editor.draft);
         });
       case "profile-apply":
         return update(() => closeProfileForm(editor));
@@ -737,7 +767,7 @@ function syncOpenProfileForm(card: HTMLElement, editor: EditorState): void {
   };
 }
 
-/** Rule rows and the extended host list are plain inputs; fold them into the draft. */
+/** Rule rows are plain inputs; fold them into the draft. */
 function syncRulesFromDom(card: HTMLElement, editor: EditorState): void {
   const rules: ProfileRule[] = [
     ...card.querySelectorAll<HTMLElement>(".wb-profiles__rule")
@@ -764,18 +794,7 @@ function syncRulesFromDom(card: HTMLElement, editor: EditorState): void {
         ]
       : [];
   });
-  const hostsField = card.querySelector<HTMLTextAreaElement>('[name="extendedCaptureHosts"]');
-
-  editor.draft = {
-    ...editor.draft,
-    rules,
-    extendedCaptureHosts: hostsField
-      ? hostsField.value
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-      : editor.draft.extendedCaptureHosts
-  };
+  editor.draft = { ...editor.draft, rules };
 }
 
 function newRule(editor: EditorState): ProfileRule {

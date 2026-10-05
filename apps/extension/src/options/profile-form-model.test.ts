@@ -1,15 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  DEFAULT_PROFILE_ID,
-  PROFILES_SCHEMA_VERSION,
-  type RecordingProfilesStore
-} from "../shared/profiles/model.js";
 import { BUILT_IN_PROFILE_IDS, createDefaultProfile } from "../shared/profiles/presets.js";
 import {
   applyProfileFormValues,
   createUniqueId,
-  deleteProfileFromStore,
+  duplicateIntoStore,
   formatQueryLines,
   formatValuePatternLines,
   parseValuePatternLines,
@@ -134,22 +129,30 @@ describe("profile form model", () => {
     });
   });
 
-  it("creates unique ids and deletes profiles with their rules", () => {
+  it("creates unique ids", () => {
     expect(createUniqueId("rule", ["rule-2", "rule-3"])).toBe("rule-4");
+  });
 
-    const store: RecordingProfilesStore = {
-      schemaVersion: PROFILES_SCHEMA_VERSION,
-      defaultProfileId: "custom",
-      profiles: [createDefaultProfile(), { ...createDefaultProfile(), id: "custom" }],
-      rules: [{ id: "r", profileId: "custom", priority: 0, enabled: true, match: {} }],
+  it("never gives a copy the id a rule or the default still points to", () => {
+    // A rule left behind by a deleted profile must not silently start using a new copy.
+    const store = {
+      schemaVersion: 2 as const,
+      defaultProfileId: "profile-3",
+      profiles: [createDefaultProfile()],
+      rules: [
+        {
+          id: "bank",
+          profileId: "profile-2",
+          priority: 1,
+          enabled: true,
+          match: { hosts: ["*.bank.example"] }
+        }
+      ],
       extendedCaptureHosts: []
     };
-    const next = deleteProfileFromStore(store, "custom");
+    const { id } = duplicateIntoStore(store, createDefaultProfile());
 
-    expect(next.defaultProfileId).toBe(DEFAULT_PROFILE_ID);
-    expect(next.profiles.map((profile) => profile.id)).toEqual([DEFAULT_PROFILE_ID]);
-    expect(next.rules).toEqual([]);
-    expect(deleteProfileFromStore(store, DEFAULT_PROFILE_ID)).toBe(store);
+    expect(id).toBe("profile-4");
   });
 
   it("keeps the local data block absent until the form departs from the defaults", () => {

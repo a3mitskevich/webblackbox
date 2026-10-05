@@ -40,7 +40,7 @@ function snapshot(
     profile: {
       request: "auto",
       selection,
-      history: [selection],
+      profileConfig: DEFAULT_RECORDER_CONFIG,
       visualsCaptured: { screenshots: false, screenRecordings: false }
     },
     config: DEFAULT_RECORDER_CONFIG,
@@ -79,6 +79,31 @@ describe("stopped session store", () => {
     const restored = await createStoppedSessionStore(area).list();
 
     expect(restored).toEqual([JSON.parse(JSON.stringify(snapshot("S-1")))]);
+  });
+
+  it("keeps why a cancelled recording stopped, and whether the popup showed it", async () => {
+    const area = createArea();
+    const started = { id: "builtin:qa", name: "QA", source: "rule" as const, extended: false };
+    const cancelled = snapshot("S-1", {
+      profile: {
+        ...snapshot("S-1").profile,
+        cancellation: { reason: "rule-changed", trigger: "navigation", at: 1_500, started },
+        cancellationAcknowledged: false
+      }
+    });
+
+    await createStoppedSessionStore(area).remember(cancelled);
+    const [restored] = await createStoppedSessionStore(area).list();
+
+    expect(restored?.profile.cancellation).toEqual(cancelled.profile.cancellation);
+    expect(restored?.profile.cancellationAcknowledged).toBe(false);
+  });
+
+  it("drops a snapshot without the profile's recorder config", () => {
+    const profile: Record<string, unknown> = { ...snapshot("S-1").profile };
+    delete profile.profileConfig;
+
+    expect(parseStoppedSessionSnapshots([{ ...snapshot("S-1"), profile }])).toEqual([]);
   });
 
   it("replaces a snapshot of the same session and forgets it on disposal", async () => {

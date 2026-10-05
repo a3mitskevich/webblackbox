@@ -24,11 +24,11 @@ Enterprise deployments can provide a managed policy object through `chrome.stora
 }
 ```
 
-`siteDenylist` wins over `siteAllowlist`. If `siteAllowlist` is non-empty, recording is denied outside the allowlist. `disableLabMode` forces lab-only categories such as full CDP and heap profiles off. `dataCategoryCaps` are a ceiling for every recording profile, presets included.
+`siteDenylist` wins over `siteAllowlist`. If `siteAllowlist` is non-empty, recording is denied outside the allowlist. `disableLabMode` forces lab-only categories such as full CDP and heap profiles off. `dataCategoryCaps` are a ceiling for every recording profile, presets included; the popup names the capped categories and archives record them. If the policy changes what a running recording's profile may record, the recording is stopped as soon as the policy changes and the user is told why.
 
 ### Managed Recording Profiles And Rules
 
-The same policy object may ship read-only recording profiles and site rules. They appear to users as `managed:<id>` and cannot be edited, only duplicated. Rules may point at managed profiles or at the built-in presets (`builtin:lite`, `builtin:full`, `builtin:qa`, `builtin:full-capture`). Rules never start recording; they only pick the profile.
+The same policy object may ship read-only recording profiles and site rules. They appear to users as `managed:<id>` and cannot be edited or deleted, only duplicated. Users can delete the built-in presets; a rule that points at a deleted preset is skipped until the user restores the recommended profiles. Rules may point at managed profiles or at the built-in presets (`builtin:lite`, `builtin:full`, `builtin:qa`, `builtin:full-capture`). Rules never start recording; they only pick the profile.
 
 ```json
 {
@@ -47,7 +47,7 @@ The same policy object may ship read-only recording profiles and site rules. The
 }
 ```
 
-Profiles use the same JSON shape as the options page export (`Export JSON`). Only `id` and `name` are required: missing blocks and fields (`categories`, `redaction`, `network`, `pointer`, `sampling`, `recorder`, `export`, `base`, `unmaskSelectors`, `sitePolicies`) take the Default profile's values, and a profile with an invalid value is skipped and reported on the options page. A list you set replaces the default list instead of adding to it: a `redaction.blockedSelectors` without `input[type='password']` and the other default entries blocks only what you list. Hosts listed in the enterprise `siteAllowlist` also allow extended profiles such as QA and Full capture.
+Profiles use the same JSON shape as the options page export (`Export JSON`). Only `id` and `name` are required: missing blocks and fields (`categories`, `redaction`, `network`, `pointer`, `sampling`, `recorder`, `export`, `base`, `unmaskSelectors`, `sitePolicies`) take the Default profile's values, and a profile with an invalid value is skipped and reported on the options page. A list you set replaces the default list instead of adding to it: a `redaction.blockedSelectors` without `input[type='password']` and the other default entries blocks only what you list.
 
 ## Self-Hosted Share Server
 

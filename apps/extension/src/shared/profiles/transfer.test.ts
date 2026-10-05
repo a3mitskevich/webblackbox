@@ -135,13 +135,43 @@ describe("previewProfilesImport", () => {
     expect(preview).toMatchObject({ ok: false, error: expect.stringContaining("rule #2") });
   });
 
-  it("rejects rules and defaults that point to missing profiles", () => {
-    expect(
-      previewProfilesImport(exported({ rules: [{ ...STAGE_RULE, profileId: "ghost" }] }), store())
-    ).toMatchObject({ ok: false, error: expect.stringContaining('unknown profile "ghost"') });
-    expect(previewProfilesImport(exported({ defaultProfileId: "ghost" }), store())).toMatchObject({
-      ok: false,
-      error: expect.stringContaining('Default profile "ghost"')
+  it("keeps rules and a default that point to deleted profiles, as the store does", () => {
+    // Deleting a profile keeps its rules (skipped and flagged until it exists again), and deleting
+    // every profile keeps the default id: such a store must survive its own export.
+    const orphanRule = { ...STAGE_RULE, profileId: "ghost" };
+    const withOrphanRule = store({ rules: [orphanRule] });
+    const ruleRoundTrip = previewProfilesImport(exported({ rules: [orphanRule] }), withOrphanRule);
+
+    expect(ruleRoundTrip.ok && ruleRoundTrip.next).toEqual(withOrphanRule);
+
+    const emptied = store({
+      defaultProfileId: "ghost",
+      profiles: [],
+      removedRecommendedProfileIds: [DEFAULT_PROFILE_ID]
     });
+    const emptyRoundTrip = previewProfilesImport(
+      JSON.stringify(createProfilesExportFile(emptied)),
+      emptied
+    );
+
+    expect(emptyRoundTrip.ok && emptyRoundTrip.next).toEqual(emptied);
+  });
+
+  it("carries deleted recommended profiles and reports restoring or deleting them", () => {
+    const withoutQa = store({ removedRecommendedProfileIds: [BUILT_IN_PROFILE_IDS.qa] });
+    const file = createProfilesExportFile(withoutQa);
+    const roundTrip = previewProfilesImport(JSON.stringify(file), withoutQa);
+
+    expect(file.removedRecommendedProfileIds).toEqual([BUILT_IN_PROFILE_IDS.qa]);
+    expect(roundTrip.ok && roundTrip.next).toEqual(withoutQa);
+    expect(roundTrip.ok && roundTrip.diff.hasChanges).toBe(false);
+
+    const deleting = previewProfilesImport(JSON.stringify(file), store());
+    expect(deleting.ok && deleting.diff.removedRecommendedProfileIds).toEqual({
+      from: [],
+      to: [BUILT_IN_PROFILE_IDS.qa]
+    });
+    expect(deleting.ok && deleting.diff.hasChanges).toBe(true);
+    expect("removedRecommendedProfileIds" in createProfilesExportFile(store())).toBe(false);
   });
 });

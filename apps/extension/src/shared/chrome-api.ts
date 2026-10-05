@@ -225,6 +225,9 @@ export type ChromeApi = {
         keys?: string[] | string | Record<string, unknown> | null
       ): Promise<Record<string, unknown>>;
     };
+    onChanged?: {
+      addListener(callback: (changes: Record<string, unknown>, areaName: string) => void): void;
+    };
   };
   tabs?: {
     create(createProperties: { url?: string; active?: boolean }): Promise<{
@@ -241,6 +244,7 @@ export type ChromeApi = {
       title?: string;
       incognito?: boolean;
       lastAccessed?: number;
+      status?: "unloaded" | "loading" | "complete";
     }>;
     query(queryInfo: {
       active?: boolean;

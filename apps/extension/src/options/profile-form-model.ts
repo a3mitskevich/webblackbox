@@ -15,7 +15,6 @@ import {
   resolveLocalDataSettings
 } from "../shared/profiles/local-data.js";
 import {
-  DEFAULT_PROFILE_ID,
   MAX_BODY_CAPTURE_BYTES,
   MAX_MOUSEMOVE_HZ,
   MAX_RULE_PRIORITY,
@@ -279,32 +278,18 @@ export function duplicateIntoStore(
   store: RecordingProfilesStore,
   source: RecordingProfile
 ): { store: RecordingProfilesStore; id: string } {
-  const id = createUniqueId(
-    "profile",
-    store.profiles.map((profile) => profile.id)
-  );
+  // Ids that rules or the default still point to are taken too: a rule left by a deleted profile
+  // must not silently start using the copy.
+  const taken = new Set([
+    ...store.profiles.map((profile) => profile.id),
+    ...store.rules.map((rule) => rule.profileId),
+    store.defaultProfileId
+  ]);
+  const id = createUniqueId("profile", [...taken]);
 
   return {
     id,
     store: { ...store, profiles: [...store.profiles, duplicateProfile(source, { id })] }
-  };
-}
-
-/** Removes a user profile, its rules, and resets the default when needed. */
-export function deleteProfileFromStore(
-  store: RecordingProfilesStore,
-  profileId: string
-): RecordingProfilesStore {
-  if (profileId === DEFAULT_PROFILE_ID) {
-    return store;
-  }
-
-  return {
-    ...store,
-    defaultProfileId:
-      store.defaultProfileId === profileId ? DEFAULT_PROFILE_ID : store.defaultProfileId,
-    profiles: store.profiles.filter((profile) => profile.id !== profileId),
-    rules: store.rules.filter((rule) => rule.profileId !== profileId)
   };
 }
 

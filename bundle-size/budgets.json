@@ -2,14 +2,15 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 70700,
-      "maxGzipBytes": 16450,
-      "note": "Measured 68,581 / 15,968 B (+3%): CDP allowlists and runtime error policy (#9) plus per-profile redaction rules (#10); no dead code or duplicated helpers left to cut."
+      "maxBytes": 78300,
+      "maxGzipBytes": 18400,
+      "note": "Measured 76,018 / 17,842 B (+3%): full console detail, the CDP cache tracker and byte-capped stream bodies (#9) plus per-profile redaction rules (#10)."
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 80000,
-      "maxGzipBytes": 18000
+      "maxBytes": 82600,
+      "maxGzipBytes": 18200,
+      "note": "Measured 80,191 / 17,596 B (+3%): sealed session metadata, indexes and integrity at rest (#15) on top of #9/#10."
     },
     {
       "path": "packages/player-sdk/dist/index.js",
@@ -23,14 +24,15 @@
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 48500,
-      "maxGzipBytes": 13000
+      "maxBytes": 54100,
+      "maxGzipBytes": 14300,
+      "note": "Measured 52,488 / 13,848 B (+3%): the shared UI dictionary with the profile-change and profile-deletion strings (#10) and the local data settings strings (#15); #14 moves the dictionary out of the content script."
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 889000,
-      "maxGzipBytes": 158000,
-      "note": "Measured 871,335 / 154,920 B (CI) with at-rest encryption and stopped recordings restored across worker restarts (#15) on top of 850,791 / 150,067 B (+3%) for recording profiles, redaction rules and the linear regex engine (#10)."
+      "maxBytes": 908800,
+      "maxGzipBytes": 162500,
+      "note": "Measured 882,286 / 157,710 B (+3%): recording profiles, cancellation on profile change and profile deletion (#10) plus at-rest encryption and stopped recordings restored across worker restarts (#15)."
     }
   ]
 }

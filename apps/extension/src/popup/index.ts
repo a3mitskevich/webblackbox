@@ -10,6 +10,7 @@ import { getChromeApi } from "../shared/chrome-api.js";
 import { createExtensionI18n } from "../shared/i18n.js";
 import {
   PORT_NAMES,
+  PROFILES_SECTION_ID,
   type ExportPrivacyWarning,
   type ExtensionInboundMessage,
   type ExtensionOutboundMessage,
@@ -18,7 +19,10 @@ import {
   type SessionListItem
 } from "../shared/messages.js";
 import {
+  createProfileCancelSection,
   createProfilePickerSection,
+  createProfileRequirementSection,
+  hasNoRecordingProfiles,
   loadProfileChoice,
   PROFILE_CHOICE_AUTO,
   saveProfileChoice,
@@ -230,7 +234,11 @@ function render(container: HTMLElement): void {
   const exportStatusClass = state.exportStatusIsError
     ? "wb-popup__status wb-popup__status--error"
     : "wb-popup__status";
-  const startDisabled = Boolean(activeOnCurrentTab || pendingOnCurrentTab);
+  const noProfiles = hasNoRecordingProfiles(state.profilePreview);
+  const startDisabled = Boolean(activeOnCurrentTab || pendingOnCurrentTab || noProfiles);
+  const cancelledSession =
+    tabSessions.find((item) => item.profileCancel) ??
+    sortedSessions.find((item) => item.profileCancel);
   const section = document.createElement("section");
   section.className = "card wb-popup";
 
@@ -258,14 +266,25 @@ function render(container: HTMLElement): void {
     section.append(createRingUsageSection(ringUsage));
   }
 
+  if (cancelledSession?.profileCancel) {
+    section.append(
+      createProfileCancelSection(
+        { sid: cancelledSession.sid, profileCancel: cancelledSession.profileCancel },
+        t
+      )
+    );
+  }
+
   section.append(
-    createProfilePickerSection({
-      preview: state.profilePreview,
-      choice: state.profileChoice,
-      disabled: startDisabled,
-      t,
-      formatMode
-    })
+    noProfiles
+      ? createProfileRequirementSection(t)
+      : createProfilePickerSection({
+          preview: state.profilePreview,
+          choice: state.profileChoice,
+          disabled: startDisabled,
+          t,
+          formatMode
+        })
   );
 
   const actions = document.createElement("div");
@@ -406,6 +425,22 @@ function bindActions(
   container.querySelector("[data-action='open-options']")?.addEventListener("click", () => {
     void openExtensionPage("options.html");
   });
+
+  for (const button of container.querySelectorAll("[data-action='open-profiles']")) {
+    button.addEventListener("click", () => {
+      void openExtensionPage(`options.html#${PROFILES_SECTION_ID}`);
+    });
+  }
+
+  container
+    .querySelector<HTMLElement>("[data-action='ack-profile-cancel']")
+    ?.addEventListener("click", (event) => {
+      const sid = (event.currentTarget as HTMLElement).dataset.sid;
+
+      if (sid) {
+        postUiMessage({ kind: "ui.ack-profile-cancel", sid });
+      }
+    });
 }
 
 async function openExtensionPage(path: string): Promise<void> {

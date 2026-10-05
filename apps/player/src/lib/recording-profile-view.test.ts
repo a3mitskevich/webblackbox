@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createPlayerI18n } from "./i18n.js";
 import {
   formatPrivacyViolationText,
+  formatRecordingProfileBanner,
   formatRecordingProfileSummary,
   isConsolePrivacyViolation
 } from "./recording-profile-view.js";
@@ -57,5 +58,59 @@ describe("recording profile view", () => {
     ).toBe(
       "profile Default → profile QA (rule Stage) → profile Full (Full capture not allowed on this site)"
     );
+  });
+
+  it("warns when the recording was stopped because its profile changed", () => {
+    const entries = [{ t: 1, mono: 1, id: "builtin:qa", name: "QA", extended: true }];
+
+    expect(formatRecordingProfileBanner(entries, null, i18n)).toEqual([]);
+    expect(
+      formatRecordingProfileBanner(
+        entries,
+        {
+          t: 9,
+          mono: 9,
+          reason: "rule-changed",
+          started: { id: "builtin:qa", name: "QA" },
+          next: { id: "default", name: "Default" }
+        },
+        i18n
+      )
+    ).toEqual([
+      "Recording stopped early: it recorded with QA, but after a navigation the site rules picked Default. Nothing after that point was recorded."
+    ]);
+    expect(
+      formatRecordingProfileBanner(entries, { t: 9, mono: 9, reason: "something-new" }, i18n)
+    ).toEqual(["Recording stopped early: the recording profile changed (something-new)."]);
+  });
+
+  it("warns about old downgraded archives and enterprise caps", () => {
+    expect(
+      formatRecordingProfileBanner(
+        [
+          {
+            t: 1,
+            mono: 1,
+            id: "builtin:full",
+            name: "Full",
+            extended: false,
+            downgradedFrom: { id: "builtin:full-capture", name: "Full capture" }
+          },
+          {
+            t: 2,
+            mono: 2,
+            id: "builtin:qa",
+            name: "QA",
+            extended: true,
+            enterpriseCapped: ["console", "network"]
+          }
+        ],
+        null,
+        i18n
+      )
+    ).toEqual([
+      "Recorded with Full instead of Full capture: Full capture was not allowed on this site, so data only Full capture records is missing.",
+      "The organization's policy limited QA: console, network."
+    ]);
   });
 });

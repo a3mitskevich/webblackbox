@@ -2,6 +2,7 @@ import type { CaptureMode, RecorderConfig } from "@webblackbox/protocol";
 
 import type { FullModeVisualCapture } from "../shared/messages.js";
 import type { ProfileSelection } from "../shared/profiles/resolve.js";
+import type { ProfileCancellation } from "./profile-change.js";
 import type { CapturedVisuals } from "./profile-runtime.js";
 
 /**
@@ -32,8 +33,11 @@ export type StoppedSessionSnapshot = {
     request: string;
     visualCapture?: FullModeVisualCapture;
     selection: ProfileSelection;
-    history: ProfileSelection[];
+    profileConfig: RecorderConfig;
     visualsCaptured: CapturedVisuals;
+    /** A recording cancelled by a profile change keeps its reason for the popup and badge. */
+    cancellation?: ProfileCancellation;
+    cancellationAcknowledged?: boolean;
   };
   config: RecorderConfig;
   counters: {
@@ -225,7 +229,7 @@ function parseStoppedSessionSnapshot(value: unknown): StoppedSessionSnapshot | n
     typeof profile.request !== "string" ||
     !isRecord(profile.selection) ||
     !isRecord(profile.selection.profile) ||
-    !Array.isArray(profile.history) ||
+    !isRecord(profile.profileConfig) ||
     !isRecord(profile.visualsCaptured) ||
     !isRecord(config) ||
     !isRecord(config.redaction)

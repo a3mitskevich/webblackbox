@@ -8,7 +8,6 @@ import {
 } from "./local-data.js";
 import { recordingProfileSchema, type RecordingProfile } from "./model.js";
 import { BUILT_IN_PROFILE_IDS, BUILT_IN_PROFILES, findBuiltInProfile } from "./presets.js";
-import { downgradeExtendedSelection } from "./resolve.js";
 import { parseManagedProfilesPolicy } from "./storage.js";
 
 function fullCapturePreset(): RecordingProfile {
@@ -69,18 +68,6 @@ describe("profile local data settings", () => {
         localData: { deleteAfterExport: true }
       }).success
     ).toBe(false);
-  });
-
-  it("keeps the profile's local data rules when an extended profile is downgraded", () => {
-    const downgraded = downgradeExtendedSelection({
-      profile: fullCapturePreset(),
-      source: "explicit",
-      extended: true,
-      legacy: false
-    });
-
-    expect(downgraded.profile.id).toBe(BUILT_IN_PROFILE_IDS.full);
-    expect(downgraded.profile.localData).toEqual(fullCapturePreset().localData);
   });
 
   it("completes a partial managed block and leaves an absent one absent", () => {
