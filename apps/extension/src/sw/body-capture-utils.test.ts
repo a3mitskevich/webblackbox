@@ -43,7 +43,7 @@ describe("body-capture utils", () => {
         },
         resolveRule
       )
-    ).toBe(false);
+    ).toBe("filtered");
     expect(
       isInlineRequestBodyAllowed(
         {
@@ -54,6 +54,16 @@ describe("body-capture utils", () => {
         resolveRule
       )
     ).toBe(true);
+    expect(
+      isInlineRequestBodyAllowed(
+        {
+          eventType: "network.request",
+          url: "https://app.example.com/upload",
+          mimeType: "application/octet-stream"
+        },
+        resolveRule
+      )
+    ).toBe("mime-not-allowed");
     expect(isInlineRequestBodyAllowed({ eventType: "network.ws.frame" }, resolveRule)).toBe(true);
   });
 
