@@ -854,7 +854,7 @@ async function handleInboundMessage(
   }
 
   if (message.kind === "ui.resolve-profile") {
-    const preview = await resolveProfilePreview(message.tabId, message.profileId);
+    const preview = await resolveProfilePreview(message.tabId, senderTabId, message.profileId);
 
     if (port) {
       sendPortMessage(port, preview);
@@ -1469,10 +1469,12 @@ function loadSessionProfilesState(): Promise<ProfilesState> {
 
 async function resolveProfilePreview(
   requestedTabId: number | undefined,
+  senderTabId: number | undefined,
   requestedProfileId: string | undefined
 ): Promise<ReturnType<typeof buildProfilePreview>> {
   const state = await loadSessionProfilesState();
-  const tabId = await resolveUiActionTabId(requestedTabId);
+  // The same tab `ui.start` would record, so the preview shows the profile Start applies.
+  const tabId = await resolveUiActionTarget(requestedTabId, senderTabId);
 
   if (typeof tabId !== "number") {
     return buildProfilePreview(state, null);
