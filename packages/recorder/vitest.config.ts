@@ -27,7 +27,14 @@ export default defineConfig({
         lines: 80,
         statements: 80,
         functions: 80,
-        branches: 65
+        branches: 65,
+        // Privacy-critical code: keep a stricter per-file floor than the package default.
+        "src/redaction.ts": {
+          lines: 85,
+          statements: 85,
+          functions: 85,
+          branches: 75
+        }
       }
     }
   }

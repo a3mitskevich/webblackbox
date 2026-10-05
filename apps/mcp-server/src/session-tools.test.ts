@@ -225,6 +225,24 @@ describe("session tools", () => {
     );
   });
 
+  it("refuses zip-bomb archives through the player-sdk load limits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "wb-mcp-zip-bomb-"));
+    tempDirs.push(root);
+
+    const archivePath = join(root, "bomb.webblackbox");
+    const bombPath = "blobs/sha256-bomb.bin";
+    const archiveBytes = declareUncompressedSize(
+      await createArchiveFixture(createBaselineEvents(), { [bombPath]: "0" }),
+      bombPath,
+      0xf000_0000
+    );
+    await writeFile(archivePath, Buffer.from(archiveBytes));
+
+    await expect(summarizeActions({ path: archivePath })).rejects.toThrowError(
+      /Failed to open archive '.*bomb\.webblackbox': Archive entry 'blobs\/sha256-bomb\.bin' declares 4026531840 uncompressed bytes/
+    );
+  });
+
   it("throws helpful errors when report archive is missing", async () => {
     const missing = join(tmpdir(), `wb-mcp-missing-${Date.now()}.webblackbox`);
 
@@ -288,7 +306,10 @@ describe("session tools", () => {
   });
 });
 
-async function createArchiveFixture(events: WebBlackboxEvent[]): Promise<Uint8Array> {
+async function createArchiveFixture(
+  events: WebBlackboxEvent[],
+  extraFiles: Record<string, string> = {}
+): Promise<Uint8Array> {
   const zip = new JSZip();
   const firstEvent = events[0];
   const lastEvent = events[events.length - 1];
@@ -358,6 +379,10 @@ async function createArchiveFixture(events: WebBlackboxEvent[]): Promise<Uint8Ar
     events.map((event) => JSON.stringify(event)).join("\n")
   );
 
+  for (const [path, content] of Object.entries(extraFiles)) {
+    addTextFile(path, content);
+  }
+
   const fileHashes = Object.fromEntries(
     [...files.entries()].map(([path, content]) => [path, sha256Hex(content)])
   );
@@ -368,6 +393,28 @@ async function createArchiveFixture(events: WebBlackboxEvent[]): Promise<Uint8Ar
   });
 
   return zip.generateAsync({ type: "uint8array" });
+}
+
+/** Rewrites the declared uncompressed size of one entry in its local and central headers. */
+function declareUncompressedSize(source: Uint8Array, entryPath: string, size: number): Uint8Array {
+  const output = Buffer.from(source);
+  const name = Buffer.from(entryPath);
+
+  for (let offset = 0; offset + 46 <= output.length; offset += 1) {
+    const signature = output.readUInt32LE(offset);
+
+    if (signature === 0x04034b50 && output.readUInt16LE(offset + 26) === name.length) {
+      if (output.subarray(offset + 30, offset + 30 + name.length).equals(name)) {
+        output.writeUInt32LE(size, offset + 22);
+      }
+    } else if (signature === 0x02014b50 && output.readUInt16LE(offset + 28) === name.length) {
+      if (output.subarray(offset + 46, offset + 46 + name.length).equals(name)) {
+        output.writeUInt32LE(size, offset + 24);
+      }
+    }
+  }
+
+  return new Uint8Array(output);
 }
 
 function sha256Hex(content: string): string {

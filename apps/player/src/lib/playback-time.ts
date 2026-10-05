@@ -1,3 +1,4 @@
+import { compareEventsForTimeline } from "@webblackbox/player-sdk";
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 
 export type PlaybackTimeNormalization = {
@@ -29,9 +30,7 @@ export function normalizePlaybackEvents(events: WebBlackboxEvent[]): PlaybackTim
             mono: normalizedMono
           };
     })
-    .sort(
-      (left, right) => left.mono - right.mono || left.t - right.t || left.id.localeCompare(right.id)
-    );
+    .sort(compareEventsForTimeline);
 
   const monoByEventId = new Map<string, number>();
 
