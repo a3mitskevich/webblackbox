@@ -64,9 +64,11 @@ function StageColumn() {
  */
 function Workspace() {
   const wide = useMediaQuery(WIDE_LAYOUT_QUERY);
+  const railWide = usePlayerState((state) => state.railWide);
+  const layout = wide ? "body body-split" : "body body-stacked";
 
   return (
-    <main className={wide ? "body body-split" : "body body-stacked"}>
+    <main className={railWide ? `${layout} body-rail-wide` : layout} data-testid="workspace">
       <BodySplit stacked={!wide} stage={<StageColumn />} rail={<Rail />} />
     </main>
   );

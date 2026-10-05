@@ -54,6 +54,8 @@ export type PlayerState = {
   /** Text filter of the rail lists and the header search. */
   query: string;
   detailsOpen: boolean;
+  /** `F`: the rail takes the whole width (the stage stays mounted, hidden). */
+  railWide: boolean;
   shortcutsOpen: boolean;
   dragActive: boolean;
   /** Polite live-region message (jumps, loading results). */
@@ -79,6 +81,7 @@ export function createInitialState(locale: PlayerLocale, theme: ThemePreference)
     tab: "activity",
     query: "",
     detailsOpen: false,
+    railWide: false,
     shortcutsOpen: false,
     dragActive: false,
     announcement: "",

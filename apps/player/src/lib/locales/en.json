@@ -491,6 +491,7 @@
     "keySearch": "Search",
     "keyTabs": "Switch the panel",
     "keyDetails": "Open details / close",
+    "keyRailWide": "Full-width rail (Network, Console)",
     "keyShortcuts": "This sheet",
     "announceError": "Error {index} of {count}: {label}, {time}",
     "announceNoMore": "No more {what} in this direction.",

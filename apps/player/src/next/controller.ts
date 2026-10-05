@@ -498,7 +498,14 @@ export function createPlayerController(
         update({ shortcutsOpen: false });
       } else if (state.detailsOpen) {
         update({ detailsOpen: false });
+      } else if (state.railWide) {
+        update({ railWide: false });
       }
+    },
+
+    /** F: the rail takes the whole width, or gives the stage its column back. */
+    toggleRailWide(): void {
+      update({ railWide: !store.getState().railWide });
     },
 
     setShortcutsOpen(shortcutsOpen: boolean): void {

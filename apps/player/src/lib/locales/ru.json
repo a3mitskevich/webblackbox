@@ -491,6 +491,7 @@
     "keySearch": "Поиск",
     "keyTabs": "Переключить панель",
     "keyDetails": "Открыть подробности / закрыть",
+    "keyRailWide": "Рейл на всю ширину (Сеть, Консоль)",
     "keyShortcuts": "Эта шпаргалка",
     "announceError": "Ошибка {index} из {count}: {label}, {time}",
     "announceNoMore": "Дальше в эту сторону нет: {what}.",

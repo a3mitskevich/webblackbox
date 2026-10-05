@@ -57,6 +57,9 @@ function runCommand(
     case "show-shortcuts":
       controller.setShortcutsOpen(true);
       return;
+    case "toggle-rail-wide":
+      controller.toggleRailWide();
+      return;
   }
 }
 
