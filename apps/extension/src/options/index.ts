@@ -513,8 +513,9 @@ function createRuntimeProfilesSection(): HTMLElement {
   title.textContent = t("optionsRuntimeProfilesTitle");
 
   const summary = createHelpText([t("optionsRuntimeProfilesSummary")], { variant: "flush" });
+  const localData = createHelpText([t("localDataRestartNotice")], { variant: "flush" });
 
-  section.append(title, summary, ...createModeProfileCards());
+  section.append(title, summary, localData, ...createModeProfileCards());
   return section;
 }
 

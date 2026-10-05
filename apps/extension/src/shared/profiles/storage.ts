@@ -23,6 +23,7 @@ import {
   type RecordingProfile,
   type RecordingProfilesStore
 } from "./model.js";
+import { DEFAULT_LOCAL_DATA_SETTINGS } from "./local-data.js";
 import {
   BUILT_IN_PROFILES,
   createBaseProfile,
@@ -375,13 +376,16 @@ function withManagedProfileDefaults(entry: unknown): unknown {
       return [key, value ? { ...base[key], ...value } : (record[key] ?? base[key])];
     })
   );
+  const localData = asRecord(record.localData);
 
   return {
     base: base.base,
     unmaskSelectors: base.unmaskSelectors,
     sitePolicies: base.sitePolicies,
     ...record,
-    ...blocks
+    ...blocks,
+    // Optional block: absent stays absent (the defaults); a partial one is completed.
+    ...(localData ? { localData: { ...DEFAULT_LOCAL_DATA_SETTINGS, ...localData } } : {})
   };
 }
 

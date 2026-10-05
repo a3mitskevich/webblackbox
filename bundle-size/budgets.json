@@ -8,8 +8,9 @@
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 79000,
-      "maxGzipBytes": 18000
+      "maxBytes": 82600,
+      "maxGzipBytes": 18200,
+      "note": "Measured 80,191 / 17,596 B (+3%): sealed session metadata, indexes and integrity at rest (#15) on top of #9/#10."
     },
     {
       "path": "packages/player-sdk/dist/index.js",
@@ -24,9 +25,9 @@
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 53400,
-      "maxGzipBytes": 14100,
-      "note": "Measured 51,816 / 13,675 B (+3%): content.js bundles the shared UI dictionary, which grew with the profile-change and profile-deletion strings; #14 moves the dictionary out of the content script."
+      "maxBytes": 54100,
+      "maxGzipBytes": 14300,
+      "note": "Measured 52,488 / 13,848 B (+3%): the shared UI dictionary with the profile-change and profile-deletion strings (#10) and the local data settings strings (#15); #14 moves the dictionary out of the content script."
     },
     {
       "path": "apps/extension/build/sw.js",

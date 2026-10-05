@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { compileTitleRegex, MAX_MATCHED_TITLE_LENGTH } from "./title-regex.js";
 
-const FAST_MATCH_MS = 50;
+/**
+ * Catastrophic backtracking on a 256-character title takes seconds to years, so this budget
+ * separates it from a busy shared CI runner (one 50 ms limit measured 50.4 ms there).
+ */
+const FAST_MATCH_MS = 250;
+const TIMED_RUNS = 5;
 const FUZZ_PATTERNS = 3_000;
 const FUZZ_TITLES_PER_PATTERN = 12;
 
@@ -72,10 +77,17 @@ function randomTitle(random: () => number): string {
   );
 }
 
-function elapsedMs(run: () => unknown): number {
-  const started = performance.now();
-  run();
-  return performance.now() - started;
+/** The fastest of several runs: CPU contention only ever adds time, so the minimum is stable. */
+function fastestRunMs(run: () => unknown): number {
+  let fastest = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < TIMED_RUNS; index += 1) {
+    const started = performance.now();
+    run();
+    fastest = Math.min(fastest, performance.now() - started);
+  }
+
+  return fastest;
 }
 
 describe("compileTitleRegex", () => {
@@ -136,16 +148,14 @@ describe("compileTitleRegex", () => {
 
       expect(matcher, source).not.toBeNull();
       expect(
-        elapsedMs(() => matcher?.(title)),
+        fastestRunMs(() => matcher?.(title)),
         source
       ).toBeLessThan(FAST_MATCH_MS);
     }
   });
 
   it("rejects syntax it cannot match in linear time, and oversized programs", () => {
-    const started = performance.now();
-
-    for (const source of [
+    const rejected = [
       "(a)\\1",
       "(?<x>a)\\k<x>",
       "(?=.*a)b",
@@ -157,10 +167,14 @@ describe("compileTitleRegex", () => {
       "((((((?:){99}){99}){99}){99}){99}){99}",
       "(unclosed",
       "*a"
-    ]) {
+    ];
+
+    for (const source of rejected) {
       expect(compileTitleRegex(source), source).toBeNull();
     }
 
-    expect(performance.now() - started).toBeLessThan(FAST_MATCH_MS);
+    expect(fastestRunMs(() => rejected.map((source) => compileTitleRegex(source)))).toBeLessThan(
+      FAST_MATCH_MS
+    );
   });
 });

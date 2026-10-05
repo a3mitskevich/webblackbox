@@ -5,6 +5,7 @@ import {
 } from "@webblackbox/protocol";
 
 import type { CaptureCategories } from "./categories.js";
+import { FULL_CAPTURE_LOCAL_DATA_SETTINGS } from "./local-data.js";
 import {
   BUILT_IN_PROFILE_ID_PREFIX,
   DEFAULT_PROFILE_ID,
@@ -186,7 +187,8 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
   export: {
     encryption: "required",
     privacyScanner: "block"
-  }
+  },
+  localData: { ...FULL_CAPTURE_LOCAL_DATA_SETTINGS }
 });
 
 /** Read-only presets, in display order. */
