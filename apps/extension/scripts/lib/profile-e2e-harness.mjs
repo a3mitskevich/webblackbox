@@ -121,6 +121,11 @@ export function createProfileE2eHarness({ name, appRoot, defaultPort }) {
       args.unshift("--headless=new");
     }
 
+    // CI runners (Ubuntu) cannot start Chrome's sandbox; same flags as the fullchain e2e.
+    if (process.platform === "linux") {
+      args.unshift("--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage");
+    }
+
     state.chrome = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
     state.logStream = createWriteStream(chromeLogPath, { flags: "a" });
     state.chrome.stdout?.pipe(state.logStream);
