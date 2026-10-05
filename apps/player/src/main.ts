@@ -1,3 +1,6 @@
+// The classic stylesheet; Vite emits it as a CSS file loaded with this chunk.
+import "./styles.css";
+
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import {
   type ActionTimelineEntry,

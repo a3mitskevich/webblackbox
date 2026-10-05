@@ -20,8 +20,16 @@
     },
     {
       "path": "apps/player/build/main.js",
+      "maxBytes": 10000,
+      "maxGzipBytes": 4000,
+      "note": "Vite entry chunk (boot.ts) only: it picks the UI and lazy-loads its chunk. A jump here means a UI or library got imported statically into boot."
+    },
+    {
+      "dir": "apps/player/build",
+      "extensions": [".js", ".css"],
       "maxBytes": 1800000,
-      "maxGzipBytes": 330000
+      "maxGzipBytes": 400000,
+      "note": "PLACEHOLDER"
     },
     {
       "path": "apps/extension/build/sw.js",

@@ -69,14 +69,11 @@ function Layout() {
 
 type AppProps = {
   controller: PlayerController;
-  /** Stylesheet of the React player (React 19 hoists it into <head>); `null` in tests. */
-  stylesheetHref?: string | null;
 };
 
-export function App({ controller, stylesheetHref = "./next.css" }: AppProps) {
+export function App({ controller }: AppProps) {
   return (
     <PlayerProvider controller={controller}>
-      {stylesheetHref ? <link rel="stylesheet" href={stylesheetHref} precedence="high" /> : null}
       <Layout />
     </PlayerProvider>
   );

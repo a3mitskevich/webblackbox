@@ -4,12 +4,11 @@ import { resolvePlayerUi } from "./core/preferences.js";
 
 /**
  * Entry point: `?ui=next` mounts the React player (stages R1–R5 of the rewrite); without the flag
- * the classic player in `main.ts` runs unchanged. Each UI is only evaluated when chosen.
+ * the classic player in `main.ts` runs unchanged. Each UI is a separate chunk that brings its own
+ * stylesheet (a CSS file Vite loads with the chunk), so only the chosen one is fetched.
  */
 async function boot(): Promise<void> {
   if (resolvePlayerUi(window.location.search) === "next") {
-    // The classic stylesheet styles bare elements; the React player brings its own (next.css).
-    document.querySelector<HTMLLinkElement>('link[rel="stylesheet"][href$="styles.css"]')?.remove();
     const root = document.getElementById("app");
 
     if (!root) {

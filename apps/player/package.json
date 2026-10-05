@@ -5,24 +5,30 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/copy-assets.mjs && tsup --config tsup.config.ts --watch",
-    "build": "tsup --config tsup.config.ts --clean && node scripts/copy-assets.mjs",
+    "dev": "vite",
+    "build": "vite build",
     "e2e:playback": "pnpm run build && node scripts/e2e-playback-regression.mjs",
     "e2e:player-next": "pnpm run build && node scripts/e2e-player-next.mjs",
     "pages:build": "pnpm build && node scripts/prepare-pages-build.mjs",
     "pages:deploy": "node scripts/deploy-gh-pages.mjs",
-    "serve": "npx -y http-server ./ -p 4177",
+    "serve": "vite preview --strictPort",
     "lint": "eslint src --ext .ts,.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@base-ui/react": "1.8.0",
+    "@tanstack/react-virtual": "3.14.13",
     "@webblackbox/player-sdk": "workspace:*",
     "@webblackbox/protocol": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "lucide-react": "1.52.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-error-boundary": "6.1.6",
+    "react-hotkeys-hook": "5.3.3",
+    "react-resizable-panels": "4.14.2",
     "tailwind-merge": "^3.5.0",
     "zod": "^4.1.12"
   },
@@ -32,8 +38,10 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "6.1.2",
     "@webblackbox/pipeline": "workspace:*",
     "jsdom": "^26.1.0",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "vite": "8.3.2"
   }
 }

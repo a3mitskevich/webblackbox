@@ -35,7 +35,7 @@ describe("Timeline", () => {
       scheduler: { request: () => 0, cancel: () => undefined },
       mediaCache: createMediaUrlCache({ createUrl: () => "blob:frame", revokeUrl: () => undefined })
     });
-    render(<App controller={controller} stylesheetHref={null} />);
+    render(<App controller={controller} />);
     await act(async () => {
       await controller.openFile({
         name: "synthetic.webblackbox",

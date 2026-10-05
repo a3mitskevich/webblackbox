@@ -20,23 +20,38 @@ The Player provides an interactive UI for exploring recorded web sessions with m
 - **React 19** — UI framework
 - **@webblackbox/player-sdk** — Session analysis engine
 - **@webblackbox/protocol** — Type definitions and validation
-- **Custom CSS** — Player styling in `public/styles.css`
+- **Custom CSS** — classic Player styling in `src/styles.css`; the React player (`?ui=next`) uses the token sheet `src/next/styles/next.css` with self-hosted Onest and JetBrains Mono
 - **class-variance-authority** — Component variants
-- **tsup** — Build/watch pipeline
+- **Vite** — build, dev server with HMR and code splitting (the rest of the monorepo builds with tsup)
+
+The React player (`?ui=next`, the rewrite in progress) is documented in [`src/next/README.md`](src/next/README.md): feature folders, rail-tab registry, per-feature i18n, store slices and e2e scenarios.
 
 ## Development
 
 ```bash
 cd apps/player
-pnpm dev
+pnpm dev        # Vite dev server with HMR on http://localhost:4177 (?ui=next for the React player)
 ```
+
+The dev server relaxes the page CSP for React refresh (its inline preamble script) and the HMR websocket only; production builds keep `index.html` as written.
 
 ## Build
 
 ```bash
 cd apps/player
-pnpm build
+pnpm build      # vite build → build/
+pnpm serve      # serve build/ on http://localhost:4177
 ```
+
+`build/` keeps the deploy contract of the tsup build:
+
+- `index.html` (from `apps/player/index.html`, the Vite entry; its CSP meta is the Player CSP) and `main.js`, a small entry with a stable name that picks the UI;
+- lazily loaded chunks, CSS files and fonts under `assets/` with content hashes: the classic UI, the React UI, React, Zod and the archive SDK are separate chunks, so each UI loads only what it uses and heavy panels can `React.lazy` their own chunk;
+- everything in `public/` copied as is (logo, iframe examples, font licences);
+- `__PLAYER_VERSION__` from `package.json`, source maps next to every chunk;
+- no `eval`/`Function`/WebAssembly and no runtime-injected `<style>`: CSS ships as files and fonts are never inlined as `data:` URIs (`e2e:player-next` scans the build and fails on any CSP violation, also under a policy without `style-src 'unsafe-inline'`).
+
+`pnpm bundle:size` (repo root) checks the entry chunk and the total of all JS and CSS files against `bundle-size/budgets.json`.
 
 ## GitHub Pages
 

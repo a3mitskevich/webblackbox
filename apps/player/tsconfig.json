@@ -11,5 +11,11 @@
       "@webblackbox/protocol": ["../../packages/protocol/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "tsup.config.ts", "scripts/**/*.mjs"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "scripts/**/*.mjs"
+  ]
 }

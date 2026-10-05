@@ -249,7 +249,7 @@ export function Stage() {
   // A ready frame of the same media kind stays up until its successor has loaded.
   const ready =
     media.kind === "ready" && mediaKey !== null && media.key.slice(0, 4) === mediaKey.slice(0, 4);
-  // The frame keeps the media aspect ratio inside the theater (see .frame in next.css).
+  // The frame keeps the media aspect ratio inside the theater (see .frame in styles/next.css).
   const frameStyle = {
     "--ar": size.width > 0 && size.height > 0 ? (size.width / size.height).toFixed(4) : "1.7778"
   } as CSSProperties;

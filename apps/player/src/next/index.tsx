@@ -1,5 +1,7 @@
 import { createRoot } from "react-dom/client";
 
+import "./styles/next.css";
+
 import { readThemePreference } from "../core/preferences.js";
 import { applyPlayerDocumentLocale, detectPlayerLocale } from "../lib/i18n.js";
 import { App } from "./app.js";

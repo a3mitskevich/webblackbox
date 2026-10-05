@@ -7,7 +7,7 @@
 // WB_E2E_SCREENSHOTS_DIR (capture classic vs next at 1440/1920, light/dark, EN/RU),
 // WB_E2E_REAL_ARCHIVE + WB_E2E_REAL_PASSPHRASE (also open a real archive; screenshots stay local).
 import { constants } from "node:fs";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,7 +47,7 @@ main().catch(async (error) => {
 
 async function main() {
   await access(resolve(playerDir, "main.js"), constants.R_OK);
-  await access(resolve(playerDir, "next.css"), constants.R_OK);
+  const build = await verifyBuildOutput(playerDir);
   await mkdir(artifactsDir, { recursive: true });
 
   const archivePath = resolve(artifactsDir, "synthetic-replay.webblackbox");
@@ -99,7 +99,7 @@ async function main() {
     features: [{ name: "prefers-color-scheme", value: "light" }]
   });
 
-  const results = {};
+  const results = { build };
   results.empty = await verifyEmptyState(client, `${origin}/?ui=next&lang=en`);
   assert(
     await client.evaluate("typeof window.__wbCspViolation === 'function'"),
@@ -129,6 +129,67 @@ async function main() {
   assert(exceptions.length === 0, "Runtime exceptions in the player page", exceptions);
   console.log("Player next E2E passed:", JSON.stringify(results, null, 2));
   await cleanup();
+}
+
+/**
+ * `Function(...)` calls third-party code ships that never run under the Player. Each match is
+ * checked against the source around it, so a new call site fails the scan until it is explained.
+ */
+const ALLOWED_FUNCTION_CALLS = [
+  // Zod's JIT capability probe; the entry chunk sets `jitless` before any schema exists (the
+  // runtime CSP guard proves the probe never runs).
+  { label: "zod allowsEval probe", pattern: /Function\((``|"")\)/u },
+  // jszip's bundled setImmediate polyfill compiles a *string* callback; jszip passes functions.
+  {
+    label: "setImmediate string callback",
+    pattern: /typeof ([\w$]+)!=[`"']function[`"']&&\(\1=Function\([`"']{2}\+\1\)\)/u
+  }
+];
+
+function findForbiddenCode(source) {
+  const hits = [];
+
+  if (/(?<![\w$.])eval\(/u.test(source)) {
+    hits.push("eval");
+  }
+
+  if (/WebAssembly/u.test(source)) {
+    hits.push("WebAssembly");
+  }
+
+  for (const match of source.matchAll(/(?<![\w$.])Function\(/gu)) {
+    const around = source.slice(Math.max(0, match.index - 60), match.index + 40);
+
+    if (!ALLOWED_FUNCTION_CALLS.some(({ pattern }) => pattern.test(around))) {
+      hits.push(`Function constructor: ${around}`);
+    }
+  }
+
+  return hits;
+}
+
+/**
+ * The Vite build: a tiny entry, code-split chunks and CSS files, and nothing the CSP forbids
+ * (eval, the Function constructor, WebAssembly) in any chunk.
+ */
+async function verifyBuildOutput(dir) {
+  const assets = await readdir(resolve(dir, "assets"));
+  const scripts = [
+    "main.js",
+    ...assets.filter((name) => name.endsWith(".js")).map((name) => `assets/${name}`)
+  ];
+  const forbidden = [];
+
+  for (const name of scripts) {
+    const source = await readFile(resolve(dir, name), "utf8");
+    forbidden.push(...findForbiddenCode(source).map((hit) => `${name}: ${hit}`));
+  }
+
+  const stylesheets = assets.filter((name) => name.endsWith(".css"));
+  assert(forbidden.length === 0, "The build contains code the CSP forbids", forbidden);
+  assert(stylesheets.length >= 2, "Expected CSS files for the classic and the React UI", assets);
+  assert(scripts.length > 2, "Expected a code-split build (entry + lazy chunks)", scripts);
+  return { scripts: scripts.length, stylesheets: stylesheets.length };
 }
 
 async function navigate(client, url) {
@@ -166,8 +227,10 @@ async function verifyEmptyState(client, url) {
     await document.fonts.ready;
     return {
       mains: document.querySelectorAll("main").length,
-      classicStylesheet: Boolean(document.querySelector('link[href$="styles.css"]')),
-      nextStylesheet: [...document.styleSheets].some((sheet) => (sheet.href ?? "").endsWith("next.css")),
+      // The classic stylesheet (its own chunk) defines --default-font-family on :root.
+      classicStylesheet: getComputedStyle(document.documentElement).getPropertyValue("--default-font-family").trim() !== "",
+      nextStylesheet: [...document.styleSheets].some((sheet) => (sheet.href ?? "").includes("/assets/") && sheet.href.endsWith(".css")),
+      styleElements: document.querySelectorAll("style").length,
       empty: Boolean(document.querySelector('${testId("empty-state")}')),
       lang: document.documentElement.lang,
       title: document.querySelector('${testId("empty-state")} h1')?.textContent ?? "",
@@ -181,6 +244,7 @@ async function verifyEmptyState(client, url) {
     "Stylesheets not switched",
     snapshot
   );
+  assert(snapshot.styleElements === 0, "The React player injected <style> elements", snapshot);
   assert(snapshot.empty && snapshot.title === "Open a recording", "Empty state missing", snapshot);
   assert(
     snapshot.font.includes("Onest") && snapshot.onestLoaded,
