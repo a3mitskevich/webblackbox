@@ -106,9 +106,4 @@ export const RELATED_TAB_CHANGE_KINDS = [
   "updated"
 ] as const;
 
-export const TABS_SNAPSHOT_REASONS = [
-  "start",
-  "resume",
-  "profile-change",
-  "origin-change"
-] as const;
+export const TABS_SNAPSHOT_REASONS = ["start", "profile-change", "origin-change"] as const;

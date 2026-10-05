@@ -122,6 +122,11 @@ import {
   parseStorageSnapshotMeta,
   type LocalStorageSnapshotMode
 } from "./storage-snapshot.js";
+import {
+  resolveTabsContextLevel,
+  TabsContextTracker,
+  type TabsContextEmission
+} from "./tabs-context/tracker.js";
 
 /** Recording profile bookkeeping for one session. */
 type SessionProfileState = {
@@ -497,6 +502,8 @@ const STOP_DRAIN_ACK_TIMEOUT_MS = 3_000;
 const CDP_ARTIFACT_TIMEOUT_MS = 5_000;
 const CDP_HEAP_SNAPSHOT_TIMEOUT_MS = 8_000;
 const SCREEN_RECORDING_OFFSCREEN_SOURCE = "tab";
+
+const tabsContextTracker = createTabsContextTracker();
 
 console.info("[WebBlackbox] service worker booted");
 
@@ -888,6 +895,52 @@ async function deleteSessionBySid(sid: string): Promise<void> {
   }
 }
 
+function createTabsContextTracker(): TabsContextTracker | null {
+  const tabs = chromeApi?.tabs;
+
+  if (!tabs?.onCreated || !tabs.onUpdated || !tabs.onRemoved || !tabs.onActivated) {
+    return null;
+  }
+
+  return new TabsContextTracker(
+    {
+      tabs: {
+        query: (queryInfo) => tabs.query(queryInfo),
+        get: (tabId) => tabs.get(tabId),
+        onCreated: tabs.onCreated,
+        onUpdated: tabs.onUpdated,
+        onRemoved: tabs.onRemoved,
+        onActivated: tabs.onActivated
+      },
+      windows: chromeApi?.windows
+    },
+    {
+      emit: ingestTabsContext,
+      onError: (error) => {
+        console.warn("[WebBlackbox] other tabs of the site could not be read", error);
+      }
+    }
+  );
+}
+
+function ingestTabsContext(recordedTabId: number, emission: TabsContextEmission): void {
+  const runtime = sessionsByTab.get(recordedTabId);
+
+  if (!runtime || runtime.stoppedAt) {
+    return;
+  }
+
+  ingestRawEvent({
+    source: "system",
+    rawType: emission.rawType,
+    sid: runtime.sid,
+    tabId: recordedTabId,
+    t: Date.now(),
+    mono: monotonicTime(),
+    payload: emission.payload
+  });
+}
+
 async function startSession(
   tabId: number,
   mode: CaptureMode,
@@ -1057,6 +1110,12 @@ async function startSession(
     }
   });
 
+  // Other tabs of the site right after the config, before instrumentation can take a while.
+  await tabsContextTracker?.startSession(tabId, {
+    url: tabMetadata.url,
+    level: resolveTabsContextLevel(recorderConfig.capturePolicy)
+  });
+
   if (shouldInjectHooksForMode(mode)) {
     await ensureContentScriptInjected(tabId);
     await ensureInjectedHooks(tabId);
@@ -1134,6 +1193,9 @@ async function stopSession(tabId: number): Promise<void> {
   }
 
   runtime.stopping = true;
+  // Changes of other tabs seen before Stop still belong to the session.
+  await tabsContextTracker?.settle();
+  tabsContextTracker?.stopSession(tabId);
   const stopDrainAck = createStopDrainAck(runtime);
   await stopScreenRecording(runtime, "session-stop").catch((error) => {
     console.warn("[WebBlackbox] failed to stop screen recording", error);
@@ -1518,6 +1580,11 @@ async function applySessionProfileSelection(
         previous: toArchivedProfileInfo(previous)
       }
     }
+  });
+
+  void tabsContextTracker?.updateSession(runtime.tabId, {
+    url: runtime.url,
+    level: resolveTabsContextLevel(config.capturePolicy)
   });
 
   if (runtime.screenRecording && config.capturePolicy?.categories.screenRecordings !== "allow") {
@@ -4653,6 +4720,9 @@ async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void>
     runtime.url = nextUrl;
     pushSessionList();
   }
+
+  // Relations to other tabs are computed against the recorded tab's origin.
+  void tabsContextTracker?.updateSession(tabId, { url: rawUrl });
 
   await enforceExtendedHostGate(runtime, rawUrl, nextUrl).catch((error) => {
     console.warn("[WebBlackbox] extended capture host gate failed", error);
