@@ -79,6 +79,9 @@ import {
 import { formatTabsContextReport, readTabsContext } from "./tabs-context.js";
 
 /** Player lifecycle status. */
+export * from "./compare-endpoints.js";
+export * from "./console-entries.js";
+export * from "./perf-series.js";
 export * from "./playwright-actions.js";
 export * from "./problems.js";
 export * from "./pointer-insights.js";
@@ -86,6 +89,7 @@ export * from "./recording-profile.js";
 export * from "./route-chapters.js";
 export * from "./source-map.js";
 export * from "./stack-trace.js";
+export * from "./storage-state.js";
 export * from "./symbolicate.js";
 export * from "./tabs-context.js";
 export * from "./third-party.js";
