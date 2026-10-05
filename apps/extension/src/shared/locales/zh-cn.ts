@@ -136,7 +136,7 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   optionsProfileRedactQueryParams: "要遮盖的 URL 查询参数",
   optionsProfileRedactStorageKeys: "要遮盖的存储键",
   optionsProfileValuePatterns:
-    "值模式，每行一个：[bodies, dom, storage, inputs, console, urls] 正则（无前缀：全部）",
+    "值模式，每行一个：[bodies, dom, storage, inputs, console, urls] 正则（无前缀：全部）。DOM 规则也适用于所记录操作的标签。",
   optionsProfileSave: "应用",
   optionsProfileCancel: "取消",
   optionsRulesHint:

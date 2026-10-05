@@ -142,7 +142,7 @@ export const EN_MESSAGES = {
   optionsProfileRedactQueryParams: "URL query parameters to mask",
   optionsProfileRedactStorageKeys: "Storage keys to mask",
   optionsProfileValuePatterns:
-    "Value patterns, one per line: [bodies, dom, storage, inputs, console, urls] regex (no prefix: everywhere)",
+    "Value patterns, one per line: [bodies, dom, storage, inputs, console, urls] regex (no prefix: everywhere). DOM rules also apply to labels of recorded actions.",
   optionsProfileSave: "Apply",
   optionsProfileCancel: "Cancel",
   optionsRulesHint:
