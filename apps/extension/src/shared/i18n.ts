@@ -142,7 +142,7 @@ const EXTENSION_MESSAGES = {
     optionsProfileRedactQueryParams: "URL query parameters to mask",
     optionsProfileRedactStorageKeys: "Storage keys to mask",
     optionsProfileValuePatterns:
-      "Value patterns, one per line: [bodies, dom, storage, inputs, console, urls] regex (no prefix: everywhere)",
+      "Value patterns, one per line: [bodies, dom, storage, inputs, console, urls] regex (no prefix: everywhere). DOM rules also apply to labels of recorded actions.",
     optionsProfileSave: "Apply",
     optionsProfileCancel: "Cancel",
     optionsRulesTitle: "Site rules",
@@ -371,7 +371,7 @@ const EXTENSION_MESSAGES = {
     optionsProfileRedactQueryParams: "要遮盖的 URL 查询参数",
     optionsProfileRedactStorageKeys: "要遮盖的存储键",
     optionsProfileValuePatterns:
-      "值模式，每行一个：[bodies, dom, storage, inputs, console, urls] 正则（无前缀：全部）",
+      "值模式，每行一个：[bodies, dom, storage, inputs, console, urls] 正则（无前缀：全部）。DOM 规则也适用于所记录操作的标签。",
     optionsProfileSave: "应用",
     optionsProfileCancel: "取消",
     optionsRulesTitle: "站点规则",
