@@ -29,7 +29,7 @@ export type RealtimeStream = {
   received: number;
   sentBytes: number;
   receivedBytes: number;
-  /** Messages the recorder cut at the profile limit. */
+  /** Messages the archive keeps only a prefix of (`isRealtimePayloadCut`). */
   truncated: number;
   format: RealtimeStreamFormat;
 };
@@ -69,6 +69,24 @@ export function realtimeMessageBytes(entry: RealtimeNetworkEntry): number {
   return entry.payloadPreview?.length ?? 0;
 }
 
+/**
+ * The archive keeps only a prefix of this message: the recorder flagged it, or (older archives
+ * that cut previews without a flag) the kept text is shorter than the recorded payload length and
+ * no blob holds the rest.
+ */
+export function isRealtimePayloadCut(entry: RealtimeNetworkEntry): boolean {
+  if (entry.payloadTruncated === true) {
+    return true;
+  }
+
+  if (entry.payloadHash || typeof entry.payloadLength !== "number") {
+    return false;
+  }
+
+  const kept = new TextEncoder().encode(entry.payloadPreview ?? "").byteLength;
+  return kept < entry.payloadLength;
+}
+
 function toStream(group: RealtimeNetworkEntry[]): RealtimeStream {
   const first = group[0] as RealtimeNetworkEntry;
   const open = group.find((entry) => entry.eventType === "network.ws.open");
@@ -93,7 +111,7 @@ function toStream(group: RealtimeNetworkEntry[]): RealtimeStream {
       receivedBytes += bytes;
     }
 
-    if (message.payloadTruncated) {
+    if (isRealtimePayloadCut(message)) {
       truncated += 1;
     }
   }

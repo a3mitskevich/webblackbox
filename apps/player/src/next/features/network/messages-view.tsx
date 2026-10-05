@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
 import {
+  isRealtimePayloadCut,
   isServiceRealtimeRecord,
   parseRealtimePayload,
   realtimeMessageBytes,
@@ -50,7 +51,7 @@ function previewOf(record: RealtimeRecord | undefined): string {
 
 export function labelMessage(entry: RealtimeNetworkEntry, signalr: boolean): MessageLabel {
   const parsed = parseRealtimePayload(entry.payloadPreview, {
-    truncated: entry.payloadTruncated,
+    truncated: isRealtimePayloadCut(entry),
     opcode: entry.opcode,
     signalr
   });
@@ -148,7 +149,7 @@ export function MessageList({ labels, selectedId, minMono }: MessageListProps) {
             </span>
             <span className="sz mono">
               {i18n.formatByteSize(realtimeMessageBytes(entry))}
-              {entry.payloadTruncated ? <span className="ncut">cut</span> : null}
+              {isRealtimePayloadCut(entry) ? <span className="ncut">cut</span> : null}
             </span>
           </div>
         );
@@ -221,7 +222,7 @@ export function MessageView({ entry, stream, minMono }: MessageViewProps) {
   const parsed = useMemo(
     () =>
       parseRealtimePayload(loaded ?? entry.payloadPreview, {
-        truncated: entry.payloadTruncated,
+        truncated: isRealtimePayloadCut(entry),
         opcode: entry.opcode,
         signalr: stream.format === "signalr"
       }),

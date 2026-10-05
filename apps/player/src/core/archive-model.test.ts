@@ -57,7 +57,7 @@ describe("buildArchiveModel", () => {
         (event, index) => index === 0 || event.mono >= (model.events[index - 1]?.mono ?? 0)
       )
     ).toBe(true);
-    expect(model.waterfall).toHaveLength(15);
+    expect(model.waterfall).toHaveLength(20);
     expect(model.waterfallByReqId.get("90080.1706")?.status).toBe(401);
     expect(model.screenshots).toHaveLength(5);
     expect(model.realtime.length).toBeGreaterThan(8);

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { RealtimeNetworkEntry } from "./index.js";
-import { buildRealtimeStreams, realtimeMessageBytes } from "./realtime-streams.js";
+import {
+  buildRealtimeStreams,
+  isRealtimePayloadCut,
+  realtimeMessageBytes
+} from "./realtime-streams.js";
 
 const RS = "\u001e";
 
@@ -105,5 +109,17 @@ describe("realtimeMessageBytes", () => {
     expect(realtimeMessageBytes(entry({ payloadLength: 99, payloadPreview: "ab" }))).toBe(99);
     expect(realtimeMessageBytes(entry({ payloadPreview: "abc" }))).toBe(3);
     expect(realtimeMessageBytes(entry({}))).toBe(0);
+  });
+});
+
+describe("isRealtimePayloadCut", () => {
+  it("trusts the flag, then compares the kept text with the recorded length", () => {
+    expect(isRealtimePayloadCut(entry({ payloadTruncated: true }))).toBe(true);
+    expect(isRealtimePayloadCut(entry({ payloadPreview: "abc", payloadLength: 6_786 }))).toBe(true);
+    expect(isRealtimePayloadCut(entry({ payloadPreview: "ж", payloadLength: 2 }))).toBe(false);
+    expect(
+      isRealtimePayloadCut(entry({ payloadPreview: "a", payloadLength: 99, payloadHash: "h" }))
+    ).toBe(false);
+    expect(isRealtimePayloadCut(entry({ payloadPreview: "abc" }))).toBe(false);
   });
 });

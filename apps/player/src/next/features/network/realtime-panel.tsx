@@ -1,7 +1,11 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef } from "react";
 
-import { realtimeMessageBytes, type RealtimeStream } from "@webblackbox/player-sdk";
+import {
+  isRealtimePayloadCut,
+  realtimeMessageBytes,
+  type RealtimeStream
+} from "@webblackbox/player-sdk";
 
 import { formatOffset } from "../../../core/format.js";
 import { Icon } from "../../components/icon.js";
@@ -180,7 +184,7 @@ function Conversation({
                       {formatOffset(entry.mono - minMono, locale)} ·{" "}
                       {i18n.formatByteSize(realtimeMessageBytes(entry))}
                     </span>
-                    {entry.payloadTruncated ? <span className="ncut">cut</span> : null}
+                    {isRealtimePayloadCut(entry) ? <span className="ncut">cut</span> : null}
                   </div>
                   {label.service ? null : <div className="bubble-text mono">{label.preview}</div>}
                 </div>
