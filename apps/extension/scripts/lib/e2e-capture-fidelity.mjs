@@ -145,63 +145,6 @@ export async function verifyCaptureFidelityArchive({
   };
 }
 
-/**
- * Expands the sent 40 KB frame in the player's realtime panel and waits for the full payload.
- * The panel lists only frames up to the playhead, and earlier checks leave the playhead on a
- * screenshot (the marker check seeks to the newest one with a pointer marker, which can predate the
- * fidelity scenario), so the playhead is first moved to the end with the player's End shortcut.
- */
-export async function verifyPlayerRealtimePayload(playerClient, expectedChars, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let last = null;
-
-  await playerClient.evaluate(`
-    (() => {
-      document.body.dispatchEvent(
-        new KeyboardEvent('keydown', { code: 'End', key: 'End', bubbles: true, cancelable: true })
-      );
-    })()
-  `);
-
-  while (Date.now() < deadline) {
-    last = await playerClient.evaluate(`
-      (() => {
-        const rows = [...document.querySelectorAll('#realtime-list details.realtime-entry')];
-        const sent = rows.find((row) => (row.querySelector('summary')?.textContent ?? '').includes('sent '));
-
-        if (!sent) {
-          return {
-            ok: false,
-            reason: 'sent-frame-row-missing',
-            rows: rows.length,
-            playhead: document.getElementById('playback-current')?.textContent ?? null,
-            duration: document.getElementById('playback-total')?.textContent ?? null
-          };
-        }
-
-        if (!sent.open) {
-          sent.open = true;
-        }
-
-        const text = sent.querySelector('pre')?.textContent ?? '';
-        return {
-          ok: text.length >= ${Number(expectedChars)} && text.includes('Record 1 of'),
-          chars: text.length,
-          head: text.slice(0, 120)
-        };
-      })()
-    `);
-
-    if (last?.ok) {
-      return last;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-
-  return { ok: false, reason: "timeout", last };
-}
-
 function checkConsoleEntry(events, scenario) {
   const entry = events.find(
     (event) =>
