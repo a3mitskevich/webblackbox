@@ -13,7 +13,7 @@ import {
   sanitizeOptionalUrl,
   stripUndefined
 } from "./normalizer-utils.js";
-import { normalizeTabsChangePayload, normalizeTabsSnapshotPayload } from "./tabs-context.js";
+import { normalizeTabsContextPayload } from "./tabs-context.js";
 import { recordedUrl } from "./url-recording.js";
 import type { EventNormalizer, RawRecorderEvent } from "./types.js";
 
@@ -159,19 +159,10 @@ function normalizeTabsContextEvent(
   rawType: "tabs.snapshot" | "tabs.change",
   payload: unknown
 ): { eventType: WebBlackboxEventType; payload: unknown } | null {
-  const normalized =
-    rawType === "tabs.snapshot"
-      ? normalizeTabsSnapshotPayload(payload)
-      : normalizeTabsChangePayload(payload);
+  const eventType = rawType === "tabs.snapshot" ? "meta.tabs.snapshot" : "meta.tabs.change";
+  const normalized = normalizeTabsContextPayload(eventType, payload);
 
-  if (!normalized) {
-    return null;
-  }
-
-  return {
-    eventType: rawType === "tabs.snapshot" ? "meta.tabs.snapshot" : "meta.tabs.change",
-    payload: normalized
-  };
+  return normalized ? { eventType, payload: normalized } : null;
 }
 
 function normalizeCdpPayload(

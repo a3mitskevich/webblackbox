@@ -23,8 +23,7 @@ const TAB = {
   incognito: false,
   discarded: false,
   firstSeenAt: 1_700_000_000_000,
-  lastAccessed: 1_699_999_999_000,
-  injected: "dropped"
+  lastAccessed: 1_699_999_999_000
 };
 
 function recorder(
@@ -55,7 +54,7 @@ function snapshot(level: "metadata" | "allow", tabs: unknown[] = [TAB]) {
 }
 
 describe("parallel tabs context events", () => {
-  it("records a metadata snapshot with known fields only", () => {
+  it("records a metadata snapshot", () => {
     const metadataTab = { ...TAB, path: undefined, title: undefined };
     const event = ingest(
       recorder("metadata"),
@@ -158,7 +157,11 @@ describe("parallel tabs context events", () => {
       ingest(target, "tabs.change", { change: "closed", level: "allow", tab: { tabId: -1 } })
     ).toBeUndefined();
 
-    const partial = ingest(target, "tabs.snapshot", snapshot("allow", [TAB, { tabId: "x" }]));
-    expect((partial?.data as { tabs: unknown[] }).tabs).toHaveLength(1);
+    expect(
+      ingest(target, "tabs.snapshot", snapshot("allow", [TAB, { tabId: "x" }]))
+    ).toBeUndefined();
+    expect(
+      ingest(target, "tabs.snapshot", snapshot("allow", [{ ...TAB, url: "https://x.test/" }]))
+    ).toBeUndefined();
   });
 });
