@@ -9,7 +9,6 @@ import {
   type RecordingProfilesStore
 } from "../shared/profiles/model.js";
 import {
-  describeIssues,
   listStoreProfiles,
   removeProfileFromStore,
   restoreRecommendedProfiles,
@@ -18,9 +17,8 @@ import {
   type ProfilesState
 } from "../shared/profiles/storage.js";
 import { previewProfilesImport, type ProfilesDiff } from "../shared/profiles/transfer.js";
-import { openConfirmDialog } from "../shared/ui/dialogs.js";
 import { preserveFocus } from "../shared/ui/focus.js";
-import { button, el, readField } from "./dom.js";
+import { el, readField } from "./dom.js";
 import {
   changedItemIds,
   comparableStoreJson,
@@ -43,6 +41,12 @@ import {
 } from "./editor-validation.js";
 import { bindRuleDragging, shownRuleIds } from "./rules-drag.js";
 import { readSandboxInputs, runRedactionSandbox, type SandboxState } from "./sandbox-model.js";
+import {
+  canDeleteProfile,
+  confirmProfileDeletion,
+  describeProfileDeletion,
+  hasRecommendedProfilesToRestore
+} from "./profile-delete.js";
 import { createProfileForm } from "./profile-form.js";
 import {
   createUniqueId,
@@ -51,7 +55,13 @@ import {
   sortRulesForDisplay,
   stableJson
 } from "./profile-form-model.js";
-import { createProfileCard, createSandboxPanel, createTransferPanel } from "./profiles-view.js";
+import {
+  createProfileCard,
+  createProfileListActions,
+  createProfilesNotices,
+  createSandboxPanel,
+  createTransferPanel
+} from "./profiles-view.js";
 import { testRulesForUrl } from "./rule-tester.js";
 import { createRuleTester, createRulesList, describeTestResult } from "./rules-editor.js";
 
@@ -271,42 +281,6 @@ function buildCatalog(state: EditorState): RecordingProfile[] {
   ];
 }
 
-function renderNotices(state: EditorState, catalog: RecordingProfile[], t: Translate) {
-  const notices = [
-    ...[
-      ...(catalog.some((profile) => profile.id.startsWith("managed:"))
-        ? [t("optionsProfilesManagedNotice")]
-        : []),
-      ...(state.profilesState.issues.length > 0
-        ? [t("optionsProfilesIssues", { issues: describeIssues(state.profilesState.issues) })]
-        : [])
-    ].map((text) => el("p", { className: "wb-notice", text })),
-    // Every profile was deleted: recording is off until one is created or restored.
-    ...(catalog.length === 0
-      ? [
-          el("p", {
-            className: "wb-notice wb-notice--error",
-            text: t("optionsProfilesEmpty"),
-            attrs: { role: "alert" },
-            dataset: { profilesEmpty: "" }
-          })
-        ]
-      : [])
-  ];
-
-  return state.status
-    ? [
-        ...notices,
-        el("p", {
-          className: state.status.error ? "wb-notice wb-notice--error" : "wb-notice",
-          text: state.status.text,
-          attrs: { role: state.status.error ? "alert" : "status" },
-          dataset: { profilesStatus: "" }
-        })
-      ]
-    : notices;
-}
-
 function render(editor: Editor): void {
   const { state, slots, deps } = editor;
   const { t } = deps;
@@ -316,7 +290,12 @@ function render(editor: Editor): void {
   slots.profiles.replaceChildren(
     el("div", { className: "wb-profiles wb-profiles-layout" }, [
       el("div", { className: "wb-profiles__list-col" }, [
-        ...renderNotices(state, catalog, t),
+        ...createProfilesNotices({
+          catalog,
+          issues: state.profilesState.issues,
+          ...(state.status ? { status: state.status } : {}),
+          t
+        }),
         el(
           "ul",
           { className: "wb-profiles__list" },
@@ -325,20 +304,30 @@ function render(editor: Editor): void {
               profile,
               defaultProfileId: state.draft.defaultProfileId,
               editing: profile.id === state.editingId,
+              deletable: canDeleteProfile(catalog),
               t
             })
           )
         ),
-        el("div", { className: "wb-profiles__list-actions" }, [
-          button(t("optionsProfilesRestore"), "profiles-restore", "ghost", { small: true })
-        ])
+        ...(catalog.length > 0
+          ? [
+              createProfileListActions({
+                canRestore: hasRecommendedProfilesToRestore(state.draft),
+                lastProfile: !canDeleteProfile(catalog),
+                t
+              })
+            ]
+          : [])
       ]),
       el(
         "div",
         { className: "wb-profiles__editor-col" },
         editing
           ? [createProfileForm(editing, t)]
-          : [el("p", { className: "wb-empty", text: t("optionsProfileEditorEmpty") })]
+          : // With no profile left there is nothing to edit or duplicate; the notice says what to do.
+            catalog.length > 0
+            ? [el("p", { className: "wb-empty", text: t("optionsProfileEditorEmpty") })]
+            : []
       )
     ])
   );
@@ -453,15 +442,7 @@ function handleAction(
         state.draft = { ...state.draft, defaultProfileId: profileId };
       });
     case "profile-delete":
-      void confirmProfileDelete(editor, profileId).then((confirmed) => {
-        if (confirmed) {
-          update(() => {
-            state.draft = removeProfileFromStore(state.draft, profileId);
-            closeProfileForm(state);
-          });
-        }
-      });
-      return;
+      return deleteProfile(editor, profileId, update);
     case "profiles-restore":
       return update(() => {
         state.draft = restoreRecommendedProfiles(state.draft);
@@ -620,24 +601,32 @@ function closeGuardHost(editor: Editor, update: Update): EditorCloseHost {
 /** Rows that tell apart equal buttons ("Move up" of each rule) when focus is restored. */
 const FOCUS_SCOPES = ["data-rule-id", "data-profile-id"];
 
-/** Rules that use a deleted profile stay but are skipped; those sit in another section. */
-async function confirmProfileDelete(editor: Editor, profileId: string): Promise<boolean> {
+/**
+ * Asks first, naming the rules that use the profile (they stay, skipped, in another section). The
+ * last profile stays: recording needs one. Another profile's open form stays open.
+ */
+function deleteProfile(editor: Editor, profileId: string, update: Update): void {
   syncRulesFromDom(editor);
   const { state, deps } = editor;
-  const ruleCount = state.draft.rules.filter((rule) => rule.profileId === profileId).length;
+  const catalog = buildCatalog(state);
 
-  if (ruleCount === 0) {
-    return true;
+  if (!canDeleteProfile(catalog)) {
+    return;
   }
 
-  const name = buildCatalog(state).find((profile) => profile.id === profileId)?.name ?? profileId;
+  void confirmProfileDeletion(
+    deps.t,
+    describeProfileDeletion(state.draft, catalog, profileId)
+  ).then((confirmed) => {
+    if (confirmed) {
+      update(() => {
+        state.draft = removeProfileFromStore(state.draft, profileId);
 
-  return openConfirmDialog({
-    title: deps.t("optionsProfileDeleteTitle", { name }),
-    body: deps.t("optionsProfileDeleteRules", { count: ruleCount }),
-    acceptLabel: deps.t("optionsProfileDelete"),
-    cancelLabel: deps.t("optionsProfileCancel"),
-    acceptVariant: "danger"
+        if (state.editingId === profileId) {
+          closeProfileForm(state);
+        }
+      });
+    }
   });
 }
 

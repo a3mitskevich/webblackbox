@@ -549,10 +549,17 @@ describe("popup recording profiles", () => {
 
     expect(query("[data-profile-required]").textContent).toBe(
       "No recording profile" +
-        "Recording needs at least one profile. Create one or restore the recommended profiles." +
+        "Recording needs at least one profile. Restore the recommended profiles or import yours in Options." +
         "Open profiles"
     );
     expect(has("[data-action='start']")).toBe(false);
+    // It takes the Start panel's place and look: a panel with one primary action.
+    expect(query("[data-profile-required]").classList.contains("wb-panel")).toBe(true);
+    expect(
+      query("[data-profile-required] [data-action='open-profiles']").classList.contains(
+        "wb-btn--brand"
+      )
+    ).toBe(true);
 
     query<HTMLButtonElement>("[data-profile-required] [data-action='open-profiles']").click();
     await flushPopup();

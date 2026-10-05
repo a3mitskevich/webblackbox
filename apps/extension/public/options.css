@@ -455,8 +455,20 @@
 }
 
 .wb-profiles__list-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.wb-profiles__restore {
   display: flex;
-  justify-content: flex-start;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.wb-profiles__restore .wb-field__hint {
+  flex: 1 1 200px;
+  margin: 0;
 }
 
 .wb-profiles__list {
@@ -678,6 +690,27 @@
 
 .wb-rule > .wb-notice {
   margin: 0 10px 8px;
+}
+
+/* Its profile was deleted: the rule engine skips it until it gets one again. */
+.wb-rule--orphan {
+  border-color: color-mix(in srgb, var(--wb-danger) 35%, var(--wb-border));
+  box-shadow: inset 3px 0 0 var(--wb-danger);
+}
+
+.wb-rules__orphaned,
+.wb-profiles__empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+}
+
+.wb-rules__orphaned p,
+.wb-profiles__empty p {
+  margin: 0;
+  flex: 1 1 220px;
 }
 
 .wb-rule--dragging {

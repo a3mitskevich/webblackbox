@@ -6,6 +6,7 @@ import {
   type RecordingProfile
 } from "../shared/profiles/model.js";
 import { isExtendedCaptureProfile } from "../shared/profiles/resolve.js";
+import { describeIssues, type ProfilesStoreIssue } from "../shared/profiles/storage.js";
 import type { ProfilesDiff } from "../shared/profiles/transfer.js";
 import type { RedactionSandboxKind } from "../shared/redaction-sandbox.js";
 import { button, el, unsavedItemBadge } from "./dom.js";
@@ -26,10 +27,16 @@ export const SANDBOX_KINDS: Array<{ value: RedactionSandboxKind; key: ExtensionM
 /** Categories worth a glance on a collapsed profile card. */
 const CARD_CATEGORIES: readonly CaptureCategoryKey[] = ["inputs", "console", "network", "dom"];
 
+/** Explains a disabled Delete on the last profile; the button points at it. */
+const LAST_PROFILE_HINT_ID = "profiles-last-hint";
+const RESTORE_HINT_ID = "profiles-restore-hint";
+
 export function createProfileCard(options: {
   profile: RecordingProfile;
   defaultProfileId: string;
   editing: boolean;
+  /** False for the last profile: recording needs one. */
+  deletable: boolean;
   t: Translate;
 }): HTMLElement {
   const { profile, t } = options;
@@ -58,7 +65,16 @@ export function createProfileCard(options: {
 
   // Any profile can be deleted, presets and Default included; policy profiles cannot.
   if (!isManagedProfileId(profile.id)) {
-    actions.append(button(t("optionsProfileDelete"), "profile-delete", "ghost", { small: true }));
+    const deleteButton = button(t("optionsProfileDelete"), "profile-delete", "ghost", {
+      small: true
+    });
+
+    if (!options.deletable) {
+      deleteButton.disabled = true;
+      deleteButton.setAttribute("aria-describedby", LAST_PROFILE_HINT_ID);
+    }
+
+    actions.append(deleteButton);
   }
 
   const levels = CAPTURE_CATEGORY_KEYS.filter((key) => CARD_CATEGORIES.includes(key)).map(
@@ -93,6 +109,94 @@ export function createProfileCard(options: {
         el("p", { className: "wb-profile-card__levels", text: levels.join(" · ") })
       ]),
       actions
+    ]
+  );
+}
+
+/**
+ * Under the profile list: "Restore recommended profiles" (disabled when nothing was deleted) and,
+ * with one profile left, why its Delete is disabled.
+ */
+export function createProfileListActions(options: {
+  canRestore: boolean;
+  lastProfile: boolean;
+  t: Translate;
+}): HTMLElement {
+  const { t } = options;
+  const restore = button(t("optionsProfilesRestore"), "profiles-restore", "surface", {
+    small: true
+  });
+  restore.disabled = !options.canRestore;
+  restore.setAttribute("aria-describedby", RESTORE_HINT_ID);
+
+  return el("div", { className: "wb-profiles__list-actions" }, [
+    ...(options.lastProfile
+      ? [
+          el("p", {
+            className: "wb-notice",
+            text: t("optionsProfileDeleteLast"),
+            attrs: { id: LAST_PROFILE_HINT_ID },
+            dataset: { profilesLast: "" }
+          })
+        ]
+      : []),
+    el("div", { className: "wb-profiles__restore" }, [
+      restore,
+      el("p", {
+        className: "wb-field__hint",
+        text: t(
+          options.canRestore ? "optionsProfilesRestoreHint" : "optionsProfilesRestoreNothing"
+        ),
+        attrs: { id: RESTORE_HINT_ID },
+        dataset: { profilesRestoreHint: "" }
+      })
+    ])
+  ]);
+}
+
+/** Notices above the profile list: policy profiles, storage issues, no profile left, status. */
+export function createProfilesNotices(options: {
+  catalog: readonly RecordingProfile[];
+  issues: readonly ProfilesStoreIssue[];
+  status?: { text: string; error: boolean };
+  t: Translate;
+}): HTMLElement[] {
+  const { catalog, issues, status, t } = options;
+  const texts = [
+    ...(catalog.some((profile) => isManagedProfileId(profile.id))
+      ? [t("optionsProfilesManagedNotice")]
+      : []),
+    ...(issues.length > 0 ? [t("optionsProfilesIssues", { issues: describeIssues(issues) })] : [])
+  ];
+
+  return [
+    ...texts.map((text) => el("p", { className: "wb-notice", text })),
+    // No profile left (an import or older storage): recording is off until one is restored.
+    ...(catalog.length === 0 ? [createEmptyProfilesNotice(t)] : []),
+    ...(status
+      ? [
+          el("p", {
+            className: status.error ? "wb-notice wb-notice--error" : "wb-notice",
+            text: status.text,
+            attrs: { role: status.error ? "alert" : "status" },
+            dataset: { profilesStatus: "" }
+          })
+        ]
+      : [])
+  ];
+}
+
+function createEmptyProfilesNotice(t: Translate): HTMLElement {
+  return el(
+    "div",
+    {
+      className: "wb-notice wb-notice--error wb-profiles__empty",
+      attrs: { role: "alert" },
+      dataset: { profilesEmpty: "" }
+    },
+    [
+      el("p", { text: t("optionsProfilesEmpty") }),
+      button(t("optionsProfilesRestore"), "profiles-restore", "brand", { small: true })
     ]
   );
 }

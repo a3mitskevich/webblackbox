@@ -41,7 +41,7 @@ export const EN_MESSAGES = {
   popupProfileRecommends: "Recommended start: {mode}.",
   popupProfileRequiredTitle: "No recording profile",
   popupProfileRequired:
-    "Recording needs at least one profile. Create one or restore the recommended profiles.",
+    "Recording needs at least one profile. Restore the recommended profiles or import yours in Options.",
   popupOpenProfiles: "Open profiles",
   popupProfileCancelTitle: "Recording stopped: the profile changed",
   popupProfileCancelRuleChanged:
@@ -120,7 +120,7 @@ export const EN_MESSAGES = {
   optionsProfileDelete: "Delete",
   optionsProfileDeleteTitle: "Delete profile “{name}”?",
   optionsProfileDeleteRules:
-    "{count} site rule(s) use this profile. They are kept but skipped until you pick another profile for them or restore the recommended profiles.",
+    "{count} site rule(s) use this profile. They are kept but skipped until they get a profile again:",
   optionsProfileMakeDefault: "Make default",
   optionsProfileName: "Name",
   optionsProfileBase: "Recommended start",
@@ -155,7 +155,21 @@ export const EN_MESSAGES = {
     "This rule points at a deleted profile and is skipped. Pick another profile or restore the recommended profiles.",
   optionsProfilesRestore: "Restore recommended profiles",
   optionsProfilesEmpty:
-    "No profiles left: recording is disabled until you create one or restore the recommended profiles.",
+    "No profiles left: recording is disabled until you restore the recommended profiles or import profiles.",
+  optionsProfileDeleteNoRules: "No site rule uses this profile.",
+  optionsProfileDeleteRestorable:
+    "You can bring it back later with “Restore recommended profiles”.",
+  optionsProfileDeleteOwn: "This is your own profile: once you save, it cannot be restored.",
+  optionsProfileDeleteNewDefault: "{name} becomes the default profile.",
+  optionsProfileDeleteLast:
+    "Recording needs at least one profile. Duplicate a profile or restore the recommended ones before deleting this one.",
+  optionsProfilesRestoreHint:
+    "Brings back Default and the built-in presets you deleted. Your own profiles and site rules stay as they are.",
+  optionsProfilesRestoreNothing: "All recommended profiles are in the list.",
+  optionsRuleSkippedBadge: "skipped",
+  optionsRuleProfileMissingHintOwn:
+    "This rule points at a deleted profile and is skipped. Pick another profile for it.",
+  optionsRulesOrphaned: "{count} site rule(s) point at deleted profiles and are skipped.",
   optionsRulePriority: "Priority",
   optionsRuleEnabled: "Enabled",
   optionsRuleHosts: "Hosts",

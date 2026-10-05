@@ -458,11 +458,11 @@ describe("profiles editor", () => {
     });
     const container = await mount(storage);
 
+    // Every delete asks first (backlog item 4).
     click(rowOf(container, BUILT_IN_PROFILE_IDS.qa), "[data-action='profile-delete']");
-    // QA still has a rule: deleting it asks first.
     await answerPrompt("[data-confirm-accept]");
     click(rowOf(container, "default"), "[data-action='profile-delete']");
-    await flush();
+    await answerPrompt("[data-confirm-accept]");
 
     expect(
       [...container.querySelectorAll<HTMLElement>("[data-profile-id]")].map(
@@ -476,7 +476,7 @@ describe("profiles editor", () => {
     expect(container.querySelector<HTMLSelectElement>('[name="ruleProfile"]')?.value).toBe(
       BUILT_IN_PROFILE_IDS.qa
     );
-    expect(container.querySelector("[data-rule-missing]")?.textContent).toBe(
+    expect(container.querySelector("[data-rule-missing]")?.textContent).toContain(
       t("optionsRuleProfileMissingHint")
     );
 
@@ -499,28 +499,6 @@ describe("profiles editor", () => {
     expect(savedStore(storage).profiles.map((profile) => profile.id)).toEqual(["default"]);
     expect(container.querySelector("[data-rule-missing]")).toBeNull();
     expect(container.querySelectorAll("[data-profile-id]")).toHaveLength(5);
-  });
-
-  it("warns that recording is disabled once every profile is deleted", async () => {
-    const container = await mount(createStorage());
-
-    expect(container.querySelector("[data-profiles-empty]")).toBeNull();
-
-    for (const id of [
-      "default",
-      BUILT_IN_PROFILE_IDS.lite,
-      BUILT_IN_PROFILE_IDS.full,
-      BUILT_IN_PROFILE_IDS.qa,
-      BUILT_IN_PROFILE_IDS.fullCapture
-    ]) {
-      click(rowOf(container, id), "[data-action='profile-delete']");
-      await flush();
-    }
-
-    expect(container.querySelectorAll("[data-profile-id]")).toHaveLength(0);
-    expect(container.querySelector("[data-profiles-empty]")?.textContent).toBe(
-      t("optionsProfilesEmpty")
-    );
   });
 
   it("never offers to delete a profile from the enterprise policy", async () => {

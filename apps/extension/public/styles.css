@@ -835,6 +835,16 @@ input[type="radio"] {
   margin: 0;
 }
 
+/* No profile to record with: the Start panel's place, marked as a warning. */
+.wb-popup__profile-required {
+  border-color: var(--wb-warn-border);
+  box-shadow: inset 3px 0 0 var(--wb-warn);
+}
+
+.wb-popup__profile-required .wb-popup__hint {
+  margin: 0;
+}
+
 .wb-popup__footer {
   font-size: 10.5px;
   color: var(--wb-text-subtle);
@@ -875,6 +885,20 @@ input[type="radio"] {
 .wb-confirm-body {
   font-size: 12.5px;
   color: var(--wb-text-muted);
+}
+
+.wb-confirm-list {
+  display: grid;
+  gap: 2px;
+  max-height: 160px;
+  margin: 0;
+  padding: 6px 10px 6px 26px;
+  overflow-y: auto;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-sm);
+  background: var(--wb-surface-2);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
 }
 
 .wb-confirm-actions {
