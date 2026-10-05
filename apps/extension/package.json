@@ -23,6 +23,7 @@
     "e2e:at-rest": "node scripts/e2e-at-rest-encryption.mjs",
     "e2e:ui": "node scripts/e2e-ui-screenshots.mjs",
     "e2e:ui:update": "WB_UI_SHOTS_UPDATE=1 node scripts/e2e-ui-screenshots.mjs",
+    "e2e:tabs-context": "node scripts/e2e-tabs-context.mjs",
     "e2e:realworld": "node scripts/e2e-realworld-stability.mjs",
     "e2e:realworld:quick": "WB_E2E_REALWORLD_QUICK=1 node scripts/e2e-realworld-stability.mjs",
     "e2e:realworld:ci": "node scripts/e2e-realworld-stability.mjs",

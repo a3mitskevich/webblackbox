@@ -1,7 +1,8 @@
 import {
   DEFAULT_RECORDER_CONFIG,
   type CapturePolicy,
-  type RecorderConfig
+  type RecorderConfig,
+  type TabsContextLevel
 } from "@webblackbox/protocol";
 
 export const OPTIONS_STORAGE_VERSION = 1;
@@ -231,6 +232,7 @@ function normalizeDataCategoryCaps(value: unknown): EnterpriseRecorderPolicy["da
   setEnumCap(output, "cookies", record.cookies, ["off", "count-only", "names-only"]);
   setEnumCap(output, "cdp", record.cdp, ["off", "safe-subset", "full"]);
   setEnumCap(output, "heapProfiles", record.heapProfiles, ["off", "lab-only"]);
+  setEnumCap(output, "tabsContext", record.tabsContext, ["off", "metadata", "allow"]);
 
   return output;
 }
@@ -291,7 +293,12 @@ function applyDataCategoryCaps(
     indexedDb: capEnum(categories.indexedDb, caps.indexedDb, ["off", "counts-only", "names-only"]),
     cookies: capEnum(categories.cookies, caps.cookies, ["off", "count-only", "names-only"]),
     cdp: capEnum(categories.cdp, caps.cdp, ["off", "safe-subset", "full"]),
-    heapProfiles: capEnum(categories.heapProfiles, caps.heapProfiles, ["off", "lab-only"])
+    heapProfiles: capEnum(categories.heapProfiles, caps.heapProfiles, ["off", "lab-only"]),
+    tabsContext: capEnum<TabsContextLevel>(categories.tabsContext ?? "metadata", caps.tabsContext, [
+      "off",
+      "metadata",
+      "allow"
+    ])
   };
 }
 

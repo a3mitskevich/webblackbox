@@ -28,7 +28,14 @@ type NetworkType =
   | "other";
 
 type CompareSignal = "regressed" | "stable" | "new" | "missing";
-type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action" | "pointer";
+type MarkerKind =
+  | "error"
+  | "network"
+  | "screenshot"
+  | "recording"
+  | "action"
+  | "pointer"
+  | "tabs";
 type PointerRippleKind = "double" | "right" | "middle" | "hold" | "drag" | "dnd";
 type SortDirection = "asc" | "desc";
 type SelectionKind = "action" | "event" | "request";
@@ -321,6 +328,8 @@ type PlayerMessages = {
   summaryProfile: string;
   summaryProfileRule: string;
   summaryProfileDowngraded: string;
+  summaryParallelTabs: string;
+  summaryParallelTabsDetail: string;
   profileBannerCancelRuleChanged: string;
   profileBannerCancelMissing: string;
   profileBannerCancelEdited: string;
@@ -665,7 +674,8 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       screenshot: "screenshot",
       recording: "recording",
       action: "action",
-      pointer: "pointer"
+      pointer: "pointer",
+      tabs: "other tab"
     },
     privacyHiddenByProfile: "Hidden by profile: {what}",
     privacySubjects: {
@@ -680,12 +690,17 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       "tab-recording": "tab recording",
       storage: "storage",
       "storage-details": "storage details",
+      tabs: "other tabs of the site",
+      "tab-details": "paths and titles of other tabs",
       profile: "profiling data",
       unknown: "data"
     },
     summaryProfile: "profile {name}",
     summaryProfileRule: "profile {name} (rule {rule})",
     summaryProfileDowngraded: "profile {name} ({requested} not allowed on this site)",
+    summaryParallelTabs: "{count} other tabs of this site were open",
+    summaryParallelTabsDetail:
+      "Up to {max} at once, {start} when recording started; {sameOrigin} same-origin, {sameSite} same-site. Click for details.",
     profileBannerCancelRuleChanged:
       "Recording stopped early: it recorded with {started}, but after a navigation the site rules picked {next}. Nothing after that point was recorded.",
     profileBannerCancelMissing:
@@ -1067,7 +1082,8 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       screenshot: "截图",
       recording: "录屏",
       action: "动作",
-      pointer: "指针"
+      pointer: "指针",
+      tabs: "其他标签页"
     },
     privacyHiddenByProfile: "已被配置隐藏：{what}",
     privacySubjects: {
@@ -1082,12 +1098,17 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       "tab-recording": "标签页录制",
       storage: "存储",
       "storage-details": "存储详情",
+      tabs: "本站点的其他标签页",
+      "tab-details": "其他标签页的路径和标题",
       profile: "性能分析数据",
       unknown: "数据"
     },
     summaryProfile: "配置 {name}",
     summaryProfileRule: "配置 {name}（规则 {rule}）",
     summaryProfileDowngraded: "配置 {name}（{requested} 在此站点不可用）",
+    summaryParallelTabs: "此站点的其他标签页：{count} 个",
+    summaryParallelTabsDetail:
+      "最多同时打开 {max} 个，开始录制时 {start} 个；同源 {sameOrigin} 个，同站点 {sameSite} 个。点击查看详情。",
     profileBannerCancelRuleChanged:
       "录制提前停止：录制使用的是 {started}，但导航后站点规则选择了 {next}。此后的内容未被录制。",
     profileBannerCancelMissing:

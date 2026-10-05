@@ -61,6 +61,7 @@ import {
   type PointerSignals,
   type PointerTimelineEntry
 } from "./pointer-insights.js";
+import { formatTabsContextReport, readTabsContext } from "./tabs-context.js";
 
 /** Player lifecycle status. */
 export * from "./playwright-actions.js";
@@ -69,6 +70,7 @@ export * from "./recording-profile.js";
 export * from "./source-map.js";
 export * from "./stack-trace.js";
 export * from "./symbolicate.js";
+export * from "./tabs-context.js";
 
 export type PlayerStatus = "idle" | "loaded";
 
@@ -1716,6 +1718,8 @@ export class WebBlackboxPlayer {
     const heading = options.title ?? "WebBlackbox Bug Report";
     const derived = this.buildDerived(options.range);
     const pointerSignals = detectPointerSignals(scoped);
+    // The whole session: what was open in parallel does not depend on the selected range.
+    const tabsContext = readTabsContext(this.query());
 
     return [
       `# ${heading}`,
@@ -1727,6 +1731,9 @@ export class WebBlackboxPlayer {
       `- Action Spans: ${derived.actionSpans.length}`,
       `- Errors: ${derived.totals.errors}`,
       `- Requests: ${derived.totals.requests}`,
+      "",
+      "## Parallel Tabs",
+      ...formatTabsContextReport(tabsContext, maxItems),
       "",
       "## Markers",
       markers.length === 0

@@ -8,6 +8,7 @@ import {
 } from "@webblackbox/protocol";
 
 import { migrateStoredRecorderConfig } from "../options-storage.js";
+import { completeCaptureCategories } from "./categories.js";
 import {
   DEFAULT_PROFILE_ID,
   isManagedProfileId,
@@ -550,9 +551,9 @@ function migrateLegacyDefaultProfile(legacyOptions: unknown): RecordingProfile {
   });
   const candidate: RecordingProfile = {
     ...fallback,
-    categories: basePolicy.success
-      ? { ...basePolicy.data.categories }
-      : { ...DEFAULT_CAPTURE_POLICY.categories },
+    categories: completeCaptureCategories(
+      basePolicy.success ? basePolicy.data.categories : DEFAULT_CAPTURE_POLICY.categories
+    ),
     redaction: redaction.success ? redaction.data : fallback.redaction,
     unmaskSelectors: redaction.success ? [...(redaction.data.unmaskSelectors ?? [])] : [],
     sampling: pickValidSampling(migrated.sampling),

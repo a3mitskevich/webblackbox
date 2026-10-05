@@ -19,6 +19,8 @@ export const WEBBLACKBOX_EVENT_TYPES = [
   "meta.session.start",
   "meta.session.end",
   "meta.config",
+  "meta.tabs.snapshot",
+  "meta.tabs.change",
   "privacy.violation",
   "sys.debugger.attach",
   "sys.debugger.detach",
@@ -106,3 +108,29 @@ export const MESSAGE_TYPES = [
 export const FREEZE_REASONS = ["error", "network", "marker", "perf", "manual"] as const;
 
 export const STORAGE_SNAPSHOT_MODES = ["schema-only", "sample", "full"] as const;
+
+/** Capture level of the parallel-tabs context: none, ids/origins/flags, or also paths and titles. */
+export const TABS_CONTEXT_LEVELS = ["off", "metadata", "allow"] as const;
+
+/** How another tab relates to the recorded one: same origin, or same registrable domain. */
+export const RELATED_TAB_RELATIONS = ["same-origin", "same-site"] as const;
+
+export const RELATED_TAB_CHANGE_KINDS = [
+  "opened",
+  "entered",
+  "navigated",
+  "left",
+  "closed",
+  "activated",
+  "deactivated",
+  "updated"
+] as const;
+
+export const TABS_SNAPSHOT_REASONS = ["start", "profile-change", "origin-change"] as const;
+
+/** Bounds of the `meta.tabs.*` payloads: related tabs per snapshot, path and title lengths. */
+export const TABS_CONTEXT_LIMITS = {
+  maxTabs: 500,
+  maxPathLength: 8_192,
+  maxTitleLength: 2_048
+} as const;

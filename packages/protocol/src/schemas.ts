@@ -7,7 +7,12 @@ import {
   CHUNK_CODECS,
   EVENT_LEVELS,
   FREEZE_REASONS,
+  RELATED_TAB_CHANGE_KINDS,
+  RELATED_TAB_RELATIONS,
   STORAGE_SNAPSHOT_MODES,
+  TABS_CONTEXT_LEVELS,
+  TABS_CONTEXT_LIMITS,
+  TABS_SNAPSHOT_REASONS,
   WEBBLACKBOX_EVENT_TYPES,
   WEBBLACKBOX_PROTOCOL_VERSION
 } from "./constants.js";
@@ -38,6 +43,8 @@ export const freezeReasonSchema = z.enum(FREEZE_REASONS);
 export const storageSnapshotModeSchema = z.enum(STORAGE_SNAPSHOT_MODES);
 
 export const webBlackboxEventTypeSchema = z.enum(WEBBLACKBOX_EVENT_TYPES);
+
+export const tabsContextLevelSchema = z.enum(TABS_CONTEXT_LEVELS);
 
 export const eventReferenceSchema = z
   .object({
@@ -201,7 +208,9 @@ export const capturePolicySchema = z
         indexedDb: z.enum(["off", "counts-only", "names-only"]),
         cookies: z.enum(["off", "count-only", "names-only"]),
         cdp: z.enum(["off", "safe-subset", "full"]),
-        heapProfiles: z.enum(["off", "lab-only"])
+        heapProfiles: z.enum(["off", "lab-only"]),
+        // Optional: policies written before the category existed mean `metadata`.
+        tabsContext: tabsContextLevelSchema.optional()
       })
       .strict(),
     redaction: redactionProfileSchema,
@@ -468,6 +477,47 @@ const metaSessionStartSchema = z
   })
   .strict();
 
+const recordedTabsLevelSchema = z.enum(["metadata", "allow"]);
+const chromeTabIdSchema = z.number().int().nonnegative();
+
+const relatedTabSchema = z
+  .object({
+    tabId: chromeTabIdSchema,
+    windowId: z.number().int(),
+    relation: z.enum(RELATED_TAB_RELATIONS),
+    origin: z.string().min(1).max(2_048),
+    path: z.string().max(TABS_CONTEXT_LIMITS.maxPathLength).optional(),
+    title: z.string().max(TABS_CONTEXT_LIMITS.maxTitleLength).optional(),
+    active: z.boolean(),
+    focused: z.boolean(),
+    incognito: z.boolean(),
+    discarded: z.boolean().optional(),
+    frozen: z.boolean().optional(),
+    openerTabId: chromeTabIdSchema.optional(),
+    firstSeenAt: z.number().finite(),
+    lastAccessed: z.number().finite().optional()
+  })
+  .strict();
+
+const metaTabsSnapshotSchema = z
+  .object({
+    reason: z.enum(TABS_SNAPSHOT_REASONS),
+    level: recordedTabsLevelSchema,
+    origin: z.string().min(1).max(2_048),
+    site: z.string().min(1).max(2_048),
+    tabs: z.array(relatedTabSchema).max(TABS_CONTEXT_LIMITS.maxTabs)
+  })
+  .strict();
+
+const metaTabsChangeSchema = z
+  .object({
+    change: z.enum(RELATED_TAB_CHANGE_KINDS),
+    level: recordedTabsLevelSchema,
+    tab: relatedTabSchema,
+    openCount: z.number().int().nonnegative()
+  })
+  .strict();
+
 const networkRequestDataSchema = z
   .object({
     reqId: z.string().min(1),
@@ -643,6 +693,8 @@ const genericStrictDataSchema = z.union([
 
 const specializedDataSchemas = {
   "meta.session.start": metaSessionStartSchema,
+  "meta.tabs.snapshot": metaTabsSnapshotSchema,
+  "meta.tabs.change": metaTabsChangeSchema,
   "network.request": networkRequestDataSchema,
   "network.response": networkResponseDataSchema,
   "console.entry": consoleEntryDataSchema,

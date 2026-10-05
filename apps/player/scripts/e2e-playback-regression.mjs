@@ -159,6 +159,20 @@ async function main() {
   assert(hover.bodyText.includes("fixture"), "Network hover response body is unexpected", hover);
   assert(hover.toggleEnabled, "JSON response hover toggle is disabled", hover);
 
+  const tabs = await verifyParallelTabs(client, 10_000);
+  assert(
+    tabs.badgeText === "2 other tabs of this site were open",
+    "Parallel tabs badge did not render",
+    tabs
+  );
+  assert(tabs.markerCount >= 2, "Missing parallel tabs progress markers", tabs);
+  assert(
+    tabs.details.includes('"meta.tabs.snapshot"') &&
+      tabs.details.includes("otherTabsOfSiteOpenAfter"),
+    "Parallel tabs badge did not open the snapshot in the details panel",
+    tabs
+  );
+
   const playwright = await verifyPlaywrightPreview(client, 10_000);
   assert(playwright.open, "Playwright preview dialog did not open", playwright);
   assert(
@@ -182,6 +196,7 @@ async function main() {
   console.log("Timeline:", JSON.stringify(loaded));
   console.log("Playback:", JSON.stringify(playback));
   console.log("Hover:", JSON.stringify(hover));
+  console.log("Parallel tabs:", JSON.stringify({ ...tabs, details: tabs.details.length }));
   console.log(
     "Playwright preview:",
     JSON.stringify({
@@ -215,6 +230,13 @@ async function createMixedMonoArchive() {
   const events = [
     event("E-000", base, 0, "meta.session.start", {
       url: "https://example.test"
+    }),
+    event("E-005", base + 50, 50, "meta.tabs.snapshot", {
+      reason: "start",
+      level: "allow",
+      origin: "https://example.test",
+      site: "example.test",
+      tabs: [relatedTab(41, "https://example.test", "/inbox", base)]
     }),
     event(
       "E-010",
@@ -336,6 +358,12 @@ async function createMixedMonoArchive() {
         shot: screenshotHash
       }
     ),
+    event("E-075", base + 1_100, 1_100, "meta.tabs.change", {
+      change: "opened",
+      level: "allow",
+      tab: relatedTab(42, "https://admin.example.test", "/users", base + 1_100),
+      openCount: 2
+    }),
     event("E-080", base + 1_250, 1_250, "console.entry", {
       level: "info",
       source: "console-api",
@@ -397,6 +425,12 @@ async function createMixedMonoArchive() {
         shot: screenshotHash
       }
     ),
+    event("E-125", base + 2_300, 2_300, "meta.tabs.change", {
+      change: "closed",
+      level: "allow",
+      tab: relatedTab(41, "https://example.test", "/inbox", base),
+      openCount: 1
+    }),
     event("E-130", base + 2_400, 2_400, "meta.session.end", {
       reason: "complete"
     })
@@ -472,6 +506,20 @@ async function createMixedMonoArchive() {
       level: 6
     }
   });
+}
+
+function relatedTab(tabId, origin, path, firstSeenAt) {
+  return {
+    tabId,
+    windowId: 1,
+    relation: origin === "https://example.test" ? "same-origin" : "same-site",
+    origin,
+    path,
+    active: false,
+    focused: false,
+    incognito: false,
+    firstSeenAt
+  };
 }
 
 function event(id, t, mono, type, data, ref = undefined) {
@@ -1170,6 +1218,38 @@ async function verifyProgressHoverResponse(client, timeoutMs) {
     timeoutMs,
     200,
     "Progress hover response preview did not render"
+  );
+}
+
+async function verifyParallelTabs(client, timeoutMs) {
+  return waitFor(
+    async () => {
+      const snapshot = await client.evaluate(`
+        (() => {
+          const badge = document.querySelector('#summary .summary-tabs-badge');
+
+          if (!badge) {
+            return null;
+          }
+
+          badge.click();
+
+          return {
+            badgeText: (badge.textContent || '').trim(),
+            badgeTitle: badge.getAttribute('title') || '',
+            markerCount: document.querySelectorAll(
+              '#playback-markers button[data-marker-kind="tabs"]'
+            ).length,
+            details: document.getElementById('event-details')?.textContent || ''
+          };
+        })()
+      `);
+
+      return snapshot?.details.includes("meta.tabs.snapshot") ? snapshot : null;
+    },
+    timeoutMs,
+    200,
+    "Parallel tabs badge or details did not render"
   );
 }
 
