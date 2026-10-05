@@ -227,8 +227,8 @@ function normalizeDataCategoryCaps(value: unknown): EnterpriseRecorderPolicy["da
     "lengths-only",
     "allow"
   ]);
-  setEnumCap(output, "indexedDb", record.indexedDb, ["off", "counts-only", "names-only"]);
-  setEnumCap(output, "cookies", record.cookies, ["off", "count-only", "names-only"]);
+  setEnumCap(output, "indexedDb", record.indexedDb, ["off", "counts-only", "names-only", "allow"]);
+  setEnumCap(output, "cookies", record.cookies, ["off", "count-only", "names-only", "allow"]);
   setEnumCap(output, "cdp", record.cdp, ["off", "safe-subset", "full"]);
   setEnumCap(output, "heapProfiles", record.heapProfiles, ["off", "lab-only"]);
 
@@ -288,8 +288,18 @@ function applyDataCategoryCaps(
       "body-allowlist"
     ]),
     storage: capStorageCategory(categories.storage, caps.storage),
-    indexedDb: capEnum(categories.indexedDb, caps.indexedDb, ["off", "counts-only", "names-only"]),
-    cookies: capEnum(categories.cookies, caps.cookies, ["off", "count-only", "names-only"]),
+    indexedDb: capEnum(categories.indexedDb, caps.indexedDb, [
+      "off",
+      "counts-only",
+      "names-only",
+      "allow"
+    ]),
+    cookies: capEnum(categories.cookies, caps.cookies, [
+      "off",
+      "count-only",
+      "names-only",
+      "allow"
+    ]),
     cdp: capEnum(categories.cdp, caps.cdp, ["off", "safe-subset", "full"]),
     heapProfiles: capEnum(categories.heapProfiles, caps.heapProfiles, ["off", "lab-only"])
   };

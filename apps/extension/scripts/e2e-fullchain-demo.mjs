@@ -81,6 +81,9 @@ const verifySourceMaps =
   captureMode === "full" && (process.env.WB_E2E_VERIFY_SOURCE_MAPS ?? "1") !== "0";
 // Needs the configured console: allow / network: body-allowlist policy and CDP capture.
 const checkCaptureFidelity = captureMode === "full" && configureRecorderOptions;
+// Lite records console text and stacks through the page hook under the same console: allow policy.
+const checkConsoleFidelity = captureMode === "lite" && configureRecorderOptions;
+const checkAnyFidelity = checkCaptureFidelity || checkConsoleFidelity;
 const playerSdkEntry = resolve(workspaceRoot, "packages/player-sdk/dist/index.js");
 const usePopupUiActions =
   process.env.WB_E2E_USE_POPUP_UI === undefined
@@ -447,9 +450,9 @@ async function main() {
     minifiedErrorResult
   );
 
-  const fidelityScenario = checkCaptureFidelity
-    ? await runCaptureFidelityScenario(demoClient)
-    : { ok: true, skipped: "needs-full-mode-with-configured-options" };
+  const fidelityScenario = checkAnyFidelity
+    ? await runCaptureFidelityScenario(demoClient, { consoleOnly: checkConsoleFidelity })
+    : { ok: true, skipped: "needs-configured-options" };
   assert(fidelityScenario?.ok === true, "Capture fidelity scenario failed", fidelityScenario);
 
   const realWorldResult = await runRealWorldScenarioAddons({
@@ -544,12 +547,13 @@ async function main() {
     archiveEvidenceResult
   );
 
-  const fidelityArchiveResult = checkCaptureFidelity
+  const fidelityArchiveResult = checkAnyFidelity
     ? await verifyCaptureFidelityArchive({
         archivePath: exportedPath,
         passphrase: exportPassphrase,
         playerSdkEntry,
-        scenario: fidelityScenario
+        scenario: fidelityScenario,
+        consoleOnly: checkConsoleFidelity
       })
     : fidelityScenario;
   assert(

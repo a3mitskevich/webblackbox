@@ -19,6 +19,7 @@ import {
   STORAGE_SNAPSHOT_MAX_ITEMS,
   STORAGE_SNAPSHOT_MAX_VALUE_CHARS
 } from "./capture-scope.js";
+import { readIndexedDbSnapshot } from "./indexeddb-snapshot.js";
 import { serializeRawDom } from "./raw-dom-snapshot.js";
 import {
   INJECTED_MESSAGE_SOURCE,
@@ -61,6 +62,8 @@ const FULL_MODE_POINTER_TRACK_INTERVAL_MS = 250;
 const QUIET_MODE_MUTATION_RECORD_LIMIT = 360;
 const QUIET_MODE_EVENT_BUFFER_LIMIT = 560;
 const QUIET_MODE_COOLDOWN_MS = 3_000;
+/** Shortest gap between raw DOM snapshots taken because the page changed (`dom: allow`). */
+const DOM_CHANGE_SNAPSHOT_INTERVAL_MS = 2_500;
 const QUIET_MODE_SCROLL_COOLDOWN_MS = 2_000;
 const QUIET_MODE_EDITOR_COOLDOWN_MS = 4_200;
 const SCREENSHOT_MAX_DIMENSION_PX = 1_200;
@@ -208,6 +211,12 @@ export class LiteCaptureAgent {
   private pendingTargetEnrichmentTimers = new Set<number>();
   private trailingScrollTimer = 0;
   private mutationFlushTimer = 0;
+
+  private domChangeSnapshotTimer = 0;
+
+  private indexedDbSnapshotInFlight = false;
+
+  private lastDomSnapshotMono = Number.NEGATIVE_INFINITY;
   private flushTimer = 0;
   private lastScrollTime = 0;
   private lastPointerTime = Number.NEGATIVE_INFINITY;
@@ -898,9 +907,12 @@ export class LiteCaptureAgent {
     );
   }
 
+  /** Full mode leaves DOM changes to CDP unless the profile records the raw DOM. */
   private shouldCaptureMutationSignals(): boolean {
     return (
-      this.mode !== "full" && this.isTopLevelFrame && this.capturePolicy.categories.dom !== "off"
+      (this.mode !== "full" || capturesRawDom(this.capturePolicy.categories)) &&
+      this.isTopLevelFrame &&
+      this.capturePolicy.categories.dom !== "off"
     );
   }
 
@@ -1017,6 +1029,11 @@ export class LiteCaptureAgent {
       this.flushMutationBuffer();
     }
 
+    if (this.domChangeSnapshotTimer > 0) {
+      clearTimeout(this.domChangeSnapshotTimer);
+      this.domChangeSnapshotTimer = 0;
+    }
+
     this.flushPendingScrollEvent();
   }
 
@@ -1094,6 +1111,45 @@ export class LiteCaptureAgent {
     }, flushDelayMs);
   }
 
+  /**
+   * Sessions that record the raw DOM snapshot the page again after it changes, at most every
+   * {@link DOM_CHANGE_SNAPSHOT_INTERVAL_MS}, so a replayed DOM follows the session instead of
+   * freezing at the start snapshot. Under capture pressure the snapshot waits (checked again
+   * every interval) and is taken once the pressure ends.
+   */
+  private scheduleDomChangeSnapshot(): void {
+    if (
+      this.domChangeSnapshotTimer > 0 ||
+      !this.recordingActive ||
+      !capturesRawDom(this.capturePolicy.categories) ||
+      !this.shouldCaptureDomSnapshots()
+    ) {
+      return;
+    }
+
+    const delayMs = Math.max(
+      0,
+      this.lastDomSnapshotMono + DOM_CHANGE_SNAPSHOT_INTERVAL_MS - monotonicTime()
+    );
+
+    this.domChangeSnapshotTimer = window.setTimeout(() => {
+      this.domChangeSnapshotTimer = 0;
+
+      if (!this.recordingActive) {
+        return;
+      }
+
+      if (this.shouldDeferBackgroundCapture()) {
+        // Retried one interval later (the last snapshot time is unchanged).
+        this.lastDomSnapshotMono = monotonicTime();
+        this.scheduleDomChangeSnapshot();
+        return;
+      }
+
+      this.emitDomSnapshot("mutation");
+    }, delayMs);
+  }
+
   private flushMutationBuffer(): void {
     if (this.mutationSummary.count === 0) {
       return;
@@ -1107,6 +1163,7 @@ export class LiteCaptureAgent {
       summary
     });
     this.emitRrwebMutationSummary(summary);
+    this.scheduleDomChangeSnapshot();
   }
 
   private emitRrwebMutationSummary(summary: MutationBatchSummary): void {
@@ -1135,6 +1192,7 @@ export class LiteCaptureAgent {
   }
 
   private emitDomSnapshot(reason: string): void {
+    this.lastDomSnapshotMono = monotonicTime();
     const nodeCount = document.getElementsByTagName("*").length;
     const summaryMode = this.resolveDomSnapshotSummaryMode(nodeCount);
 
@@ -1202,7 +1260,10 @@ export class LiteCaptureAgent {
   }
 
   private emitStorageSnapshots(reason: string): void {
-    if (this.capturePolicy.categories.cookies !== "off") {
+    const cookies = this.capturePolicy.categories.cookies;
+
+    // Full mode reads cookie values through CDP, HttpOnly ones included.
+    if (cookies !== "off" && !(this.mode === "full" && cookies === "allow")) {
       this.emitCookieSnapshot(reason);
     }
 
@@ -1224,7 +1285,31 @@ export class LiteCaptureAgent {
     const names = cookies
       .filter((entry) => entry.includes("="))
       .map((entry) => entry.split("=")[0]?.trim() ?? "");
-    const showsNames = this.capturePolicy.categories.cookies === "names-only";
+    const level = this.capturePolicy.categories.cookies;
+
+    if (level === "allow") {
+      // `cookies` (name/value records) so the recorder's cookie-name rules can mask values.
+      const listed = cookies
+        .filter((entry) => entry.includes("="))
+        .slice(0, STORAGE_SNAPSHOT_MAX_ITEMS);
+      this.queueEvent("cookieSnapshot", {
+        reason,
+        count: cookies.length,
+        mode: "allow",
+        redacted: false,
+        truncated: cookies.length > listed.length,
+        cookies: listed.map((entry) => {
+          const separator = entry.indexOf("=");
+          return {
+            name: entry.slice(0, separator).trim(),
+            ...capStorageValue(entry.slice(separator + 1))
+          };
+        })
+      });
+      return;
+    }
+
+    const showsNames = level === "names-only";
 
     this.queueEvent("cookieSnapshot", {
       reason,
@@ -1293,12 +1378,39 @@ export class LiteCaptureAgent {
   }
 
   private async emitIndexedDbSnapshot(reason: string): Promise<void> {
-    if (!("indexedDB" in window) || typeof indexedDB.databases !== "function") {
+    // One read at a time: start, interval and stop snapshots must not stack up on the page.
+    if (
+      this.indexedDbSnapshotInFlight ||
+      !("indexedDB" in window) ||
+      typeof indexedDB.databases !== "function"
+    ) {
       return;
     }
 
+    this.indexedDbSnapshotInFlight = true;
+
     try {
       const rows = await indexedDB.databases();
+
+      if (this.capturePolicy.categories.indexedDb === "allow") {
+        const snapshot = await readIndexedDbSnapshot(indexedDB, rows);
+
+        if (!this.recordingActive) {
+          return;
+        }
+
+        this.queueEvent("indexedDbSnapshot", {
+          reason,
+          count: rows.length,
+          mode: "allow",
+          redacted: false,
+          truncated: snapshot.truncated,
+          databaseNames: snapshot.databases.map((database) => database.name),
+          databases: snapshot.databases
+        });
+        return;
+      }
+
       const showsNames = this.capturePolicy.categories.indexedDb === "names-only";
       const names = rows
         .map((row) => row.name)
@@ -1315,6 +1427,8 @@ export class LiteCaptureAgent {
       });
     } catch {
       void 0;
+    } finally {
+      this.indexedDbSnapshotInFlight = false;
     }
   }
 
@@ -1934,6 +2048,7 @@ export class LiteCaptureAgent {
     this.mutationObserver?.disconnect();
     this.mutationObserver = null;
     this.scheduleQuietModeRecovery();
+    this.scheduleDomChangeSnapshot();
   }
 
   private scheduleQuietModeRecovery(): void {

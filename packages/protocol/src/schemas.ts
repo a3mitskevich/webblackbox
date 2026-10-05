@@ -189,8 +189,9 @@ export const capturePolicySchema = z
         console: z.enum(["off", "metadata", "sanitized", "allow"]),
         network: z.enum(["metadata", "headers-allowlist", "body-allowlist"]),
         storage: z.enum(["off", "counts-only", "names-only", "lengths-only", "allow"]),
-        indexedDb: z.enum(["off", "counts-only", "names-only"]),
-        cookies: z.enum(["off", "count-only", "names-only"]),
+        // `allow` (values: cookie values, database records, bounded) added for Full capture.
+        indexedDb: z.enum(["off", "counts-only", "names-only", "allow"]),
+        cookies: z.enum(["off", "count-only", "names-only", "allow"]),
         cdp: z.enum(["off", "safe-subset", "full"]),
         heapProfiles: z.enum(["off", "lab-only"])
       })
