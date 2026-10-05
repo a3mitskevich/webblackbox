@@ -4,6 +4,7 @@ import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_POINTER_CAPTURE_OPTIONS,
   DEFAULT_RECORDER_CONFIG,
+  maskPointerLabels,
   stripUnreadablePointerDetail,
   recorderConfigSchema,
   validateEvent,
@@ -167,5 +168,71 @@ describe("stripUnreadablePointerDetail", () => {
     expect(stripUnreadablePointerDetail("network.request", network, DEFAULT_CAPTURE_POLICY)).toBe(
       network
     );
+  });
+});
+
+describe("maskPointerLabels", () => {
+  const rules = { valuePatterns: [{ pattern: "acct-\\d+", targets: ["dom" as const] }] };
+
+  it("masks each readable label, drops a changed selector and masks selected text", () => {
+    const readable = {
+      role: "button acct-1",
+      ariaLabel: "Pay acct-2",
+      text: "Pay acct-3",
+      testId: "pay-acct-4",
+      name: "acct-5",
+      css: '[name="acct-5"]'
+    };
+
+    expect(
+      maskPointerLabels(
+        "user.drag.end",
+        { target: { tag: "A", readable }, dropTarget: { tag: "B", readable } },
+        rules
+      )
+    ).toEqual({
+      target: {
+        tag: "A",
+        readable: {
+          role: "button [REDACTED]",
+          ariaLabel: "Pay [REDACTED]",
+          text: "Pay [REDACTED]",
+          testId: "pay-[REDACTED]",
+          name: "[REDACTED]"
+        }
+      },
+      dropTarget: {
+        tag: "B",
+        readable: {
+          role: "button [REDACTED]",
+          ariaLabel: "Pay [REDACTED]",
+          text: "Pay [REDACTED]",
+          testId: "pay-[REDACTED]",
+          name: "[REDACTED]"
+        }
+      }
+    });
+    expect(maskPointerLabels("user.selection", { length: 6, text: "acct-7" }, rules)).toEqual({
+      length: 6,
+      text: "[REDACTED]"
+    });
+  });
+
+  it("keeps labels as recorded when masking is off, nothing matches or rules target bodies", () => {
+    const click = { target: { tag: "A", readable: { text: "Pay acct-3", css: "#pay" } } };
+
+    expect(maskPointerLabels("user.click", click, { ...rules, contentRedaction: false })).toBe(
+      click
+    );
+    expect(
+      maskPointerLabels("user.click", { target: { readable: { text: "Hi" } } }, rules)
+    ).toEqual({
+      target: { readable: { text: "Hi" } }
+    });
+    expect(
+      maskPointerLabels("user.click", click, {
+        valuePatterns: [{ pattern: "acct-\\d+", targets: ["bodies"] }]
+      })
+    ).toBe(click);
   });
 });

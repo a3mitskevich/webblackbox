@@ -323,6 +323,29 @@ describe("pointer capture", () => {
     readable.agent.dispose();
   });
 
+  it("masks selected text with the profile's dom patterns", async () => {
+    const policy: CapturePolicy = {
+      ...READABLE_POLICY,
+      redaction: {
+        ...READABLE_POLICY.redaction,
+        valuePatterns: [{ pattern: "twelve", targets: ["dom"] }]
+      }
+    };
+    const { agent, ofType } = createAgent({ pointer: ALL_POINTER, capturePolicy: policy });
+    const range = document.createRange();
+    range.selectNodeContents(element("#para"));
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(ofType("selection")[0]?.payload).toMatchObject({
+      length: 40,
+      text: "Quarterly revenue grew by [REDACTED] percent"
+    });
+    agent.dispose();
+  });
+
   it("drops selected text that spans a blocked element between clean endpoints", async () => {
     const { agent, ofType } = createAgent({ pointer: ALL_POINTER, capturePolicy: READABLE_POLICY });
     const range = document.createRange();

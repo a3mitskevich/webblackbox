@@ -8,6 +8,8 @@ import {
   type PointerKind
 } from "@webblackbox/protocol";
 
+import { maskDomText } from "@webblackbox/protocol/redaction-rules";
+
 import { isCoveredByBlockedSelector, isNeverCapturedField } from "./input-value-policy.js";
 import {
   readFrameOffset,
@@ -717,7 +719,10 @@ function readSelectionState(policy: CapturePolicy): SelectionState | null {
 
   return {
     length: raw.length,
-    ...(textAllowed ? { text: raw.slice(0, SELECTION_TEXT_MAX_CHARS) } : {}),
+    // Selected text is page text: DOM rules mask it (before the length limit) as in the snapshot.
+    ...(textAllowed
+      ? { text: maskDomText(raw, policy.redaction).slice(0, SELECTION_TEXT_MAX_CHARS) }
+      : {}),
     editable,
     element,
     anchorKey: `${selection.anchorOffset}:${selection.focusOffset}`

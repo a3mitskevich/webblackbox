@@ -104,6 +104,57 @@ describe("readable pointer targets", () => {
     expect(text.startsWith("word word word")).toBe(true);
   });
 
+  describe("DOM value patterns", () => {
+    const withDomRule = (contentRedaction = true): CapturePolicy => ({
+      ...READABLE_POLICY,
+      redaction: {
+        ...READABLE_POLICY.redaction,
+        contentRedaction,
+        valuePatterns: [{ pattern: "acct-\\d+", targets: ["dom"] }]
+      }
+    });
+
+    it("masks every label field with the profile's dom patterns", () => {
+      mount(`
+        <button id="pay" role="button acct-11" aria-label="Pay acct-22" data-testid="pay-acct-33"
+          name="acct-44">Pay acct-55 now</button>
+      `);
+
+      const readable = buildReadableTarget(element("#pay"), withDomRule());
+
+      expect(readable).toMatchObject({
+        role: "button [REDACTED]",
+        ariaLabel: "Pay [REDACTED]",
+        text: "Pay [REDACTED] now",
+        testId: "pay-[REDACTED]",
+        name: "[REDACTED]"
+      });
+      expect(JSON.stringify(readable)).not.toMatch(/acct-\d/);
+    });
+
+    it("masks before clipping, drops a selector the patterns would change and labels inputs", () => {
+      mount(`
+        <a id="long" href="/x">${"padding ".repeat(4)}acct-123456789</a>
+        <button data-testid="acct-77">Go</button>
+        <input id="send" type="submit" value="Send acct-88" />
+      `);
+
+      const long = buildReadableTarget(element("#long"), withDomRule());
+      expect(long?.text).not.toMatch(/acct-\d|\d{3}/);
+      expect(buildReadableTarget(element("[data-testid]"), withDomRule())?.css).toBeUndefined();
+      expect(buildReadableTarget(element("#send"), withDomRule())?.text).toBe("Send [REDACTED]");
+    });
+
+    it("masks nothing when content masking is off", () => {
+      mount(`<button id="pay" aria-label="Pay acct-22">Pay acct-55</button>`);
+
+      expect(buildReadableTarget(element("#pay"), withDomRule(false))).toMatchObject({
+        ariaLabel: "Pay acct-22",
+        text: "Pay acct-55"
+      });
+    });
+  });
+
   it("returns nothing when the profile keeps actions as metadata", () => {
     mount(`<button id="go">Go</button>`);
 

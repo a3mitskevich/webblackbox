@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { maskDomText, type RedactionRules } from "./redaction-rules.js";
 import type { CapturePolicy } from "./types.js";
 
 /**
@@ -317,6 +318,71 @@ export function stripUnreadablePointerDetail(
   }
 
   return changed ? next : payload;
+}
+
+/**
+ * A `user.*` payload with the profile's DOM rules applied to its readable labels and selected
+ * text: they are page text, so DOM rules apply to them as to the DOM snapshot. A readable
+ * selector the rules would change is dropped (a masked selector matches nothing). Returns the
+ * payload itself when nothing changes.
+ */
+export function maskPointerLabels(
+  eventType: string,
+  payload: unknown,
+  rules: RedactionRules
+): unknown {
+  if (!eventType.startsWith("user.") || !isPlainRecord(payload)) {
+    return payload;
+  }
+
+  const next: Record<string, unknown> = { ...payload };
+  let changed = false;
+
+  for (const key of READABLE_TARGET_KEYS) {
+    const target = payload[key];
+    const readable = isPlainRecord(target) ? target.readable : undefined;
+    const masked = isPlainRecord(readable) ? maskReadableLabels(readable, rules) : readable;
+
+    if (masked !== readable && isPlainRecord(target)) {
+      next[key] = { ...target, readable: masked };
+      changed = true;
+    }
+  }
+
+  if (eventType === "user.selection" && typeof payload.text === "string") {
+    const text = maskDomText(payload.text, rules);
+
+    if (text !== payload.text) {
+      next.text = text;
+      changed = true;
+    }
+  }
+
+  return changed ? next : payload;
+}
+
+/** Readable labels through {@link maskDomText}; a changed `css` selector is dropped instead. */
+function maskReadableLabels(
+  readable: Record<string, unknown>,
+  rules: RedactionRules
+): Record<string, unknown> {
+  let changed = false;
+  const entries = Object.entries(readable).flatMap(([key, value]) => {
+    if (typeof value !== "string") {
+      return [[key, value]];
+    }
+
+    const masked = maskDomText(value, rules);
+
+    if (masked === value) {
+      return [[key, value]];
+    }
+
+    changed = true;
+    return key === "css" ? [] : [[key, masked]];
+  });
+
+  return changed ? Object.fromEntries(entries) : readable;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
