@@ -3,9 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ChromeApi } from "../shared/chrome-api.js";
 import { DEFAULT_PROFILE_ID, PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
+import { resolveStartEngine } from "../shared/profiles/engine.js";
 import {
   BUILT_IN_PROFILE_IDS,
   createDefaultProfile,
+  duplicateProfile,
+  findBuiltInProfile,
   RECOMMENDED_PROFILE_IDS
 } from "../shared/profiles/presets.js";
 import { selectRecordingProfile } from "../shared/profiles/resolve.js";
@@ -233,11 +236,78 @@ describe("buildProfilePreview", () => {
       name: "QA",
       base: "full",
       source: "explicit",
-      extended: true
+      extended: true,
+      requiresFull: true
     });
     expect(buildProfilePreview(state, selection, ["console"]).selection?.enterpriseCapped).toEqual([
       "console"
     ]);
+  });
+
+  it("upgrades a Lite start to Full for a profile that needs it, as startSession does", async () => {
+    const fullCaptureCopy = {
+      ...duplicateProfile(findBuiltInProfile(BUILT_IN_PROFILE_IDS.fullCapture)!, { id: "copy" }),
+      name: "My capture"
+    };
+    const { api } = fakeChrome({
+      local: {
+        [PROFILES_STORAGE_KEY]: {
+          schemaVersion: 2,
+          defaultProfileId: "default",
+          profiles: [createDefaultProfile(), fullCaptureCopy],
+          rules: [],
+          extendedCaptureHosts: []
+        }
+      }
+    });
+    const state = await loadProfilesState(api, KEYS);
+    const startWith = (requestedProfileId: string) => {
+      const selection = selectRecordingProfile({
+        state,
+        page: { url: "https://a.example/" },
+        requestedProfileId
+      });
+
+      if (!selection) {
+        throw new Error(`no selection for ${requestedProfileId}`);
+      }
+
+      return {
+        engine: resolveStartEngine("lite", selection),
+        requiresFull: buildProfilePreview(state, selection).selection?.requiresFull
+      };
+    };
+
+    expect(startWith("copy")).toEqual({ engine: "full", requiresFull: true });
+    expect(startWith(BUILT_IN_PROFILE_IDS.qa)).toEqual({ engine: "full", requiresFull: true });
+    expect(startWith(DEFAULT_PROFILE_ID)).toEqual({ engine: "lite", requiresFull: false });
+    expect(startWith(BUILT_IN_PROFILE_IDS.full)).toEqual({ engine: "lite", requiresFull: false });
+  });
+
+  it("keeps a Lite start for the legacy Default whatever its v1 options ask for", async () => {
+    const { api } = fakeChrome({
+      local: {
+        [KEYS.legacyOptionsKey]: {
+          optionsVersion: 1,
+          capturePolicy: {
+            ...DEFAULT_CAPTURE_POLICY,
+            categories: {
+              ...DEFAULT_CAPTURE_POLICY.categories,
+              console: "allow",
+              network: "body-allowlist",
+              cdp: "safe-subset"
+            }
+          }
+        }
+      }
+    });
+    const state = await loadProfilesState(api, KEYS);
+    const selection = selectRecordingProfile({ state, page: { url: "https://a.example/" } });
+
+    expect(selection?.legacy).toBe(true);
+    expect(selection?.profile.categories.network).toBe("body-allowlist");
+    expect(selection && resolveStartEngine("lite", selection)).toBe("lite");
+    expect(selection && buildProfilePreview(state, selection).selection?.requiresFull).toBe(false);
   });
 
   it("returns an empty catalog and no selection once every profile is deleted", async () => {

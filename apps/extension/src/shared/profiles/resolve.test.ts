@@ -188,8 +188,8 @@ describe("buildProfileRecorderConfig — presets", () => {
       console: "allow",
       network: "body-allowlist",
       storage: "allow",
-      indexedDb: "names-only",
-      cookies: "names-only",
+      indexedDb: "allow",
+      cookies: "allow",
       cdp: "full",
       heapProfiles: "off",
       tabsContext: "allow"

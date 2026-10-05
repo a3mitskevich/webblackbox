@@ -1,3 +1,5 @@
+import { CONSOLE_FULL_ENTRY_MAX_CHARS, CONSOLE_FULL_STACK_MAX_FRAMES } from "@webblackbox/protocol";
+
 import {
   asArray,
   asFiniteNumber,
@@ -16,9 +18,9 @@ import {
 export type ConsoleDetail = "compact" | "full";
 
 /** Ceiling for one console entry under `full` detail: its text, and all its arguments together. */
-export const MAX_CONSOLE_ENTRY_CHARS = 64 * 1024;
+export const MAX_CONSOLE_ENTRY_CHARS = CONSOLE_FULL_ENTRY_MAX_CHARS;
 /** Max call frames kept in a `full` stack (Chrome captures up to 200 for console messages). */
-export const MAX_FULL_STACK_FRAMES = 200;
+export const MAX_FULL_STACK_FRAMES = CONSOLE_FULL_STACK_MAX_FRAMES;
 
 type ConsoleLevel = "log" | "info" | "warn" | "error" | "debug";
 
@@ -119,6 +121,8 @@ export function normalizeContentConsolePayload(
   const limiter = createTextLimiter(detail);
   const args = asArray(row?.args).map((entry) => sanitizeSerializable(entry, 0, shape, limiter));
   const text = readEntryText(asString(row?.text), args, detail, limiter);
+  // Under `full` the page hook already cut the entry to the same ceiling and flags it when it did.
+  const truncatedByHook = detail === "full" && row?.truncated === true;
 
   return stripUndefined({
     source: asString(row?.source) ?? "content.injected",
@@ -127,8 +131,22 @@ export function normalizeContentConsolePayload(
     text,
     args,
     stackTop: asString(row?.stackTop) ?? undefined,
-    truncated: limiter.isTruncated() || undefined
+    stack: detail === "full" ? readContentStack(asString(row?.stack)) : undefined,
+    truncated: truncatedByHook || limiter.isTruncated() || undefined
   });
+}
+
+/** A page-hook stack (V8 `Error.stack` frame lines), held to the frame and entry ceilings. */
+function readContentStack(stack: string | undefined): string | undefined {
+  if (!stack) {
+    return undefined;
+  }
+
+  return stack
+    .split("\n")
+    .slice(0, MAX_FULL_STACK_FRAMES)
+    .join("\n")
+    .slice(0, MAX_CONSOLE_ENTRY_CHARS);
 }
 
 function resolveShape(detail: ConsoleDetail): SerializeShape {

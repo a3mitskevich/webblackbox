@@ -1479,6 +1479,58 @@ describe("recorder", () => {
   });
 });
 
+describe("cookie and IndexedDB values", () => {
+  function ingestSnapshot(
+    categories: Partial<CapturePolicy["categories"]>,
+    contentRedaction: boolean
+  ): Record<string, unknown> | undefined {
+    const recorder = new WebBlackboxRecorder({
+      ...TEST_CONFIG,
+      redaction: { ...TEST_CONFIG.redaction, contentRedaction },
+      capturePolicy: {
+        ...TEST_CAPTURE_POLICY,
+        categories: { ...TEST_CAPTURE_POLICY.categories, ...categories },
+        redaction: { ...TEST_CAPTURE_POLICY.redaction, contentRedaction }
+      }
+    });
+    const result = recorder.ingest({
+      source: "system",
+      rawType: "cdp.storage.cookie.snapshot",
+      sid: "S-cookies",
+      tabId: 1,
+      t: 1,
+      mono: 1,
+      payload: {
+        mode: "allow",
+        redacted: false,
+        count: 2,
+        cookies: [
+          { name: "session", value: "s3cr3t-session", httpOnly: true, domain: "app.example" },
+          { name: "theme", value: "dark", httpOnly: false, domain: "app.example" }
+        ]
+      }
+    });
+
+    return result.event?.type === "storage.cookie.snapshot"
+      ? (result.event.data as Record<string, unknown>)
+      : undefined;
+  }
+
+  it("keeps cookie values under cookies: allow and masks secret cookie names when masking is on", () => {
+    const masked = ingestSnapshot({ cookies: "allow" }, true);
+    const raw = ingestSnapshot({ cookies: "allow" }, false);
+
+    expect(JSON.stringify(masked)).not.toContain("s3cr3t-session");
+    expect(masked?.cookies).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "theme", value: "dark" })])
+    );
+    expect(raw?.cookies).toEqual([
+      expect.objectContaining({ name: "session", value: "s3cr3t-session", httpOnly: true }),
+      expect.objectContaining({ name: "theme", value: "dark" })
+    ]);
+  });
+});
+
 describe("recorder reconfigure", () => {
   it("applies a new capture policy to later events and keeps the buffer", () => {
     const metadataPolicy: CapturePolicy = {

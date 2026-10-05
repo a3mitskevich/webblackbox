@@ -35,7 +35,10 @@ const RAW_SECRETS = {
   requestBody: "FC-REQUEST-BODY-1",
   responseBody: "FC-RESPONSE-BODY-1",
   password: "FC-PASSWORD-1",
-  webSocket: "FC-WS-PAYLOAD-1"
+  webSocket: "FC-WS-PAYLOAD-1",
+  cookie: "FC-COOKIE-SECRET-1",
+  httpOnlyCookie: "FC-HTTPONLY-SECRET-1",
+  indexedDb: "FC-IDB-SECRET-1"
 };
 /** The same kinds of secrets planted on another host: the explicit choice still records them. */
 const OTHER_HOST_SECRETS = {
@@ -46,10 +49,15 @@ const OTHER_HOST_SECRETS = {
   requestBody: "OH-REQUEST-BODY-2",
   responseBody: "OH-RESPONSE-BODY-2",
   password: "OH-PASSWORD-2",
-  webSocket: "OH-WS-PAYLOAD-2"
+  webSocket: "OH-WS-PAYLOAD-2",
+  cookie: "OH-COOKIE-SECRET-2",
+  httpOnlyCookie: "OH-HTTPONLY-SECRET-2",
+  indexedDb: "OH-IDB-SECRET-2"
 };
 /** Text in the page markup: only a raw DOM snapshot carries it into the archive. */
 const DOM_MARKER = "FC-DOM-MARKER-1";
+/** Rows the scenario adds over a few seconds: later DOM snapshots must follow them. */
+const DOM_CHANGE_ROWS = 10;
 const FULL_CAPTURE_ID = "builtin:full-capture";
 
 main().catch(async (error) => {
@@ -138,6 +146,13 @@ async function main() {
     "The recording did not keep going on the other host",
     session
   );
+
+  // Stopping takes the last cookie snapshot (CDP, HttpOnly cookies included).
+  const stopped = await popup.evaluate(
+    `chrome.runtime.sendMessage({ kind: "ui.stop", tabId: ${tabId} })`
+  );
+  assert(stopped?.ok !== false, "Stopping the recording failed", stopped);
+  await sleep(1_500);
 
   for (const refused of [undefined, "short"]) {
     const result = await popup.evaluate(
@@ -229,13 +244,63 @@ async function main() {
     assert(!rawArchive.includes(secret), `The ${kind} secret is readable in the archive bytes`);
   }
 
+  // Values, not names: cookie values (HttpOnly too, through CDP) and IndexedDB records.
+  const cookieEntries = events
+    .filter((event) => event.type === "storage.cookie.snapshot")
+    .flatMap((event) => (Array.isArray(event.data?.cookies) ? event.data.cookies : []));
+  const idbRecords = events
+    .filter((event) => event.type === "storage.idb.snapshot")
+    .flatMap((event) => event.data?.databases ?? [])
+    .flatMap((database) => database.stores ?? [])
+    .flatMap((store) => store.records ?? []);
+
+  for (const secrets of [RAW_SECRETS, OTHER_HOST_SECRETS]) {
+    assert(
+      cookieEntries.some((entry) => entry.name === "fc_cookie" && entry.value === secrets.cookie),
+      "Full capture did not record the page cookie value",
+      { cookieEntries }
+    );
+    assert(
+      cookieEntries.some(
+        (entry) =>
+          entry.name === "fc_http" &&
+          entry.value === secrets.httpOnlyCookie &&
+          entry.httpOnly === true
+      ),
+      "Full capture did not record the HttpOnly cookie value",
+      { cookieEntries }
+    );
+  }
+
+  for (const secrets of [RAW_SECRETS, OTHER_HOST_SECRETS]) {
+    assert(
+      idbRecords.some((record) => record.value?.includes(secrets.indexedDb)),
+      "Full capture did not record the IndexedDB record",
+      { idbRecords }
+    );
+  }
+
+  // DOM changes: summaries and snapshots taken because the page changed, the last one current.
+  const changeSnapshots = rawDomSnapshots.filter((event) => event.data?.reason === "mutation");
+  const mutationBatches = events.filter((event) => event.type === "dom.mutation.batch");
+  const lastRow = `DOM-CHANGE-ROW-${DOM_CHANGE_ROWS - 1}`;
+  assert(mutationBatches.length > 0, "Full capture did not record DOM mutations");
+  assert(changeSnapshots.length > 0, "Full capture took no DOM snapshot after the page changed", {
+    reasons: rawDomSnapshots.map((event) => event.data?.reason)
+  });
+  assert(recorded.includes(lastRow), "No DOM snapshot shows the page after its last change");
+
   assert(!rawArchive.includes("127.0.0.1"), "The site appears in the archive's plaintext");
   assert(swExceptions.length === 0, "Service worker threw", swExceptions);
 
   console.log(`Archive: ${archivePath} (${bytes.byteLength} bytes)`);
   console.log(`Profile: ${JSON.stringify(fullCaptureConfig.data.profile)}`);
   console.log(`Raw secrets found: ${Object.keys(RAW_SECRETS).join(", ")} (both hosts)`);
-  console.log(`Raw DOM snapshots: ${rawDomSnapshots.length}; WebSocket frames: ${wsFrames.length}`);
+  console.log(
+    `Raw DOM snapshots: ${rawDomSnapshots.length} (${changeSnapshots.length} after changes); ` +
+      `mutation batches: ${mutationBatches.length}; WebSocket frames: ${wsFrames.length}`
+  );
+  console.log(`Cookie values: ${cookieEntries.length}; IndexedDB records: ${idbRecords.length}`);
   console.log(`Chrome log: ${harness.chromeLogPath}`);
   console.log("Profile full capture E2E passed.");
 
@@ -254,12 +319,18 @@ async function runScenario(page, secrets) {
   await page.evaluate(`document.querySelector("input[name=password]").focus()`);
   await page.send("Input.insertText", { text: secrets.password });
   await sleep(2_500);
+  // A marker snapshots the DOM and storage (IndexedDB records included) right now.
+  await page.evaluate(
+    `window.postMessage({ source: "webblackbox-injected", kind: "marker", message: "fc storage" }, "*")`
+  );
+  await sleep(1_500);
 }
 
 function startDemoServer() {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Full capture demo</title></head>
 <body><h1>Full capture demo</h1><p>${DOM_MARKER}</p><input name="password" type="password">
+<ul id="rows"></ul>
 <script>
   const echoOverWebSocket = (text) =>
     new Promise((resolve, reject) => {
@@ -271,16 +342,53 @@ function startDemoServer() {
       };
       socket.onerror = () => reject(new Error("WebSocket failed"));
     });
+  const putIndexedDbRecord = (value) =>
+    new Promise((resolve, reject) => {
+      const open = indexedDB.open("fc-db", 1);
+      open.onupgradeneeded = () => open.result.createObjectStore("kv", { keyPath: "id" });
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const tx = open.result.transaction("kv", "readwrite");
+        tx.objectStore("kv").put({ id: location.host, secret: value });
+        tx.oncomplete = () => {
+          open.result.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+  const changeDom = (rows) =>
+    new Promise((resolve) => {
+      let index = 0;
+      const list = document.getElementById("rows");
+      const timer = setInterval(() => {
+        const row = document.createElement("li");
+        row.textContent = "DOM-CHANGE-ROW-" + index;
+        list.append(row);
+        index += 1;
+        if (index >= rows) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 400);
+    });
   window.__runScenario = async (secrets) => {
     console.log("password=" + secrets.console);
     localStorage.setItem("authToken", secrets.storage);
+    document.cookie = "fc_cookie=" + secrets.cookie + "; path=/";
+    await putIndexedDbRecord(secrets.indexedDb);
+    await changeDom(${DOM_CHANGE_ROWS});
     const response = await fetch("/api/echo?token=" + secrets.url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         authorization: "Bearer " + secrets.header
       },
-      body: JSON.stringify({ password: secrets.requestBody, reply: secrets.responseBody })
+      body: JSON.stringify({
+        password: secrets.requestBody,
+        reply: secrets.responseBody,
+        httpOnlyCookie: secrets.httpOnlyCookie
+      })
     });
     const result = await response.json();
     return { ...result, wsEcho: await echoOverWebSocket(secrets.webSocket) };
@@ -294,7 +402,11 @@ function startDemoServer() {
         request.on("data", (chunk) => chunks.push(chunk));
         request.on("end", () => {
           const sent = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
-          response.writeHead(200, { "content-type": "application/json" });
+          response.writeHead(200, {
+            "content-type": "application/json",
+            // Readable through CDP only: the page cannot see HttpOnly cookies.
+            "set-cookie": `fc_http=${sent.httpOnlyCookie}; Path=/; HttpOnly`
+          });
           response.end(JSON.stringify({ echo: sent.reply, secret: sent.reply }));
         });
         return;

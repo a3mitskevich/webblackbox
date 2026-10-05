@@ -66,6 +66,7 @@ import {
   shouldInjectPageHooksForMode
 } from "../shared/mode-profile.js";
 import {
+  capStorageValue,
   capturesPageStorageInFullMode,
   isPageEventKeptInFullMode
 } from "webblackbox/capture-scope";
@@ -91,6 +92,7 @@ import {
   ScriptSourceMapTracker,
   type RawScriptRecord
 } from "./source-maps.js";
+import { resolveStartEngine } from "../shared/profiles/engine.js";
 import type { ProfilesState } from "../shared/profiles/storage.js";
 import {
   resolveLocalDataSettings,
@@ -252,6 +254,8 @@ type SessionRuntime = {
   pipeline: SessionPipelineClient;
   cdpRouter: CdpRouter | null;
   enabledCdpSessions: Set<string>;
+  /** Page URLs the tab showed while recording (memory only): cookie values are read for all. */
+  visitedPageUrls: Set<string>;
   requestMeta: Map<string, RequestMetaEntry>;
   screenshotInterval: ReturnType<typeof setInterval> | null;
   screenRecording: ScreenRecordingRuntime | null;
@@ -958,11 +962,11 @@ async function handleInboundMessage(
       return;
     }
 
-    await startSession(tabId, message.mode, {
+    const mode = await startSession(tabId, message.mode, {
       visualCapture: resolveFullModeVisualCapture(message),
       profileId: typeof message.profileId === "string" ? message.profileId : undefined
     });
-    if (message.mode === "lite" && message.reloadPage) {
+    if (mode === "lite" && message.reloadPage) {
       try {
         await reloadRecordingTab(tabId);
       } catch (error) {
@@ -1204,11 +1208,12 @@ function ingestTabsContext(recordedTabId: number, emission: TabsContextEmission)
   });
 }
 
+/** Starts recording the tab; resolves with the engine it runs in. */
 async function startSession(
   tabId: number,
-  mode: CaptureMode,
+  requestedMode: CaptureMode,
   options: { visualCapture?: FullModeVisualCapture; profileId?: string } = {}
-): Promise<void> {
+): Promise<CaptureMode> {
   const existing = sessionsByTab.get(tabId);
 
   if (existing) {
@@ -1238,6 +1243,10 @@ async function startSession(
     throw new Error(NO_RECORDING_PROFILE_ERROR);
   }
 
+  // A profile that needs the Full engine never runs in Lite, whatever the caller asked for: Lite
+  // would drop its bodies, socket messages and visuals without a trace. Upgrading (rather than
+  // refusing) keeps the start the user asked for; the popup already shows the engine as Full.
+  const mode = resolveStartEngine(requestedMode, profileSelection);
   const loadedRecorderConfig = await buildSessionRecorderConfig(
     mode,
     profileSelection,
@@ -1285,7 +1294,8 @@ async function startSession(
     startedAt,
     pipeline,
     recorderPlugins,
-    performanceBudget
+    performanceBudget,
+    pageUrl: tabMetadata.url
   });
 
   runtime.recorder = new WebBlackboxRecorder(
@@ -1390,6 +1400,7 @@ async function startSession(
   pushSessionList();
   await persistRuntimeState();
   notifyOffscreenPipelineStatus();
+  return mode;
 }
 
 async function reloadRecordingTab(tabId: number): Promise<void> {
@@ -1443,6 +1454,12 @@ async function stopSession(tabId: number): Promise<void> {
   await stopScreenRecording(runtime, "session-stop").catch((error) => {
     console.warn("[WebBlackbox] failed to stop screen recording", error);
   });
+
+  if (runtime.mode === "full" && runtime.config.capturePolicy?.categories.cookies === "allow") {
+    await captureCookieValues(runtime, "session-stop").catch((error) => {
+      console.warn("[WebBlackbox] failed to capture cookie values at stop", error);
+    });
+  }
   await flushBufferedPipelineEvents(runtime);
   await teardownCaptureInstrumentation(runtime);
   sessionsByTab.delete(runtime.tabId);
@@ -3347,6 +3364,9 @@ async function captureFullModeArtifacts(runtime: SessionRuntime, reason: string)
     // The DOM comes from the page agent's raw snapshot (`dom: allow`), which masks blocked
     // selectors and field values; a CDP DOMSnapshot would carry both unmasked.
     tasks.push(captureStorageSnapshots(runtime, reason));
+  } else if (runtime.config.capturePolicy?.categories.cookies === "allow") {
+    // Cookie values at the start (and at stop) even when no incident triggers a snapshot.
+    tasks.push(captureCookieValues(runtime, reason));
   }
 
   if (shouldCaptureAdvancedProfiles(reason)) {
@@ -3704,6 +3724,103 @@ function createScreenRecordingId(sid: string): string {
   return `VR-${sid}-${Date.now()}-${random}`;
 }
 
+const VISITED_PAGE_URLS_MAX = 20;
+
+/** An http(s) page URL without its fragment, or null for other schemes. */
+function rememberablePageUrl(rawUrl: string | undefined): [string] | null {
+  try {
+    const url = new URL(rawUrl ?? "");
+    url.hash = "";
+    return url.protocol === "http:" || url.protocol === "https:" ? [url.href] : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberVisitedPageUrl(runtime: SessionRuntime, rawUrl: string): void {
+  const [url] = rememberablePageUrl(rawUrl) ?? [];
+
+  if (!url || runtime.visitedPageUrls.has(url)) {
+    return;
+  }
+
+  if (runtime.visitedPageUrls.size >= VISITED_PAGE_URLS_MAX) {
+    const oldest = runtime.visitedPageUrls.values().next().value;
+
+    if (oldest !== undefined) {
+      runtime.visitedPageUrls.delete(oldest);
+    }
+  }
+
+  runtime.visitedPageUrls.add(url);
+}
+
+/**
+ * `cookies: allow`: every cookie of the page with its value (HttpOnly ones too, which the page
+ * cannot read), inline as `cookies` records so the recorder's cookie-name rules can mask values.
+ */
+async function captureCookieValues(runtime: SessionRuntime, reason: string): Promise<void> {
+  if (!runtime.cdpRouter) {
+    return;
+  }
+
+  // Sent directly (not through `sendCdpCommand`) so the snapshot at stop still runs. The pages
+  // the tab showed only; Storage.getCookies would list every site in the browser.
+  const urls = [...runtime.visitedPageUrls];
+  const outcome = await withCdpCommandTimeout(
+    runtime.cdpRouter.send<{ cookies?: unknown[] }>(
+      { tabId: runtime.tabId },
+      "Network.getCookies",
+      urls.length > 0 ? { urls } : undefined
+    ),
+    CDP_ARTIFACT_TIMEOUT_MS
+  );
+  const result = outcome.ok ? outcome.value : undefined;
+
+  if (!result?.cookies) {
+    return;
+  }
+
+  const cookies = result.cookies.slice(0, FULL_MODE_STORAGE_SNAPSHOT_MAX_ITEMS).flatMap((entry) => {
+    const row = asRecord(entry);
+    const name = asString(row?.name);
+
+    if (!row || name === null || typeof row.value !== "string") {
+      return [];
+    }
+
+    return [
+      {
+        name,
+        ...capStorageValue(row.value),
+        domain: asString(row.domain) ?? undefined,
+        path: asString(row.path) ?? undefined,
+        httpOnly: row.httpOnly === true,
+        secure: row.secure === true,
+        sameSite: asString(row.sameSite) ?? undefined,
+        expires: typeof row.expires === "number" ? row.expires : undefined
+      }
+    ];
+  });
+
+  ingestRawEvent({
+    source: "system",
+    rawType: "cdp.storage.cookie.snapshot",
+    sid: runtime.sid,
+    tabId: runtime.tabId,
+    t: Date.now(),
+    mono: monotonicTime(),
+    payload: {
+      reason,
+      count: result.cookies.length,
+      truncated: result.cookies.length > cookies.length,
+      mode: "allow",
+      redacted: false,
+      cookies
+    }
+  });
+}
+
 async function captureStorageSnapshots(runtime: SessionRuntime, reason: string): Promise<void> {
   if (!runtime.cdpRouter) {
     return;
@@ -3715,6 +3832,10 @@ async function captureStorageSnapshots(runtime: SessionRuntime, reason: string):
   // the CDP snapshots below would duplicate them in blobs the redactor never sees. Cookie names
   // stay on CDP: `document.cookie` cannot see HttpOnly cookies.
   const pageRecordsStorage = !!policy && capturesPageStorageInFullMode(policy.categories);
+
+  if (policy?.categories.cookies === "allow") {
+    await captureCookieValues(runtime, reason);
+  }
 
   const cookies =
     policy?.categories.cookies === "names-only"
@@ -5071,6 +5192,8 @@ type SessionRuntimeInit = {
   recorderPlugins: ReturnType<typeof createDefaultRecorderPlugins>;
   performanceBudget: PerformanceBudgetConfig;
   counters?: StoppedSessionSnapshot["counters"];
+  /** Unsanitized URL of the recorded page at Start (memory only; cookie values are read for it). */
+  pageUrl?: string;
 };
 
 /** A session runtime with its capture state reset; Start wires its recorder afterwards. */
@@ -5105,6 +5228,7 @@ function createSessionRuntime(init: SessionRuntimeInit): SessionRuntime {
     pipeline: init.pipeline,
     cdpRouter: null,
     enabledCdpSessions: new Set<string>(),
+    visitedPageUrls: new Set(rememberablePageUrl(init.pageUrl) ?? []),
     requestMeta: new Map(),
     screenshotInterval: null,
     screenRecording: null,
@@ -5653,6 +5777,7 @@ async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void>
 
   // Relations to other tabs are computed against the recorded tab's origin.
   void tabsContextTracker?.updateSession(tabId, { url: rawUrl });
+  rememberVisitedPageUrl(runtime, rawUrl);
 
   scheduleProfileReevaluation(runtime, "navigation");
 }
