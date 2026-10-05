@@ -63,7 +63,8 @@
     "build": "tsup src/index.ts src/injected-hooks.ts src/lite-capture-agent.ts src/lite-materializer.ts src/lite-sdk.ts src/types.ts --format esm --dts --clean",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "jsdom": "^26.1.0"
