@@ -30,6 +30,14 @@ import {
   parseArchiveRequestIndex,
   parseArchiveTimeIndex
 } from "./archive-schema.js";
+import {
+  lowerBoundEventMono,
+  mergeSortedEventLists,
+  sortEventsForTimeline,
+  upperBoundEventMono
+} from "./event-order.js";
+
+export { compareEventsForTimeline } from "./event-order.js";
 
 export {
   ArchiveLimitError,
@@ -501,6 +509,8 @@ type EventChunkSource = {
   bytes: Uint8Array;
 };
 
+type ChunkMonoBounds = Pick<EventChunkSource, "monoStart" | "monoEnd">;
+
 type EventChunkDescriptor = {
   chunkId: string;
   path: string;
@@ -525,6 +535,9 @@ export class WebBlackboxPlayer {
   private readonly eventChunks: EventChunkSource[];
 
   private readonly decodedChunkCache = new Map<string, WebBlackboxEvent[]>();
+
+  /** True mono bounds of chunks parsed so far; index bounds of older archives are first/last only. */
+  private readonly parsedChunkBounds = new Map<string, ChunkMonoBounds>();
 
   private allEventsCache: WebBlackboxEvent[] | null = null;
 
@@ -733,23 +746,9 @@ export class WebBlackboxPlayer {
       return matched.length >= limit;
     };
 
-    if (sourceEvents) {
-      for (const event of sourceEvents) {
-        if (collectMatch(event)) {
-          return matched;
-        }
-      }
-
-      return matched;
-    }
-
-    for (const chunk of this.getChunksForRange(query.range)) {
-      const chunkEvents = this.getChunkEvents(chunk);
-
-      for (const event of chunkEvents) {
-        if (collectMatch(event)) {
-          return matched;
-        }
+    for (const event of sourceEvents ?? this.getRangeEvents(query.range)) {
+      if (collectMatch(event)) {
+        return matched;
       }
     }
 
@@ -800,12 +799,42 @@ export class WebBlackboxPlayer {
       .slice(0, Math.max(1, limit));
   }
 
+  /**
+   * Events of a mono range in timeline order. Uses the fully loaded list when available (exact);
+   * otherwise merges the per-chunk ordered lists of the chunks that may hold the range, because
+   * chunks overlap in time when events arrive late.
+   */
+  private getRangeEvents(range?: PlayerRange): WebBlackboxEvent[] {
+    if (this.allEventsCache) {
+      return sliceEventsByMonoRange(this.allEventsCache, range);
+    }
+
+    return mergeSortedEventLists(
+      this.getChunksForRange(range).map((chunk) => this.getChunkEvents(chunk))
+    );
+  }
+
   private getChunksForRange(range?: PlayerRange): EventChunkSource[] {
     if (!range) {
       return this.eventChunks;
     }
 
-    return this.eventChunks.filter((chunk) => chunkSourceIntersectsRange(chunk, range));
+    return this.eventChunks.filter((chunk) =>
+      chunkSourceIntersectsRange(this.resolveChunkBounds(chunk), range)
+    );
+  }
+
+  private resolveChunkBounds(chunk: EventChunkSource): ChunkMonoBounds {
+    const parsed = this.parsedChunkBounds.get(chunk.chunkId);
+
+    if (!parsed) {
+      return chunk;
+    }
+
+    return {
+      monoStart: Math.min(chunk.monoStart, parsed.monoStart),
+      monoEnd: Math.max(chunk.monoEnd, parsed.monoEnd)
+    };
   }
 
   private getAllEvents(): WebBlackboxEvent[] {
@@ -813,11 +842,9 @@ export class WebBlackboxPlayer {
       return this.allEventsCache;
     }
 
-    const events: WebBlackboxEvent[] = [];
-
-    for (const chunk of this.eventChunks) {
-      events.push(...this.getChunkEvents(chunk));
-    }
+    const events = mergeSortedEventLists(
+      this.eventChunks.map((chunk) => this.getChunkEvents(chunk))
+    );
 
     this.allEventsCache = events;
     return events;
@@ -834,6 +861,7 @@ export class WebBlackboxPlayer {
 
     const parsed = parseChunkEvents(chunk);
     this.decodedChunkCache.set(chunk.chunkId, parsed);
+    this.rememberParsedChunkBounds(chunk.chunkId, parsed);
 
     while (this.decodedChunkCache.size > DEFAULT_DECODED_CHUNK_CACHE_SIZE) {
       const oldest = this.decodedChunkCache.keys().next().value;
@@ -846,6 +874,15 @@ export class WebBlackboxPlayer {
     }
 
     return parsed;
+  }
+
+  private rememberParsedChunkBounds(chunkId: string, events: WebBlackboxEvent[]): void {
+    const first = events[0];
+    const last = events[events.length - 1];
+
+    if (first && last && !this.parsedChunkBounds.has(chunkId)) {
+      this.parsedChunkBounds.set(chunkId, { monoStart: first.mono, monoEnd: last.mono });
+    }
   }
 
   private findEventById(eventId: string): WebBlackboxEvent | null {
@@ -1056,8 +1093,8 @@ export class WebBlackboxPlayer {
     const screenshots = this.query({
       range,
       types: ["screen.screenshot"]
-    }).sort(compareEventsByMono);
-    const errorEvents = scopedEvents.filter(isErrorEvent).sort(compareEventsByMono);
+    });
+    const errorEvents = scopedEvents.filter(isErrorEvent);
 
     return derived.actionSpans.slice(0, limit).map((span) => {
       const spanEvents = span.eventIds
@@ -1177,7 +1214,7 @@ export class WebBlackboxPlayer {
 
   /** Returns all events that reference a specific request id. */
   public getRequestEvents(reqId: string): WebBlackboxEvent[] {
-    return this.query({ requestId: reqId }).sort((left, right) => left.mono - right.mono);
+    return this.query({ requestId: reqId });
   }
 
   /** Builds a concrete request/response diff including body sizes and missing replay inputs. */
@@ -2126,10 +2163,6 @@ function compactText(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}...`;
 }
 
-function compareEventsByMono(left: WebBlackboxEvent, right: WebBlackboxEvent): number {
-  return left.mono - right.mono || left.id.localeCompare(right.id);
-}
-
 function isErrorEvent(event: WebBlackboxEvent): boolean {
   return event.type.startsWith("error.") || event.lvl === "error";
 }
@@ -2194,40 +2227,6 @@ function findActionScreenshot(
     format: asString(payload?.format) ?? null,
     size: asNumber(payload?.size) ?? null
   };
-}
-
-function lowerBoundEventMono(events: WebBlackboxEvent[], mono: number): number {
-  let low = 0;
-  let high = events.length;
-
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2);
-
-    if ((events[mid]?.mono ?? Number.POSITIVE_INFINITY) < mono) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-
-  return low;
-}
-
-function upperBoundEventMono(events: WebBlackboxEvent[], mono: number): number {
-  let low = 0;
-  let high = events.length;
-
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2);
-
-    if ((events[mid]?.mono ?? Number.POSITIVE_INFINITY) <= mono) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-
-  return low;
 }
 
 function buildEndpointRegressions(
@@ -3085,6 +3084,7 @@ function buildEventChunkDescriptors(
 
   if (Array.isArray(timeIndex) && timeIndex.length > 0) {
     return timeIndex
+      .map((entry) => ({ ...entry, ...normalizeIndexedChunkBounds(entry) }))
       .filter((entry) => !range || chunkIntersectsRange(entry, range))
       .sort((left, right) => left.seq - right.seq)
       .map((entry) => ({
@@ -3110,6 +3110,7 @@ function buildEventChunkDescriptors(
     }));
 }
 
+/** Parses a chunk's NDJSON into timeline order (chunks store events in arrival order). */
 function parseChunkEvents(chunk: EventChunkSource): WebBlackboxEvent[] {
   const content = new TextDecoder().decode(chunk.bytes);
   const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
@@ -3127,10 +3128,25 @@ function parseChunkEvents(chunk: EventChunkSource): WebBlackboxEvent[] {
     }
   }
 
-  return events;
+  return sortEventsForTimeline(events);
 }
 
-function chunkSourceIntersectsRange(chunk: EventChunkSource, range: PlayerRange): boolean {
+function sliceEventsByMonoRange(
+  events: WebBlackboxEvent[],
+  range?: PlayerRange
+): WebBlackboxEvent[] {
+  if (isRangeUnbounded(range)) {
+    return events;
+  }
+
+  const start = range?.monoStart === undefined ? 0 : lowerBoundEventMono(events, range.monoStart);
+  const end =
+    range?.monoEnd === undefined ? events.length : upperBoundEventMono(events, range.monoEnd);
+
+  return events.slice(start, end);
+}
+
+function chunkSourceIntersectsRange(chunk: ChunkMonoBounds, range: PlayerRange): boolean {
   if (
     Number.isFinite(chunk.monoEnd) &&
     range.monoStart !== undefined &&
@@ -3150,7 +3166,18 @@ function chunkSourceIntersectsRange(chunk: EventChunkSource, range: PlayerRange)
   return true;
 }
 
-function chunkIntersectsRange(entry: ChunkTimeIndexEntry, range: PlayerRange): boolean {
+/**
+ * Pipelines before the ordering fix recorded the first and last event of a chunk rather than its
+ * min/max, so legacy bounds can be inverted when the last event arrived late.
+ */
+function normalizeIndexedChunkBounds(entry: ChunkTimeIndexEntry): ChunkMonoBounds {
+  return {
+    monoStart: Math.min(entry.monoStart, entry.monoEnd),
+    monoEnd: Math.max(entry.monoStart, entry.monoEnd)
+  };
+}
+
+function chunkIntersectsRange(entry: ChunkMonoBounds, range: PlayerRange): boolean {
   if (range.monoStart !== undefined && entry.monoEnd < range.monoStart) {
     return false;
   }

@@ -91,6 +91,8 @@ try {
 
 ### Querying Events
 
+Results are always in timeline order: `mono`, then wall-clock `t`, then event id. Archives store events in arrival order, and the SDK sorts and merges chunks for you. Use `compareEventsForTimeline` to order your own event lists the same way.
+
 ```typescript
 // Get all events
 const allEvents = player.query();
