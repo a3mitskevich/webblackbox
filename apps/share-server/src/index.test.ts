@@ -2,10 +2,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,11 +14,21 @@ import { afterEach, describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const tsxCli = require.resolve("tsx/cli");
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const delayAuditAppendPreload = resolve(appRoot, "src/test-support/delay-audit-append.mjs");
 const apiKey = "share-test-key";
+const MIN_SHARE_TTL_MS = 1_000;
 const BLOB_FIXTURE_PATH =
   "blobs/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json";
 const TEXT_BLOB_FIXTURE_PATH =
   "blobs/sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bin";
+
+type AuditedRequestStep = {
+  path: string;
+  method?: string;
+  status: number;
+  action: string;
+  outcome: string;
+};
 
 type RunningShareServer = {
   baseUrl: string;
@@ -53,6 +64,58 @@ describe("share-server", () => {
       error: "Upload payload exceeds 4 bytes."
     });
     expect(response.status).toBe(413);
+  });
+
+  it("rejects archives that inflate beyond the server analysis limit and keeps serving", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_SHARE_MAX_UNCOMPRESSED_BYTES: String(64 * 1024)
+    });
+    const bomb = await JSZip.loadAsync(await createEncryptedEnvelopeArchive());
+    bomb.file("blobs/sha256-bomb.bin", new Uint8Array(8 * 1024 * 1024));
+    const bombBytes = await bomb.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+
+    expect(bombBytes.byteLength).toBeLessThan(64 * 1024);
+
+    const response = await fetch(`${server.baseUrl}/api/share/upload`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-webblackbox-api-key": apiKey,
+        "x-webblackbox-filename": "bomb.webblackbox",
+        "x-webblackbox-share-summary": encodeURIComponent(JSON.stringify(buildPassedShareSummary()))
+      },
+      body: Buffer.from(bombBytes)
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "Archive exceeds server analysis limits: Archive entry 'blobs/sha256-bomb.bin' declares " +
+        "8388608 uncompressed bytes, more than the per-entry limit of 65536 bytes."
+    });
+    await expect(uploadEncryptedFixture(server)).resolves.toHaveProperty("shareId");
+  });
+
+  it("rejects uploads whose analysis exceeds the configured timeout", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_SHARE_ANALYSIS_TIMEOUT_MS: "1"
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/share/upload`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-webblackbox-api-key": apiKey,
+        "x-webblackbox-filename": "slow.webblackbox",
+        "x-webblackbox-share-summary": encodeURIComponent(JSON.stringify(buildPassedShareSummary()))
+      },
+      body: Buffer.from(await createEncryptedEnvelopeArchive())
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      error: "Archive exceeds server analysis limits: Archive analysis timed out after 1 ms."
+    });
   });
 
   it("does not advertise passphrase upload headers", async () => {
@@ -380,6 +443,66 @@ describe("share-server", () => {
     expect(auditLog).not.toContain("webblackbox-share-");
   });
 
+  it("persists the audit event before sending each response", async () => {
+    const server = await startShareServer({
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${pathToFileURL(delayAuditAppendPreload)}`]
+        .filter(Boolean)
+        .join(" ")
+    });
+    const { shareId } = await uploadEncryptedFixture(server);
+    const { shareId: expiringShareId } = await uploadEncryptedFixture(server, apiKey, {
+      "x-webblackbox-share-ttl-ms": String(MIN_SHARE_TTL_MS)
+    });
+    const expiresBy = Date.now() + MIN_SHARE_TTL_MS;
+    const assertAuditedBeforeResponse = async (step: AuditedRequestStep): Promise<void> => {
+      const response = await fetch(`${server.baseUrl}${step.path}`, {
+        method: step.method ?? "GET",
+        headers: { "x-webblackbox-api-key": apiKey }
+      });
+      await response.arrayBuffer();
+      expect(response.status).toBe(step.status);
+
+      const auditEvents = await readAuditEvents(server);
+      expect(auditEvents.at(-1)).toMatchObject({ action: step.action, outcome: step.outcome });
+    };
+    const steps: AuditedRequestStep[] = [
+      { path: `/api/share/${shareId}/meta`, status: 200, action: "metadata", outcome: "ok" },
+      { path: `/share/${shareId}`, status: 200, action: "page", outcome: "ok" },
+      { path: `/api/share/${shareId}/archive`, status: 200, action: "download", outcome: "ok" },
+      {
+        path: `/api/share/${shareId}/revoke`,
+        method: "POST",
+        status: 200,
+        action: "revoke",
+        outcome: "ok"
+      },
+      {
+        path: `/api/share/${shareId}/archive`,
+        status: 410,
+        action: "download",
+        outcome: "revoked"
+      },
+      {
+        path: `/api/share/${"0".repeat(32)}/meta`,
+        status: 404,
+        action: "metadata",
+        outcome: "not-found"
+      }
+    ];
+
+    for (const step of steps) {
+      await assertAuditedBeforeResponse(step);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, expiresBy - Date.now() + 100)));
+    await assertAuditedBeforeResponse({
+      path: `/api/share/${expiringShareId}/archive`,
+      status: 410,
+      action: "download",
+      outcome: "expired"
+    });
+  });
+
   it("enforces scoped API keys", async () => {
     const uploadKey = "upload-scope-key";
     const readKey = "read-scope-key";
@@ -477,7 +600,172 @@ describe("share-server", () => {
     expect(html).not.toContain("?key=");
     expect(html).not.toContain(apiKey);
   });
+
+  it("never grants keyless loopback access from forwarded headers", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_SHARE_API_KEY: "",
+      WEBBLACKBOX_TRUST_X_FORWARDED_FOR: "true",
+      WEBBLACKBOX_TRUSTED_PROXIES: "127.0.0.1"
+    });
+
+    const direct = await sendRawRequest(server, "/api/share/list");
+    expect(direct.status).toBe(200);
+
+    for (const forwarded of ["127.0.0.1", "203.0.113.7, 127.0.0.1"]) {
+      const spoofed = await sendRawRequest(server, "/api/share/list", {
+        "x-forwarded-for": forwarded
+      });
+      expect(spoofed.status).toBe(401);
+    }
+
+    const realIp = await sendRawRequest(server, "/api/share/list", { "x-real-ip": "127.0.0.1" });
+    expect(realIp.status).toBe(401);
+  });
+
+  it("rejects foreign Host headers in keyless mode", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_SHARE_API_KEY: ""
+    });
+
+    const rebinding = await sendRawRequest(server, "/api/share/list", {
+      host: "attacker.example:8787"
+    });
+    expect(rebinding.status).toBe(403);
+    expect(JSON.parse(rebinding.body)).toEqual({ error: "Host not allowed." });
+
+    const preflight = await sendRawRequest(
+      server,
+      "/api/share/upload",
+      { host: "attacker.example" },
+      "OPTIONS"
+    );
+    expect(preflight.status).toBe(403);
+
+    for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+      const allowed = await sendRawRequest(server, "/api/share/list", {
+        host: `${host}:8787`
+      });
+      expect(allowed.status).toBe(200);
+    }
+  });
+
+  it("accepts configured public hosts in keyless mode", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_SHARE_API_KEY: "",
+      WEBBLACKBOX_SHARE_ALLOWED_HOSTS: "share.internal.example"
+    });
+
+    const response = await sendRawRequest(server, "/api/share/list", {
+      host: "share.internal.example"
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it("checks Host headers in keyed mode only when an allowlist is configured", async () => {
+    const openServer = await startShareServer();
+    const keyedDefault = await sendRawRequest(openServer, "/api/share/list", {
+      host: "share.example.com",
+      "x-webblackbox-api-key": apiKey
+    });
+    expect(keyedDefault.status).toBe(200);
+
+    const strictServer = await startShareServer({
+      WEBBLACKBOX_SHARE_ALLOWED_HOSTS: "share.example.com"
+    });
+    const allowed = await sendRawRequest(strictServer, "/api/share/list", {
+      host: "share.example.com",
+      "x-webblackbox-api-key": apiKey
+    });
+    const blocked = await sendRawRequest(strictServer, "/api/share/list", {
+      host: "other.example.com",
+      "x-webblackbox-api-key": apiKey
+    });
+    expect(allowed.status).toBe(200);
+    expect(blocked.status).toBe(403);
+  });
+
+  it("does not let rotating X-Forwarded-For entries bypass upload rate limits", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_TRUST_X_FORWARDED_FOR: "true",
+      WEBBLACKBOX_UPLOAD_RATE_LIMIT_MAX: "1"
+    });
+
+    const first = await sendRawRequest(
+      server,
+      "/api/share/upload",
+      { "x-webblackbox-api-key": apiKey, "x-forwarded-for": "198.51.100.1" },
+      "POST"
+    );
+    const second = await sendRawRequest(
+      server,
+      "/api/share/upload",
+      { "x-webblackbox-api-key": apiKey, "x-forwarded-for": "198.51.100.2" },
+      "POST"
+    );
+
+    expect(first.status).toBe(400);
+    expect(second.status).toBe(429);
+  });
+
+  it("rate limits by the right-most untrusted X-Forwarded-For hop behind a trusted proxy", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_TRUST_X_FORWARDED_FOR: "true",
+      WEBBLACKBOX_TRUSTED_PROXIES: "127.0.0.1",
+      WEBBLACKBOX_UPLOAD_RATE_LIMIT_MAX: "1"
+    });
+    const upload = (forwardedFor: string): Promise<RawResponse> =>
+      sendRawRequest(
+        server,
+        "/api/share/upload",
+        { "x-webblackbox-api-key": apiKey, "x-forwarded-for": forwardedFor },
+        "POST"
+      );
+
+    expect((await upload("10.9.9.1, 198.51.100.1")).status).toBe(400);
+    expect((await upload("10.9.9.2, 198.51.100.1")).status).toBe(429);
+    expect((await upload("198.51.100.1, 198.51.100.2")).status).toBe(400);
+  });
 });
+
+type RawResponse = {
+  status: number;
+  body: string;
+};
+
+async function sendRawRequest(
+  server: RunningShareServer,
+  path: string,
+  headers: Record<string, string> = {},
+  method = "GET"
+): Promise<RawResponse> {
+  const url = new URL(path, server.baseUrl);
+
+  return new Promise((resolvePromise, reject) => {
+    const request = httpRequest(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method,
+        headers
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () =>
+          resolvePromise({
+            status: response.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8")
+          })
+        );
+        response.on("error", reject);
+      }
+    );
+
+    request.on("error", reject);
+    request.end();
+  });
+}
 
 async function startShareServer(
   envOverrides: Record<string, string> = {}
@@ -593,13 +881,24 @@ async function reservePort(): Promise<number> {
   return address.port;
 }
 
+async function readAuditEvents(
+  server: RunningShareServer
+): Promise<Array<{ action: string; outcome: string }>> {
+  const auditLog = await readFile(resolve(server.dataDir, "audit/share-access.jsonl"), "utf8");
+  return auditLog
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { action: string; outcome: string });
+}
+
 function readSetCookiePair(response: Response): string {
   return response.headers.get("set-cookie")?.split(";")[0] ?? "";
 }
 
 async function uploadEncryptedFixture(
   server: RunningShareServer,
-  credential = apiKey
+  credential = apiKey,
+  extraHeaders: Record<string, string> = {}
 ): Promise<{ shareId: string }> {
   const response = await fetch(`${server.baseUrl}/api/share/upload`, {
     method: "POST",
@@ -607,7 +906,8 @@ async function uploadEncryptedFixture(
       "content-type": "application/octet-stream",
       "x-webblackbox-api-key": credential,
       "x-webblackbox-filename": "fixture.webblackbox",
-      "x-webblackbox-share-summary": encodeURIComponent(JSON.stringify(buildPassedShareSummary()))
+      "x-webblackbox-share-summary": encodeURIComponent(JSON.stringify(buildPassedShareSummary())),
+      ...extraHeaders
     },
     body: Buffer.from(await createEncryptedEnvelopeArchive())
   });
@@ -700,7 +1000,7 @@ async function createEnvelopeArchive(
       origin: "https://fixture.example",
       title: "Fixture"
     },
-    chunkCodec: "ndjson",
+    chunkCodec: "none",
     redactionProfile: {
       redactHeaders: [],
       redactCookieNames: [],

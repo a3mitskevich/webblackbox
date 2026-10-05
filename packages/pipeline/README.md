@@ -281,7 +281,7 @@ const result = await pipeline.exportBundle({
 Every archive is encrypted: `exportBundle` and `createWebBlackboxArchive` refuse to write one
 without a passphrase of at least 8 characters (trimmed).
 
-- **KDF**: PBKDF2 with SHA-256, 120,000 iterations, random salt
+- **KDF**: PBKDF2 with SHA-256, 600,000 iterations (`ARCHIVE_KDF_DEFAULT_ITERATIONS`), random salt; readers accept 10,000–10,000,000 iterations from the manifest
 - **Encryption**: AES-GCM with per-file random IVs
 - **Scope**: Event chunks, indexes, blobs, the privacy manifest and the full manifest
   (`meta/manifest.json`) are encrypted

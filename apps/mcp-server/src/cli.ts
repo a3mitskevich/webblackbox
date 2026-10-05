@@ -8,6 +8,7 @@ import { SERVER_NAME, SERVER_VERSION, startServer } from "./index.js";
 export type CliCommand =
   | {
       kind: "start";
+      allowedDirs: string[];
     }
   | {
       kind: "help";
@@ -16,8 +17,25 @@ export type CliCommand =
       kind: "version";
     };
 
+const ALLOW_DIR_FLAG = "--allow-dir";
+
 export function parseCliArgs(argv: string[]): CliCommand {
-  for (const arg of argv) {
+  const allowedDirs: string[] = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index] ?? "";
+
+    if (arg === ALLOW_DIR_FLAG || arg.startsWith(`${ALLOW_DIR_FLAG}=`)) {
+      const value = arg === ALLOW_DIR_FLAG ? argv[++index] : arg.slice(ALLOW_DIR_FLAG.length + 1);
+
+      if (!value) {
+        throw new Error(`${ALLOW_DIR_FLAG} requires a directory path`);
+      }
+
+      allowedDirs.push(value);
+      continue;
+    }
+
     if (arg === "--help" || arg === "-h" || arg === "help") {
       return {
         kind: "help"
@@ -38,7 +56,8 @@ export function parseCliArgs(argv: string[]): CliCommand {
   }
 
   return {
-    kind: "start"
+    kind: "start",
+    allowedDirs
   };
 }
 
@@ -47,11 +66,15 @@ export function formatCliHelp(): string {
     `${SERVER_NAME} v${SERVER_VERSION}`,
     "",
     "Usage:",
-    `  ${SERVER_NAME} [--stdio]`,
+    `  ${SERVER_NAME} [--stdio] [${ALLOW_DIR_FLAG} <dir>]...`,
     `  ${SERVER_NAME} --help`,
     `  ${SERVER_NAME} --version`,
     "",
-    "Starts the WebBlackbox MCP server over stdio."
+    "Starts the WebBlackbox MCP server over stdio.",
+    "",
+    "Options:",
+    `  ${ALLOW_DIR_FLAG} <dir>  Only allow archive and directory access inside <dir>.`,
+    "                     Repeat for several directories. Default: unrestricted."
   ].join("\n");
 }
 
@@ -77,7 +100,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<number> {
     return 0;
   }
 
-  await startServer();
+  await startServer({ allowedDirs: command.allowedDirs });
   return 0;
 }
 

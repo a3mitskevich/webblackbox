@@ -147,8 +147,9 @@ export async function verifyCaptureFidelityArchive({
 
 /**
  * Expands the sent 40 KB frame in the player's realtime panel and waits for the full payload.
- * The panel lists only events up to the playhead, and earlier checks leave it on a screenshot
- * that can precede the frames, so the playhead moves to the end of the session first.
+ * The panel lists only frames up to the playhead, and earlier checks leave the playhead on a
+ * screenshot (the marker check seeks to the newest one with a pointer marker, which can predate the
+ * fidelity scenario), so the playhead is first moved to the end with the player's End shortcut.
  */
 export async function verifyPlayerRealtimePayload(playerClient, expectedChars, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -156,12 +157,9 @@ export async function verifyPlayerRealtimePayload(playerClient, expectedChars, t
 
   await playerClient.evaluate(`
     (() => {
-      const progress = document.getElementById('playback-progress');
-
-      if (progress) {
-        progress.value = progress.max;
-        progress.dispatchEvent(new Event('input', { bubbles: true }));
-      }
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { code: 'End', key: 'End', bubbles: true, cancelable: true })
+      );
     })()
   `);
 
@@ -172,7 +170,13 @@ export async function verifyPlayerRealtimePayload(playerClient, expectedChars, t
         const sent = rows.find((row) => (row.querySelector('summary')?.textContent ?? '').includes('sent '));
 
         if (!sent) {
-          return { ok: false, reason: 'sent-frame-row-missing', rows: rows.length };
+          return {
+            ok: false,
+            reason: 'sent-frame-row-missing',
+            rows: rows.length,
+            playhead: document.getElementById('playback-current')?.textContent ?? null,
+            duration: document.getElementById('playback-total')?.textContent ?? null
+          };
         }
 
         if (!sent.open) {

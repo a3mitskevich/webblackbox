@@ -13,24 +13,26 @@ export function getShareServerApiKeyForBaseUrl(
   return apiKeysByOrigin[origin] ?? "";
 }
 
+/**
+ * Returns a copy of `apiKeysByOrigin` with `apiKey` saved for the origin of `baseUrl`.
+ * An empty key never removes a saved one (e.g. a share link opened without a key).
+ */
 export function setShareServerApiKeyForBaseUrl(
-  apiKeysByOrigin: Record<string, string>,
+  apiKeysByOrigin: Readonly<Record<string, string>>,
   baseUrl: string,
   apiKey: string
-): void {
+): Record<string, string> {
   const origin = resolveShareServerOrigin(baseUrl);
-
-  if (!origin) {
-    return;
-  }
-
   const trimmed = apiKey.trim();
 
-  if (trimmed.length > 0) {
-    apiKeysByOrigin[origin] = trimmed;
-  } else {
-    delete apiKeysByOrigin[origin];
+  if (!origin || trimmed.length === 0) {
+    return apiKeysByOrigin;
   }
+
+  return {
+    ...apiKeysByOrigin,
+    [origin]: trimmed
+  };
 }
 
 export function bindShareApiKeyInputToTargetOrigin(
