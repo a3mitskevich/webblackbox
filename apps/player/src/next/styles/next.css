@@ -1016,6 +1016,8 @@ h2 {
   background: var(--surface);
 }
 .rail-tabs {
+  /* The tabs' offsetParent: Base UI scrolls the active tab into view by its offsetLeft. */
+  position: relative;
   display: flex;
   gap: 2px;
   padding: 0 8px;

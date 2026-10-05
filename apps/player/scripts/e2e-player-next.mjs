@@ -247,6 +247,8 @@ async function verifyStrictStyleCsp(client, { origin, archivePath }, violations)
   await waitForSnapshot(client, (value) => value.details !== "", "No details under the policy");
   await dragBy(client, testId("split-body"), -40, 0);
   await press(client, "Escape", { code: "Escape", keyCode: 27 });
+  // "Reset layout" under the strict policy too; later passes start from the default sizes.
+  await client.evaluate(`document.querySelector('${testId("reset-layout")}').click()`);
 
   const strictPage = (entry) => entry.page.includes("csp=strict");
   const before = violations.filter(strictPage).length;

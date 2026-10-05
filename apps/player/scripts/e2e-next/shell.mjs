@@ -137,6 +137,12 @@ export async function verifyLoadedLayout(client) {
     "Activity list did not render",
     snapshot
   );
+  // The first tab is active: the tab strip starts unscrolled (Base UI scrolls the active tab
+  // into view by its offsetLeft, which needs the strip to be the tabs' offsetParent).
+  const tabsScroll = await client.evaluate(
+    `document.querySelector('${testId("rail-tabs")}').scrollLeft`
+  );
+  assert(tabsScroll === 0, "The rail tab strip starts scrolled", { tabsScroll });
   return snapshot;
 }
 

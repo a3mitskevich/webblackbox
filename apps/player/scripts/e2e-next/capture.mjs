@@ -55,7 +55,10 @@ export async function captureScreenshots(client, origin, archivePath, outDir) {
 
       for (const theme of ["light", "dark"]) {
         // The shot is taken at the first 401 (t=10.89); waitForSnapshot below checks the clock.
-        await client.evaluate("localStorage.removeItem('webblackbox.player.theme')");
+        // Default theme and splitter sizes: earlier scenarios may have stored others.
+        await client.evaluate(
+          "Object.keys(localStorage).filter((key) => key === 'webblackbox.player.theme' || key.startsWith('react-resizable-panels:')).forEach((key) => localStorage.removeItem(key))"
+        );
         await client.send("Emulation.setEmulatedMedia", {
           features: [{ name: "prefers-color-scheme", value: theme }]
         });

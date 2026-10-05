@@ -57,7 +57,12 @@ export function Rail() {
       }}
       render={<aside className="rail" aria-label={i18n.tn("railLabel")} data-testid="rail" />}
     >
-      <Tabs.List className="rail-tabs" aria-label={i18n.tn("railLabel")} activateOnFocus>
+      <Tabs.List
+        className="rail-tabs"
+        aria-label={i18n.tn("railLabel")}
+        activateOnFocus
+        data-testid="rail-tabs"
+      >
         {RAIL_TAB_ORDER.map((registration) => (
           <RailTabButton key={registration.id} registration={registration} />
         ))}
