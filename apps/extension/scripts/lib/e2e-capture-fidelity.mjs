@@ -145,10 +145,25 @@ export async function verifyCaptureFidelityArchive({
   };
 }
 
-/** Expands the sent 40 KB frame in the player's realtime panel and waits for the full payload. */
+/**
+ * Expands the sent 40 KB frame in the player's realtime panel and waits for the full payload.
+ * The panel lists only events up to the playhead, and earlier checks leave it on a screenshot
+ * that can precede the frames, so the playhead moves to the end of the session first.
+ */
 export async function verifyPlayerRealtimePayload(playerClient, expectedChars, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
+
+  await playerClient.evaluate(`
+    (() => {
+      const progress = document.getElementById('playback-progress');
+
+      if (progress) {
+        progress.value = progress.max;
+        progress.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    })()
+  `);
 
   while (Date.now() < deadline) {
     last = await playerClient.evaluate(`
