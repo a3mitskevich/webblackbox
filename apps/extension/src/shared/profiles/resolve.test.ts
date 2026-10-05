@@ -19,7 +19,8 @@ import {
   BUILT_IN_PROFILES,
   createDefaultProfile,
   duplicateProfile,
-  findBuiltInProfile
+  findBuiltInProfile,
+  RECOMMENDED_PROFILE_IDS
 } from "./presets.js";
 import {
   AUTO_PROFILE_ID,
@@ -170,7 +171,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.redaction).toEqual(DEFAULT_REDACTION_PROFILE);
   });
 
-  it("Full capture raises every category except the DOM and heap profiles and samples the pointer at 60 Hz", () => {
+  it("Full capture raises every category except heap profiles, records the raw DOM and samples the pointer at 60 Hz", () => {
     const config = buildProfileRecorderConfig({
       mode: "full",
       profile: preset(BUILT_IN_PROFILE_IDS.fullCapture),
@@ -180,7 +181,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.capturePolicy?.categories).toEqual({
       actions: "allow",
       inputs: "allow",
-      dom: "masked",
+      dom: "allow",
       screenshots: "allow",
       screenRecordings: "allow",
       console: "allow",
@@ -199,10 +200,11 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.capturePolicy?.redaction.blockedSelectors).toEqual([]);
   });
 
-  it("records the raw DOM only when a duplicated profile opts in", () => {
-    for (const id of [BUILT_IN_PROFILE_IDS.qa, BUILT_IN_PROFILE_IDS.fullCapture]) {
-      expect(preset(id).categories.dom, id).toBe(preset(BUILT_IN_PROFILE_IDS.full).categories.dom);
-    }
+  it("records the raw DOM in Full capture, and in other profiles only when a copy opts in", () => {
+    expect(preset(BUILT_IN_PROFILE_IDS.qa).categories.dom).toBe(
+      preset(BUILT_IN_PROFILE_IDS.full).categories.dom
+    );
+    expect(preset(BUILT_IN_PROFILE_IDS.fullCapture).categories.dom).toBe("allow");
 
     const copy = duplicateProfile(preset(BUILT_IN_PROFILE_IDS.qa), { id: "raw-dom" });
     const config = buildProfileRecorderConfig({
@@ -224,7 +226,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(createDefaultProfile().redaction.contentRedaction).toBeUndefined();
   });
 
-  it("treats a profile that turns masking off as extended and masks again when downgraded", () => {
+  it("treats a profile that turns masking off as extended and runs it as chosen on any host", () => {
     const fullCopy = duplicateProfile(preset(BUILT_IN_PROFILE_IDS.full), { id: "raw" });
     const raw = { ...fullCopy, redaction: { ...fullCopy.redaction, contentRedaction: false } };
 
@@ -244,9 +246,8 @@ describe("buildProfileRecorderConfig — presets", () => {
       requestedProfileId: "raw"
     });
 
-    expect(selection.downgradedFrom?.id).toBe("raw");
-    expect(selection.profile.redaction.contentRedaction).not.toBe(false);
-    expect(selection.profile.redaction.blockedSelectors).toContain("input[type='password']");
+    expect(selection?.profile).toEqual(raw);
+    expect(selection?.extended).toBe(true);
   });
 
   it("keeps the lite transport boundary: no page-side bodies even for QA", () => {
@@ -356,7 +357,7 @@ describe("selectRecordingProfile", () => {
     const selection = selectRecordingProfile({ state: v2State(), page: { url: foreign } });
 
     expect(selection).toMatchObject({ source: "default", extended: false, legacy: false });
-    expect(selection.profile.id).toBe(DEFAULT_PROFILE_ID);
+    expect(selection?.profile.id).toBe(DEFAULT_PROFILE_ID);
   });
 
   it("selects the rule's profile and records the rule", () => {
@@ -366,13 +367,13 @@ describe("selectRecordingProfile", () => {
       requestedProfileId: AUTO_PROFILE_ID
     });
 
-    expect(selection.profile.id).toBe(BUILT_IN_PROFILE_IDS.qa);
+    expect(selection?.profile.id).toBe(BUILT_IN_PROFILE_IDS.qa);
     expect(selection).toMatchObject({
       source: "rule",
       rule: { id: "stage-qa", name: "Stage" },
       extended: true
     });
-    expect(toArchivedProfileInfo(selection)).toEqual({
+    expect(selection && toArchivedProfileInfo(selection)).toEqual({
       id: BUILT_IN_PROFILE_IDS.qa,
       name: "QA",
       source: "rule",
@@ -390,50 +391,43 @@ describe("selectRecordingProfile", () => {
     });
 
     expect(selection).toMatchObject({ source: "explicit", extended: false });
-    expect(selection.profile.id).toBe(BUILT_IN_PROFILE_IDS.lite);
+    expect(selection?.profile.id).toBe(BUILT_IN_PROFILE_IDS.lite);
   });
 
-  it("downgrades an extended profile to Full on a foreign host", () => {
+  it("runs an explicitly chosen extended profile on a host without rules, unchanged", () => {
     const selection = selectRecordingProfile({
       state: v2State({ rules: [qaRule] }),
       page: { url: foreign },
       requestedProfileId: BUILT_IN_PROFILE_IDS.fullCapture
     });
 
-    expect(selection.profile.id).toBe(BUILT_IN_PROFILE_IDS.full);
-    expect(selection.extended).toBe(false);
-    // Map references survive the downgrade; embedding the site's source maps does not.
-    expect(selection.profile.sourceMaps).toEqual({ mode: "metadata" });
-    expect(selection.downgradedFrom).toEqual({
+    expect(selection?.profile).toEqual(preset(BUILT_IN_PROFILE_IDS.fullCapture));
+    expect(selection).toMatchObject({ source: "explicit", extended: true });
+    expect(selection && toArchivedProfileInfo(selection)).toEqual({
       id: BUILT_IN_PROFILE_IDS.fullCapture,
       name: "Full capture",
-      reason: "host-not-allowed"
+      source: "explicit",
+      extended: true
     });
   });
 
-  it("allows extended profiles on rule hosts, extended hosts and the enterprise allowlist", () => {
-    const pick = (state: ProfilesState, url: string, allowlist: string[] = []) =>
-      selectRecordingProfile({
-        state,
-        page: { url },
-        requestedProfileId: BUILT_IN_PROFILE_IDS.qa,
-        enterpriseSiteAllowlist: allowlist
-      }).profile.id;
+  it("no longer gates extended profiles by host lists", () => {
+    const pick = (state: ProfilesState, url: string) =>
+      selectRecordingProfile({ state, page: { url }, requestedProfileId: BUILT_IN_PROFILE_IDS.qa })
+        ?.profile.id;
 
-    expect(pick(v2State({ rules: [qaRule] }), stage)).toBe(BUILT_IN_PROFILE_IDS.qa);
-    expect(pick(v2State({ extendedCaptureHosts: ["localhost:*"] }), "http://localhost:5173/")).toBe(
-      BUILT_IN_PROFILE_IDS.qa
-    );
-    expect(pick(v2State(), foreign, ["https://mail.example.org"])).toBe(BUILT_IN_PROFILE_IDS.qa);
-    expect(pick(v2State({ rules: [{ ...qaRule, enabled: false }] }), stage)).toBe(
-      BUILT_IN_PROFILE_IDS.full
-    );
-    expect(
-      pick(v2State({ rules: [{ ...qaRule, profileId: BUILT_IN_PROFILE_IDS.fullCapture }] }), stage)
-    ).toBe(BUILT_IN_PROFILE_IDS.full);
+    for (const state of [
+      v2State(),
+      v2State({ rules: [{ ...qaRule, enabled: false }] }),
+      v2State({ rules: [{ ...qaRule, profileId: BUILT_IN_PROFILE_IDS.fullCapture }] }),
+      v2State({ extendedCaptureHosts: ["localhost:*"] })
+    ]) {
+      expect(pick(state, foreign)).toBe(BUILT_IN_PROFILE_IDS.qa);
+      expect(pick(state, "http://localhost:5173/")).toBe(BUILT_IN_PROFILE_IDS.qa);
+    }
   });
 
-  it("keeps a v1-only Default exactly as today, but still gates presets", () => {
+  it("keeps a v1-only Default exactly as today and runs presets as chosen", () => {
     const state = resolveProfilesState({
       rawProfilesStore: undefined,
       rawLegacyOptions: LEGACY_FIXTURES["harness capture policy"]
@@ -446,8 +440,8 @@ describe("selectRecordingProfile", () => {
     });
 
     expect(legacyDefault).toMatchObject({ legacy: true, extended: false });
-    expect(legacyDefault.profile.categories.console).toBe("allow");
-    expect(qa.profile.id).toBe(BUILT_IN_PROFILE_IDS.full);
+    expect(legacyDefault?.profile.categories.console).toBe("allow");
+    expect(qa?.profile.id).toBe(BUILT_IN_PROFILE_IDS.qa);
   });
 
   it("treats an edited Default above Full as extended once v2 exists", () => {
@@ -460,35 +454,8 @@ describe("selectRecordingProfile", () => {
       page: { url: foreign }
     });
 
-    expect(selection.downgradedFrom?.id).toBe(DEFAULT_PROFILE_ID);
-  });
-
-  it("keeps the profile's redaction and lower levels when it is downgraded", () => {
-    const raised = {
-      ...createDefaultProfile(),
-      categories: {
-        ...createDefaultProfile().categories,
-        console: "allow" as const,
-        dom: "off" as const
-      },
-      redaction: { ...DEFAULT_REDACTION_PROFILE, blockedSelectors: [".my-secret"] },
-      recorder: { ringBufferMinutes: 3 },
-      unmaskSelectors: [".order-id"]
-    };
-    const selection = selectRecordingProfile({
-      state: v2State({ profiles: [raised] }),
-      page: { url: foreign }
-    });
-
-    expect(selection.profile.id).toBe(BUILT_IN_PROFILE_IDS.full);
-    expect(selection.profile.categories.console).toBe(
-      preset(BUILT_IN_PROFILE_IDS.full).categories.console
-    );
-    expect(selection.profile.categories.dom).toBe("off");
-    expect(selection.profile.redaction.blockedSelectors).toEqual([".my-secret"]);
-    expect(selection.profile.recorder.ringBufferMinutes).toBe(3);
-    expect(selection.profile.unmaskSelectors).toEqual([]);
-    expect(isExtendedCaptureProfile(selection.profile)).toBe(false);
+    expect(selection).toMatchObject({ extended: true, source: "default" });
+    expect(selection?.profile).toEqual(raised);
   });
 
   it("lets a lower-priority rule win over one pointing to a missing profile", () => {
@@ -502,8 +469,8 @@ describe("selectRecordingProfile", () => {
       page: { url: stage }
     });
 
-    expect(selection.profile.id).toBe(BUILT_IN_PROFILE_IDS.lite);
-    expect(selection.rule?.id).toBe("lite");
+    expect(selection?.profile.id).toBe(BUILT_IN_PROFILE_IDS.lite);
+    expect(selection?.rule?.id).toBe("lite");
   });
 
   it("ignores unknown explicit ids and rules to missing profiles", () => {
@@ -514,7 +481,32 @@ describe("selectRecordingProfile", () => {
     });
 
     expect(selection).toMatchObject({ source: "default" });
-    expect(selection.profile.id).toBe(DEFAULT_PROFILE_ID);
+    expect(selection?.profile.id).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("falls back to the first profile left when the default was deleted, and to none at all", () => {
+    const withoutDefault = v2State({
+      profiles: [],
+      removedRecommendedProfileIds: [DEFAULT_PROFILE_ID, BUILT_IN_PROFILE_IDS.lite]
+    });
+
+    expect(
+      selectRecordingProfile({ state: withoutDefault, page: { url: foreign } })?.profile.id
+    ).toBe(BUILT_IN_PROFILE_IDS.full);
+
+    const empty = v2State({
+      profiles: [],
+      removedRecommendedProfileIds: [...RECOMMENDED_PROFILE_IDS]
+    });
+
+    expect(selectRecordingProfile({ state: empty, page: { url: foreign } })).toBeNull();
+    expect(
+      selectRecordingProfile({
+        state: empty,
+        page: { url: foreign },
+        requestedProfileId: BUILT_IN_PROFILE_IDS.qa
+      })
+    ).toBeNull();
   });
 });
 

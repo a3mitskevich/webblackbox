@@ -2,13 +2,13 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 73100,
-      "maxGzipBytes": 17100,
-      "note": "Measured 70,960 / 16,596 B (+3%): CDP allowlists (#9), redaction rules (#10) and script/source-map events (#11)."
+      "maxBytes": 80800,
+      "maxGzipBytes": 19000,
+      "note": "Measured 78,397 / 18,438 B (+3%): full console detail, the CDP cache tracker and byte-capped stream bodies (#9), per-profile redaction rules (#10) and script/source-map events (#11)."
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 76000,
+      "maxBytes": 79000,
       "maxGzipBytes": 18000
     },
     {
@@ -23,15 +23,15 @@
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 49900,
-      "maxGzipBytes": 13300,
-      "note": "Measured 48,433 / 12,892 B (+3%): profiles UI strings in the shared dictionary (moved out by #14) plus source-map settings (#11)."
+      "maxBytes": 54500,
+      "maxGzipBytes": 14400,
+      "note": "Measured 52,896 / 13,940 B (+3%): content.js bundles the shared UI dictionary, which grew with the profile-change and profile-deletion strings (#10) and source-map settings (#11); #14 moves the dictionary out of the content script."
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 894300,
-      "maxGzipBytes": 159300,
-      "note": "Measured 868,171 / 154,620 B (+3%): recording profiles, redaction rules and source-map capture in the service worker."
+      "maxBytes": 905000,
+      "maxGzipBytes": 162100,
+      "note": "Measured 878,600 / 157,301 B (+3%): recording profiles with profile-change cancellation and redaction rules (#10) and source-map capture (#11) in the service worker."
     }
   ]
 }

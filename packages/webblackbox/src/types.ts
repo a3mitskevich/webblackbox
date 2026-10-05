@@ -72,6 +72,13 @@ export type LiteRecorderConfigOverride = Partial<
   Omit<RecorderConfig, "mode" | "sampling" | "redaction" | "sitePolicies">
 > & {
   sampling?: Partial<RecorderConfig["sampling"]>;
+  /**
+   * Redaction overrides, field by field. A list given here (`blockedSelectors`, `redactHeaders`,
+   * `redactCookieNames`, `redactBodyPatterns`, ...) REPLACES the default list rather than
+   * extending it: the caller owns the full list. To extend, spread the defaults explicitly:
+   * `blockedSelectors: [...DEFAULT_REDACTION_PROFILE.blockedSelectors, ".my-secret"]`
+   * (`DEFAULT_REDACTION_PROFILE` from `@webblackbox/protocol`). Omitted fields keep their defaults.
+   */
   redaction?: Partial<RecorderConfig["redaction"]>;
   sitePolicies?: RecorderConfig["sitePolicies"];
 };

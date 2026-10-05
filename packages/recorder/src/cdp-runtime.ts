@@ -1,50 +1,76 @@
+import type { ConsoleDetail } from "./console-normalizer.js";
+import { MAX_CONSOLE_ENTRY_CHARS, MAX_FULL_STACK_FRAMES } from "./console-normalizer.js";
 import {
   asArray,
   asFiniteNumber,
   asRecord,
   asString,
   compactText,
+  formatV8CallFrames,
   sanitizeOptionalUrl,
-  stripUndefined
+  stripUndefined,
+  toOneBased
 } from "./normalizer-utils.js";
 
-const MAX_EXCEPTION_MESSAGE_CHARS = 2_000;
-const MAX_EXCEPTION_STACK_CHARS = 8_000;
-const MAX_STACK_FRAMES = 32;
+type ExceptionTextLimits = {
+  messageChars: number;
+  stackChars: number;
+  stackFrames: number;
+};
+
+const COMPACT_LIMITS: ExceptionTextLimits = {
+  messageChars: 2_000,
+  stackChars: 8_000,
+  stackFrames: 32
+};
+const FULL_LIMITS: ExceptionTextLimits = {
+  messageChars: MAX_CONSOLE_ENTRY_CHARS,
+  stackChars: MAX_CONSOLE_ENTRY_CHARS,
+  stackFrames: MAX_FULL_STACK_FRAMES
+};
 const PROMISE_REJECTION_TEXT = "Uncaught (in promise)";
+const V8_FRAME_PREFIX = "    at ";
 
 /**
  * Projects a CDP `Runtime.exceptionThrown` event onto the same flat shape the page hooks emit for
  * `pageError` (`message`, `stack`, `filename`, 1-based `lineno`/`colno`). Remote object handles and
  * previews are dropped. Text fields stay here; the recorder strips them under the `console: metadata`
- * policy (see `applyErrorTextPolicy`).
+ * policy (see `applyErrorTextPolicy`). `full` detail (`console: allow`) keeps the whole message and
+ * every CDP call frame: V8 cuts `Error.stack` at `Error.stackTraceLimit` (10), CDP goes deeper.
  */
-export function normalizeCdpExceptionPayload(payload: unknown): Record<string, unknown> {
+export function normalizeCdpExceptionPayload(
+  payload: unknown,
+  detail: ConsoleDetail = "compact"
+): Record<string, unknown> {
+  const limits = detail === "full" ? FULL_LIMITS : COMPACT_LIMITS;
   const row = asRecord(payload) ?? {};
   const details = asRecord(row.exceptionDetails);
 
   if (!details) {
     return stripUndefined({
       source: "cdp.runtime",
-      message: readText(row.message, MAX_EXCEPTION_MESSAGE_CHARS),
+      message: readText(row.message, limits.messageChars),
       name: asString(row.name),
-      stack: readText(row.stack, MAX_EXCEPTION_STACK_CHARS)
+      stack: readText(row.stack, limits.stackChars)
     });
   }
 
   const exception = asRecord(details.exception);
   const description = asString(exception?.description);
-  const stackTrace = asRecord(details.stackTrace);
-  const topFrame = asRecord(asArray(stackTrace?.callFrames)[0]);
+  const callFrames = asArray(asRecord(details.stackTrace)?.callFrames);
+  const topFrame = asRecord(callFrames[0]);
+  const header = description ? readDescriptionHeader(description) : undefined;
   const message =
-    description?.split("\n")[0] || readPrimitiveValue(exception) || asString(details.text);
-  const stack = description?.includes("\n") ? description : formatCallFrames(stackTrace);
+    (detail === "full" ? header : description?.split("\n")[0]) ||
+    readPrimitiveValue(exception) ||
+    asString(details.text);
+  const stack = readExceptionStack(description, header, callFrames, detail, limits);
 
   return stripUndefined({
     source: "cdp.runtime",
-    message: readText(message, MAX_EXCEPTION_MESSAGE_CHARS),
+    message: readText(message, limits.messageChars),
     name: exception?.subtype === "error" ? asString(exception.className) : undefined,
-    stack: readText(stack, MAX_EXCEPTION_STACK_CHARS),
+    stack: readText(stack, limits.stackChars),
     filename: sanitizeOptionalUrl(asString(details.url) || asString(topFrame?.url)),
     lineno: toOneBased(details.lineNumber),
     colno: toOneBased(details.columnNumber),
@@ -72,23 +98,33 @@ function readPrimitiveValue(exception: Record<string, unknown> | null): string |
   return asString(exception.unserializableValue);
 }
 
-function formatCallFrames(stackTrace: Record<string, unknown> | null): string | undefined {
-  const frames = asArray(stackTrace?.callFrames)
-    .slice(0, MAX_STACK_FRAMES)
-    .map((entry) => asRecord(entry))
-    .filter((frame): frame is Record<string, unknown> => frame !== null)
-    .map((frame) => {
-      const functionName = asString(frame.functionName) || "(anonymous)";
-      const url = sanitizeOptionalUrl(asString(frame.url)) ?? "(unknown)";
-      return `    at ${functionName} (${url}:${toOneBased(frame.lineNumber) ?? 0}:${toOneBased(frame.columnNumber) ?? 0})`;
-    });
+function readExceptionStack(
+  description: string | undefined,
+  header: string | undefined,
+  callFrames: unknown[],
+  detail: ConsoleDetail,
+  limits: ExceptionTextLimits
+): string | undefined {
+  const formatted = formatV8CallFrames(callFrames, limits.stackFrames);
 
-  return frames.length > 0 ? frames.join("\n") : undefined;
+  if (!description?.includes("\n")) {
+    return formatted;
+  }
+
+  const describedFrames = description
+    .split("\n")
+    .filter((line) => line.startsWith(V8_FRAME_PREFIX)).length;
+
+  return detail === "full" && formatted && callFrames.length > describedFrames
+    ? `${header}\n${formatted}`
+    : description;
 }
 
-function toOneBased(value: unknown): number | undefined {
-  const numeric = asFiniteNumber(value);
-  return numeric === null ? undefined : numeric + 1;
+/** The message lines of an `Error.stack` text: everything before the first `    at` frame. */
+function readDescriptionHeader(description: string): string {
+  const lines = description.split("\n");
+  const firstFrame = lines.findIndex((line) => line.startsWith(V8_FRAME_PREFIX));
+  return (firstFrame < 0 ? lines : lines.slice(0, firstFrame)).join("\n");
 }
 
 function readText(value: unknown, maxChars: number): string | undefined {

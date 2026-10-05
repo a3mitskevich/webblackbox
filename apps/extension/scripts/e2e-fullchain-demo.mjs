@@ -10,6 +10,14 @@ import { dirname, extname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import JSZip from "jszip";
 
+import {
+  attachFidelitySocketServer,
+  runCaptureFidelityScenario,
+  serveFidelityImage,
+  verifyCaptureFidelityArchive,
+  verifyPlayerRealtimePayload
+} from "./lib/e2e-capture-fidelity.mjs";
+
 const root = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(root, "..");
 const workspaceRoot = resolve(extensionRoot, "..", "..");
@@ -47,6 +55,9 @@ const configureRecorderOptions = (process.env.WB_E2E_CONFIGURE_OPTIONS ?? "1") !
 // Full mode records script → source map references unless a profile turns them off.
 const verifySourceMaps =
   captureMode === "full" && (process.env.WB_E2E_VERIFY_SOURCE_MAPS ?? "1") !== "0";
+// Needs the configured console: allow / network: body-allowlist policy and CDP capture.
+const checkCaptureFidelity = captureMode === "full" && configureRecorderOptions;
+const playerSdkEntry = resolve(workspaceRoot, "packages/player-sdk/dist/index.js");
 const usePopupUiActions =
   process.env.WB_E2E_USE_POPUP_UI === undefined
     ? !headless
@@ -99,6 +110,7 @@ const state = {
   openedTargetIds: [],
   tempExtensionDir: null,
   server: null,
+  fidelitySockets: null,
   baseUrl: null
 };
 
@@ -124,6 +136,7 @@ async function main() {
   });
 
   state.server = server.server;
+  state.fidelitySockets = server.fidelitySockets;
 
   const demoUrl = `http://127.0.0.1:${server.port}/demo/`;
   const playerUrl = `http://127.0.0.1:${server.port}/player/`;
@@ -421,6 +434,11 @@ async function main() {
     minifiedErrorResult
   );
 
+  const fidelityScenario = checkCaptureFidelity
+    ? await runCaptureFidelityScenario(demoClient)
+    : { ok: true, skipped: "needs-full-mode-with-configured-options" };
+  assert(fidelityScenario?.ok === true, "Capture fidelity scenario failed", fidelityScenario);
+
   const realWorldResult = await runRealWorldScenarioAddons({
     scenario: realWorldScenario,
     demoClient,
@@ -511,6 +529,20 @@ async function main() {
     archiveEvidenceResult.ok,
     "Exported archive missing real-world captured evidence",
     archiveEvidenceResult
+  );
+
+  const fidelityArchiveResult = checkCaptureFidelity
+    ? await verifyCaptureFidelityArchive({
+        archivePath: exportedPath,
+        passphrase: exportPassphrase,
+        playerSdkEntry,
+        scenario: fidelityScenario
+      })
+    : fidelityScenario;
+  assert(
+    fidelityArchiveResult.ok,
+    "Exported archive lost console text, WebSocket payloads or cache status",
+    fidelityArchiveResult
   );
 
   const screenRecordingArchiveResult = recordScreenInFullMode
@@ -641,6 +673,15 @@ async function main() {
     hoverResponseResult
   );
 
+  const playerRealtimeResult = checkCaptureFidelity
+    ? await verifyPlayerRealtimePayload(playerClient, fidelityScenario.sentChars, 20_000)
+    : fidelityScenario;
+  assert(
+    playerRealtimeResult.ok,
+    "Player does not show the full WebSocket frame",
+    playerRealtimeResult
+  );
+
   const playerScreenRecordingResult = recordScreenInFullMode
     ? await verifyPlayerScreenRecording(playerClient, 25_000)
     : { ok: true, skipped: "screen-recording-e2e-disabled" };
@@ -670,6 +711,8 @@ async function main() {
   console.log("Demo URL:", demoUrl);
   console.log("Player URL:", playerUrl);
   console.log("Capture mode:", captureMode);
+  console.log("Capture fidelity (archive):", JSON.stringify(fidelityArchiveResult));
+  console.log("Capture fidelity (player):", JSON.stringify(playerRealtimeResult));
   console.log("Full visual capture:", fullVisualCapture);
   console.log("Record screen:", recordScreenInFullMode);
   console.log("Capture screenshots:", captureScreenshotsInFullMode);
@@ -725,9 +768,7 @@ async function logMinifiedBundleError(demoClient) {
  * references by default), and the logged stack maps back to the bundle's original source.
  */
 async function verifyScriptSourceMapEvidence(archivePath) {
-  const sdk = await import(
-    pathToFileURL(resolve(workspaceRoot, "packages/player-sdk/dist/index.js")).href
-  );
+  const sdk = await import(pathToFileURL(playerSdkEntry).href);
   const player = await sdk.WebBlackboxPlayer.open(new Uint8Array(await readFile(archivePath)), {
     passphrase: exportPassphrase || undefined
   });
@@ -1093,6 +1134,10 @@ async function startDemoServer({ demoDir, playerDir, artifactsDir }) {
         return;
       }
 
+      if (serveFidelityImage(pathname, response)) {
+        return;
+      }
+
       if (pathname.startsWith("/api/")) {
         await handleApiRequest(request, response, requestUrl, tasks);
         return;
@@ -1155,7 +1200,8 @@ async function startDemoServer({ demoDir, playerDir, artifactsDir }) {
 
   return {
     server,
-    port: address.port
+    port: address.port,
+    fidelitySockets: attachFidelitySocketServer(server)
   };
 }
 
@@ -4610,6 +4656,9 @@ async function cleanup() {
     });
     state.logStream = null;
   }
+
+  state.fidelitySockets?.closeAll();
+  state.fidelitySockets = null;
 
   if (state.server) {
     await new Promise((resolve) => {

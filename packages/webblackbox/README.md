@@ -79,6 +79,28 @@ const sdk = new WebBlackboxLiteSdk({
 
 Persist `derived.salt` + `derived.iterations` using your own key-management policy if you need to reopen the same encrypted cache.
 
+## Redaction Lists Replace the Defaults
+
+Every list you pass in `options.config.redaction` (`blockedSelectors`, `redactHeaders`, `redactCookieNames`, `redactBodyPatterns`, `redactQueryParams`, `redactStorageKeys`, `unmaskSelectors`, `valuePatterns`) **replaces** the default list of the same name; it is not merged with it. You own the full list: `blockedSelectors: [".my-secret"]` blocks `.my-secret` only, and the default selectors such as `.secret`, `[data-sensitive]` and `[data-webblackbox-redact]` are no longer blocked. Fields you leave out keep their defaults. Password field values stay masked by the input policy while content masking (`contentRedaction`) is on, whatever the selector lists say.
+
+To extend the defaults, spread them explicitly. They are exported as `DEFAULT_REDACTION_PROFILE` from `@webblackbox/protocol` (install it next to `webblackbox`):
+
+```ts
+import { DEFAULT_REDACTION_PROFILE } from "@webblackbox/protocol";
+import { WebBlackboxLiteSdk } from "webblackbox/lite-sdk";
+
+const sdk = new WebBlackboxLiteSdk({
+  config: {
+    redaction: {
+      blockedSelectors: [...DEFAULT_REDACTION_PROFILE.blockedSelectors, ".my-secret"],
+      redactHeaders: [...DEFAULT_REDACTION_PROFILE.redactHeaders, "x-tenant-token"]
+    }
+  }
+});
+```
+
+The same applies to `config.capturePolicy.redaction`; `config.redaction` is applied on top of it, field by field. Masking applies your rules on a best-effort basis and does not guarantee that all sensitive data is removed.
+
 ## Default Safety Tuning
 
 `WebBlackboxLiteSdk` applies lite-focused runtime defaults to reduce long-session freezes and archive bloat:
