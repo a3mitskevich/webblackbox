@@ -244,6 +244,7 @@ type PlayerMessages = {
   realtimePayloadLoading: string;
   realtimePayloadTruncated: string;
   realtimePayloadRecord: string;
+  realtimePayloadLoadFailed: string;
   noScreenshotEvents: string;
   screenshotBeforePlayhead: string;
   screenshotLoading: string;
@@ -539,6 +540,7 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     realtimePayloadLoading: "Loading the full payload...",
     realtimePayloadTruncated: "Cut at the recording profile's body size limit.",
     realtimePayloadRecord: "Record {index} of {count}",
+    realtimePayloadLoadFailed: "Could not load the full payload: {reason}",
     noScreenshotEvents: "No screenshot events in this archive.",
     screenshotBeforePlayhead: "No screenshot available before this playhead.",
     screenshotLoading: "Loading screenshot...",
@@ -868,6 +870,7 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     realtimePayloadLoading: "正在加载完整载荷...",
     realtimePayloadTruncated: "已按录制配置的正文大小上限截断。",
     realtimePayloadRecord: "第 {index} 条，共 {count} 条",
+    realtimePayloadLoadFailed: "无法加载完整载荷：{reason}",
     noScreenshotEvents: "该归档中没有截图事件。",
     screenshotBeforePlayhead: "当前播放头之前没有可用截图。",
     screenshotLoading: "截图加载中...",

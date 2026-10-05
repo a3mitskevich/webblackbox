@@ -43,7 +43,7 @@ import {
   type NetworkStatusFilter,
   type NetworkTypeFilter
 } from "./lib/network-view.js";
-import { formatRealtimePayload } from "./lib/realtime-payload.js";
+import { readRealtimePayloadView } from "./lib/realtime-payload.js";
 import { asFiniteNumber, asRecord, asString } from "./lib/parsing.js";
 import { markerKindToPanel } from "./lib/progress.js";
 import { normalizePlaybackEvents, type PlaybackTimeNormalization } from "./lib/playback-time.js";
@@ -4055,17 +4055,16 @@ async function showRealtimePayload(eventId: string, details: HTMLDetailsElement)
 
   if (formatted === undefined && player) {
     const entry = state.model?.realtime.find((item) => item.eventId === eventId);
-    const text = await player.getRealtimePayloadText(eventId).catch(() => null);
-    formatted =
-      text === null
-        ? i18n.messages.realtimeNoPayload
-        : formatRealtimePayload(text, (index, count) =>
-            i18n.t("realtimePayloadRecord", { index, count })
-          );
-
-    if (entry?.payloadTruncated) {
-      formatted = `${formatted}\n\n${i18n.messages.realtimePayloadTruncated}`;
-    }
+    formatted = await readRealtimePayloadView(
+      () => player.getRealtimePayloadText(eventId),
+      entry?.payloadTruncated === true,
+      {
+        noPayload: i18n.messages.realtimeNoPayload,
+        truncated: i18n.messages.realtimePayloadTruncated,
+        loadFailed: (reason) => i18n.t("realtimePayloadLoadFailed", { reason }),
+        record: (index, count) => i18n.t("realtimePayloadRecord", { index, count })
+      }
+    );
 
     // The archive may have been replaced while the blob was loading.
     if (state.player !== player) {

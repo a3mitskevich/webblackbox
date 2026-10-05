@@ -38,3 +38,35 @@ function formatJson(text: string): string {
     return text;
   }
 }
+
+export type RealtimePayloadLabels = {
+  noPayload: string;
+  truncated: string;
+  loadFailed: (reason: string) => string;
+  record: (index: number, count: number) => string;
+};
+
+/**
+ * Text for an expanded realtime row: the formatted payload (with a note when the recorder cut it),
+ * "no payload" when the event has none, or the reason the full payload could not be loaded.
+ */
+export async function readRealtimePayloadView(
+  loadText: () => Promise<string | null>,
+  isTruncated: boolean,
+  labels: RealtimePayloadLabels
+): Promise<string> {
+  let text: string | null;
+
+  try {
+    text = await loadText();
+  } catch (error) {
+    return labels.loadFailed(error instanceof Error ? error.message : String(error));
+  }
+
+  if (text === null) {
+    return labels.noPayload;
+  }
+
+  const formatted = formatRealtimePayload(text, labels.record);
+  return isTruncated ? `${formatted}\n\n${labels.truncated}` : formatted;
+}

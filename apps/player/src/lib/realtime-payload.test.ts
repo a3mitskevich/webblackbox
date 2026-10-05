@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatRealtimePayload } from "./realtime-payload.js";
+import { formatRealtimePayload, readRealtimePayloadView } from "./realtime-payload.js";
 
 const RS = "\u001e";
 const recordLabel = (index: number, count: number): string => `Record ${index} of ${count}`;
@@ -41,5 +41,41 @@ describe("formatRealtimePayload", () => {
     expect(formatRealtimePayload('{"type":3,"result":{"da', recordLabel)).toBe(
       '{"type":3,"result":{"da'
     );
+  });
+});
+
+describe("readRealtimePayloadView", () => {
+  const labels = {
+    noPayload: "(no payload)",
+    truncated: "Cut at the limit.",
+    loadFailed: (reason: string) => `Could not load: ${reason}`,
+    record: recordLabel
+  };
+
+  it("formats the loaded text and notes a frame cut at the body limit", async () => {
+    await expect(readRealtimePayloadView(async () => '{"type":6}', false, labels)).resolves.toBe(
+      '{\n  "type": 6\n}'
+    );
+    await expect(readRealtimePayloadView(async () => "PING", true, labels)).resolves.toBe(
+      "PING\n\nCut at the limit."
+    );
+  });
+
+  it("says there is no payload when the event has none", async () => {
+    await expect(readRealtimePayloadView(async () => null, false, labels)).resolves.toBe(
+      "(no payload)"
+    );
+  });
+
+  it("shows why the full payload could not be loaded instead of claiming there is none", async () => {
+    await expect(
+      readRealtimePayloadView(
+        async () => {
+          throw new Error("blob abc is missing from the archive.");
+        },
+        true,
+        labels
+      )
+    ).resolves.toBe("Could not load: blob abc is missing from the archive.");
   });
 });
