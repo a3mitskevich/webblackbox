@@ -476,6 +476,7 @@
     "railLabel": "Inspector",
     "comingLater": "{panel} arrives in a later stage of the new player.",
     "comingLaterHint": "The classic player still has it.",
+    "toastClose": "Dismiss notice",
     "openClassic": "Open the classic player",
     "shortcutsTitle": "Keyboard shortcuts",
     "shortcutKeysLabel": "Keys",

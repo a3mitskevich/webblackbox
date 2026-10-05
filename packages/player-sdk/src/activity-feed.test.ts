@@ -242,6 +242,18 @@ describe("buildActivityRows", () => {
     expect(hiddenThirdParty).toBe(1);
   });
 
+  it("keeps pinned items (the selection) whatever the filters", () => {
+    const pinned = (item: ActivityItem) => item.eventId === "q-ga" || item.eventId === "route2";
+    const { rows, hiddenThirdParty } = buildActivityRows(items, {
+      errorsOnly: true,
+      hideThirdParty: true,
+      matches: (item) => item.kind === "exception",
+      pinned
+    });
+    expect(heads(rows)).toEqual(["q-ga×1", "route2×1", "err×1", "lvl-err×1"]);
+    expect(hiddenThirdParty).toBe(0);
+  });
+
   it("applies the text filter before grouping", () => {
     const { rows } = buildActivityRows(items, { matches: (item) => item.kind === "request" });
     expect(heads(rows)).toEqual(["q-ga×1", "q-t1×2", "q-cu×1"]);

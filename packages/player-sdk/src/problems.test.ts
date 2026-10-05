@@ -157,6 +157,9 @@ describe("groupProblems", () => {
     event("ex2", "error.exception", 12000, {
       message: "AuthError: casino-user request rejected (403 'xyz')"
     }),
+    event("ex3", "error.unhandledrejection", 12500, {
+      message: "TypeError: x is undefined\n    at render (https://app.example.test/js/view.js:4:18)"
+    }),
     event("tp", "console.entry", 3000, {
       level: "error",
       text: "widget crashed",
@@ -215,7 +218,9 @@ describe("groupProblems", () => {
   });
 
   it("folds linked console errors into their request and skips cancels", () => {
-    const ids = groups.flatMap((group) => group.occurrences.map((occurrence) => occurrence.eventId));
+    const ids = groups.flatMap((group) =>
+      group.occurrences.map((occurrence) => occurrence.eventId)
+    );
     expect(ids).not.toContain("c-linked");
     expect(ids).not.toContain("req-x1");
     expect(ids).not.toContain("req-ok");
@@ -235,12 +240,35 @@ describe("groupProblems", () => {
     });
   });
 
+  it("merges a logged error with the exception of the same message", () => {
+    const [merged] = groupProblems({
+      events: [
+        event("log", "console.entry", 1, { level: "error", text: "AuthError: rejected (401)" }),
+        event("throw", "error.exception", 2, { message: "AuthError: rejected (401)" })
+      ],
+      requests: [],
+      firstPartyUrl: ORIGIN
+    });
+    expect(merged).toMatchObject({
+      key: "message:autherror: rejected (#)",
+      category: "exception",
+      count: 2
+    });
+  });
+
   it("groups exceptions by message without numbers or quoted values", () => {
     const exception = groups.find((group) => group.category === "exception");
     expect(exception).toMatchObject({
       message: "AuthError: casino-user request rejected (401 'abc')",
       where: "ensure-casino-user.js:57",
       count: 2
+    });
+  });
+
+  it("finds the script of an exception in its stack", () => {
+    expect(groups.find((group) => group.message === "TypeError: x is undefined")).toMatchObject({
+      category: "exception",
+      where: "view.js:4"
     });
   });
 
@@ -255,7 +283,7 @@ describe("groupProblems", () => {
 
   it("sorts first-party groups first, then by count and first time", () => {
     const order = groups.map((group) => `${group.thirdParty ? "3p" : "1p"}:${group.count}`);
-    expect(order).toEqual(["1p:3", "1p:2", "1p:2", "1p:1", "1p:1", "3p:3", "3p:1"]);
+    expect(order).toEqual(["1p:3", "1p:2", "1p:2", "1p:1", "1p:1", "1p:1", "3p:3", "3p:1"]);
     expect(groups[1]?.key).toBe("net:ERR_CONNECTION_RESET:cdn.example.test");
   });
 

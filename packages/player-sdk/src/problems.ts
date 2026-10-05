@@ -186,18 +186,24 @@ function normalizeMessage(message: string): string {
     .replace(/\d+/g, "#");
 }
 
-/** `file.js:57` from a stack top (`fn @ https://…/file.js:57:3`) or the event URL. */
+const STACK_URL = /((?:https?|chrome-extension|moz-extension):\/\/[^\s()]+)/;
+
+/**
+ * `file.js:57` for a message: the script of its top stack frame (`stackTop`, else the first URL in
+ * `stack` or in the message itself), else the event URL; the column is dropped.
+ */
 function readLocation(event: WebBlackboxEvent): string {
-  const stackTop = asText(asRecord(event.data)?.stackTop);
-  const source = stackTop
-    ? (/(?:@\s*|\()([^\s()]+?)(?::\d+)?\)?$/.exec(stackTop.trim())?.[1] ?? stackTop)
-    : readEventResourceUrl(event);
+  const data = asRecord(event.data);
+  const stackText =
+    asText(data?.stackTop) ?? asText(data?.stack) ?? asText(data?.message) ?? asText(data?.text);
+  const source = (stackText ? STACK_URL.exec(stackText)?.[1] : null) ?? readEventResourceUrl(event);
 
   if (!source) {
     return "";
   }
 
-  return pathOf(source).split("/").filter(Boolean).pop() ?? hostOf(source);
+  const file = pathOf(source).split("/").filter(Boolean).pop() ?? hostOf(source);
+  return file.replace(/(:\d+):\d+$/, "$1");
 }
 
 function firstSegment(path: string): string {
@@ -343,7 +349,8 @@ function eventOccurrence(event: WebBlackboxEvent, firstPartyUrl: string): Occurr
   const url = readEventResourceUrl(event);
 
   return {
-    key: `${category}:${normalizeMessage(message)}`,
+    // A logged error and the exception it describes ("AuthError: …") are one problem.
+    key: `message:${normalizeMessage(message)}`,
     seed: { category, message },
     occurrence: { eventId: event.id, mono: event.mono },
     url,
@@ -401,7 +408,8 @@ function collectOccurrences(input: ProblemGroupingInput): Occurrence[] {
  * Groups the session's failures for the problems strip:
  * - failed requests by HTTP status (first-party: per host and first path segment; third-party:
  *   one group per status) or by net error (per host; third-party: one group per error);
- * - exceptions and console errors by message, ignoring numbers, ids and quoted values.
+ * - exceptions and console errors by message (a logged error and the exception it describes are
+ *   one group), ignoring numbers, ids and quoted values.
  *
  * A console "Failed to load resource" entry that points at a recorded request
  * (`data.networkRequestId`) belongs to that request; cancelled requests (`ERR_ABORTED`) are not
@@ -431,7 +439,8 @@ export function groupProblems(input: ProblemGroupingInput): ProblemGroup[] {
 
     draft.occurrences.push(occurrence);
     draft.thirdPartyFlags.push(thirdParty);
-    drafts.set(key, draft);
+    // Thrown beats logged: a group with an exception is an exception.
+    drafts.set(key, seed.category === "exception" ? { ...draft, category: "exception" } : draft);
   }
 
   return [...drafts.values()].map(finishGroup).sort(compareGroups);

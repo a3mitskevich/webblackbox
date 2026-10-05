@@ -2,7 +2,8 @@ import type { ComponentType } from "react";
 
 import type { RailTab } from "../../core/url-hash.js";
 import type { PlayerLocale } from "../../lib/i18n.js";
-import type { LoadedArchive } from "../state.js";
+import type { ListStepItem } from "../controller.js";
+import type { LoadedArchive, PlayerState } from "../state.js";
 import type { AnyFeatureMessages } from "./messages.js";
 
 /** The feature folders under `src/next/features/` (one owner stage each, see README). */
@@ -33,6 +34,12 @@ export type RailTabRegistration = {
   count?: (archive: LoadedArchive, query: string) => number;
   /** Shows the count as a problem (red), e.g. console errors. */
   isAlert?: (count: number) => boolean;
+  /**
+   * The rows J / L step through while this tab is active, in time order (the controller selects
+   * the neighbour of the selection, or the first row after the playhead). Omit to step through
+   * the Activity events.
+   */
+  stepItems?: (archive: LoadedArchive, state: PlayerState) => readonly ListStepItem[];
   /**
    * The tab panel. Runs inside an error boundary and Suspense, so a `React.lazy` panel loads
    * its own chunk (and CSS) on first use, and a crash degrades only this panel.

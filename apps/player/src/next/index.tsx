@@ -6,6 +6,7 @@ import { readThemePreference } from "../core/preferences.js";
 import { applyPlayerDocumentLocale, detectPlayerLocale } from "../lib/i18n.js";
 import { App } from "./app.js";
 import { createPlayerController, type PlayerController } from "./controller.js";
+import { RAIL_TAB_REGISTRY } from "./features/registry.js";
 import { createInitialState } from "./state.js";
 import { createStore } from "./store.js";
 
@@ -15,7 +16,12 @@ export function mountNextPlayer(root: HTMLElement): void {
   applyPlayerDocumentLocale(locale);
 
   const store = createStore(createInitialState(locale, readThemePreference()));
-  const controller = createPlayerController(store);
+  const controller = createPlayerController(store, {
+    stepItems: (state) => {
+      const stepItems = RAIL_TAB_REGISTRY.get(state.tab)?.stepItems;
+      return state.archive && stepItems ? stepItems(state.archive, state) : null;
+    }
+  });
 
   createRoot(root).render(<App controller={controller} />);
   bindPageLifecycle(window, controller);

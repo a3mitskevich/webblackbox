@@ -1,0 +1,250 @@
+/* Activity feed and problems strip (R2). Replay mockups: mockups/replay/overview.html. */
+
+/* Problems strip, persistent above the stage. */
+.problems {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--surface);
+}
+.problems-count {
+  flex: 0 0 auto;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.problems-count.ok {
+  color: var(--ok);
+  font-weight: 500;
+}
+.problems-list {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.problems-list > li {
+  flex: 0 0 auto;
+}
+.problem {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.problem:hover {
+  background: var(--surface-2);
+}
+.problem b {
+  font-weight: 600;
+}
+.problem .ic {
+  color: var(--bad);
+}
+.problem .n {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bad-soft);
+  color: var(--bad);
+  font: 600 11.5px var(--mono);
+}
+.problem .where {
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-3);
+  font: 12px var(--mono);
+}
+.problem.third {
+  color: var(--ink-2);
+}
+.problem.third .n {
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+.problem.sel {
+  border-color: var(--bad);
+  box-shadow: inset 0 0 0 1px var(--bad);
+}
+
+/* Filter row of the Activity tab. */
+.feed-tools {
+  flex-wrap: wrap;
+}
+.feed-tools .field {
+  min-width: 140px;
+}
+.feed-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.fchip,
+.hidden-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fchip:hover,
+.hidden-chip:hover {
+  background: var(--surface-2);
+}
+.fchip[data-pressed] {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.hidden-chip {
+  border-style: dashed;
+  color: var(--ink-3);
+}
+
+/* Feed rows: measured (variable height), absolutely placed by TanStack Virtual. */
+.feed .vlist-canvas {
+  padding-bottom: 24px;
+}
+.feed .fi {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: auto;
+  min-height: 34px;
+  overflow: visible;
+}
+.feed .fi .t1 {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.feed .fi .t1 > * {
+  flex: 0 0 auto;
+}
+.feed .fi .subj {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed .fi .subj.mono {
+  font-size: 13px;
+}
+.feed .fi .code {
+  font-weight: 600;
+}
+.feed .fi.child .tt,
+.feed .fi.nested .tt {
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+}
+.feed .fi.nested .tt {
+  margin-left: 14px;
+}
+.feed .fi.is-action .t1,
+.feed .fi.is-action .gl {
+  color: var(--ink);
+  font-weight: 600;
+}
+.feed .fi.tone-action .gl {
+  color: var(--ink);
+}
+.feed .fi.tone-navigation .gl {
+  color: var(--nav);
+}
+.feed .fi.tone-realtime .gl {
+  color: var(--ws);
+}
+.feed .fi.tone-warn .gl {
+  color: var(--warn);
+}
+.feed .fi.tone-error .gl,
+.feed .fi.tone-error .code {
+  color: var(--bad);
+}
+.feed .fi.future .t1,
+.feed .fi.future .gl,
+.feed .fi.future .code {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.feed .fi.cur {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--playhead);
+}
+.feed .fi .cnt {
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font: 600 11px var(--mono);
+}
+.feed .fi .rep {
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font: 600 11.5px var(--mono);
+  cursor: pointer;
+}
+.feed .fi[aria-expanded="true"] .rep {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.feed .fi .flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--bad);
+  font-size: 12px;
+  font-weight: 600;
+}
+.feed .fi.future .flag {
+  color: color-mix(in srgb, var(--bad) 60%, var(--ink-3));
+}
+.feed .fi .flag .ic {
+  width: 13px;
+  height: 13px;
+}
+.feed .nowline {
+  transform: translateY(-1px);
+}
+
+@media (max-width: 900px) {
+  .problems {
+    padding: 8px 12px;
+  }
+  .feed .fi {
+    grid-template-columns: 44px 20px minmax(0, 1fr);
+    padding-right: 12px;
+  }
+}

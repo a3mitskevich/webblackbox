@@ -356,6 +356,8 @@ export type ActivityRowOptions = {
   hideThirdParty?: boolean;
   /** Text filter: items it rejects are left out. */
   matches?: (item: ActivityItem, index: number) => boolean;
+  /** Items shown whatever the filters (the selection), not counted as hidden. */
+  pinned?: (item: ActivityItem) => boolean;
 };
 
 export type ActivityRows = {
@@ -373,16 +375,17 @@ export function buildActivityRows(
   items: readonly ActivityItem[],
   options: ActivityRowOptions = {}
 ): ActivityRows {
+  const isPinned = (item: ActivityItem): boolean => options.pinned?.(item) ?? false;
   const matching = options.matches
-    ? items.filter((item, index) => options.matches?.(item, index) ?? true)
+    ? items.filter((item, index) => isPinned(item) || (options.matches?.(item, index) ?? true))
     : items;
   const candidates = options.errorsOnly
-    ? matching.filter((item) => item.isProblem || item.actId !== null)
+    ? matching.filter((item) => isPinned(item) || item.isProblem || item.actId !== null)
     : matching;
   const visible = options.hideThirdParty
-    ? candidates.filter((item) => !item.thirdParty)
+    ? candidates.filter((item) => isPinned(item) || !item.thirdParty)
     : candidates;
-  const kept = options.errorsOnly ? keepActionsWithProblems(visible) : visible;
+  const kept = options.errorsOnly ? keepActionsWithProblems(visible, isPinned) : visible;
 
   return {
     rows: collapseRepeats(kept),
@@ -390,13 +393,17 @@ export function buildActivityRows(
   };
 }
 
-function keepActionsWithProblems(items: readonly ActivityItem[]): ActivityItem[] {
+function keepActionsWithProblems(
+  items: readonly ActivityItem[],
+  isPinned: (item: ActivityItem) => boolean
+): ActivityItem[] {
   const actsWithProblems = new Set(
     items.flatMap((item) => (item.isProblem && item.parentActId ? [item.parentActId] : []))
   );
 
   return items.filter(
-    (item) => item.isProblem || (item.actId !== null && actsWithProblems.has(item.actId))
+    (item) =>
+      item.isProblem || isPinned(item) || (item.actId !== null && actsWithProblems.has(item.actId))
   );
 }
 

@@ -476,6 +476,7 @@
     "railLabel": "检查器",
     "comingLater": "“{panel}”将在新播放器的后续阶段提供。",
     "comingLaterHint": "经典播放器中已有此功能。",
+    "toastClose": "关闭通知",
     "openClassic": "打开经典播放器",
     "shortcutsTitle": "键盘快捷键",
     "shortcutKeysLabel": "按键",
