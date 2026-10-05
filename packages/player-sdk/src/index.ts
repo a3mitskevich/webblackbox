@@ -87,6 +87,7 @@ export * from "./source-map.js";
 export * from "./stack-trace.js";
 export * from "./symbolicate.js";
 export * from "./tabs-context.js";
+export * from "./third-party.js";
 
 export type PlayerStatus = "idle" | "loaded";
 
