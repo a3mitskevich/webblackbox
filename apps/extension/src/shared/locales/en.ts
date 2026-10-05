@@ -379,6 +379,7 @@ export const EN_MESSAGES = {
   optionsCategoryCookies: "Cookies",
   optionsCategoryCdp: "CDP",
   optionsCategoryHeapProfiles: "Heap profiles",
+  optionsCategoryTabsContext: "Other tabs of the site",
   optionsLevelOff: "Off",
   optionsLevelNone: "None",
   optionsLevelMetadata: "Metadata",

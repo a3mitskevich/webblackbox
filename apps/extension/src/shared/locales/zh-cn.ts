@@ -362,6 +362,7 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   optionsCategoryCookies: "Cookie",
   optionsCategoryCdp: "CDP",
   optionsCategoryHeapProfiles: "堆快照",
+  optionsCategoryTabsContext: "该站点的其他标签页",
   optionsLevelOff: "关闭",
   optionsLevelNone: "无",
   optionsLevelMetadata: "仅元数据",
