@@ -1,4 +1,5 @@
 import {
+  maskPointerLabels,
   maskValuePatterns,
   type RedactionRules,
   type RedactionTarget,
@@ -7,17 +8,22 @@ import {
 
 /**
  * The user's value patterns for an event's recorded strings. Bodies and URLs are masked where
- * they are recorded (body policy, URL recording); the raw DOM in the page.
+ * they are recorded (body policy, URL recording); the raw DOM and action labels in the page,
+ * with action labels masked here again in case a stale page script did not.
  */
 export function applyValuePatterns(
   eventType: WebBlackboxEventType,
   payload: unknown,
   rules: RedactionRules
 ): unknown {
+  if (!rules?.valuePatterns?.length) {
+    return payload;
+  }
+
   const target = targetOf(eventType);
 
-  if (!target || !rules?.valuePatterns?.length) {
-    return payload;
+  if (!target) {
+    return maskPointerLabels(eventType, payload, rules);
   }
 
   return mapStrings(payload, (text) => maskValuePatterns(text, rules, target));

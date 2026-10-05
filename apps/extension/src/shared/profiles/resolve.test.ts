@@ -249,6 +249,17 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(selection?.extended).toBe(true);
   });
 
+  it("hands the profile's pointer streams to the recorder config", () => {
+    const fullCapture = buildProfileRecorderConfig({
+      mode: "lite",
+      profile: preset(BUILT_IN_PROFILE_IDS.fullCapture)
+    });
+    const defaults = buildProfileRecorderConfig({ mode: "full", profile: createDefaultProfile() });
+
+    expect(fullCapture.pointer).toEqual({ hover: true, drag: true, wheel: true });
+    expect(defaults.pointer).toEqual({ hover: false, drag: false, wheel: false });
+  });
+
   it("keeps the lite transport boundary: no page-side bodies even for QA", () => {
     const config = buildProfileRecorderConfig({
       mode: "lite",

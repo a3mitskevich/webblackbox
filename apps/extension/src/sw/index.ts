@@ -8,6 +8,7 @@ import {
   createSessionId,
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_EXPORT_POLICY,
+  DEFAULT_POINTER_CAPTURE_OPTIONS,
   DEFAULT_RECORDER_CONFIG,
   assertExportPassphrase,
   isValidExportPassphrase,
@@ -20,6 +21,7 @@ import {
   type ExportPolicy,
   type FreezeReason,
   type HashesManifest,
+  type PointerCaptureOptions,
   type PrivacyScannerFinding,
   type PrivacyScannerFindingKind,
   type PrivacyScannerResult,
@@ -492,8 +494,8 @@ const PIPELINE_BATCH_DRAIN_CHUNK_EVENTS = 160;
 const PIPELINE_BATCH_FLUSH_MS = 120;
 const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
 const SKIPPED_FULL_MODE_BODY_RESOURCE_TYPES = new Set(["Image", "Media", "Font"]);
+// Pointer samples are kept: the page samples them at the profile rate and drops them under load.
 const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
-  "mousemove",
   "scroll",
   "mutation",
   "vitals",
@@ -784,7 +786,8 @@ function syncContentPortRecordingState(port: PortLike): void {
       mode: runtime.mode,
       sampling,
       capturePolicy: runtime.config.capturePolicy,
-      injectedBridgeNonce: runtime.injectedBridgeNonce
+      injectedBridgeNonce: runtime.injectedBridgeNonce,
+      pointer: toStatusPointer(runtime)
     });
   } catch (error) {
     logPortSendFailure("sw.recording-status", error, {
@@ -1022,7 +1025,8 @@ async function handleInboundMessage(
       mode: runtime.mode,
       sampling,
       capturePolicy: runtime.config.capturePolicy,
-      injectedBridgeNonce: runtime.injectedBridgeNonce
+      injectedBridgeNonce: runtime.injectedBridgeNonce,
+      pointer: toStatusPointer(runtime)
     };
   }
 
@@ -1241,6 +1245,8 @@ async function startSession(
   const sampling = toStatusSampling(runtime);
 
   await setRecordingBadge();
+  const pointer = toStatusPointer(runtime);
+
   await notifyTabStatus(
     tabId,
     true,
@@ -1248,7 +1254,8 @@ async function startSession(
     mode,
     sampling,
     recorderConfig.capturePolicy,
-    runtime.injectedBridgeNonce
+    runtime.injectedBridgeNonce,
+    pointer
   );
   broadcast({
     kind: "sw.recording-status",
@@ -1256,7 +1263,8 @@ async function startSession(
     sid,
     mode,
     sampling,
-    capturePolicy: recorderConfig.capturePolicy
+    capturePolicy: recorderConfig.capturePolicy,
+    pointer
   });
   pushSessionList();
   await persistRuntimeState();
@@ -1292,7 +1300,8 @@ async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<
     runtime.mode,
     toStatusSampling(runtime),
     runtime.config.capturePolicy,
-    runtime.injectedBridgeNonce
+    runtime.injectedBridgeNonce,
+    toStatusPointer(runtime)
   );
   // Title, meta tags and selectors are only reliable once the page has loaded.
   scheduleProfileReevaluation(runtime, "page-loaded");
@@ -2089,11 +2098,7 @@ function updateRuntimeInteractionState(runtime: SessionRuntime, rawEvent: RawRec
     return;
   }
 
-  if (
-    rawEvent.rawType === "mousemove" ||
-    rawEvent.rawType === "click" ||
-    rawEvent.rawType === "dblclick"
-  ) {
+  if (POINTER_TRACKING_RAW_TYPES.has(rawEvent.rawType)) {
     const x = asFiniteNumber(payload.x);
     const y = asFiniteNumber(payload.y);
 
@@ -2107,6 +2112,16 @@ function updateRuntimeInteractionState(runtime: SessionRuntime, rawEvent: RawRec
     }
   }
 }
+
+const POINTER_TRACKING_RAW_TYPES = new Set([
+  "mousemove",
+  "click",
+  "dblclick",
+  "pointerdown",
+  "pointerup",
+  "contextmenu",
+  "auxclick"
+]);
 
 function shouldCaptureActionScreenshot(
   rawEvent: RawRecorderEvent,
@@ -4053,6 +4068,10 @@ function normalizeExportBoundedInt(
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
+function toStatusPointer(runtime: SessionRuntime): PointerCaptureOptions {
+  return { ...DEFAULT_POINTER_CAPTURE_OPTIONS, ...runtime.config.pointer };
+}
+
 function toStatusSampling(runtime: SessionRuntime): RecordingSampling {
   const sampling = runtime.config.sampling;
 
@@ -5744,7 +5763,8 @@ async function notifyTabStatus(
   mode?: CaptureMode,
   sampling?: RecordingSampling,
   capturePolicy?: CapturePolicy,
-  injectedBridgeNonce?: string
+  injectedBridgeNonce?: string,
+  pointer?: PointerCaptureOptions
 ): Promise<void> {
   if (!chromeApi?.tabs?.sendMessage) {
     return;
@@ -5758,7 +5778,8 @@ async function notifyTabStatus(
       mode,
       sampling,
       capturePolicy,
-      injectedBridgeNonce
+      injectedBridgeNonce,
+      pointer
     })
     .catch(() => undefined);
 }

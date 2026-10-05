@@ -141,4 +141,44 @@ describe("content redaction switch in the recorder", () => {
     expect(recorded).toContain("page=2");
     expect(recorded).toContain("users/12345");
   });
+
+  it("masks readable action labels with the profile's DOM rules, even from a stale page", () => {
+    const config: RecorderConfig = {
+      ...DEFAULT_RECORDER_CONFIG,
+      redaction: {
+        ...DEFAULT_RECORDER_CONFIG.redaction,
+        valuePatterns: [{ pattern: "acct-\\d+", targets: ["dom"] }]
+      },
+      capturePolicy: {
+        ...DEFAULT_CAPTURE_POLICY,
+        categories: { ...DEFAULT_CAPTURE_POLICY.categories, actions: "allow", dom: "allow" }
+      }
+    };
+    const recorder = new WebBlackboxRecorder(config);
+    const readable = { text: "Pay acct-55", ariaLabel: "acct-22", css: '[aria-label="acct-22"]' };
+    const click = recorder.ingest({
+      source: "content",
+      rawType: "click",
+      sid: "S-labels",
+      tabId: 1,
+      t: 1_000,
+      mono: 1,
+      payload: { x: 1, y: 1, target: { tag: "BUTTON", readable } }
+    }).event;
+    const selection = recorder.ingest({
+      source: "content",
+      rawType: "selection",
+      sid: "S-labels",
+      tabId: 1,
+      t: 1_001,
+      mono: 2,
+      payload: { length: 11, text: "see acct-99", target: { tag: "P" } }
+    }).event;
+
+    expect(click?.data).toMatchObject({
+      target: { readable: { text: "Pay [REDACTED]", ariaLabel: "[REDACTED]" } }
+    });
+    expect(JSON.stringify(click?.data)).not.toContain("acct-");
+    expect(selection?.data).toMatchObject({ text: "see [REDACTED]" });
+  });
 });

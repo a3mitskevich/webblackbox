@@ -2,9 +2,9 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 78300,
-      "maxGzipBytes": 18400,
-      "note": "Measured 76,018 / 17,842 B (+3%): full console detail, the CDP cache tracker and byte-capped stream bodies (#9) plus per-profile redaction rules (#10)."
+      "maxBytes": 79800,
+      "maxGzipBytes": 18800,
+      "note": "Measured 77,392 / 18,203 B (+3%): full console detail, the CDP cache tracker and byte-capped stream bodies (#9), per-profile redaction rules (#10) and pointer capture options (#13)."
     },
     {
       "path": "packages/pipeline/dist/index.js",
@@ -14,9 +14,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 103500,
-      "maxGzipBytes": 24900,
-      "note": "Measured 100,424 / 24,105 B (+3%): #7's bounded, validated archive loading and #9's event ordering plus archive format 2 with the encrypted manifest (#10)."
+      "maxBytes": 121400,
+      "maxGzipBytes": 29500,
+      "note": "Measured 117,797 / 28,629 B (+3%): pointer timeline, rage/dead clicks and Playwright selectors (#13) on top of #7's bounded archive loading, #9's event ordering and archive format 2 (#10)."
     },
     {
       "path": "apps/player/build/main.js",

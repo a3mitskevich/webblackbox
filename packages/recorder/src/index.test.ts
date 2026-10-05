@@ -676,6 +676,72 @@ describe("recorder", () => {
     expect(payload?.target?.selector).not.toContain("secret-action");
   });
 
+  it("normalizes pointer raw types into user pointer events", () => {
+    const recorder = new WebBlackboxRecorder(TEST_CONFIG);
+    const types = [
+      ["pointerdown", "user.pointerdown"],
+      ["pointerup", "user.pointerup"],
+      ["contextmenu", "user.contextmenu"],
+      ["auxclick", "user.auxclick"],
+      ["clickReaction", "user.click.reaction"],
+      ["dragStart", "user.drag.start"],
+      ["dragEnd", "user.drag.end"],
+      ["selection", "user.selection"],
+      ["wheel", "user.wheel"],
+      ["hover", "user.hover"]
+    ] as const;
+
+    for (const [rawType, eventType] of types) {
+      const result = recorder.ingest(createRawEvent({ rawType, payload: { x: 1, y: 2 } }));
+      expect(result.event?.type).toBe(eventType);
+    }
+  });
+
+  it("keeps readable targets and selected text only when the profile allows them", () => {
+    const readablePayload = {
+      x: 4,
+      y: 5,
+      target: { tag: "BUTTON", readable: { text: "Delete account", css: "#delete" } },
+      dropTarget: { tag: "DIV", readable: { text: "Trash" } }
+    };
+    const allowed = new WebBlackboxRecorder(TEST_CONFIG).ingest(
+      createRawEvent({ rawType: "dragEnd", payload: readablePayload })
+    );
+
+    expect(allowed.event?.data).toMatchObject({
+      target: { readable: { text: "Delete account", css: "#delete" } },
+      dropTarget: { readable: { text: "Trash" } }
+    });
+
+    const metadataOnly = new WebBlackboxRecorder({
+      ...TEST_CONFIG,
+      capturePolicy: createPolicy({
+        categories: { ...TEST_CAPTURE_POLICY.categories, actions: "metadata" }
+      })
+    });
+    const stripped = metadataOnly.ingest(
+      createRawEvent({ rawType: "dragEnd", payload: readablePayload })
+    );
+
+    expect(stripped.event?.type).toBe("user.drag.end");
+    expect(JSON.stringify(stripped.event?.data)).not.toContain("Delete account");
+    expect(JSON.stringify(stripped.event?.data)).not.toContain("Trash");
+    expect(stripped.event?.data).toMatchObject({ target: { tag: "BUTTON" } });
+
+    const selection = metadataOnly.ingest(
+      createRawEvent({ rawType: "selection", payload: { length: 6, text: "secret" } })
+    );
+    expect(selection.event?.data).toEqual({ length: 6 });
+
+    const rawDomOff = new WebBlackboxRecorder({
+      ...TEST_CONFIG,
+      capturePolicy: createPolicy({
+        categories: { ...TEST_CAPTURE_POLICY.categories, dom: "masked" }
+      })
+    }).ingest(createRawEvent({ rawType: "selection", payload: { length: 5, text: "hello" } }));
+    expect(rawDomOff.event?.data).toEqual({ length: 5 });
+  });
+
   it("classifies privacy risk on stored events", () => {
     const recorder = new WebBlackboxRecorder(TEST_CONFIG);
     const input = recorder.ingest({

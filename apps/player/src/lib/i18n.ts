@@ -1,5 +1,7 @@
 import type { NetworkCacheSource, PrivacyViolationSubject } from "@webblackbox/player-sdk";
 
+import type { PointerLaneKind } from "./pointer-overlay.js";
+
 import { readStoredText, writeStoredText } from "./storage.js";
 
 export type PlayerLocale = "en" | "zh-CN";
@@ -26,7 +28,8 @@ type NetworkType =
   | "other";
 
 type CompareSignal = "regressed" | "stable" | "new" | "missing";
-type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action";
+type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action" | "pointer";
+type PointerRippleKind = "double" | "right" | "middle" | "hold" | "drag" | "dnd";
 type SortDirection = "asc" | "desc";
 type SelectionKind = "action" | "event" | "request";
 
@@ -299,6 +302,9 @@ type PlayerMessages = {
   screenshotPointerMarker: string;
   pointerReasonActionClick: string;
   pointerReasonMove: string;
+  pointerLaneLabel: string;
+  pointerKinds: Record<PointerLaneKind, string>;
+  pointerRippleLabels: Record<PointerRippleKind, string>;
   networkInitiatorDirect: string;
   networkInitiatorActionNumber: string;
   networkStatusPending: string;
@@ -614,6 +620,30 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     screenshotPointerMarker: "Pointer marker: ({x}, {y})",
     pointerReasonActionClick: "action:click",
     pointerReasonMove: "pointer:move",
+    pointerLaneLabel: "Pointer actions",
+    pointerKinds: {
+      click: "Click",
+      double: "Double click",
+      right: "Right click",
+      middle: "Middle click",
+      hold: "Long press",
+      drag: "Drag",
+      dnd: "Drag and drop",
+      wheel: "Wheel",
+      zoom: "Ctrl+wheel zoom",
+      hover: "Hover",
+      selection: "Text selection",
+      rage: "Rage click",
+      dead: "Dead click"
+    },
+    pointerRippleLabels: {
+      double: "double",
+      right: "right",
+      middle: "middle",
+      hold: "hold",
+      drag: "drag",
+      dnd: "drop"
+    },
     networkInitiatorDirect: "(direct)",
     networkInitiatorActionNumber: "action #{index}",
     networkStatusPending: "(pending)",
@@ -633,7 +663,8 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       network: "network",
       screenshot: "screenshot",
       recording: "recording",
-      action: "action"
+      action: "action",
+      pointer: "pointer"
     },
     privacyHiddenByProfile: "Hidden by profile: {what}",
     privacySubjects: {
@@ -976,6 +1007,30 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     screenshotPointerMarker: "指针标记：({x}, {y})",
     pointerReasonActionClick: "动作:点击",
     pointerReasonMove: "指针:移动",
+    pointerLaneLabel: "指针操作",
+    pointerKinds: {
+      click: "点击",
+      double: "双击",
+      right: "右键点击",
+      middle: "中键点击",
+      hold: "长按",
+      drag: "拖动",
+      dnd: "拖放",
+      wheel: "滚轮",
+      zoom: "Ctrl+滚轮缩放",
+      hover: "悬停",
+      selection: "文本选择",
+      rage: "狂点",
+      dead: "无响应点击"
+    },
+    pointerRippleLabels: {
+      double: "双击",
+      right: "右键",
+      middle: "中键",
+      hold: "长按",
+      drag: "拖动",
+      dnd: "放下"
+    },
     networkInitiatorDirect: "（直接）",
     networkInitiatorActionNumber: "动作 #{index}",
     networkStatusPending: "（等待中）",
@@ -995,7 +1050,8 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       network: "网络",
       screenshot: "截图",
       recording: "录屏",
-      action: "动作"
+      action: "动作",
+      pointer: "指针"
     },
     privacyHiddenByProfile: "已被配置隐藏：{what}",
     privacySubjects: {
@@ -1143,6 +1199,11 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
   const formatScopeTag = (scope: "main" | "iframe"): string =>
     scope === "iframe" ? messages.scopeTagIframe : messages.scopeTagMain;
   const formatMarkerKind = (kind: MarkerKind): string => messages.markerKinds[kind];
+  const formatPointerKind = (kind: PointerLaneKind): string => messages.pointerKinds[kind];
+  const formatPointerRipple = (kind: string): string | null =>
+    kind in messages.pointerRippleLabels
+      ? messages.pointerRippleLabels[kind as PointerRippleKind]
+      : null;
   const formatNetworkType = (type: NetworkType): string => messages.networkTypes[type];
   const formatHiddenByProfile = (subject: PrivacyViolationSubject): string =>
     t("privacyHiddenByProfile", { what: messages.privacySubjects[subject] });
@@ -1260,6 +1321,8 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     formatPanelLabel,
     formatScopeTag,
     formatMarkerKind,
+    formatPointerKind,
+    formatPointerRipple,
     formatNetworkType,
     formatHiddenByProfile,
     formatCompareSignal,

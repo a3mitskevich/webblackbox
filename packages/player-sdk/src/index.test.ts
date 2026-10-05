@@ -10,6 +10,26 @@ import { WebBlackboxPlayer } from "./index.js";
 const PRESSURE_TEST_TIMEOUT_MS = 30_000;
 
 describe("WebBlackboxPlayer", () => {
+  it("surfaces pointer actions, rage clicks and dead clicks in the bug report", async () => {
+    const player = await WebBlackboxPlayer.open(await createPointerFixtureArchive());
+    const timeline = player.getPointerTimeline();
+    const signals = player.getPointerSignals();
+    const report = player.generateBugReport();
+
+    expect(
+      timeline.filter((entry) => entry.eventId.startsWith("E-P")).map((entry) => entry.kind)
+    ).toEqual(["click", "click", "click", "right"]);
+    expect(signals.rageClicks).toHaveLength(1);
+    expect(signals.deadClicks.map((finding) => finding.eventId)).toEqual(["E-P1", "E-P2", "E-P3"]);
+    expect(signals.deadClicks[0]?.evidence).toBe("reaction-probe");
+    expect(report).toContain("## Pointer Signals");
+    expect(report).toContain('- Rage click: 3 clicks @ 6.00ms at (50, 60) on button "Pay" (#pay)');
+    expect(report).toContain('- Dead click: E-P1 @ 6.00ms on button "Pay" (#pay)');
+    expect(player.generatePlaywrightScript()).toContain(
+      'await page.click("#pay", {"button":"right"});'
+    );
+  });
+
   it("opens archive and supports query/search/getBlob", async () => {
     const bytes = await createFixtureArchive();
     const player = await WebBlackboxPlayer.open(bytes);
@@ -610,7 +630,7 @@ describe("WebBlackboxPlayer", () => {
 
     const script = player.generatePlaywrightScript({ name: "it's a test" });
     expect(script).toContain('test("it\'s a test", async ({ browser }) => {');
-    expect(script).toContain("  // input on #email process.exit(1) was masked in capture");
+    expect(script).toContain('  // input on "#email\\nprocess.exit(1)" was masked in capture');
     expect(script).not.toMatch(/^process\.exit/m);
   });
 
@@ -948,6 +968,46 @@ async function appendFixtureEvents(extraEvents: WebBlackboxEvent[]): Promise<Uin
   };
 
   zip.file("manifest.json", JSON.stringify(manifest));
+  zip.file(eventPath, events.map((event) => JSON.stringify(event)).join("\n"));
+  await writeIntegrityManifest(zip);
+
+  return zip.generateAsync({ type: "uint8array" });
+}
+
+async function createPointerFixtureArchive(): Promise<Uint8Array> {
+  const bytes = await createFixtureArchive();
+  const zip = await JSZip.loadAsync(bytes);
+  const eventPath = "events/chunk-000001.ndjson";
+  const eventFile = zip.file(eventPath);
+
+  if (!eventFile) {
+    throw new Error("Missing fixture archive files");
+  }
+
+  const events = (await eventFile.async("string"))
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as WebBlackboxEvent);
+  const target = { tag: "BUTTON", readable: { role: "button", text: "Pay", css: "#pay" } };
+  const pointerEvent = (
+    id: string,
+    mono: number,
+    type: WebBlackboxEvent["type"],
+    data: Record<string, unknown>
+  ): WebBlackboxEvent => ({ v: 1, sid: "S-1", tab: 1, t: 1000 + mono, mono, type, id, data });
+
+  events.push(
+    pointerEvent("E-P1", 6, "user.click", { x: 50, y: 60, button: 0, target }),
+    pointerEvent("E-P2", 6.2, "user.click", { x: 52, y: 61, button: 0, target }),
+    pointerEvent("E-P3", 6.4, "user.click", { x: 51, y: 59, button: 0, target }),
+    pointerEvent("E-P4", 6.6, "user.click.reaction", {
+      clickMono: 6,
+      mutated: false,
+      windowMs: 1000
+    }),
+    pointerEvent("E-P5", 6.8, "user.contextmenu", { x: 10, y: 10, button: 2, target })
+  );
+
   zip.file(eventPath, events.map((event) => JSON.stringify(event)).join("\n"));
   await writeIntegrityManifest(zip);
 
