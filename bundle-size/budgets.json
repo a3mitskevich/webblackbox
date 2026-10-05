@@ -28,9 +28,9 @@
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 876500,
-      "maxGzipBytes": 154600,
-      "note": "Measured 857,461 / 151,908 B with at-rest encryption (#15) on top of 850,791 / 150,067 B (+3%) for recording profiles, redaction rules and the linear regex engine (#10)."
+      "maxBytes": 889000,
+      "maxGzipBytes": 158000,
+      "note": "Measured 871,335 / 154,920 B (CI) with at-rest encryption and stopped recordings restored across worker restarts (#15) on top of 850,791 / 150,067 B (+3%) for recording profiles, redaction rules and the linear regex engine (#10)."
     }
   ]
 }
