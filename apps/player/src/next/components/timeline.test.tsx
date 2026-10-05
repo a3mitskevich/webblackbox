@@ -56,6 +56,10 @@ describe("Timeline", () => {
     expect(screen.getByTestId("scrubber")).toHaveAttribute("aria-valuenow", "5");
     expect(vi.mocked(format.formatRulerSeconds).mock.calls.length).toBe(rulerCalls);
 
+    const marks = screen.getAllByTestId("action-mark");
+    act(() => (marks[1] as HTMLElement).click());
+    expect(screen.getAllByTestId("action-mark")[1]).toHaveClass("cur");
+
     act(() => controller.setLocale("ru"));
     expect(vi.mocked(format.formatRulerSeconds).mock.calls.length).toBeGreaterThan(rulerCalls);
   });

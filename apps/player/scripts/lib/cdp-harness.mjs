@@ -508,6 +508,7 @@ export class CdpClient {
       });
 
       socket.addEventListener("close", () => {
+        clearTimeout(timer);
         for (const pending of this.pending.values()) {
           clearTimeout(pending.timer);
           pending.reject(new Error("CDP socket closed"));

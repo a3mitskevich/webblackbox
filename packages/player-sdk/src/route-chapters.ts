@@ -195,7 +195,12 @@ function readCommittedFrames(events: readonly WebBlackboxEvent[]): CommittedFram
   return { main, child };
 }
 
-/** Events without a frame id, or from a frame never seen committing, count as top-level. */
+/**
+ * Events without a frame id count as top-level. Otherwise the frame must be a recorded top-level
+ * frame; Chrome keeps the main frame id of a tab across navigations, so an id that never committed
+ * as top-level belongs to an iframe loaded before the recording. Only a session without any
+ * top-level commit keeps events from unknown frames, since nothing tells them apart.
+ */
 function isTopLevelFrame(frameId: string | undefined, frames: CommittedFrames): boolean {
   if (!frameId) {
     return true;

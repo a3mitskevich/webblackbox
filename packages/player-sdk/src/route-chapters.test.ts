@@ -126,13 +126,15 @@ describe("buildRouteChapters", () => {
       event("nav.hash", 800, { frameId: "WIDGET", url: "https://widget.test/#/step-2" }),
       event("nav.hash", 1_000, { frameId: "MAIN", url: `${shop}#/cart` }),
       event("nav.commit", 2_000, { frame: { id: "MAIN", url: `${shop}checkout` } }),
-      event("nav.hash", 2_500, { frameId: "GAME", url: "https://game.test/#/round/2" })
+      event("nav.hash", 2_500, { frameId: "GAME", url: "https://game.test/#/round/2" }),
+      event("nav.hash", 3_000, { url: `${shop}checkout#/paid` })
     ]);
 
     expect(chapters.map((chapter) => [chapter.kind, chapter.label])).toEqual([
       ["load", "#/lobby"],
       ["route", "#/cart"],
-      ["document", "/checkout"]
+      ["document", "/checkout"],
+      ["route", "#/paid"]
     ]);
   });
 
