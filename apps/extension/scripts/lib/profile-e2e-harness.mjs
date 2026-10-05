@@ -98,6 +98,19 @@ export function createProfileE2eHarness({ name, appRoot, defaultPort }) {
     );
   }
 
+  /** Opens another tab and connects to it; Runtime stays disabled so callers can subscribe first. */
+  async function openPage(url) {
+    const target = await openTarget(url);
+    const client = await connect(target.webSocketDebuggerUrl);
+    return { client, targetId: target.id };
+  }
+
+  async function closePage(targetId) {
+    await fetch(`${baseUrl}/json/close/${targetId}`, { signal: AbortSignal.timeout(6_000) }).catch(
+      () => undefined
+    );
+  }
+
   function trackServer(server) {
     state.servers.push(server);
   }
@@ -185,7 +198,7 @@ export function createProfileE2eHarness({ name, appRoot, defaultPort }) {
     }
   }
 
-  return { chromeLogPath, launch, waitForDownload, trackServer, cleanup };
+  return { chromeLogPath, launch, openPage, closePage, waitForDownload, trackServer, cleanup };
 }
 
 export async function fetchJson(url, init) {
