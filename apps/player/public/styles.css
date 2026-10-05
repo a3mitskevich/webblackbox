@@ -831,6 +831,10 @@ input[type="file"],
   background: var(--sys-color-yellow);
 }
 
+.progress-marker-tabs {
+  background: #8e24aa;
+}
+
 .progress-playhead {
   position: absolute;
   top: 0;
@@ -940,6 +944,12 @@ input[type="file"],
   background: var(--sys-color-yellow-container);
   border-color: #f4df9b;
   color: #815f00;
+}
+
+.progress-hover-tag-tabs {
+  background: #f3e5f5;
+  border-color: #ce93d8;
+  color: #6a1b9a;
 }
 
 .progress-hover-tag-neutral {
@@ -1191,6 +1201,11 @@ input[type="file"],
 
 .summary-jump-btn:hover:not(:disabled) {
   background: var(--sys-color-state-hover-on-subtle);
+}
+
+.summary-tabs-badge {
+  border-color: #8e24aa;
+  color: #6a1b9a;
 }
 
 .summary-jump-btn:disabled {

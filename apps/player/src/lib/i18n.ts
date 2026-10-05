@@ -26,7 +26,7 @@ type NetworkType =
   | "other";
 
 type CompareSignal = "regressed" | "stable" | "new" | "missing";
-type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action";
+type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action" | "tabs";
 type SortDirection = "asc" | "desc";
 type SelectionKind = "action" | "event" | "request";
 
@@ -305,6 +305,8 @@ type PlayerMessages = {
   summaryProfile: string;
   summaryProfileRule: string;
   summaryProfileDowngraded: string;
+  summaryParallelTabs: string;
+  summaryParallelTabsDetail: string;
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;
@@ -599,7 +601,8 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       network: "network",
       screenshot: "screenshot",
       recording: "recording",
-      action: "action"
+      action: "action",
+      tabs: "other tab"
     },
     privacyHiddenByProfile: "Hidden by profile: {what}",
     privacySubjects: {
@@ -614,12 +617,17 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       "tab-recording": "tab recording",
       storage: "storage",
       "storage-details": "storage details",
+      tabs: "other tabs of the site",
+      "tab-details": "paths and titles of other tabs",
       profile: "profiling data",
       unknown: "data"
     },
     summaryProfile: "profile {name}",
     summaryProfileRule: "profile {name} (rule {rule})",
     summaryProfileDowngraded: "profile {name} ({requested} not allowed on this site)",
+    summaryParallelTabs: "{count} other tabs of this site were open",
+    summaryParallelTabsDetail:
+      "Up to {max} at once, {start} when recording started; {sameOrigin} same-origin, {sameSite} same-site. Click for details.",
     networkTypes: {
       document: "Document",
       fetch: "Fetch/XHR",
@@ -931,7 +939,8 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       network: "网络",
       screenshot: "截图",
       recording: "录屏",
-      action: "动作"
+      action: "动作",
+      tabs: "其他标签页"
     },
     privacyHiddenByProfile: "已被配置隐藏：{what}",
     privacySubjects: {
@@ -946,12 +955,17 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       "tab-recording": "标签页录制",
       storage: "存储",
       "storage-details": "存储详情",
+      tabs: "本站点的其他标签页",
+      "tab-details": "其他标签页的路径和标题",
       profile: "性能分析数据",
       unknown: "数据"
     },
     summaryProfile: "配置 {name}",
     summaryProfileRule: "配置 {name}（规则 {rule}）",
     summaryProfileDowngraded: "配置 {name}（{requested} 在此站点不可用）",
+    summaryParallelTabs: "此站点的其他标签页：{count} 个",
+    summaryParallelTabsDetail:
+      "最多同时打开 {max} 个，开始录制时 {start} 个；同源 {sameOrigin} 个，同站点 {sameSite} 个。点击查看详情。",
     networkTypes: {
       document: "文档",
       fetch: "Fetch/XHR",

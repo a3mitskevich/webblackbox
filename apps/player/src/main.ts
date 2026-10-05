@@ -8,7 +8,9 @@ import {
   type RealtimeNetworkEntry,
   type ReplayDiagnosticEntry,
   type StorageTimelineEntry,
+  type TabsContext,
   readRecordingProfiles,
+  readTabsContext,
   WebBlackboxPlayer
 } from "@webblackbox/player-sdk";
 import { flushSync } from "react-dom";
@@ -50,6 +52,12 @@ import {
   isConsolePrivacyViolation
 } from "./lib/recording-profile-view.js";
 import { markerKindToPanel } from "./lib/progress.js";
+import {
+  buildParallelTabsBadge,
+  buildTabsEventDetails,
+  findTabsEventAt,
+  isTabLifecycleEvent
+} from "./lib/tabs-context-view.js";
 import { normalizePlaybackEvents, type PlaybackTimeNormalization } from "./lib/playback-time.js";
 import { generatePlaywrightScriptFromEvents } from "./lib/playwright-script.js";
 import { lowerBoundByMono, prefixValue, upperBoundByMono } from "./lib/range.js";
@@ -164,14 +172,21 @@ type ScreenshotRenderContext = {
   viewportHeight?: number;
 };
 
-type ProgressMarkerKind = "error" | "network" | "screenshot" | "recording" | "action";
+type ProgressMarkerKind = "error" | "network" | "screenshot" | "recording" | "action" | "tabs";
 
 type ProgressMarker = {
   mono: number;
   kind: ProgressMarkerKind;
 };
 
-type ProgressHoverTagTone = "error" | "network" | "screenshot" | "recording" | "action" | "neutral";
+type ProgressHoverTagTone =
+  | "error"
+  | "network"
+  | "screenshot"
+  | "recording"
+  | "action"
+  | "tabs"
+  | "neutral";
 
 type ProgressHoverTag = {
   label: string;
@@ -253,6 +268,8 @@ type ArchiveModel = {
   storage: StorageTimelineEntry[];
   perf: PerformanceArtifactEntry[];
   progressMarkers: ProgressMarker[];
+  /** Other tabs of the recorded site (empty for archives without them). */
+  tabsContext: TabsContext;
   minMono: number;
   maxMono: number;
   durationMono: number;
@@ -832,6 +849,12 @@ function bindGlobalActions(): void {
       renderPanelTabs();
     }
 
+    if (kind === "tabs") {
+      // The inspector shows the change and the other tabs open after it.
+      state.selectedActionId = null;
+      state.selectedEventId = findTabsEventAt(state.model.tabsContext, mono);
+    }
+
     pausePlayback();
     setPlayhead(mono, { forcePanels: true });
   });
@@ -1213,6 +1236,11 @@ function bindGlobalActions(): void {
 
     if (jump === "slowest-request") {
       jumpToSlowestRequest();
+      return;
+    }
+
+    if (jump === "parallel-tabs") {
+      jumpToParallelTabs();
     }
   });
 
@@ -3032,6 +3060,23 @@ function jumpToFirstError(): void {
   );
 }
 
+/** Opens the first tabs snapshot (or change) in the details panel. */
+function jumpToParallelTabs(): void {
+  const model = state.model;
+  const badge = model ? buildParallelTabsBadge(model.tabsContext, i18n) : null;
+  const event = badge ? model?.eventById.get(badge.eventId) : undefined;
+
+  if (!model || !event) {
+    return;
+  }
+
+  pausePlayback();
+  state.selectedActionId = null;
+  state.selectedEventId = event.id;
+  state.activePanel = "details";
+  setPlayhead(event.mono, { forcePanels: true });
+}
+
 function jumpToSlowestRequest(): void {
   const model = state.model;
 
@@ -3114,6 +3159,7 @@ function renderSummary(): void {
   const visibleNetworkIframeCount = Math.max(0, visibleRequestCount - visibleNetworkMainCount);
   const triage = computeTriageStats(model.events, model.waterfall, TRIAGE_SLOW_REQUEST_MS);
   const profileSummary = formatRecordingProfileSummary(readRecordingProfiles(model.events), i18n);
+  const tabsBadge = buildParallelTabsBadge(model.tabsContext, i18n);
 
   const compareDelta = state.compareSummary
     ? `<div class="pill">${escapeHtml(
@@ -3156,6 +3202,13 @@ function renderSummary(): void {
       i18n.t("summaryOrigin", { origin: state.player.archive.manifest.site.origin })
     )}</div>
     ${profileSummary ? `<div class="pill">${escapeHtml(profileSummary)}</div>` : ""}
+    ${
+      tabsBadge
+        ? `<button class="summary-jump-btn summary-tabs-badge" type="button" data-summary-jump="parallel-tabs" title="${escapeHtml(
+            tabsBadge.title
+          )}">${escapeHtml(tabsBadge.text)}</button>`
+        : ""
+    }
     <div class="pill">${escapeHtml(
       i18n.t("summaryPlayhead", {
         time: formatMono(state.playheadMono - model.minMono)
@@ -3678,12 +3731,15 @@ function renderEventDetails(): void {
     return;
   }
 
+  const tabsDetails = buildTabsEventDetails(model.tabsContext, selected);
+
   refs.eventDetails.textContent = JSON.stringify(
     {
       scope: resolveEventScope(model, selected),
       cdpSession: selected.cdp ?? null,
       frame: selected.frame ?? null,
-      event: selected
+      event: selected,
+      ...(tabsDetails ? { otherTabsOfSiteOpenAfter: tabsDetails.openTabs } : {})
     },
     null,
     2
@@ -4901,6 +4957,7 @@ function buildArchiveModel(player: WebBlackboxPlayer): ArchiveModel {
       }))
       .sort((left, right) => left.mono - right.mono),
     progressMarkers,
+    tabsContext: readTabsContext(events),
     minMono,
     maxMono,
     durationMono: Math.max(0, maxMono - minMono),
@@ -5112,7 +5169,8 @@ function buildProgressMarkers(
     network: [],
     screenshot: [],
     recording: [],
-    action: []
+    action: [],
+    tabs: []
   };
 
   for (const event of events) {
@@ -5133,6 +5191,11 @@ function buildProgressMarkers(
 
     if (event.type === "screen.recording.start" || event.type === "screen.recording.end") {
       buckets.recording.push(event.mono);
+      continue;
+    }
+
+    if (isTabLifecycleEvent(event)) {
+      buckets.tabs.push(event.mono);
       continue;
     }
 
