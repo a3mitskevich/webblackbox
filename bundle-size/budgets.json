@@ -23,9 +23,9 @@
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 72000,
-      "maxGzipBytes": 19000,
-      "note": "Measured 71,119 / 18,745 B (+1%): the content script bundles both shared i18n locale tables (~56 KB of it), which the redesigned UI (#12) and the Page injection settings grew, plus the capture-scope and redaction changes (#10) and the single-run guard. #14 moves the tables out of content.js."
+      "maxBytes": 73000,
+      "maxGzipBytes": 19300,
+      "note": "Measured 71,946 / 18,970 B (+1.5%): the content script bundles both shared i18n locale tables (~56 KB of it), which the redesigned UI (#12) and the Page injection settings grew, plus the capture-scope and redaction changes (#10) and the single-run guard. #14 moves the tables out of content.js."
     },
     {
       "path": "apps/extension/build/sw.js",
