@@ -22,9 +22,9 @@
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 825000,
+      "maxBytes": 835000,
       "maxGzipBytes": 150000,
-      "note": "808,875 B raw with the CDP Network allowlist and inline body gate (#9) on top of the service worker recovery (#8); original budget 800,000."
+      "note": "825,569 B raw with the Full-mode body capture pool and skip records (#21) on top of the CDP Network allowlist (#9) and service worker recovery (#8); original budget 800,000."
     }
   ]
 }
