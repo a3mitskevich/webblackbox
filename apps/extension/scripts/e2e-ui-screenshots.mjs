@@ -25,15 +25,16 @@
  *   WB_UI_SHOTS_LANG        UI language (default en-US)
  *   WB_UI_SHOTS_DARK=1      emulate prefers-color-scheme: dark (names get a -dark suffix; no
  *                           baselines are kept for it, use with WB_UI_SHOTS_COMPARE=0)
+ *   WB_UI_GUARD=0           skip the options unsaved-changes guard checks (run after the shots)
  */
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { runOptionsGuardChecks } from "./lib/options-guard-e2e.mjs";
+import { connectBrowser, launchChrome, resolveExtensionId } from "./lib/ui-shots-chrome.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(scriptDir, "..");
@@ -48,10 +49,10 @@ const compareBaselines = process.env.WB_UI_SHOTS_COMPARE !== "0" && !updateBasel
 const tolerance = Number(process.env.WB_UI_SHOTS_TOLERANCE ?? "0.01");
 const uiLanguage = process.env.WB_UI_SHOTS_LANG ?? "en-US";
 const darkTheme = process.env.WB_UI_SHOTS_DARK === "1";
+const runGuardChecks = process.env.WB_UI_GUARD !== "0";
 const POPUP_WIDTH = 360;
 const POPUP_HEIGHT = 600;
 const SETTLE_MS = 700;
-const CDP_TIMEOUT_MS = 30_000;
 
 const FIXED_NOW = Date.UTC(2026, 8, 21, 10, 30, 0);
 const MINUTE = 60_000;
@@ -202,6 +203,15 @@ const POPUP_STATES = [
 ];
 
 const OPTIONS_SECTIONS = ["profiles", "rules", "sensitivity", "sampling", "export"];
+/**
+ * An unsaved new site rule and an unsaved pointer setting, typed without leaving the rules
+ * section (switching sections would ask first). Nothing is saved by the shots.
+ */
+const OPTIONS_DIRTY_STEPS = [
+  { click: ["[data-action='rule-add']"] },
+  { type: { selector: "[data-rule-id] [name='ruleName']", value: "Stage" } },
+  { type: { selector: "#scrollHz", value: "30" } }
+];
 const PAGE_SHOTS = [
   { name: "options-420", page: "options.html", width: 420, height: 900 },
   { name: "options-1440", page: "options.html", width: 1440, height: 900 },
@@ -213,6 +223,30 @@ const PAGE_SHOTS = [
     hash: section,
     requires: `[data-options-section='${section}']`
   })),
+  {
+    name: "options-1440-unsaved",
+    page: "options.html",
+    width: 1440,
+    height: 900,
+    hash: "rules",
+    steps: OPTIONS_DIRTY_STEPS
+  },
+  {
+    name: "options-1440-leave-prompt",
+    page: "options.html",
+    width: 1440,
+    height: 900,
+    hash: "rules",
+    steps: [...OPTIONS_DIRTY_STEPS, { click: ["[data-section-link='sampling']"] }]
+  },
+  {
+    name: "options-420-unsaved",
+    page: "options.html",
+    width: 420,
+    height: 900,
+    hash: "rules",
+    steps: OPTIONS_DIRTY_STEPS
+  },
   {
     name: "sessions-420",
     page: "sessions.html",
@@ -245,11 +279,11 @@ async function main() {
   );
   await mkdir(outDir, { recursive: true });
   const extensionId = await resolveExtensionId(extensionDir);
-  const chrome = await launchChrome();
+  const chrome = await launchChrome({ chromeBin, extensionDir, uiLanguage });
   const results = [];
 
   try {
-    const browser = await connectBrowser(chrome.port);
+    const browser = await connectBrowser(chrome.port, pendingEvents);
     const fingerprint = await measureFingerprint(browser, extensionId);
 
     for (const state of POPUP_STATES) {
@@ -258,6 +292,20 @@ async function main() {
 
     for (const shot of PAGE_SHOTS) {
       results.push(await capturePage(browser, extensionId, shot, outDir));
+    }
+
+    // Last: the guard checks save settings into this browser profile.
+    if (runGuardChecks) {
+      failures.push(
+        ...(await runOptionsGuardChecks({
+          browser,
+          extensionId,
+          openPage,
+          navigate,
+          waitForEvent,
+          sleep
+        }))
+      );
     }
 
     if (updateBaselines) {
@@ -301,24 +349,7 @@ async function capturePopupState(browser, extensionId, state, outDir) {
 
   try {
     await navigate(page, `chrome-extension://${extensionId}/popup.html`);
-
-    for (const step of state.steps ?? []) {
-      if (step.type) {
-        if (!(await typeInto(page, step.type.selector, step.type.value))) {
-          failures.push(`${state.name}: ${step.type.selector} not found`);
-        }
-
-        continue;
-      }
-
-      const clicked = await clickFirst(page, step.click);
-
-      if (!clicked && !step.optional) {
-        failures.push(`${state.name}: none of ${step.click.join(", ")} found`);
-      }
-
-      await sleep(300);
-    }
+    await runSteps(page, state.name, state.steps);
 
     const result = await screenshot(page, state.name, POPUP_WIDTH, POPUP_HEIGHT, outDir);
     checkInvariant(
@@ -349,6 +380,8 @@ async function capturePage(browser, extensionId, shot, outDir) {
       return null;
     }
 
+    await runSteps(page, shot.name, shot.steps);
+
     const result = await screenshot(page, shot.name, shot.width, shot.height, outDir);
     checkInvariant(
       result.scrollWidth <= shot.width,
@@ -357,6 +390,26 @@ async function capturePage(browser, extensionId, shot, outDir) {
     return result;
   } finally {
     await page.close();
+  }
+}
+
+async function runSteps(page, name, steps = []) {
+  for (const step of steps) {
+    if (step.type) {
+      if (!(await typeInto(page, step.type.selector, step.type.value))) {
+        failures.push(`${name}: ${step.type.selector} not found`);
+      }
+
+      continue;
+    }
+
+    const clicked = await clickFirst(page, step.click);
+
+    if (!clicked && !step.optional) {
+      failures.push(`${name}: none of ${step.click.join(", ")} found`);
+    }
+
+    await sleep(300);
   }
 }
 
@@ -460,6 +513,7 @@ async function compareWithBaselines(browser, results, fingerprint, outDir) {
   }
 }
 
+/* global Image, document -- diffImagesInPage is serialized and runs inside Chrome. */
 /** Runs inside Chrome: 4×4 block averages; a block differs when any channel moves > 24. */
 async function diffImagesInPage(baselineBase64, actualBase64) {
   const BLOCK = 4;
@@ -674,6 +728,22 @@ async function navigate(page, url) {
   await sleep(SETTLE_MS);
 }
 
+/** Resolves the event's params, or null when it does not come within `timeoutMs`. */
+function waitForEvent(page, method, timeoutMs) {
+  return new Promise((resolveEvent) => {
+    const waiter = { method, sessionId: page.sessionId, resolve: resolveEvent };
+    pendingEvents.push(waiter);
+    setTimeout(() => {
+      const index = pendingEvents.indexOf(waiter);
+
+      if (index >= 0) {
+        pendingEvents.splice(index, 1);
+        resolveEvent(null);
+      }
+    }, timeoutMs);
+  });
+}
+
 async function typeInto(page, selector, value) {
   return page.evaluate(`(() => {
     const input = document.querySelector(${JSON.stringify(selector)});
@@ -701,136 +771,6 @@ async function clickFirst(page, selectors) {
 
     return false;
   })()`);
-}
-
-async function connectBrowser(port) {
-  let version;
-
-  for (let attempt = 0; attempt < 100 && !version; attempt += 1) {
-    version = await fetch(`http://127.0.0.1:${port}/json/version`)
-      .then((response) => response.json())
-      .catch(() => undefined);
-
-    if (!version) {
-      await sleep(150);
-    }
-  }
-
-  if (!version) {
-    throw new Error("Chrome DevTools endpoint did not come up");
-  }
-
-  const socket = new WebSocket(version.webSocketDebuggerUrl);
-  await new Promise((resolveOpen, rejectOpen) => {
-    socket.addEventListener("open", resolveOpen, { once: true });
-    socket.addEventListener("error", () => rejectOpen(new Error("CDP socket error")), {
-      once: true
-    });
-  });
-
-  let sequence = 0;
-  const pending = new Map();
-
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-
-    if (typeof message.id === "number" && pending.has(message.id)) {
-      const { resolveCall, rejectCall, timer } = pending.get(message.id);
-      pending.delete(message.id);
-      clearTimeout(timer);
-
-      if (message.error) {
-        rejectCall(new Error(message.error.message));
-      } else {
-        resolveCall(message.result);
-      }
-
-      return;
-    }
-
-    if (typeof message.method === "string") {
-      for (const waiter of [...pendingEvents]) {
-        if (waiter.method === message.method && waiter.sessionId === message.sessionId) {
-          pendingEvents.splice(pendingEvents.indexOf(waiter), 1);
-          waiter.resolve(message.params);
-        }
-      }
-    }
-  });
-
-  return {
-    send(method, params = {}, sessionId) {
-      const id = ++sequence;
-
-      return new Promise((resolveCall, rejectCall) => {
-        const timer = setTimeout(() => {
-          pending.delete(id);
-          rejectCall(new Error(`CDP timeout: ${method}`));
-        }, CDP_TIMEOUT_MS);
-        pending.set(id, { resolveCall, rejectCall, timer });
-        socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
-      });
-    },
-    close: () => socket.close()
-  };
-}
-
-async function launchChrome() {
-  const port = await reservePort();
-  const profileDir = await mkdtemp(join(tmpdir(), "wb-ui-shots-profile-"));
-  const args = [
-    "--headless=new",
-    `--remote-debugging-port=${port}`,
-    "--remote-debugging-address=127.0.0.1",
-    `--user-data-dir=${profileDir}`,
-    `--disable-extensions-except=${extensionDir}`,
-    `--load-extension=${extensionDir}`,
-    `--lang=${uiLanguage}`,
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-background-networking",
-    "--disable-sync",
-    "--disable-component-update",
-    "--hide-scrollbars",
-    "--force-color-profile=srgb",
-    "--font-render-hinting=none",
-    "--disable-lcd-text",
-    ...(process.platform === "linux"
-      ? ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-      : []),
-    "about:blank"
-  ];
-  const proc = spawn(chromeBin, args, {
-    stdio: "ignore",
-    env: { ...process.env, LANG: `${uiLanguage.replace("-", "_")}.UTF-8` }
-  });
-  return { proc, port, profileDir };
-}
-
-function reservePort() {
-  return new Promise((resolvePort, rejectPort) => {
-    const server = createServer();
-    server.once("error", rejectPort);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() => resolvePort(typeof address === "object" && address ? address.port : 0));
-    });
-  });
-}
-
-/** Unpacked extensions with a manifest `key` get an id derived from it. */
-async function resolveExtensionId(dir) {
-  const manifest = JSON.parse(await readFile(join(dir, "manifest.json"), "utf8"));
-
-  if (typeof manifest.key !== "string") {
-    throw new Error("The extension manifest has no key; build the development profile.");
-  }
-
-  return [
-    ...createHash("sha256").update(Buffer.from(manifest.key, "base64")).digest("hex").slice(0, 32)
-  ]
-    .map((char) => String.fromCharCode(97 + parseInt(char, 16)))
-    .join("");
 }
 
 function sleep(ms) {
