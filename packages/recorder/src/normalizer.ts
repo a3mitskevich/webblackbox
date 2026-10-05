@@ -32,6 +32,7 @@ const CDP_EVENT_MAP: Record<string, WebBlackboxEventType> = {
   "Network.webSocketFrameReceived": "network.ws.frame",
   "Network.webSocketFrameSent": "network.ws.frame",
   "Network.webSocketClosed": "network.ws.close",
+  "Network.eventSourceMessageReceived": "network.sse.message",
   "Runtime.consoleAPICalled": "console.entry",
   "Log.entryAdded": "console.entry",
   "Runtime.exceptionThrown": "error.exception",

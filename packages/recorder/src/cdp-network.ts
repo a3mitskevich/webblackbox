@@ -66,6 +66,15 @@ export function normalizeCdpNetworkPayload(
         url: sanitizeOptionalUrl(asString(row.url)),
         initiator: normalizeInitiator(row.initiator)
       });
+    case "Network.eventSourceMessageReceived":
+      // Same shape as the page-hook `sse` message; `data` is gated like other inline bodies.
+      return stripUndefined({
+        ...readEventIds(row),
+        phase: "message",
+        eventType: asString(row.eventName),
+        lastEventId: asString(row.eventId),
+        data: asString(row.data)
+      });
     case "Network.webSocketFrameSent":
     case "Network.webSocketFrameReceived":
       return stripUndefined({

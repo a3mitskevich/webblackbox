@@ -93,6 +93,7 @@ export class WebBlackboxRecorder {
       {
         capturePolicy: this.config.capturePolicy,
         redactBodyPatterns: this.config.redaction.redactBodyPatterns,
+        maxBodyBytes: this.config.sampling.bodyCaptureMaxBytes,
         isBodyAllowed: shouldKeepBody
           ? () =>
               shouldKeepBody(
