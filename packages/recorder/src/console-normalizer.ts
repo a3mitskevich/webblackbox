@@ -256,10 +256,12 @@ function normalizeCdpRemoteObject(
   }
 
   // Under `console: allow`, an object or array argument keeps what CDP's preview shows of it
-  // (the page logged `{ ... }`, not the word "Object").
-  const preview = withPreview
-    ? readCdpObjectPreview(asRecord(row.preview), 0, shape, limiter)
-    : null;
+  // (the page logged `{ ... }`, not the word "Object"). Errors, nodes, dates and the like keep
+  // their description: an error's is its whole stack, which the preview cuts.
+  const preview =
+    withPreview && isPlainPreviewSubtype(row.subtype)
+      ? readCdpObjectPreview(asRecord(row.preview), 0, shape, limiter)
+      : null;
 
   if (preview !== null) {
     return preview;
@@ -291,7 +293,12 @@ function readCdpObjectPreview(
 ): unknown {
   const properties = asArray(preview?.properties);
 
-  if (!preview || properties.length === 0 || depth > shape.maxDepth) {
+  if (
+    !preview ||
+    !isPlainPreviewSubtype(preview.subtype) ||
+    properties.length === 0 ||
+    depth > shape.maxDepth
+  ) {
     return null;
   }
 
@@ -332,6 +339,11 @@ function readCdpObjectPreview(
 
   const output: Record<string, unknown> = Object.fromEntries(entries);
   return preview.overflow === true ? { ...output, "…": true } : output;
+}
+
+/** A plain object (no subtype) or an array: the kinds a CDP preview shows in full. */
+function isPlainPreviewSubtype(subtype: unknown): boolean {
+  return subtype === undefined || subtype === "array";
 }
 
 function sanitizeSerializable(
