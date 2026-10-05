@@ -232,7 +232,8 @@ export const EN_MESSAGES = {
   optionsSensitivityHint:
     "What is masked before data leaves the page. Applies to the Default profile.",
   optionsPointerHint: "How often pointer and scroll movement is sampled.",
-  optionsSamplingHint: "Buffer length and capture cadence; lower values cost less CPU.",
+  optionsSamplingHint:
+    "Where the extension runs, buffer length and capture cadence; lower values cost less CPU.",
   optionsBudgetsHint: "Warn when a page breaks these performance limits.",
   optionsExportHint: "Limits for exported archives.",
   optionsLanguageHint: "Interface language.",
