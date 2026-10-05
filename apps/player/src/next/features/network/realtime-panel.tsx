@@ -21,7 +21,13 @@ import {
   useMessageLabels,
   type MessageLabel
 } from "./messages-view.js";
-import { socketRowId, socketSelection, streamOfSelection, type NetworkModel } from "./rows.js";
+import {
+  socketPath,
+  socketRowId,
+  socketSelection,
+  streamOfSelection,
+  type NetworkModel
+} from "./rows.js";
 import { networkSlice } from "./slice.js";
 import { useNetworkModel, useNowMono } from "./use-network.js";
 import "./network.css";
@@ -45,20 +51,6 @@ const EMPTY_STREAM: RealtimeStream = {
   format: "empty"
 };
 
-/** `app.example.test/proxy-live/hubs` (no query: tokens live there). */
-function streamName(stream: RealtimeStream): string {
-  if (!stream.url) {
-    return stream.streamId;
-  }
-
-  try {
-    const url = new URL(stream.url);
-    return `${url.host}${url.pathname}`;
-  } catch {
-    return stream.url.split("?")[0] ?? stream.url;
-  }
-}
-
 /** The stream the tab shows: the selected message's, else the chosen one, else the first. */
 function useShownStream(model: NetworkModel | null): RealtimeStream | null {
   const selection = usePlayerState((state) => state.selection);
@@ -72,9 +64,12 @@ function useShownStream(model: NetworkModel | null): RealtimeStream | null {
     return (
       streamOfSelection(model, selection) ??
       model.streams.find((stream) => socketRowId(stream) === chosen) ??
-      model.streams.find((stream) => stream.messages.length > 0) ??
-      model.streams[0] ??
-      null
+      // The busiest connection, not the first: sockets opened before the recording come first.
+      model.streams.reduce<RealtimeStream | null>(
+        (busiest, stream) =>
+          !busiest || stream.messages.length > busiest.messages.length ? stream : busiest,
+        null
+      )
     );
   }, [model, selection, chosen]);
 }
@@ -264,8 +259,14 @@ export default function RealtimePanel() {
           >
             {model.streams.map((item) => (
               <option key={socketRowId(item)} value={socketRowId(item)}>
-                {t(`protocol_${item.protocol}`)} · {streamName(item)} ·{" "}
-                {i18n.formatNumber(item.messages.length)}
+                {t(`protocol_${item.protocol}`)} ·{" "}
+                {(() => {
+                  const path = socketPath(item);
+                  return path
+                    ? `${path.host}${path.path}`
+                    : t("socketNoUrl", { id: item.streamId });
+                })()}{" "}
+                · {i18n.formatNumber(item.messages.length)}
               </option>
             ))}
           </select>

@@ -187,5 +187,6 @@
   "protocol_ws": "WebSocket",
   "protocol_sse": "SSE",
   "conversationLabel": "会话",
-  "openInNetwork": "在网络中打开"
+  "openInNetwork": "在网络中打开",
+  "socketNoUrl": "录制开始前已打开（{id}）"
 }

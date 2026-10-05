@@ -327,7 +327,7 @@ function SocketDetails({ row, archive }: { row: SocketRow; archive: LoadedArchiv
           <h2>
             <Icon name="ws" className="ic nws-glyph" />
             <span className="nu mono" data-testid="details-url">
-              {masked.url}
+              {masked.url || t("socketNoUrl", { id: stream.streamId })}
             </span>
           </h2>
           <CloseButton />

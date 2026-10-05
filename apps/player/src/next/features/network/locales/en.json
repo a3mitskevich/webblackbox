@@ -187,5 +187,6 @@
   "protocol_ws": "WebSocket",
   "protocol_sse": "SSE",
   "conversationLabel": "Conversation",
-  "openInNetwork": "Open in Network"
+  "openInNetwork": "Open in Network",
+  "socketNoUrl": "Opened before the recording ({id})"
 }

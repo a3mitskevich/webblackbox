@@ -321,6 +321,10 @@
   font-size: 14px;
   font-weight: 600;
 }
+.ndh h2 > :not(.nu) {
+  flex: none;
+  white-space: nowrap;
+}
 .ndh .nu {
   font-size: 12.5px;
   font-weight: 500;
@@ -603,6 +607,9 @@
 .jt-index,
 .jt-colon {
   color: var(--ink-3);
+}
+.jt-colon {
+  white-space: pre;
 }
 .jt-string {
   color: var(--ok);

@@ -187,5 +187,6 @@
   "protocol_ws": "WebSocket",
   "protocol_sse": "SSE",
   "conversationLabel": "Переписка",
-  "openInNetwork": "Открыть в «Сети»"
+  "openInNetwork": "Открыть в «Сети»",
+  "socketNoUrl": "Открыт до начала записи ({id})"
 }

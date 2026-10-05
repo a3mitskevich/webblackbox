@@ -22,6 +22,7 @@ import {
   rowUrl,
   selectionOfRow,
   shortActionId,
+  socketPath,
   type NetworkModel,
   type NetworkRow
 } from "./rows.js";
@@ -79,7 +80,14 @@ type RowCellsProps = {
 };
 
 function RowCells({ row, model, locale, t, formatBytes, formatDuration }: RowCellsProps) {
-  const name = displayName(rowUrl(row));
+  const socket = row.kind === "socket" ? socketPath(row.stream) : null;
+  const name =
+    row.kind === "socket"
+      ? {
+          name: socket?.path ?? t("socketNoUrl", { id: row.stream.streamId }),
+          host: socket?.host ?? ""
+        }
+      : displayName(rowUrl(row));
   const tone = statusTone(row);
   const left = model.durationMono > 0 ? (row.startMono - model.minMono) / model.durationMono : 0;
   const width = model.durationMono > 0 ? row.durationMs / model.durationMono : 0;

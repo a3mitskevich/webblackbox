@@ -32,6 +32,7 @@ import {
   followIndex,
   rowOfSelection,
   selectionOfRow,
+  socketPath,
   socketRowId,
   type NetworkFilters,
   type NetworkSort
@@ -185,6 +186,12 @@ describe("network rows", () => {
     for (const key of ["name", "method", "size", "type", "initiator"] as const) {
       expect(ids(all, { key, direction: "asc" })).toHaveLength(5);
     }
+  });
+
+  it("names sockets by their path, not their token query", () => {
+    expect(socketPath(stream({}))).toEqual({ path: "/hubs", host: "app.example.test" });
+    expect(socketPath(stream({ url: undefined }))).toBeNull();
+    expect(socketPath(stream({ url: "not a url?x=1" }))).toEqual({ path: "not a url", host: "" });
   });
 
   it("finds the follow target and the slowest request", () => {

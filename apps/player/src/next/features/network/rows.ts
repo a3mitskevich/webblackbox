@@ -231,6 +231,20 @@ export function displayName(url: string): { name: string; host: string } {
   }
 }
 
+/** A socket by its path (`/proxy-live/hubs`): the query only holds tokens. `null` without a URL. */
+export function socketPath(stream: RealtimeStream): { path: string; host: string } | null {
+  if (!stream.url) {
+    return null;
+  }
+
+  try {
+    const url = new URL(stream.url);
+    return { path: url.pathname, host: url.host };
+  } catch {
+    return { path: stream.url.split("?")[0] ?? stream.url, host: "" };
+  }
+}
+
 export function rowUrl(row: NetworkRow): string {
   return row.kind === "http" ? row.entry.url : (row.stream.url ?? "");
 }
