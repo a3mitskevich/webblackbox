@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CAPTURE_POLICY, type CapturePolicy } from "@webblackbox/protocol";
 
 import {
+  INJECTED_BRIDGE_NONCE_SETTER_KEY,
   INJECTED_CAPTURE_CONFIG_EVENT,
   INJECTED_MESSAGE_SOURCE,
+  INJECTED_RAW_EVENT_TYPES,
   type InjectedCaptureConfig,
   type InjectedCaptureWindowMessage,
   installInjectedLiteCaptureHooks
@@ -17,6 +19,7 @@ type CaptureEventMessage = {
   payload: Record<string, unknown>;
   t: number;
   mono: number;
+  nonce?: string;
 };
 
 const DETAILED_TEST_CAPTURE_POLICY: CapturePolicy = {
@@ -57,18 +60,24 @@ describe("injected-hooks", () => {
           rawType: row.rawType,
           payload: row.payload,
           t: row.t,
-          mono: row.mono
+          mono: row.mono,
+          nonce: row.nonce
         });
         return;
       }
 
       if (row.kind === "capture-events" && Array.isArray(row.events)) {
-        captured.push(...row.events);
+        captured.push(...row.events.map((event) => ({ ...event, nonce: row.nonce })));
       }
     });
   });
 
   afterEach(() => {
+    // Bridge consumers drop unknown raw types, so every emitted type must be listed.
+    const allowed = new Set<string>(INJECTED_RAW_EVENT_TYPES);
+    expect(captured.map((message) => message.rawType).filter((type) => !allowed.has(type))).toEqual(
+      []
+    );
     vi.restoreAllMocks();
     window.fetch = originalFetch;
     localStorage.clear();
@@ -106,6 +115,32 @@ describe("injected-hooks", () => {
     });
     expect((event?.payload as { text?: unknown }).text).toBeUndefined();
     expect((event?.payload as { args?: unknown }).args).toBeUndefined();
+  });
+
+  it("stamps bridge messages with the nonce set through the privileged setter", async () => {
+    const flag = "__WB_TEST_INJECTED_NONCE__";
+
+    installInjectedLiteCaptureHooks({ flag, exposeBridgeNonceSetter: true });
+    await delay(10);
+
+    const setter = (window as unknown as Record<string, unknown>)[INJECTED_BRIDGE_NONCE_SETTER_KEY];
+    expect(typeof setter).toBe("function");
+    expect(Object.keys(window)).not.toContain(INJECTED_BRIDGE_NONCE_SETTER_KEY);
+
+    expect(() => {
+      (window as unknown as Record<string, unknown>)[INJECTED_BRIDGE_NONCE_SETTER_KEY] = () =>
+        undefined;
+    }).toThrow(TypeError);
+    (setter as (nonce: unknown) => void)("nonce-abc");
+    (setter as (nonce: unknown) => void)(42);
+    (setter as (nonce: unknown) => void)("x".repeat(500));
+
+    console.info(`wb-nonce-${Date.now()}`);
+    await delay(10);
+
+    const consoleEvents = captured.filter((message) => message.rawType === "console");
+    expect(consoleEvents.length).toBeGreaterThan(0);
+    expect(consoleEvents.every((message) => message.nonce === "nonce-abc")).toBe(true);
   });
 
   it("captures fetch start/end and sampled response body", async () => {

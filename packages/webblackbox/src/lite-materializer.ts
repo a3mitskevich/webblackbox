@@ -1,7 +1,14 @@
 import { redactBodyBytes, redactBodyText, type RecorderConfig } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
+import { decodeScreenshotDataUrl } from "./screenshot-data-url.js";
 import type { LiteMaterializerContext } from "./types.js";
+
+export {
+  decodeScreenshotDataUrl,
+  type DecodedScreenshotDataUrl,
+  type ScreenshotImageFormat
+} from "./screenshot-data-url.js";
 
 const DEFAULT_NETWORK_BODY_MAX_BYTES = 256 * 1024;
 const DEFAULT_BODY_MIME_ALLOWLIST = [
@@ -110,7 +117,7 @@ async function materializeLiteScreenshot(
     return null;
   }
 
-  const decoded = decodeDataUrl(dataUrl);
+  const decoded = decodeScreenshotDataUrl(dataUrl);
 
   if (!decoded || decoded.bytes.byteLength === 0 || decoded.bytes.byteLength > maxBytes) {
     return null;
@@ -123,7 +130,7 @@ async function materializeLiteScreenshot(
   const reason = asString(payload.reason) ?? undefined;
   const viewport = normalizeScreenshotViewport(payload.viewport);
   const pointer = normalizeScreenshotPointer(payload.pointer);
-  const format = decoded.mime.includes("png") ? "png" : "webp";
+  const format = decoded.format;
 
   return {
     ...rawEvent,
@@ -614,40 +621,6 @@ function normalizeScreenshotPointer(
     t: t === null ? undefined : t,
     mono: mono === null ? undefined : mono
   };
-}
-
-function decodeDataUrl(dataUrl: string): { mime: string; bytes: Uint8Array } | null {
-  if (!dataUrl.startsWith("data:")) {
-    return null;
-  }
-
-  const commaIndex = dataUrl.indexOf(",");
-
-  if (commaIndex <= 5) {
-    return null;
-  }
-
-  const header = dataUrl.slice(5, commaIndex);
-  const encoded = dataUrl.slice(commaIndex + 1);
-  const segments = header.split(";");
-  const mime = segments[0] && segments[0].length > 0 ? segments[0] : "application/octet-stream";
-  const isBase64 = segments.includes("base64");
-
-  try {
-    if (isBase64) {
-      return {
-        mime,
-        bytes: decodeBase64(encoded)
-      };
-    }
-
-    return {
-      mime,
-      bytes: new TextEncoder().encode(decodeURIComponent(encoded))
-    };
-  } catch {
-    return null;
-  }
 }
 
 function decodeBase64(value: string): Uint8Array {
