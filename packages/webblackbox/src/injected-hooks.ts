@@ -37,6 +37,39 @@ export const INJECTED_MESSAGE_SOURCE = "webblackbox-injected";
 /** DOM event used to push runtime capture config into the injected page world. */
 export const INJECTED_CAPTURE_CONFIG_EVENT = "webblackbox:injected-config";
 
+/**
+ * Page-world global through which a privileged host (the extension service worker via
+ * `scripting.executeScript`) hands the per-session bridge nonce to the hooks. It never
+ * travels through a DOM event, so page scripts cannot read it before the first message.
+ */
+export const INJECTED_BRIDGE_NONCE_SETTER_KEY = "__WEBBLACKBOX_SET_BRIDGE_NONCE__";
+
+const INJECTED_BRIDGE_NONCE_MAX_LENGTH = 128;
+
+/**
+ * Raw event types the injected hooks emit. Bridge consumers must drop anything else:
+ * the page can post arbitrary `webblackbox-injected` messages (for example a fake
+ * `screenshot` carrying `data:text/html`).
+ */
+export const INJECTED_RAW_EVENT_TYPES = [
+  "console",
+  "fetch",
+  "fetchError",
+  "indexedDbOp",
+  "localStorageOp",
+  "networkBody",
+  "notice",
+  "pageError",
+  "privacyViolation",
+  "resourceError",
+  "sessionStorageOp",
+  "sse",
+  "unhandledrejection",
+  "xhr"
+] as const;
+
+export type InjectedRawEventType = (typeof INJECTED_RAW_EVENT_TYPES)[number];
+
 export type InjectedCaptureConfig = {
   active?: boolean;
   bodyCaptureMaxBytes?: number;
@@ -52,6 +85,7 @@ export type InjectedCaptureWindowMessage =
       payload: CapturePayload;
       t: number;
       mono: number;
+      nonce?: string;
     }
   | {
       source: typeof INJECTED_MESSAGE_SOURCE;
@@ -62,6 +96,7 @@ export type InjectedCaptureWindowMessage =
         t: number;
         mono: number;
       }>;
+      nonce?: string;
     }
   | {
       source: typeof INJECTED_MESSAGE_SOURCE;
@@ -69,6 +104,7 @@ export type InjectedCaptureWindowMessage =
       message?: string;
       t: number;
       mono: number;
+      nonce?: string;
     };
 
 /** Options for installing browser-side injected hooks. */
@@ -83,6 +119,11 @@ export type InjectedHooksOptions = {
   capturePolicy?: CapturePolicy;
   /** Disables fetch/xhr/EventSource monkeypatching when browser-side capture is available. */
   captureNetwork?: boolean;
+  /**
+   * Installs `window[INJECTED_BRIDGE_NONCE_SETTER_KEY]` so a privileged host can set the
+   * nonce stamped on every bridge message.
+   */
+  exposeBridgeNonceSetter?: boolean;
 };
 
 /**
@@ -102,6 +143,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
   let bodyWindowBytes = 0;
   let emitFlushTimer = 0;
   let captureActive = options.active !== false;
+  let bridgeNonce: string | null = null;
   let capturePolicy = options.capturePolicy ?? DEFAULT_CAPTURE_POLICY;
   const pendingCaptureEvents: Array<{
     rawType: string;
@@ -142,6 +184,10 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
   }
 
   windowFlags[flag] = true;
+
+  if (options.exposeBridgeNonceSetter) {
+    installBridgeNonceSetter();
+  }
 
   window.addEventListener(INJECTED_CAPTURE_CONFIG_EVENT, (event: Event) => {
     const detail = (event as CustomEvent<InjectedCaptureConfig>).detail;
@@ -196,6 +242,30 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
     schedulePendingCaptureFlush();
   }
 
+  function installBridgeNonceSetter(): void {
+    const setBridgeNonce = (nonce: unknown): void => {
+      if (
+        typeof nonce === "string" &&
+        nonce.length > 0 &&
+        nonce.length <= INJECTED_BRIDGE_NONCE_MAX_LENGTH
+      ) {
+        bridgeNonce = nonce;
+      }
+    };
+
+    try {
+      Object.defineProperty(window, INJECTED_BRIDGE_NONCE_SETTER_KEY, {
+        value: setBridgeNonce,
+        configurable: false,
+        enumerable: false,
+        writable: false
+      });
+    } catch {
+      // The page pre-defined the key: leave messages unstamped, the content side then
+      // rejects them while it expects a nonce.
+    }
+  }
+
   function emitPrivacyViolation(blockedRawType: string, reason: string): void {
     emit("privacyViolation", {
       blockedRawType,
@@ -228,6 +298,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
 
     const events = pendingCaptureEvents.splice(0, pendingCaptureEvents.length);
     const first = events[0];
+    const nonceField = bridgeNonce ? { nonce: bridgeNonce } : {};
     const message: InjectedCaptureWindowMessage =
       events.length === 1 && first
         ? {
@@ -236,12 +307,14 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
             rawType: first.rawType,
             payload: first.payload,
             t: first.t,
-            mono: first.mono
+            mono: first.mono,
+            ...nonceField
           }
         : {
             source: INJECTED_MESSAGE_SOURCE,
             kind: "capture-events",
-            events
+            events,
+            ...nonceField
           };
 
     window.postMessage(message, "*");

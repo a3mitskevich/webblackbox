@@ -10,6 +10,14 @@ import { runArchiveAnalysis } from "./archive-analysis-runner.js";
 import { createConcurrencyLimiter } from "./concurrency.js";
 import { asRecord, redactText } from "./text.js";
 
+import {
+  isAllowedHostHeader,
+  isKeylessLoopbackRequest,
+  parseAllowedHosts,
+  parseTrustedProxies,
+  resolveClientAddress
+} from "./trust.js";
+
 type ShareRecord = {
   id: string;
   createdAt: number;
@@ -59,6 +67,17 @@ const SHARE_API_CREDENTIALS = parseShareApiCredentials(
 );
 const SHARE_ALLOWED_ORIGIN = normalizeAllowedOrigin(process.env.WEBBLACKBOX_SHARE_ALLOWED_ORIGIN);
 const TRUST_X_FORWARDED_FOR = parseBooleanFlag(process.env.WEBBLACKBOX_TRUST_X_FORWARDED_FOR);
+const TRUSTED_PROXIES = parseTrustedProxies(process.env.WEBBLACKBOX_TRUSTED_PROXIES);
+const SHARE_BIND_HOST = parseBindHost(process.env.WEBBLACKBOX_SHARE_BIND_HOST);
+const SHARE_ALLOWED_HOSTS = parseAllowedHosts(
+  process.env.WEBBLACKBOX_SHARE_ALLOWED_HOSTS,
+  SHARE_BIND_HOST
+);
+// Keyless mode trusts loopback clients, so it must also reject DNS-rebound hostnames. With API keys
+// the Host check is opt-in via WEBBLACKBOX_SHARE_ALLOWED_HOSTS.
+const ENFORCE_HOST_ALLOWLIST =
+  SHARE_API_CREDENTIALS.length === 0 ||
+  (process.env.WEBBLACKBOX_SHARE_ALLOWED_HOSTS ?? "").trim().length > 0;
 const ALLOW_QUERY_API_KEY = parseBooleanFlag(process.env.WEBBLACKBOX_SHARE_ALLOW_QUERY_API_KEY);
 const ALLOW_PLAINTEXT_SHARE_UPLOADS = parseBooleanFlag(
   process.env.WEBBLACKBOX_SHARE_ALLOW_PLAINTEXT_UPLOADS
@@ -131,8 +150,10 @@ async function startShareServer(): Promise<void> {
   await ensureStorageLayout();
   await pruneExpiredShareRecords(Date.now());
 
+  warnAboutProxyTrustConfig();
+
   const port = parsePort(process.env.PORT);
-  const host = parseBindHost(process.env.WEBBLACKBOX_SHARE_BIND_HOST);
+  const host = SHARE_BIND_HOST;
   const server = createServer((request, response) => {
     void routeRequest(request, response).catch((error) => {
       console.warn("[share-server] request failed", error);
@@ -148,7 +169,28 @@ async function startShareServer(): Promise<void> {
   });
 }
 
+function warnAboutProxyTrustConfig(): void {
+  if (TRUSTED_PROXIES.invalidEntries.length > 0) {
+    console.warn(
+      `[share-server] ignoring invalid WEBBLACKBOX_TRUSTED_PROXIES entries: ${TRUSTED_PROXIES.invalidEntries.join(", ")}`
+    );
+  }
+
+  if (TRUST_X_FORWARDED_FOR && TRUSTED_PROXIES.size === 0) {
+    console.warn(
+      "[share-server] WEBBLACKBOX_TRUST_X_FORWARDED_FOR is set but WEBBLACKBOX_TRUSTED_PROXIES is empty; using socket addresses."
+    );
+  }
+}
+
 async function routeRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (ENFORCE_HOST_ALLOWLIST && !isAllowedHostHeader(request.headers.host, SHARE_ALLOWED_HOSTS)) {
+    respondJson(response, 403, {
+      error: "Host not allowed."
+    });
+    return;
+  }
+
   const requestUrl = new URL(request.url ?? "/", requestBaseUrl(request));
   applyCorsHeaders(response, request, requestUrl);
 
@@ -1204,7 +1246,7 @@ function authorizeRequest(
   requiredScope: ShareApiScope
 ): ShareAuthorizationResult {
   if (SHARE_API_CREDENTIALS.length === 0) {
-    return isLoopbackRequest(request)
+    return isKeylessLoopbackRequest(request.socket.remoteAddress, request.headers)
       ? {
           authorized: true,
           source: "loopback"
@@ -1353,35 +1395,6 @@ function requestOriginFromUrl(request: IncomingMessage, requestUrl: URL): string
   return requestOrigin(request, requestUrl);
 }
 
-function isLoopbackRequest(request: IncomingMessage): boolean {
-  const address = resolveClientAddress(request);
-  return Boolean(address && isLoopbackAddress(address));
-}
-
-function resolveClientAddress(request: IncomingMessage): string | null {
-  if (TRUST_X_FORWARDED_FOR) {
-    const forwardedFor = request.headers["x-forwarded-for"];
-    if (typeof forwardedFor === "string" && forwardedFor.length > 0) {
-      const first = forwardedFor.split(",")[0]?.trim();
-      if (first) {
-        return first;
-      }
-    }
-  }
-
-  const socketAddress = request.socket.remoteAddress;
-  return typeof socketAddress === "string" && socketAddress.length > 0 ? socketAddress : null;
-}
-
-function isLoopbackAddress(address: string): boolean {
-  return (
-    address === "127.0.0.1" ||
-    address === "::1" ||
-    address === "::ffff:127.0.0.1" ||
-    address.startsWith("127.")
-  );
-}
-
 function readAuthTokenFromRequest(request: IncomingMessage): string | null {
   const apiKeyHeader = request.headers["x-webblackbox-api-key"];
 
@@ -1520,7 +1533,12 @@ function parseDurationMs(value: string | undefined, fallback: number): number {
 }
 
 function resolveClientKey(request: IncomingMessage): string {
-  const address = resolveClientAddress(request);
+  const address = resolveClientAddress({
+    socketAddress: request.socket.remoteAddress,
+    forwardedFor: request.headers["x-forwarded-for"],
+    trustForwardedFor: TRUST_X_FORWARDED_FOR,
+    trustedProxies: TRUSTED_PROXIES
+  });
   return address ? `ip:${address}` : "ip:unknown";
 }
 

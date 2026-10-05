@@ -15,6 +15,7 @@ vi.mock("@zumer/snapdom", () => {
 import { INJECTED_MESSAGE_SOURCE } from "./injected-hooks.js";
 import { LiteCaptureAgent } from "./lite-capture-agent.js";
 import type { LiteCaptureAgentOptions, LiteCaptureState } from "./types.js";
+import type { RawRecorderEvent } from "@webblackbox/recorder";
 import { DEFAULT_CAPTURE_POLICY, type CapturePolicy } from "@webblackbox/protocol";
 
 const SCREENSHOT_TEST_CAPTURE_POLICY: CapturePolicy = {
@@ -68,27 +69,37 @@ function createInactiveAgent(options: Partial<LiteCaptureAgentOptions> = {}) {
   };
 }
 
-function dispatchInjectedEvents(rawType: string, count: number): void {
+/**
+ * Feeds low-priority raw events straight into the agent queue to simulate buffer
+ * pressure. The injected page bridge cannot be used for this: it only accepts the raw
+ * types the injected hooks emit (see INJECTED_RAW_EVENT_TYPES).
+ */
+function queueAgentRawEvents(agent: LiteCaptureAgent, rawType: string, count: number): void {
+  const queue = agent as unknown as { queueRawEvent(event: RawRecorderEvent): void };
   const startedAt = Date.now();
-  const events = Array.from({ length: count }, (_, index) => {
-    const now = startedAt + index;
 
-    return {
+  for (let index = 0; index < count; index += 1) {
+    const now = startedAt + index;
+    queue.queueRawEvent({
+      source: "content",
       rawType,
+      tabId: 7,
+      sid: "S-lite-agent-test",
+      t: now,
+      mono: performance.timeOrigin + now,
       payload: {
         index
-      },
-      t: now,
-      mono: performance.timeOrigin + now
-    };
-  });
+      }
+    });
+  }
+}
 
+function dispatchInjectedMessage(data: Record<string, unknown>): void {
   window.dispatchEvent(
     new MessageEvent("message", {
       data: {
         source: INJECTED_MESSAGE_SOURCE,
-        kind: "capture-events",
-        events
+        ...data
       },
       source: window
     })
@@ -1359,7 +1370,7 @@ describe("LiteCaptureAgent", () => {
   it("suppresses mousemove capture while the event buffer is under pressure", () => {
     const { agent, emitBatch } = createAgent();
 
-    dispatchInjectedEvents("mutation", 130);
+    queueAgentRawEvents(agent, "mutation", 130);
     movePointer();
     agent.flush();
 
@@ -1372,7 +1383,7 @@ describe("LiteCaptureAgent", () => {
   it("flushes buffered low-priority events asynchronously in chunks", async () => {
     const { agent, emitBatch } = createAgent();
 
-    dispatchInjectedEvents("mutation", 130);
+    queueAgentRawEvents(agent, "mutation", 130);
 
     expect(emitBatch).not.toHaveBeenCalled();
 
@@ -1392,13 +1403,72 @@ describe("LiteCaptureAgent", () => {
   it("sheds low-priority overflow before draining the backlog", () => {
     const { agent, emitBatch } = createAgent();
 
-    dispatchInjectedEvents("mutation", 1_300);
+    queueAgentRawEvents(agent, "mutation", 1_300);
 
     expect(emitBatch).not.toHaveBeenCalled();
 
     agent.flush();
 
     expect(countEmittedEvents(emitBatch)).toBeLessThan(1_000);
+
+    agent.dispose();
+  });
+
+  it("drops injected bridge events whose raw type the hooks never emit", () => {
+    const { agent, emitBatch } = createAgent();
+
+    dispatchInjectedMessage({
+      kind: "capture-events",
+      events: [
+        { rawType: "screenshot", payload: { dataUrl: "data:text/html,<script>1</script>" } },
+        { rawType: "snapshot", payload: { html: "<p>forged</p>" } },
+        { rawType: "mutation", payload: {} },
+        { rawType: "console", payload: { method: "info" } }
+      ]
+    });
+    agent.flush();
+
+    expect(emittedRawTypes(emitBatch)).toEqual(["console"]);
+
+    agent.dispose();
+  });
+
+  it("requires the session nonce on injected bridge messages once the host set one", () => {
+    const { agent, emitBatch } = createAgent({ injectedBridgeNonce: "nonce-123" });
+
+    dispatchInjectedMessage({ kind: "capture-event", rawType: "console", payload: { n: 1 } });
+    dispatchInjectedMessage({
+      kind: "capture-event",
+      rawType: "console",
+      payload: { n: 2 },
+      nonce: "guessed"
+    });
+    dispatchInjectedMessage({ kind: "marker", message: "forged marker" });
+    dispatchInjectedMessage({
+      kind: "capture-event",
+      rawType: "console",
+      payload: { n: 3 },
+      nonce: "nonce-123"
+    });
+    agent.flush();
+
+    const payloads = emitBatch.mock.calls.flatMap((call) => {
+      const [events] = call as [Array<{ rawType?: string; payload?: { n?: number } }>];
+      return events.map((event) => ({ rawType: event.rawType, n: event.payload?.n }));
+    });
+
+    expect(payloads).toEqual([{ rawType: "console", n: 3 }]);
+
+    agent.dispose();
+  });
+
+  it("keeps accepting unstamped bridge messages when no nonce is configured", () => {
+    const { agent, emitBatch } = createAgent();
+
+    dispatchInjectedMessage({ kind: "capture-event", rawType: "console", payload: {} });
+    agent.flush();
+
+    expect(emittedRawTypes(emitBatch)).toEqual(["console"]);
 
     agent.dispose();
   });

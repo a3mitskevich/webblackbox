@@ -262,7 +262,8 @@ async function handleSwMessage(message: ExtensionOutboundMessage): Promise<void>
       tabId: DEFAULT_TAB_ID,
       mode: message.mode,
       sampling: message.sampling,
-      capturePolicy: message.capturePolicy
+      capturePolicy: message.capturePolicy,
+      injectedBridgeNonce: message.injectedBridgeNonce
     };
 
     if (message.active) {

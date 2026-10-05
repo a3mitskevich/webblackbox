@@ -23,12 +23,13 @@ By default the server listens on `http://127.0.0.1:8787`.
 
 Set these environment variables for production-like deployments:
 
-- `WEBBLACKBOX_SHARE_API_KEY`: API key for `/api/share/*` and `/share/*` routes. If unset, protected routes are limited to loopback clients (`127.0.0.1` / `::1`). When set, clients can authenticate with either:
+- `WEBBLACKBOX_SHARE_API_KEY`: API key for `/api/share/*` and `/share/*` routes. If unset (keyless mode), protected routes are limited to clients whose TCP connection comes from loopback (`127.0.0.1` / `::1`) and that carry no `X-Forwarded-For`, `Forwarded`, or `X-Real-IP` header. Forwarding headers can only revoke keyless access, never grant it, so a keyless server must not sit behind a reverse proxy. Keyless mode also enforces the `Host` allowlist below. When set, clients can authenticate with either:
   - `x-webblackbox-api-key: <key>`, or
   - `authorization: Bearer <key>`
 - `WEBBLACKBOX_SHARE_API_KEYS`: semicolon-separated scoped keys for rotation and least privilege. Format: `secret:scope,scope;next-secret:scope`. Supported scopes are `upload`, `read`, `list`, `revoke`, and `admin`. `admin` covers all scopes. Keep an old key and a new key configured during rotation, then remove the old key after clients are updated.
 - `WEBBLACKBOX_SHARE_ALLOW_QUERY_API_KEY`: optional browser bootstrap for `GET /share/:id?key=<key>`. Keep this disabled in production unless the key is short-lived; when enabled, the server redirects to a clean URL and uses a short HttpOnly read-session cookie for page links.
 - `WEBBLACKBOX_SHARE_BIND_HOST`: bind host for the HTTP server (default `127.0.0.1`).
+- `WEBBLACKBOX_SHARE_ALLOWED_HOSTS`: comma-separated hostnames (or URLs; ports are ignored) accepted in the `Host` header, e.g. `share.example.com`. The allowlist always contains `localhost`, `127.0.0.1`, `[::1]`, and the bind host when it is a specific address (not `0.0.0.0` / `::`). Requests with any other `Host` get `403` before routing. This blocks DNS-rebinding attacks against keyless servers. It is always enforced in keyless mode; with API keys it is enforced only when this variable is set. Set it to your public hostname for production deployments.
 - `WEBBLACKBOX_SHARE_ALLOWED_ORIGIN`: CORS allow origin. Defaults to `same-origin`. Use `*` only for trusted environments.
 - `WEBBLACKBOX_SHARE_MAX_UPLOAD_BYTES`: max accepted upload body size in bytes (default `262144000`).
 - `WEBBLACKBOX_SHARE_MAX_UNCOMPRESSED_BYTES`: max total uncompressed size of an uploaded archive, and of its decoded event chunks, in bytes (default `1073741824`, 1 GiB). A single entry is also capped at 256 MiB or this value, whichever is lower. Larger archives are rejected with `413`.
@@ -41,7 +42,16 @@ Set these environment variables for production-like deployments:
 - `WEBBLACKBOX_SHARE_RETAIN_EXPIRED_MS`: how long expired share records/files are retained before pruning (default `2592000000`, 30 days).
 - `WEBBLACKBOX_UPLOAD_RATE_LIMIT_MAX`: max uploads per client in each window (default `10`).
 - `WEBBLACKBOX_UPLOAD_RATE_LIMIT_WINDOW_MS`: upload rate limit window in ms (default `60000`).
-- `WEBBLACKBOX_TRUST_X_FORWARDED_FOR`: set `true` only behind a trusted proxy; otherwise upload rate limiting uses socket IP.
+- `WEBBLACKBOX_TRUST_X_FORWARDED_FOR`: set `true` only behind a trusted proxy. It takes effect only together with `WEBBLACKBOX_TRUSTED_PROXIES`; otherwise upload rate limiting and audit client hashes use the socket IP (the server logs a warning at startup).
+- `WEBBLACKBOX_TRUSTED_PROXIES`: comma-separated IPs or CIDR ranges of your reverse proxies, e.g. `10.0.0.5,172.16.0.0/12,fd00::/8`. Default: none. `X-Forwarded-For` is read only when the TCP peer is in this list. The client address is the right-most entry that is not a trusted proxy, so entries a client prepends cannot change it. Invalid entries are ignored with a startup warning.
+
+Behind a reverse proxy, configure both forwarding variables and the public host:
+
+```bash
+WEBBLACKBOX_TRUST_X_FORWARDED_FOR=true
+WEBBLACKBOX_TRUSTED_PROXIES="10.0.0.5"
+WEBBLACKBOX_SHARE_ALLOWED_HOSTS="share.example.com"
+```
 
 For production, prefer scoped keys over a single admin key:
 

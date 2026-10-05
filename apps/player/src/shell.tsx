@@ -710,7 +710,7 @@ export function PlayerShell({ locale = "en" }: PlayerShellProps = {}): React.JSX
         <form id="share-load-form" className="share-dialog-card" method="dialog">
           <header className="share-dialog-head">
             <h2>{messages.loadSharedArchiveTitle}</h2>
-            <p>{messages.loadSharedArchiveDescription}</p>
+            <p id="share-load-description">{messages.loadSharedArchiveDescription}</p>
           </header>
           <label className="share-dialog-field">
             <span>{messages.shareReference}</span>
