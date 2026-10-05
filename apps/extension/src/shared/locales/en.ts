@@ -39,6 +39,7 @@ export const EN_MESSAGES = {
   popupProfileByRule: "Records with {name} (rule: {rule}).",
   popupProfileEnterpriseCapped: "Your organization's policy limits: {categories}.",
   popupProfileRecommends: "Recommended start: {mode}.",
+  popupProfileFullOnly: "Full only: Lite cannot capture what this profile records.",
   popupProfileRequiredTitle: "No recording profile",
   popupProfileRequired:
     "Recording needs at least one profile. Restore the recommended profiles or import yours in Options.",
