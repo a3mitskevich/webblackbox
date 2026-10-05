@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
 
 import {
+  ARCHIVE_KDF_DEFAULT_ITERATIONS,
   DEFAULT_CAPTURE_POLICY,
+  exportManifestSchema,
+  hashesManifestSchema,
+  invertedIndexSchema,
+  privacyManifestSchema,
+  requestIndexSchema,
+  timeIndexSchema,
   DEFAULT_REDACTION_PROFILE,
   type SessionMetadata,
   type WebBlackboxEvent
@@ -157,6 +164,37 @@ describe("pipeline", () => {
     expect(parsed.manifest.site).toEqual({ origin: "https://example.com/" });
     expect(parsed.manifest.mode).toBe("lite");
     expect(JSON.stringify(parsed.manifest)).not.toContain("alice@example.com");
+  });
+
+  it("records min/max chunk time bounds when events arrive out of order", async () => {
+    const storage = new MemoryPipelineStorage();
+    const pipeline = new FlightRecorderPipeline({
+      session: SESSION,
+      storage,
+      maxChunkBytes: 1024 * 1024
+    });
+
+    await pipeline.start();
+    await pipeline.ingest(createEvent("E-200", "user.click", 200));
+    await pipeline.ingest(createEvent("E-100-late", "user.mousemove", 100));
+    await pipeline.ingest(createEvent("E-300", "network.request", 300));
+    await pipeline.ingest(createEvent("E-250", "screen.screenshot", 250, { shotId: "shot" }));
+    await pipeline.ingest(createEvent("E-150-late", "user.mousemove", 150));
+    await pipeline.flush();
+
+    const [stored] = await storage.listChunks(SESSION.sid);
+    expect(stored?.meta).toMatchObject({ tStart: 100, tEnd: 300, monoStart: 100, monoEnd: 300 });
+
+    const exported = await pipeline.exportBundle({
+      ...FULL_EXPORT_OPTIONS,
+      includeScreenshots: false
+    });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
+
+    expect(parsed.events.map((event) => event.id)).not.toContain("E-250");
+    expect(parsed.timeIndex).toEqual([
+      expect.objectContaining({ tStart: 100, tEnd: 300, monoStart: 100, monoEnd: 300 })
+    ]);
   });
 
   it("indexes request ids from nested request payloads", async () => {
@@ -808,6 +846,7 @@ describe("pipeline", () => {
 
     expect(parsed.events.length).toBeGreaterThanOrEqual(2);
     expect(parsed.manifest.encryption?.algorithm).toBe("AES-GCM");
+    expect(parsed.manifest.encryption?.kdf.iterations).toBe(ARCHIVE_KDF_DEFAULT_ITERATIONS);
     expect(parsed.manifest.encryption?.files["index/time.json"]).toBeDefined();
     expect(parsed.manifest.encryption?.files["index/req.json"]).toBeDefined();
     expect(parsed.manifest.encryption?.files["index/inv.json"]).toBeDefined();
@@ -828,6 +867,98 @@ describe("pipeline", () => {
         path.startsWith("events/")
       )
     ).toBe(true);
+  });
+
+  it("exports archives that satisfy the protocol archive schemas readers validate", async () => {
+    const pipeline = new FlightRecorderPipeline({
+      session: { ...SESSION, startedAt: 1_700_000_000_000.25 },
+      storage: new MemoryPipelineStorage(),
+      maxChunkBytes: 256
+    });
+    const wallClockBase = 1_700_000_000_000.125;
+
+    await pipeline.start();
+    await pipeline.ingest(createEvent("E-schema-1", "user.click", wallClockBase));
+    await pipeline.ingest(
+      createEvent("E-schema-2", "network.request", wallClockBase + 12.375, {
+        reqId: "R-schema",
+        url: "https://example.com/api"
+      })
+    );
+    await pipeline.ingest(createEvent("E-schema-3", "error.exception", wallClockBase + 40.5));
+
+    for (const passphrase of ["secret-passphrase", " padded-passphrase "]) {
+      const exported = await pipeline.exportBundle({ ...FULL_EXPORT_OPTIONS, passphrase });
+      const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase });
+
+      expect(parsed.manifest.stats.durationMs).not.toBe(
+        Math.round(parsed.manifest.stats.durationMs)
+      );
+      expect(exportManifestSchema.safeParse(parsed.manifest).error).toBeUndefined();
+      expect(hashesManifestSchema.safeParse(parsed.integrity).error).toBeUndefined();
+      expect(timeIndexSchema.safeParse(parsed.timeIndex).error).toBeUndefined();
+      expect(requestIndexSchema.safeParse(parsed.requestIndex).error).toBeUndefined();
+      expect(invertedIndexSchema.safeParse(parsed.invertedIndex).error).toBeUndefined();
+      expect(privacyManifestSchema.safeParse(parsed.privacyManifest).error).toBeUndefined();
+    }
+  });
+
+  it("writes only schema-known redaction profile keys to the manifest", async () => {
+    const redactionProfile = {
+      redactHeaders: ["authorization"],
+      redactCookieNames: [],
+      redactBodyPatterns: [],
+      blockedSelectors: [],
+      hashSensitiveValues: true,
+      legacyStoredOption: "kept in extension storage"
+    };
+    const pipeline = new FlightRecorderPipeline({
+      session: SESSION,
+      storage: new MemoryPipelineStorage(),
+      redactionProfile
+    });
+
+    await pipeline.start();
+    await pipeline.ingest(createEvent("E-profile-1", "user.click", 100));
+
+    const passphrase = "secret-passphrase";
+    const parsed = await readWebBlackboxArchive(
+      (await pipeline.exportBundle({ passphrase })).bytes,
+      { passphrase }
+    );
+
+    expect(parsed.manifest.redactionProfile).toEqual({
+      redactHeaders: ["authorization"],
+      redactCookieNames: [],
+      redactBodyPatterns: [],
+      blockedSelectors: [],
+      hashSensitiveValues: true
+    });
+    expect(exportManifestSchema.safeParse(parsed.manifest).error).toBeUndefined();
+  });
+
+  it("rejects encrypted archives whose manifest KDF iteration count is out of range", async () => {
+    const pipeline = new FlightRecorderPipeline({
+      session: SESSION,
+      storage: new MemoryPipelineStorage(),
+      maxChunkBytes: 128
+    });
+
+    await pipeline.start();
+    await pipeline.ingest(createEvent("E-kdf-1", "user.click", 100));
+
+    const exported = await pipeline.exportBundle({
+      ...FULL_EXPORT_OPTIONS,
+      passphrase: "secret-passphrase"
+    });
+
+    for (const iterations of [50_000_000, 1_000]) {
+      const tampered = await rewriteManifestKdfIterations(exported.bytes, iterations);
+
+      await expect(
+        readWebBlackboxArchive(tampered, { passphrase: "secret-passphrase" })
+      ).rejects.toThrow(/KDF iteration count .* outside the supported range/);
+    }
   });
 
   it("supports optional at-rest encryption for chunk/blob cache payloads", async () => {
@@ -1123,3 +1254,38 @@ describe("pipeline", () => {
     expect((await storage.listBlobs()).length).toBe(0);
   });
 });
+
+async function rewriteManifestKdfIterations(
+  source: Uint8Array,
+  iterations: number
+): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(source);
+  const manifest = JSON.parse((await zip.file("manifest.json")?.async("string")) ?? "{}");
+  const manifestText = JSON.stringify({
+    ...manifest,
+    encryption: {
+      ...manifest.encryption,
+      kdf: { ...manifest.encryption.kdf, iterations }
+    }
+  });
+  const integrity = JSON.parse((await zip.file("integrity/hashes.json")?.async("string")) ?? "{}");
+  const manifestSha256 = await sha256HexForTest(new TextEncoder().encode(manifestText));
+
+  zip.file("manifest.json", manifestText);
+  zip.file(
+    "integrity/hashes.json",
+    JSON.stringify({
+      manifestSha256,
+      files: { ...integrity.files, "manifest.json": manifestSha256 }
+    })
+  );
+
+  return zip.generateAsync({ type: "uint8array" });
+}
+
+async function sha256HexForTest(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join(
+    ""
+  );
+}

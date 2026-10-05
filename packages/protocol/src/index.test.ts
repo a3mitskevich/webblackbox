@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ARCHIVE_KDF_DEFAULT_ITERATIONS,
+  ARCHIVE_KDF_MAX_ITERATIONS,
+  ARCHIVE_KDF_MIN_ITERATIONS,
+  assertArchiveKdfIterations,
   createSessionId,
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_RECORDER_CONFIG,
@@ -91,6 +95,21 @@ describe("protocol", () => {
     expect(DEFAULT_CAPTURE_POLICY.encryption.archive).toBe("required");
   });
 
+  it("defaults screenRecordings to off for capture policies written before v0.6.0", () => {
+    const legacyCategories = Object.fromEntries(
+      Object.entries(DEFAULT_CAPTURE_POLICY.categories).filter(
+        ([key]) => key !== "screenRecordings"
+      )
+    );
+    const result = capturePolicySchema.safeParse({
+      ...DEFAULT_CAPTURE_POLICY,
+      categories: legacyCategories
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.data?.categories.screenRecordings).toBe("off");
+  });
+
   it("parses export manifest schema", () => {
     const result = exportManifestSchema.safeParse({
       protocolVersion: 1,
@@ -111,6 +130,53 @@ describe("protocol", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it("bounds manifest KDF iteration counts", () => {
+    const manifestWithIterations = (iterations: number) => ({
+      protocolVersion: 1,
+      createdAt: "2026-02-13T00:00:00.000Z",
+      mode: "full",
+      site: { origin: "https://example.com" },
+      chunkCodec: "none",
+      redactionProfile: DEFAULT_RECORDER_CONFIG.redaction,
+      stats: { eventCount: 1, chunkCount: 1, blobCount: 0, durationMs: 1 },
+      encryption: {
+        algorithm: "AES-GCM",
+        kdf: { name: "PBKDF2", hash: "SHA-256", iterations, saltBase64: "AAAA" },
+        files: {}
+      }
+    });
+
+    expect(exportManifestSchema.safeParse(manifestWithIterations(120_000)).success).toBe(true);
+    expect(
+      exportManifestSchema.safeParse({
+        ...manifestWithIterations(120_000),
+        stats: { eventCount: 1, chunkCount: 1, blobCount: 0, durationMs: 40.375 }
+      }).success
+    ).toBe(true);
+    expect(
+      exportManifestSchema.safeParse(manifestWithIterations(ARCHIVE_KDF_DEFAULT_ITERATIONS)).success
+    ).toBe(true);
+    expect(
+      exportManifestSchema.safeParse(manifestWithIterations(ARCHIVE_KDF_MIN_ITERATIONS - 1)).success
+    ).toBe(false);
+    expect(
+      exportManifestSchema.safeParse(manifestWithIterations(ARCHIVE_KDF_MAX_ITERATIONS + 1)).success
+    ).toBe(false);
+  });
+
+  it("asserts KDF iteration bounds", () => {
+    expect(() => assertArchiveKdfIterations(120_000)).not.toThrow();
+    expect(() => assertArchiveKdfIterations(ARCHIVE_KDF_MAX_ITERATIONS)).not.toThrow();
+    expect(() => assertArchiveKdfIterations(ARCHIVE_KDF_MAX_ITERATIONS + 1)).toThrow(
+      /outside the supported range/
+    );
+    expect(() => assertArchiveKdfIterations(ARCHIVE_KDF_MIN_ITERATIONS - 1)).toThrow(
+      /outside the supported range/
+    );
+    expect(() => assertArchiveKdfIterations(100_000.5)).toThrow(/outside the supported range/);
+    expect(() => assertArchiveKdfIterations("600000")).toThrow(/outside the supported range/);
   });
 
   it("exposes event envelope schema", () => {
@@ -256,6 +322,18 @@ describe("protocol", () => {
     );
     expect(sanitizeUrlForPrivacy("/v1/items/wbb_test_provider_token_000000000000")).toBe(
       "/v1/items/:token"
+    );
+  });
+
+  it("keeps the WebSocket endpoint and strips query, fragment, and userinfo", () => {
+    expect(sanitizeUrlForPrivacy("ws://127.0.0.1:8080/ws?token=secret#frag")).toBe(
+      "ws://127.0.0.1:8080/ws"
+    );
+    expect(
+      sanitizeUrlForPrivacy("wss://alice:hunter2@realtime.example.test/rooms/123/socket?auth=abc")
+    ).toBe("wss://realtime.example.test/rooms/:id/socket");
+    expect(sanitizeUrlForPrivacy("WSS://Realtime.Example.Test:443/live")).toBe(
+      "wss://realtime.example.test/live"
     );
   });
 });

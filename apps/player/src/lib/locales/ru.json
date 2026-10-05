@@ -124,6 +124,7 @@
   "sharePrivacyPreviewSample": "{reason}: {snippet}",
   "loadSharedArchiveTitle": "Открыть архив по ссылке",
   "loadSharedArchiveDescription": "Вставьте ссылку для обмена, URL API архива или ID.",
+  "loadSharedArchiveUntrustedOrigin": "Эта ссылка открывает архив с {origin}. Это не текущий плеер и не ваш сервер обмена. Продолжайте, только если доверяете этому серверу.",
   "shareReference": "Ссылка или ID",
   "shareReferencePlaceholder": "https://host/share/abc123 или abc123",
   "encryptedArchiveTitle": "Зашифрованный архив",

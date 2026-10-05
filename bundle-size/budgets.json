@@ -13,8 +13,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 90000,
-      "maxGzipBytes": 22000
+      "maxBytes": 103500,
+      "maxGzipBytes": 24900,
+      "note": "Measured 100,424 / 24,105 B (+3%): #7's bounded, validated archive loading and #9's event ordering plus archive format 2 with the encrypted manifest (#10)."
     },
     {
       "path": "apps/player/build/main.js",
@@ -23,9 +24,9 @@
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 876500,
-      "maxGzipBytes": 154600,
-      "note": "Measured 850,791 / 150,067 B (+3%): recording profiles, redaction rules and the linear regex engine run in the service worker."
+      "maxBytes": 919600,
+      "maxGzipBytes": 164800,
+      "note": "Measured 892,782 / 159,934 B (+3%): the service worker recovery (#8) and the CDP Network allowlist (#9) plus recording profiles, redaction rules and the linear regex engine (#10)."
     },
     {
       "path": "apps/extension/build/content.js",

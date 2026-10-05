@@ -165,6 +165,7 @@ type PlayerMessages = {
   sharePrivacyPreviewSample: string;
   loadSharedArchiveTitle: string;
   loadSharedArchiveDescription: string;
+  loadSharedArchiveUntrustedOrigin: string;
   shareReference: string;
   shareReferencePlaceholder: string;
   encryptedArchiveTitle: string;

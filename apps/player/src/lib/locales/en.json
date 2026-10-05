@@ -124,6 +124,7 @@
   "sharePrivacyPreviewSample": "{reason}: {snippet}",
   "loadSharedArchiveTitle": "Load Shared Archive",
   "loadSharedArchiveDescription": "Paste a share URL, archive API URL, or share ID.",
+  "loadSharedArchiveUntrustedOrigin": "This link loads an archive from {origin}, which is not this Player or your share server. Continue only if you trust that server.",
   "shareReference": "Share reference",
   "shareReferencePlaceholder": "https://host/share/abc123 or abc123",
   "encryptedArchiveTitle": "Encrypted Archive",
