@@ -67,7 +67,11 @@ import {
   shouldStopForCaptureScopeOriginChange,
   shouldStopForEnterpriseOriginPolicy as shouldStopForEnterpriseOriginPolicyInput
 } from "./capture-scope.js";
-import { withCdpCommandTimeout, type CdpCommandOutcome } from "./cdp-command.js";
+import {
+  enableChildSessionCapture,
+  withCdpCommandTimeout,
+  type CdpCommandOutcome
+} from "./cdp-command.js";
 import {
   buildLiteNetworkFailureRawEvent,
   buildLiteNetworkRequestRawEvent,
@@ -2404,16 +2408,14 @@ async function primeChildCdpSession(
 
   runtime.enabledCdpSessions.add(childSessionId);
 
-  try {
-    await runtime.cdpRouter.enableBaseline(runtime.tabId, childSessionId);
-    await runtime.cdpRouter.enableAutoAttach(runtime.tabId, undefined, childSessionId);
-    await runtime.cdpRouter
-      .send({ tabId: runtime.tabId, sessionId: childSessionId }, "DOMStorage.enable")
-      .catch(() => undefined);
-    await runtime.cdpRouter
-      .send({ tabId: runtime.tabId, sessionId: childSessionId }, "Performance.enable")
-      .catch(() => undefined);
-  } catch {
+  const enabled = await enableChildSessionCapture(
+    runtime.cdpRouter,
+    runtime.tabId,
+    childSessionId,
+    CDP_ARTIFACT_TIMEOUT_MS
+  );
+
+  if (!enabled) {
     runtime.enabledCdpSessions.delete(childSessionId);
   }
 }
