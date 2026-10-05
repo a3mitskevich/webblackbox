@@ -5115,15 +5115,17 @@ async function loadRecorderConfig(mode: CaptureMode): Promise<typeof DEFAULT_REC
 function resolveFullModeVisualCapture(
   message: ExtensionInboundMessage
 ): FullModeVisualCapture | undefined {
-  if (message.kind !== "ui.start" || message.mode !== "full") {
+  if (message.kind !== "ui.start") {
     return undefined;
   }
 
+  // Kept for a Lite request too: when the profile needs the Full engine the start runs in Full,
+  // and an explicit choice (e.g. "none") must hold there. A Lite session ignores it.
   if (isFullModeVisualCapture(message.visualCapture)) {
     return message.visualCapture;
   }
 
-  return message.recordScreen === true ? "both" : undefined;
+  return message.mode === "full" && message.recordScreen === true ? "both" : undefined;
 }
 
 function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture {
