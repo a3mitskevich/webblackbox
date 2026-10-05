@@ -35,7 +35,7 @@ describe("evaluateCountBudget", () => {
 });
 
 describe("mergeBudgetAttempts", () => {
-  const nav = (recorded) => evaluateRatioBudget("navigation.mouse.p95Ms", 27, recorded, NAV_LIMITS);
+  const nav = (recorded) => evaluateRatioBudget("navigation.mouse.p50Ms", 27, recorded, NAV_LIMITS);
   const requests = (recorded) =>
     evaluateRatioBudget("requests.p95Ms", 80, recorded, { ratioLimit: 1.6, deltaLimit: 30 });
 
@@ -48,7 +48,7 @@ describe("mergeBudgetAttempts", () => {
 
     expect(merged.failures).toEqual([]);
     expect(
-      merged.budgets.find((budget) => budget.metric === "navigation.mouse.p95Ms")
+      merged.budgets.find((budget) => budget.metric === "navigation.mouse.p50Ms")
     ).toMatchObject({ recorded: 41, ok: true, recordedAttempts: [150, 41] });
   });
 
@@ -67,7 +67,7 @@ describe("mergeBudgetAttempts", () => {
 
     expect(merged.failures).toEqual([
       expect.objectContaining({
-        metric: "navigation.mouse.p95Ms",
+        metric: "navigation.mouse.p50Ms",
         recorded: 131,
         threshold: 107,
         ok: false,

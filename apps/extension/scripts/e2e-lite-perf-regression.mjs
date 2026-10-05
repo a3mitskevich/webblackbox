@@ -90,8 +90,10 @@ const editorInputP95RatioLimit = Number(process.env.WB_E2E_PERF_EDITOR_INPUT_P95
 const editorInputP95DeltaLimitMs = Number(process.env.WB_E2E_PERF_EDITOR_INPUT_P95_DELTA_MS ?? "8");
 const editorRafP95RatioLimit = Number(process.env.WB_E2E_PERF_EDITOR_RAF_P95_RATIO ?? "1.5");
 const editorRafP95DeltaLimitMs = Number(process.env.WB_E2E_PERF_EDITOR_RAF_P95_DELTA_MS ?? "10");
-const navigationP95RatioLimit = Number(process.env.WB_E2E_PERF_NAV_P95_RATIO ?? "1.7");
-const navigationP95DeltaLimitMs = Number(process.env.WB_E2E_PERF_NAV_P95_DELTA_MS ?? "80");
+// Navigation yields one latency per round, so with 6 rounds a "p95" is the single slowest
+// navigation; the median is the stable statistic.
+const navigationP50RatioLimit = Number(process.env.WB_E2E_PERF_NAV_P50_RATIO ?? "1.7");
+const navigationP50DeltaLimitMs = Number(process.env.WB_E2E_PERF_NAV_P50_DELTA_MS ?? "80");
 const navigationFallbackDeltaLimit = Number(process.env.WB_E2E_PERF_NAV_FALLBACK_DELTA ?? "1");
 const clickOver16DeltaLimit = Number(process.env.WB_E2E_PERF_CLICK_OVER16_DELTA ?? "4");
 const longTaskTotalDeltaLimitMs = Number(process.env.WB_E2E_PERF_LONGTASK_TOTAL_DELTA_MS ?? "200");
@@ -2453,12 +2455,12 @@ function compareSummaries(baselineSuite, recordedSuite) {
       }
     ),
     evaluateRatioBudget(
-      "navigation.mouse.p95Ms",
-      normalizedBaselineNavigationSummary.mouseNavigationLatency.p95Ms,
-      normalizedRecordedNavigationSummary.mouseNavigationLatency.p95Ms,
+      "navigation.mouse.p50Ms",
+      normalizedBaselineNavigationSummary.mouseNavigationLatency.p50Ms,
+      normalizedRecordedNavigationSummary.mouseNavigationLatency.p50Ms,
       {
-        ratioLimit: navigationP95RatioLimit,
-        deltaLimit: navigationP95DeltaLimitMs
+        ratioLimit: navigationP50RatioLimit,
+        deltaLimit: navigationP50DeltaLimitMs
       }
     ),
     evaluateCountBudget(
