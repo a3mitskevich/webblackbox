@@ -2595,6 +2595,19 @@ async function runRealWorldScenarioAddons({
           new MouseEvent('click', { bubbles: true })
         );
         result.iframe = iframe.contentDocument?.body?.dataset.ready === 'true';
+
+        // A same-origin page frame runs its own content script, which connects its own port
+        // while the page records: the page's capture must go on (its markers below must land).
+        const pageFrame = document.createElement('iframe');
+        pageFrame.id = 'wb-realworld-page-frame';
+        pageFrame.src = '/demo/frame.html';
+        const pageFrameLoaded = new Promise((resolve) =>
+          pageFrame.addEventListener('load', resolve, { once: true })
+        );
+        document.body.appendChild(pageFrame);
+        await pageFrameLoaded;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        result.pageFrame = pageFrame.contentDocument?.body?.dataset.ready === 'true';
         mark('iframe ready');
 
         if (${JSON.stringify(wantsIframeNetwork)}) {
@@ -2814,6 +2827,7 @@ async function runRealWorldScenarioAddons({
     ok:
       pageResult?.ok === true &&
       pageResult.iframe === true &&
+      pageResult.pageFrame === true &&
       (!wantsIframeNetwork || pageResult.iframeNetworkBytes >= 1024) &&
       (!wantsChildTarget ||
         (pageResult.worker === true && pageResult.workerNetworkBytes >= 1024)) &&
