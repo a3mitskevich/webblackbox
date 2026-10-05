@@ -135,14 +135,26 @@ describe("previewProfilesImport", () => {
     expect(preview).toMatchObject({ ok: false, error: expect.stringContaining("rule #2") });
   });
 
-  it("rejects rules and defaults that point to missing profiles", () => {
-    expect(
-      previewProfilesImport(exported({ rules: [{ ...STAGE_RULE, profileId: "ghost" }] }), store())
-    ).toMatchObject({ ok: false, error: expect.stringContaining('unknown profile "ghost"') });
-    expect(previewProfilesImport(exported({ defaultProfileId: "ghost" }), store())).toMatchObject({
-      ok: false,
-      error: expect.stringContaining('Default profile "ghost"')
+  it("keeps rules and a default that point to deleted profiles, as the store does", () => {
+    // Deleting a profile keeps its rules (skipped and flagged until it exists again), and deleting
+    // every profile keeps the default id: such a store must survive its own export.
+    const orphanRule = { ...STAGE_RULE, profileId: "ghost" };
+    const withOrphanRule = store({ rules: [orphanRule] });
+    const ruleRoundTrip = previewProfilesImport(exported({ rules: [orphanRule] }), withOrphanRule);
+
+    expect(ruleRoundTrip.ok && ruleRoundTrip.next).toEqual(withOrphanRule);
+
+    const emptied = store({
+      defaultProfileId: "ghost",
+      profiles: [],
+      removedRecommendedProfileIds: [DEFAULT_PROFILE_ID]
     });
+    const emptyRoundTrip = previewProfilesImport(
+      JSON.stringify(createProfilesExportFile(emptied)),
+      emptied
+    );
+
+    expect(emptyRoundTrip.ok && emptyRoundTrip.next).toEqual(emptied);
   });
 
   it("carries deleted recommended profiles and reports restoring or deleting them", () => {

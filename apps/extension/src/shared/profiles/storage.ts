@@ -230,12 +230,20 @@ export function removeProfileFromStore(
   return fallback ? { ...next, defaultProfileId: fallback } : next;
 }
 
-/** Brings back every deleted recommended profile; Default comes back with today's defaults. */
+/**
+ * Brings back every deleted recommended profile; Default comes back with today's defaults and
+ * becomes the default again when the previous default no longer exists.
+ */
 export function restoreRecommendedProfiles(store: RecordingProfilesStore): RecordingProfilesStore {
-  return {
+  const restored: RecordingProfilesStore = {
     ...withoutRemovedRecommendedIds(store),
     profiles: ensureDefaultProfile(store.profiles, [])
   };
+  const hasDefault = listStoreProfiles(restored).some(
+    (profile) => profile.id === restored.defaultProfileId
+  );
+
+  return hasDefault ? restored : { ...restored, defaultProfileId: DEFAULT_PROFILE_ID };
 }
 
 /**

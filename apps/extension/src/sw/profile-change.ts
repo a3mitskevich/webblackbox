@@ -1,8 +1,9 @@
-import type { RecorderConfig } from "@webblackbox/protocol";
+import { DEFAULT_RECORDER_CONFIG, type RecorderConfig } from "@webblackbox/protocol";
 
 import type { ProfileCancelNotice, ProfileCancelReason } from "../shared/messages.js";
 import { PROFILES_STORAGE_KEY, type ProfileRule } from "../shared/profiles/model.js";
 import {
+  AUTO_PROFILE_ID,
   toArchivedProfileInfo,
   type ArchivedProfileInfo,
   type ProfileSelection
@@ -17,6 +18,11 @@ export type SessionProfileSnapshot = {
   /** What the recorder actually runs: after enterprise policy. */
   effectiveConfig: RecorderConfig;
 };
+
+/** What a recorder config sets; v1 option keys stored next to them are not profile settings. */
+const RECORDER_CONFIG_KEYS = [
+  ...new Set([...Object.keys(DEFAULT_RECORDER_CONFIG), "capturePolicy"])
+] as Array<keyof RecorderConfig>;
 
 export type ProfileCancelTrigger = "navigation" | "page-loaded" | "settings-changed";
 
@@ -51,11 +57,13 @@ export function detectProfileChange(input: {
     return "rule-changed";
   }
 
-  if (!isSameValue(next.profileConfig, started.profileConfig)) {
+  if (!isSameRunningConfig(next.profileConfig, started.profileConfig)) {
     return "profile-edited";
   }
 
-  return isSameValue(next.effectiveConfig, started.effectiveConfig) ? null : "enterprise-policy";
+  return isSameRunningConfig(next.effectiveConfig, started.effectiveConfig)
+    ? null
+    : "enterprise-policy";
 }
 
 /**
@@ -95,6 +103,14 @@ export function isProfileSettingsChange(
   );
 }
 
+/**
+ * What later checks re-run for a session: the chosen profile id, or `auto` when that id did not
+ * exist at Start (a stale popup choice) and the rules picked the profile instead.
+ */
+export function toSessionProfileRequest(request: string, selection: ProfileSelection): string {
+  return selection.source === "explicit" ? request : AUTO_PROFILE_ID;
+}
+
 export function buildProfileCancellation(input: {
   reason: ProfileCancelReason;
   trigger: ProfileCancelTrigger;
@@ -120,8 +136,24 @@ export function toProfileCancelNotice(cancellation: ProfileCancellation): Profil
   };
 }
 
-function isSameValue(left: unknown, right: unknown): boolean {
-  return stableStringify(left) === stableStringify(right);
+function isSameRunningConfig(left: RecorderConfig, right: RecorderConfig): boolean {
+  return stableStringify(toRunningConfig(left)) === stableStringify(toRunningConfig(right));
+}
+
+/**
+ * The part of a config the recorder runs: recorder config keys only (the legacy Default path
+ * spreads the whole v1 options record, `optionsVersion` and `performanceBudget` included), with
+ * the capture policy's redaction replaced by the config's, as the session start does.
+ */
+function toRunningConfig(config: RecorderConfig): Record<string, unknown> {
+  const picked = Object.fromEntries(RECORDER_CONFIG_KEYS.map((key) => [key, config[key]]));
+
+  return {
+    ...picked,
+    capturePolicy: config.capturePolicy
+      ? { ...config.capturePolicy, redaction: config.redaction }
+      : undefined
+  };
 }
 
 /** JSON with object keys sorted, so equal configs built in a different order compare equal. */

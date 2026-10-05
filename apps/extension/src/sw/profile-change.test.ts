@@ -17,6 +17,7 @@ import {
   findBuiltInProfile
 } from "../shared/profiles/presets.js";
 import {
+  AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
   selectRecordingProfile,
   type ProfileSelection
@@ -28,6 +29,7 @@ import {
   isProfileSettingsChange,
   shouldDeferProfileCheck,
   toProfileCancelNotice,
+  toSessionProfileRequest,
   type SessionProfileSnapshot
 } from "./profile-change.js";
 
@@ -123,6 +125,41 @@ describe("detectProfileChange", () => {
         startedProfileExists: true
       })
     ).toBeNull();
+  });
+
+  it("ignores v1 option keys and the capture policy's redaction copy the session replaces", () => {
+    const started = snapshot(select(state()));
+    const { profileConfig } = started;
+    // The legacy Default path spreads the stored v1 options record into the config.
+    const legacyLike = {
+      ...profileConfig,
+      optionsVersion: 3,
+      performanceBudget: { lcpWarnMs: 1 },
+      capturePolicy: profileConfig.capturePolicy
+        ? { ...profileConfig.capturePolicy, redaction: { ...profileConfig.redaction, x: 1 } }
+        : undefined
+    } as typeof profileConfig;
+
+    expect(
+      detectProfileChange({
+        started,
+        next: { ...started, profileConfig: legacyLike },
+        startedProfileExists: true
+      })
+    ).toBeNull();
+    expect(
+      detectProfileChange({
+        started,
+        next: {
+          ...started,
+          profileConfig: {
+            ...profileConfig,
+            ringBufferMinutes: profileConfig.ringBufferMinutes + 1
+          }
+        },
+        startedProfileExists: true
+      })
+    ).toBe("profile-edited");
   });
 
   it("keeps recording when another rule picks the same profile", () => {
@@ -306,5 +343,25 @@ describe("isProfileSettingsChange", () => {
       false
     );
     expect(isProfileSettingsChange({ [PROFILES_STORAGE_KEY]: {} }, "sync", keys)).toBe(false);
+  });
+});
+
+describe("toSessionProfileRequest", () => {
+  it("keeps an explicit choice and turns a deleted one into auto", () => {
+    const profilesState = state();
+
+    expect(
+      toSessionProfileRequest(
+        BUILT_IN_PROFILE_IDS.qa,
+        select(profilesState, BUILT_IN_PROFILE_IDS.qa)
+      )
+    ).toBe(BUILT_IN_PROFILE_IDS.qa);
+    // A stale popup choice: the profile was deleted, the rules picked the profile instead.
+    expect(toSessionProfileRequest("user-deleted", select(profilesState, "user-deleted"))).toBe(
+      AUTO_PROFILE_ID
+    );
+    expect(toSessionProfileRequest(AUTO_PROFILE_ID, select(profilesState, AUTO_PROFILE_ID))).toBe(
+      AUTO_PROFILE_ID
+    );
   });
 });

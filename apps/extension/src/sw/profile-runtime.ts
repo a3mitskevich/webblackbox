@@ -60,7 +60,12 @@ export async function loadProfilesState(
 export async function readTabPageContext(
   chromeApi: ChromeApi | null,
   tabId: number,
-  rules: readonly ProfileRule[]
+  rules: readonly ProfileRule[],
+  /**
+   * Null when the page probe fails or times out. Without it such a page has no signals: DOM rules
+   * simply do not match (restricted pages such as chrome:// cannot be probed at all).
+   */
+  options: { requireSignals?: boolean } = {}
 ): Promise<ProfilePageContext | null> {
   const tab = await chromeApi?.tabs?.get(tabId).catch(() => undefined);
   const url = typeof tab?.url === "string" ? tab.url : "";
@@ -74,6 +79,10 @@ export async function readTabPageContext(
     request.metaNames.length > 0 || request.selectors.length > 0
       ? await probePageSignals(chromeApi, tabId, request)
       : {};
+
+  if (!signals && options.requireSignals) {
+    return null;
+  }
 
   return {
     url,
@@ -167,11 +176,11 @@ async function probePageSignals(
   chromeApi: ChromeApi | null,
   tabId: number,
   request: ProfilePageSignalRequest
-): Promise<Pick<ProfilePageContext, "metaTags" | "selectorsPresent">> {
+): Promise<Pick<ProfilePageContext, "metaTags" | "selectorsPresent"> | null> {
   const scripting = chromeApi?.scripting;
 
   if (!scripting) {
-    return {};
+    return null;
   }
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -189,10 +198,12 @@ async function probePageSignals(
       })
     ]);
 
-    return parsePageSignals(Array.isArray(results) ? results[0]?.result : undefined, request);
+    const result = Array.isArray(results) ? results[0]?.result : undefined;
+    // A timeout or an empty answer: the page could not be read.
+    return result === undefined ? null : parsePageSignals(result, request);
   } catch {
-    // Restricted pages (chrome://, web store) cannot be probed: DOM rules simply do not match.
-    return {};
+    // Restricted pages (chrome://, web store) cannot be probed.
+    return null;
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);

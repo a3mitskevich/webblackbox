@@ -420,4 +420,15 @@ describe("deleting and restoring recommended profiles", () => {
       ...RECOMMENDED_PROFILE_IDS.filter((id) => findBuiltInProfile(id))
     ]);
   });
+
+  it("points a default deleted with everything else back at Default on restore", () => {
+    const mine = duplicateProfile(createDefaultProfile(), { id: "mine" });
+    const empty = [...RECOMMENDED_PROFILE_IDS, "mine"].reduce(
+      removeProfileFromStore,
+      storeWith({ defaultProfileId: "mine", profiles: [createDefaultProfile(), mine] })
+    );
+
+    expect(empty.defaultProfileId).toBe("mine");
+    expect(restoreRecommendedProfiles(empty).defaultProfileId).toBe(DEFAULT_PROFILE_ID);
+  });
 });

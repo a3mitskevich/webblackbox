@@ -105,6 +105,7 @@ import {
   isProfileSettingsChange,
   shouldDeferProfileCheck,
   toProfileCancelNotice,
+  toSessionProfileRequest,
   type ProfileCancellation,
   type ProfileCancelTrigger,
   type SessionProfileSnapshot
@@ -984,7 +985,7 @@ async function startSession(
     tabId,
     mode,
     profile: {
-      request: profileRequest,
+      request: toSessionProfileRequest(profileRequest, profileSelection),
       visualCapture: options.visualCapture,
       selection: profileSelection,
       profileConfig: loadedRecorderConfig,
@@ -1448,9 +1449,11 @@ async function reevaluateSessionProfile(
     return;
   }
 
-  const page = await readTabPageContext(chromeApi, runtime.tabId, state.rules);
+  const page = await readTabPageContext(chromeApi, runtime.tabId, state.rules, {
+    requireSignals: true
+  });
 
-  // A tab that cannot be read right now says nothing about the profile: never cancel on it.
+  // A tab or page that cannot be read right now says nothing about the profile: never cancel on it.
   if (!page) {
     return;
   }

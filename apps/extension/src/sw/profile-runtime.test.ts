@@ -12,6 +12,7 @@ import { selectRecordingProfile } from "../shared/profiles/resolve.js";
 import {
   buildProfilePreview,
   capturedVisualsOf,
+  isTabLoading,
   loadProfilesState,
   parsePageSignals,
   readTabPageContext
@@ -22,7 +23,7 @@ const KEYS = { legacyOptionsKey: "webblackbox.options", enterprisePolicyKey: "en
 function fakeChrome(options: {
   local?: Record<string, unknown>;
   managed?: Record<string, unknown> | Error;
-  tab?: { url?: string; title?: string; incognito?: boolean };
+  tab?: { url?: string; title?: string; incognito?: boolean; status?: string };
   probe?: unknown;
 }): { api: ChromeApi; executeScript: ReturnType<typeof vi.fn> } {
   const executeScript = vi.fn(async () => [{ result: options.probe }]);
@@ -137,6 +138,54 @@ describe("readTabPageContext", () => {
     await expect(readTabPageContext(api, 3, [STAGE_RULE])).resolves.toMatchObject({
       url: "https://a.stage.test/"
     });
+  });
+
+  it("returns null when the signals are required but the probe fails or times out", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const failing = fakeChrome({ tab: { url: "https://a.stage.test/" } });
+      failing.executeScript.mockRejectedValueOnce(new Error("Frame was removed"));
+      await expect(
+        readTabPageContext(failing.api, 3, [STAGE_RULE], { requireSignals: true })
+      ).resolves.toBeNull();
+
+      const hanging = fakeChrome({ tab: { url: "https://a.stage.test/" } });
+      hanging.executeScript.mockReturnValueOnce(new Promise(() => undefined));
+      const pending = readTabPageContext(hanging.api, 3, [STAGE_RULE], { requireSignals: true });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(pending).resolves.toBeNull();
+
+      const empty = fakeChrome({ tab: { url: "https://a.stage.test/" }, probe: undefined });
+      await expect(
+        readTabPageContext(empty.api, 3, [STAGE_RULE], { requireSignals: true })
+      ).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads the page when the signals are required and the probe answers", async () => {
+    const { api } = fakeChrome({
+      tab: { url: "https://a.stage.test/" },
+      probe: { metaTags: { environment: ["qa"] }, selectorsPresent: {} }
+    });
+
+    await expect(
+      readTabPageContext(api, 3, [STAGE_RULE], { requireSignals: true })
+    ).resolves.toMatchObject({ metaTags: { environment: ["qa"] } });
+  });
+});
+
+describe("isTabLoading", () => {
+  it("is true only while Chrome reports the tab as loading", async () => {
+    await expect(isTabLoading(fakeChrome({ tab: { status: "loading" } }).api, 1)).resolves.toBe(
+      true
+    );
+    await expect(isTabLoading(fakeChrome({ tab: { status: "complete" } }).api, 1)).resolves.toBe(
+      false
+    );
+    await expect(isTabLoading(null, 1)).resolves.toBe(false);
   });
 });
 
