@@ -47,6 +47,7 @@
   "popupProfileByRule": "Запись по профилю {name} (правило: {rule}).",
   "popupProfileEnterpriseCapped": "Политика вашей организации ограничивает: {categories}.",
   "popupProfileRecommends": "Рекомендуемый режим: {mode}.",
+  "popupProfileFullOnly": "Только «Полный»: «Лёгкий» этого не запишет.",
   "popupProfileRequiredTitle": "Нет профиля записи",
   "popupProfileRequired": "Для записи нужен хотя бы один профиль. Восстановите рекомендуемые профили или импортируйте свои в настройках.",
   "popupOpenProfiles": "Открыть профили",
