@@ -35,7 +35,7 @@ https://github.com/user-attachments/assets/46273fc0-36f2-4aeb-9dfa-9c60cfcba98c
 
 - Record user interactions, navigation, console output, runtime errors, network traffic, storage activity, screenshots, and performance signals in one archive.
 - Choose between `lite` capture for lower page-thread overhead and `full` capture for CDP-backed debugging detail.
-- Record only the tabs where you press Start. A setting decides whether the extension's small content script loads in every page (so a recording covers a page from its very first byte) or only once a recording starts (nothing runs in pages you are not recording); see [Page injection](apps/extension/README.md#page-injection).
+- Record only the tabs where you press Start. A setting decides whether the extension's small content script loads in every page (so pages a recorded tab loads later have it before their own code) or only once a recording starts (nothing runs in pages you are not recording); see [Page injection](apps/extension/README.md#page-injection).
 - Export encrypted, portable `.webblackbox` archives for offline replay and team handoff.
 - Replay sessions with a rich Player UI and generate curl, fetch, HAR, Playwright, and bug-report artifacts.
 - Connect archives to AI workflows through the MCP server.

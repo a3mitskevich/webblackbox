@@ -274,13 +274,14 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   optionsActionWindowHelp:
     "用户操作后此窗口内发起的网络请求会与该操作关联，回放时可看到点击引发了什么。",
   optionsContentInjection: "注入页面",
-  optionsContentInjectionHint: "对保存后加载的页面生效；已打开的标签页在重新加载前保持原状。",
+  optionsContentInjectionHint:
+    "两种模式下，按下“开始”之前都不会录制任何内容。对保存后加载的页面生效；已打开的标签页在重新加载前保持原状。",
   optionsContentInjectionAlways: "始终（从页面开始录制）",
   optionsContentInjectionAlwaysDescription:
-    "每个页面和框架从加载第一个字节起运行一个小脚本，因此录制能覆盖页面的最开始，包括首次导航。每次页面加载的空闲开销：向扩展发送一条消息，以及一个记住页面显示的密码字段的监视器。",
+    "每个页面和框架从加载第一个字节起运行一个小脚本并保持待命。被录制的标签页之后加载的页面（重新加载、导航）会在页面自身代码运行之前就有该脚本，开始之前页面显示的密码字段也已被记住。每次页面加载的空闲开销：向扩展发送一条消息，以及这个密码字段监视器。",
   optionsContentInjectionOnStart: "仅在开始录制时",
   optionsContentInjectionOnStartDescription:
-    "未录制的页面中不运行任何内容。捕获从按下“开始”时开始：开始之前的事件（包括页面的首次加载）会丢失，开始之前显示的密码字段也不会被监视。",
+    "未录制的页面中不运行任何内容。按下“开始”时注入脚本；被录制的标签页之后加载的页面在提交后立即获得脚本，这可能晚于页面最初的脚本。开始之前页面显示的密码字段不会被识别为密码，因此记录输入值的配置文件可能会记录它们。",
   optionsRingBufferHint: "保留多长时间的最近记录。",
   optionsRingBufferHelp: "新事件到达时会丢弃较旧的事件，除非冻结（错误、标记）保留了缓冲区。",
   optionsDomFlushHint: "DOM 变更的批量提交频率。",

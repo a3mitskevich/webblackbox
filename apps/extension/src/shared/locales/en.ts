@@ -283,13 +283,13 @@ export const EN_MESSAGES = {
     "Network requests that start within this window after a user action are linked to it, so the Player can show what a click caused.",
   optionsContentInjection: "Inject into pages",
   optionsContentInjectionHint:
-    "Applies to pages loaded after saving; open tabs keep their state until reloaded.",
+    "In both modes nothing is recorded before you press Start. Applies to pages loaded after saving; open tabs keep their state until reloaded.",
   optionsContentInjectionAlways: "Always (record from page start)",
   optionsContentInjectionAlwaysDescription:
-    "A small script loads in every page and frame from the first byte, so a recording covers the page from its very start, including the first navigation. Idle cost per page load: one message to the extension and a watcher that remembers password fields the page reveals.",
+    "A small script loads in every page and frame from the first byte and waits. Pages a recorded tab loads later (reload, navigation) have it before their own code runs, and password fields the page revealed before Start are already known. Idle cost per page load: one message to the extension and that password watcher.",
   optionsContentInjectionOnStart: "Only when recording starts",
   optionsContentInjectionOnStartDescription:
-    "Nothing runs in pages you are not recording. Capture begins when you press Start: events before Start, including the page's first load, are missed, and password fields revealed before Start are not watched.",
+    "Nothing runs in pages you are not recording. The script is injected when you press Start; pages the recorded tab loads later get it right after they commit, which can be after their first scripts ran. Password fields the page revealed before Start are not known as passwords, so a profile that records input values can record them.",
   optionsRingBufferHint: "How much recent history is kept.",
   optionsRingBufferHelp:
     "Older events are dropped as new ones arrive, unless a freeze (error, marker) preserves the buffer.",

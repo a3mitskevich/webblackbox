@@ -191,7 +191,7 @@ describe("options page", () => {
     expect(always.checked).toBe(true);
     expect(onStart.checked).toBe(false);
     expect(onStart.closest("label")?.textContent).toContain(
-      "events before Start, including the page's first load, are missed"
+      "Password fields the page revealed before Start are not known as passwords"
     );
 
     onStart.checked = true;
