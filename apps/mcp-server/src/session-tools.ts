@@ -1,6 +1,11 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
-import { WebBlackboxPlayer } from "@webblackbox/player-sdk";
+import {
+  readTabsContext,
+  WebBlackboxPlayer,
+  type TabsContextSummary
+} from "@webblackbox/player-sdk";
+import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import { z } from "zod";
 
 const ARCHIVE_EXTENSIONS = new Set([".webblackbox", ".zip"]);
@@ -385,6 +390,7 @@ export async function summarizeSession(args: SessionSummaryArgs): Promise<{
     durationMs: number;
     errorText: string | null;
   }>;
+  parallelTabs: ParallelTabsSummary;
 }> {
   const archivePath = resolveArchivePath(args.path);
   const archiveStat = await stat(archivePath);
@@ -483,7 +489,48 @@ export async function summarizeSession(args: SessionSummaryArgs): Promise<{
     topEventTypes,
     topErrorFingerprints,
     topSlowRequests,
-    failedRequests
+    failedRequests,
+    parallelTabs: summarizeParallelTabs(events, topN)
+  };
+}
+
+type ParallelTabsSummary = {
+  /** False for archives recorded without the tabs context (older builds or the category off). */
+  recorded: boolean;
+  summary: TabsContextSummary;
+  /** First changes of other tabs of the site; paths and titles are archive content. */
+  changes: Array<{
+    eventId: string;
+    mono: number;
+    change: string;
+    tabId: number;
+    relation: string;
+    origin: string;
+    path: string | null;
+    title: string | null;
+  }>;
+};
+
+/** Other tabs of the recorded site that were open in parallel (multi-tab bugs). */
+function summarizeParallelTabs(
+  events: readonly WebBlackboxEvent[],
+  limit: number
+): ParallelTabsSummary {
+  const context = readTabsContext(events);
+
+  return {
+    recorded: context.snapshots.length > 0 || context.changes.length > 0,
+    summary: context.summary,
+    changes: context.changes.slice(0, limit).map((entry) => ({
+      eventId: entry.eventId,
+      mono: entry.mono,
+      change: entry.change,
+      tabId: entry.tab.tabId,
+      relation: entry.tab.relation,
+      origin: entry.tab.origin,
+      path: entry.tab.path ?? null,
+      title: entry.tab.title ?? null
+    }))
   };
 }
 
