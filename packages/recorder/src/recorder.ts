@@ -51,7 +51,9 @@ export class WebBlackboxRecorder {
   public constructor(
     private readonly config: RecorderConfig,
     private readonly hooks: RecorderHooks = {},
-    private readonly normalizer: EventNormalizer = new DefaultEventNormalizer(),
+    private readonly normalizer: EventNormalizer = new DefaultEventNormalizer({
+      consoleDetail: config.capturePolicy?.categories.console === "allow" ? "full" : "compact"
+    }),
     private readonly plugins: RecorderPlugin[] = []
   ) {
     this.ringBuffer = new EventRingBuffer(config.ringBufferMinutes);

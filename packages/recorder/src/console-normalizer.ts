@@ -4,29 +4,81 @@ import {
   asRecord,
   asString,
   compactText,
+  formatV8CallFrames,
   sanitizeOptionalUrl,
   stripUndefined
 } from "./normalizer-utils.js";
 
+/**
+ * How much of a console entry is kept: `full` under the `console: allow` policy (complete text and
+ * stacks, up to {@link MAX_CONSOLE_ENTRY_CHARS}), `compact` otherwise (the legacy short previews).
+ */
+export type ConsoleDetail = "compact" | "full";
+
+/** Ceiling for one console entry under `full` detail: its text, and all its arguments together. */
+export const MAX_CONSOLE_ENTRY_CHARS = 64 * 1024;
+/** Max call frames kept in a `full` stack (Chrome captures up to 200 for console messages). */
+export const MAX_FULL_STACK_FRAMES = 200;
+
 type ConsoleLevel = "log" | "info" | "warn" | "error" | "debug";
+
+type SerializeShape = {
+  maxDepth: number;
+  maxArrayItems: number;
+  maxObjectKeys: number;
+  maxTextArgs: number;
+};
+
+/** Cuts the strings of one entry; `full` shares one budget across all of its arguments. */
+type TextLimiter = {
+  cutString: (value: string) => string;
+  cutDescription: (value: string) => string;
+  cutErrorStack: (value: string) => string;
+  cutText: (value: string) => string;
+  isTruncated: () => boolean;
+};
+
+const COMPACT_SHAPE: SerializeShape = {
+  maxDepth: 4,
+  maxArrayItems: 16,
+  maxObjectKeys: 24,
+  maxTextArgs: 8
+};
+const FULL_SHAPE: SerializeShape = {
+  maxDepth: 8,
+  maxArrayItems: 256,
+  maxObjectKeys: 256,
+  maxTextArgs: 64
+};
+/** Console methods / log levels whose `full` entries carry the whole stack, not just `stackTop`. */
+const FULL_STACK_METHODS = new Set(["error", "warning", "warn", "assert", "trace"]);
 
 export function normalizeCdpConsolePayload(
   rawType: string,
-  payload: unknown
+  payload: unknown,
+  detail: ConsoleDetail = "compact"
 ): Record<string, unknown> {
+  const limiter = createTextLimiter(detail);
+
   if (rawType === "Log.entryAdded") {
     const row = asRecord(payload);
     const entry = asRecord(row?.entry);
-    const text = asString(entry?.text) ?? "";
+    const rawText = asString(entry?.text) ?? "";
+    // The legacy compact shape never cut log entry text; full detail caps it at the entry ceiling.
+    const text = detail === "full" ? limiter.cutText(rawText) : rawText;
     const method = asString(entry?.source) ?? "log.entry";
+    const level = asString(entry?.level) ?? method;
+    const stackTrace = asRecord(entry?.stackTrace);
 
     return stripUndefined({
       source: "cdp.log",
-      level: normalizeConsoleLevel(asString(entry?.level) ?? method),
+      level: normalizeConsoleLevel(level),
       method,
       text: text || "(empty log entry)",
       args: text ? [text] : [],
-      stackTop: readStackTop(asRecord(entry?.stackTrace)),
+      stackTop: readStackTop(stackTrace),
+      stack: readFullStack(detail, level, stackTrace),
+      truncated: limiter.isTruncated() || undefined,
       url: asString(entry?.url),
       line: asFiniteNumber(entry?.lineNumber) ?? undefined,
       col: asFiniteNumber(entry?.columnNumber) ?? undefined,
@@ -38,8 +90,10 @@ export function normalizeCdpConsolePayload(
 
   const row = asRecord(payload);
   const method = asString(row?.type) ?? "log";
-  const args = asArray(row?.args).map((entry) => normalizeCdpRemoteObject(entry));
-  const text = asString(row?.text) ?? formatConsoleText(args);
+  const shape = resolveShape(detail);
+  const args = asArray(row?.args).map((entry) => normalizeCdpRemoteObject(entry, shape, limiter));
+  const text = readEntryText(asString(row?.text), args, detail, limiter);
+  const stackTrace = asRecord(row?.stackTrace);
 
   return stripUndefined({
     source: "cdp.runtime",
@@ -47,17 +101,24 @@ export function normalizeCdpConsolePayload(
     method,
     text,
     args,
-    stackTop: readStackTop(asRecord(row?.stackTrace)),
+    stackTop: readStackTop(stackTrace),
+    stack: readFullStack(detail, method, stackTrace),
+    truncated: limiter.isTruncated() || undefined,
     executionContextId: asFiniteNumber(row?.executionContextId) ?? undefined,
     timestamp: asFiniteNumber(row?.timestamp) ?? undefined
   });
 }
 
-export function normalizeContentConsolePayload(payload: unknown): Record<string, unknown> {
+export function normalizeContentConsolePayload(
+  payload: unknown,
+  detail: ConsoleDetail = "compact"
+): Record<string, unknown> {
   const row = asRecord(payload);
   const method = asString(row?.method) ?? "log";
-  const args = asArray(row?.args).map((entry) => sanitizeSerializable(entry, 0));
-  const text = asString(row?.text) ?? formatConsoleText(args);
+  const shape = resolveShape(detail);
+  const limiter = createTextLimiter(detail);
+  const args = asArray(row?.args).map((entry) => sanitizeSerializable(entry, 0, shape, limiter));
+  const text = readEntryText(asString(row?.text), args, detail, limiter);
 
   return stripUndefined({
     source: asString(row?.source) ?? "content.injected",
@@ -65,8 +126,71 @@ export function normalizeContentConsolePayload(payload: unknown): Record<string,
     method,
     text,
     args,
-    stackTop: asString(row?.stackTop) ?? undefined
+    stackTop: asString(row?.stackTop) ?? undefined,
+    truncated: limiter.isTruncated() || undefined
   });
+}
+
+function resolveShape(detail: ConsoleDetail): SerializeShape {
+  return detail === "full" ? FULL_SHAPE : COMPACT_SHAPE;
+}
+
+function createTextLimiter(detail: ConsoleDetail): TextLimiter {
+  if (detail === "compact") {
+    return {
+      cutString: (value) => compactText(value, 260),
+      cutDescription: (value) => compactText(value, 320),
+      cutErrorStack: (value) => compactText(value, 500),
+      cutText: (value) => compactText(value, 600),
+      isTruncated: () => false
+    };
+  }
+
+  // Per-entry accumulator: every argument string draws from one budget; the text has its own cap.
+  let remaining = MAX_CONSOLE_ENTRY_CHARS;
+  let truncated = false;
+  const cutShared = (value: string): string => {
+    const kept = value.slice(0, Math.max(0, remaining));
+    remaining -= kept.length;
+    truncated ||= kept.length < value.length;
+    return kept;
+  };
+
+  return {
+    cutString: cutShared,
+    cutDescription: cutShared,
+    cutErrorStack: cutShared,
+    cutText: (value) => {
+      truncated ||= value.length > MAX_CONSOLE_ENTRY_CHARS;
+      return value.slice(0, MAX_CONSOLE_ENTRY_CHARS);
+    },
+    isTruncated: () => truncated
+  };
+}
+
+function readEntryText(
+  rawText: string | undefined,
+  args: unknown[],
+  detail: ConsoleDetail,
+  limiter: TextLimiter
+): string {
+  if (rawText === undefined) {
+    return formatConsoleText(args, resolveShape(detail), limiter);
+  }
+
+  return detail === "full" ? limiter.cutText(rawText) : rawText;
+}
+
+function readFullStack(
+  detail: ConsoleDetail,
+  methodOrLevel: string,
+  stackTrace: Record<string, unknown> | null
+): string | undefined {
+  if (detail !== "full" || !FULL_STACK_METHODS.has(methodOrLevel.toLowerCase())) {
+    return undefined;
+  }
+
+  return formatV8CallFrames(asArray(stackTrace?.callFrames), MAX_FULL_STACK_FRAMES);
 }
 
 function normalizeConsoleLevel(rawLevel: string): ConsoleLevel {
@@ -91,11 +215,15 @@ function normalizeConsoleLevel(rawLevel: string): ConsoleLevel {
   return "log";
 }
 
-function normalizeCdpRemoteObject(value: unknown): unknown {
+function normalizeCdpRemoteObject(
+  value: unknown,
+  shape: SerializeShape,
+  limiter: TextLimiter
+): unknown {
   const row = asRecord(value);
 
   if (!row) {
-    return sanitizeSerializable(value, 0);
+    return sanitizeSerializable(value, 0, shape, limiter);
   }
 
   if (typeof row.unserializableValue === "string") {
@@ -103,13 +231,13 @@ function normalizeCdpRemoteObject(value: unknown): unknown {
   }
 
   if ("value" in row) {
-    return sanitizeSerializable(row.value, 0);
+    return sanitizeSerializable(row.value, 0, shape, limiter);
   }
 
   const description = asString(row.description);
 
   if (description) {
-    return compactText(description, 320);
+    return limiter.cutDescription(description);
   }
 
   return stripUndefined({
@@ -119,13 +247,18 @@ function normalizeCdpRemoteObject(value: unknown): unknown {
   });
 }
 
-function sanitizeSerializable(value: unknown, depth: number): unknown {
+function sanitizeSerializable(
+  value: unknown,
+  depth: number,
+  shape: SerializeShape,
+  limiter: TextLimiter
+): unknown {
   if (value === null || value === undefined) {
     return value;
   }
 
   if (typeof value === "string") {
-    return compactText(value, 260);
+    return limiter.cutString(value);
   }
 
   if (typeof value === "number" || typeof value === "boolean") {
@@ -136,30 +269,30 @@ function sanitizeSerializable(value: unknown, depth: number): unknown {
     return `${value.toString()}n`;
   }
 
-  if (depth >= 4) {
+  if (depth >= shape.maxDepth) {
     return "[MaxDepth]";
   }
 
   if (Array.isArray(value)) {
-    return value.slice(0, 16).map((entry) => sanitizeSerializable(entry, depth + 1));
+    return value
+      .slice(0, shape.maxArrayItems)
+      .map((entry) => sanitizeSerializable(entry, depth + 1, shape, limiter));
   }
 
   if (value instanceof Error) {
     return stripUndefined({
       name: value.name,
       message: value.message,
-      stack: value.stack ? compactText(value.stack, 500) : undefined
+      stack: value.stack ? limiter.cutErrorStack(value.stack) : undefined
     });
   }
 
   if (typeof value === "object") {
-    const output: Record<string, unknown> = {};
-
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>).slice(0, 24)) {
-      output[key] = sanitizeSerializable(entry, depth + 1);
-    }
-
-    return output;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, shape.maxObjectKeys)
+        .map(([key, entry]) => [key, sanitizeSerializable(entry, depth + 1, shape, limiter)])
+    );
   }
 
   return String(value);
@@ -180,22 +313,23 @@ function readStackTop(stackTrace: Record<string, unknown> | null): string | unde
   const url = sanitizeOptionalUrl(asString(frame.url)) ?? "(anonymous)";
   const line = asFiniteNumber(frame.lineNumber);
   const col = asFiniteNumber(frame.columnNumber);
-  const functionName = asString(frame.functionName) ?? "(anonymous)";
+  // CDP reports anonymous functions as "", which would leave the `fn @ url` shape without a name.
+  const functionName = asString(frame.functionName) || "(anonymous)";
 
   return `${functionName} @ ${url}:${line ?? 0}:${col ?? 0}`;
 }
 
-function formatConsoleText(args: unknown[]): string {
+function formatConsoleText(args: unknown[], shape: SerializeShape, limiter: TextLimiter): string {
   if (args.length === 0) {
     return "";
   }
 
   const parts = args
-    .slice(0, 8)
+    .slice(0, shape.maxTextArgs)
     .map((entry) => stringifyConsoleArg(entry))
     .filter((entry) => entry.length > 0);
 
-  return compactText(parts.join(" "), 600);
+  return limiter.cutText(parts.join(" "));
 }
 
 function stringifyConsoleArg(value: unknown): string {
