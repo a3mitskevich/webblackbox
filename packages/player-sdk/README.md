@@ -61,7 +61,37 @@ console.log(player.archive.manifest); // ExportManifest
 console.log(player.events.length); // Total event count
 ```
 
+### Opening Untrusted Archives
+
+`open()` treats every archive as untrusted input:
+
+- `manifest.json`, `integrity/hashes.json`, the indexes and the privacy manifest are validated against the
+  `@webblackbox/protocol` Zod schemas, and an unknown `protocolVersion` is rejected.
+- The ZIP central directory is checked before anything is inflated, and every entry is inflated with a
+  byte counter that stops at its declared size, so zip bombs fail fast with an `ArchiveLimitError`.
+- Event chunks are decoded (gzip / br / zst) with per-chunk and total output caps.
+- PBKDF2 iteration counts outside 10,000–10,000,000 are rejected before a key is derived.
+
+The defaults (`DEFAULT_ARCHIVE_LOAD_LIMITS`) are 100,000 entries, 256 MiB per entry or decoded chunk, and
+1 GiB in total. Override any of them per call:
+
+```typescript
+import { ArchiveLimitError, WebBlackboxPlayer } from "@webblackbox/player-sdk";
+
+try {
+  const player = await WebBlackboxPlayer.open(archiveBytes, {
+    limits: { maxTotalUncompressedBytes: 256 * 1024 * 1024 }
+  });
+} catch (error) {
+  if (error instanceof ArchiveLimitError) {
+    // The archive is larger than allowed; error.message names the entry and the limit.
+  }
+}
+```
+
 ### Querying Events
+
+Results are always in timeline order: `mono`, then wall-clock `t`, then event id. Archives store events in arrival order, and the SDK sorts and merges chunks for you. Use `compareEventsForTimeline` to order your own event lists the same way.
 
 ```typescript
 // Get all events

@@ -11,12 +11,22 @@ describe("mcp-server cli", () => {
   it("parses help and version flags", () => {
     expect(parseCliArgs(["--help"])).toEqual({ kind: "help" });
     expect(parseCliArgs(["-v"])).toEqual({ kind: "version" });
-    expect(parseCliArgs(["--stdio"])).toEqual({ kind: "start" });
+    expect(parseCliArgs(["--stdio"])).toEqual({ kind: "start", allowedDirs: [] });
+  });
+
+  it("collects repeated --allow-dir values", () => {
+    expect(parseCliArgs(["--allow-dir", "./archives", "--allow-dir=/data/sessions"])).toEqual({
+      kind: "start",
+      allowedDirs: ["./archives", "/data/sessions"]
+    });
+    expect(() => parseCliArgs(["--allow-dir"])).toThrow("--allow-dir requires a directory path");
+    expect(() => parseCliArgs(["--allow-dir="])).toThrow("--allow-dir requires a directory path");
   });
 
   it("prints usage text", () => {
     expect(formatCliHelp()).toContain("webblackbox-mcp-server");
     expect(formatCliHelp()).toContain("--version");
+    expect(formatCliHelp()).toContain("--allow-dir <dir>");
   });
 
   it("rejects unknown arguments", () => {

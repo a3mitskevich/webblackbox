@@ -1,5 +1,14 @@
 export const WEBBLACKBOX_PROTOCOL_VERSION = 1;
 
+/** Lowest PBKDF2 iteration count accepted when reading an archive manifest. */
+export const ARCHIVE_KDF_MIN_ITERATIONS = 10_000;
+
+/** Highest PBKDF2 iteration count accepted when reading an archive manifest (bounds CPU cost). */
+export const ARCHIVE_KDF_MAX_ITERATIONS = 10_000_000;
+
+/** PBKDF2 iteration count used for newly exported encrypted archives. */
+export const ARCHIVE_KDF_DEFAULT_ITERATIONS = 600_000;
+
 export const EVENT_LEVELS = ["debug", "info", "warn", "error"] as const;
 
 export const CAPTURE_MODES = ["lite", "full"] as const;

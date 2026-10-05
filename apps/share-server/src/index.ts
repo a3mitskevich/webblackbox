@@ -3,8 +3,20 @@ import { appendFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/pro
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 
-import JSZip from "jszip";
-import { WebBlackboxPlayer } from "@webblackbox/player-sdk";
+import { DEFAULT_ARCHIVE_LOAD_LIMITS, resolveArchiveLoadLimits } from "@webblackbox/player-sdk";
+
+import type { ShareSummary } from "./archive-analysis.js";
+import { runArchiveAnalysis } from "./archive-analysis-runner.js";
+import { createConcurrencyLimiter } from "./concurrency.js";
+import { asRecord, redactText } from "./text.js";
+
+import {
+  isAllowedHostHeader,
+  isKeylessLoopbackRequest,
+  parseAllowedHosts,
+  parseTrustedProxies,
+  resolveClientAddress
+} from "./trust.js";
 
 type ShareRecord = {
   id: string;
@@ -36,62 +48,6 @@ type ShareReadSession = {
   expiresAt: number;
 };
 
-type ArchiveEnvelopeSummary = {
-  encrypted: boolean;
-  encryptedPrivatePathsComplete: boolean;
-  missingEncryptedPaths: string[];
-  encryptedPrivatePathsConfidential: boolean;
-  plaintextEncryptedPaths: string[];
-  analysisError?: string;
-};
-
-type ShareSummary = {
-  schemaVersion: 1;
-  source: "client" | "server" | "unavailable";
-  analyzed: boolean;
-  encrypted: boolean;
-  analysisError?: string;
-  manifest?: {
-    mode: string;
-    chunkCodec: string;
-    recordedAt: string;
-  };
-  totals?: {
-    events: number;
-    blobs?: number;
-    privacyViolations?: number;
-    errors: number;
-    requests: number;
-    actions: number;
-    durationMs: number;
-  };
-  topActionTriggers?: Array<{
-    triggerType: string;
-    count: number;
-    errorRate: number;
-  }>;
-  privacy?: {
-    redaction: {
-      hashSensitiveValues: boolean;
-      headerRuleCount: number;
-      cookieRuleCount: number;
-      bodyPatternCount: number;
-      blockedSelectorCount: number;
-    };
-    detected: ReturnType<WebBlackboxPlayer["getPrivacyProtectionReport"]>["detected"];
-    scanner: ReturnType<WebBlackboxPlayer["getPrivacyProtectionReport"]>["scanner"];
-    categories?: Array<{
-      category: string;
-      events: number;
-      low: number;
-      medium: number;
-      high: number;
-      redacted: number;
-      unredacted: number;
-    }>;
-  };
-};
-
 const DEFAULT_PORT = 8787;
 const DEFAULT_HOST = "127.0.0.1";
 const MAX_UPLOAD_BYTES = parsePositiveInteger(
@@ -111,6 +67,17 @@ const SHARE_API_CREDENTIALS = parseShareApiCredentials(
 );
 const SHARE_ALLOWED_ORIGIN = normalizeAllowedOrigin(process.env.WEBBLACKBOX_SHARE_ALLOWED_ORIGIN);
 const TRUST_X_FORWARDED_FOR = parseBooleanFlag(process.env.WEBBLACKBOX_TRUST_X_FORWARDED_FOR);
+const TRUSTED_PROXIES = parseTrustedProxies(process.env.WEBBLACKBOX_TRUSTED_PROXIES);
+const SHARE_BIND_HOST = parseBindHost(process.env.WEBBLACKBOX_SHARE_BIND_HOST);
+const SHARE_ALLOWED_HOSTS = parseAllowedHosts(
+  process.env.WEBBLACKBOX_SHARE_ALLOWED_HOSTS,
+  SHARE_BIND_HOST
+);
+// Keyless mode trusts loopback clients, so it must also reject DNS-rebound hostnames. With API keys
+// the Host check is opt-in via WEBBLACKBOX_SHARE_ALLOWED_HOSTS.
+const ENFORCE_HOST_ALLOWLIST =
+  SHARE_API_CREDENTIALS.length === 0 ||
+  (process.env.WEBBLACKBOX_SHARE_ALLOWED_HOSTS ?? "").trim().length > 0;
 const ALLOW_QUERY_API_KEY = parseBooleanFlag(process.env.WEBBLACKBOX_SHARE_ALLOW_QUERY_API_KEY);
 const SHARE_DEFAULT_TTL_MS = parseDurationMs(
   process.env.WEBBLACKBOX_SHARE_DEFAULT_TTL_MS,
@@ -134,7 +101,34 @@ const UPLOAD_RATE_LIMIT_WINDOW_MS = parseRateLimitWindowMs(
 );
 const SHARE_SUMMARY_HEADER = "x-webblackbox-share-summary";
 const MAX_SHARE_SUMMARY_HEADER_BYTES = 16 * 1024;
-const AES_GCM_IV_BYTES = 12;
+const MAX_ARCHIVE_UNCOMPRESSED_BYTES = parsePositiveInteger(
+  process.env.WEBBLACKBOX_SHARE_MAX_UNCOMPRESSED_BYTES,
+  DEFAULT_ARCHIVE_LOAD_LIMITS.maxTotalUncompressedBytes
+);
+const ARCHIVE_ANALYSIS_LIMITS = resolveArchiveLoadLimits({
+  maxEntryUncompressedBytes: Math.min(
+    DEFAULT_ARCHIVE_LOAD_LIMITS.maxEntryUncompressedBytes,
+    MAX_ARCHIVE_UNCOMPRESSED_BYTES
+  ),
+  maxTotalUncompressedBytes: MAX_ARCHIVE_UNCOMPRESSED_BYTES,
+  maxDecodedChunkBytes: Math.min(
+    DEFAULT_ARCHIVE_LOAD_LIMITS.maxDecodedChunkBytes,
+    MAX_ARCHIVE_UNCOMPRESSED_BYTES
+  ),
+  maxTotalDecodedChunkBytes: MAX_ARCHIVE_UNCOMPRESSED_BYTES
+});
+const ARCHIVE_ANALYSIS_TIMEOUT_MS = parsePositiveInteger(
+  process.env.WEBBLACKBOX_SHARE_ANALYSIS_TIMEOUT_MS,
+  30_000
+);
+const ARCHIVE_ANALYSIS_MAX_HEAP_MB = parsePositiveInteger(
+  process.env.WEBBLACKBOX_SHARE_ANALYSIS_MAX_HEAP_MB,
+  1024
+);
+// Worker heap and archive limits are per analysis; cap parallel workers so they don't multiply.
+const archiveAnalysisSlots = createConcurrencyLimiter(
+  parsePositiveInteger(process.env.WEBBLACKBOX_SHARE_ANALYSIS_CONCURRENCY, 2)
+);
 const SHARE_READ_SESSION_COOKIE = "webblackbox_share_read";
 const SHARE_READ_SESSION_TTL_MS = 10 * 60 * 1000;
 const MAX_SHARE_READ_SESSIONS = 4096;
@@ -153,8 +147,10 @@ async function startShareServer(): Promise<void> {
   await ensureStorageLayout();
   await pruneExpiredShareRecords(Date.now());
 
+  warnAboutProxyTrustConfig();
+
   const port = parsePort(process.env.PORT);
-  const host = parseBindHost(process.env.WEBBLACKBOX_SHARE_BIND_HOST);
+  const host = SHARE_BIND_HOST;
   const server = createServer((request, response) => {
     void routeRequest(request, response).catch((error) => {
       console.warn("[share-server] request failed", error);
@@ -170,7 +166,28 @@ async function startShareServer(): Promise<void> {
   });
 }
 
+function warnAboutProxyTrustConfig(): void {
+  if (TRUSTED_PROXIES.invalidEntries.length > 0) {
+    console.warn(
+      `[share-server] ignoring invalid WEBBLACKBOX_TRUSTED_PROXIES entries: ${TRUSTED_PROXIES.invalidEntries.join(", ")}`
+    );
+  }
+
+  if (TRUST_X_FORWARDED_FOR && TRUSTED_PROXIES.size === 0) {
+    console.warn(
+      "[share-server] WEBBLACKBOX_TRUST_X_FORWARDED_FOR is set but WEBBLACKBOX_TRUSTED_PROXIES is empty; using socket addresses."
+    );
+  }
+}
+
 async function routeRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (ENFORCE_HOST_ALLOWLIST && !isAllowedHostHeader(request.headers.host, SHARE_ALLOWED_HOSTS)) {
+    respondJson(response, 403, {
+      error: "Host not allowed."
+    });
+    return;
+  }
+
   const requestUrl = new URL(request.url ?? "/", requestBaseUrl(request));
   applyCorsHeaders(response, request, requestUrl);
 
@@ -316,8 +333,28 @@ async function handleUpload(
     throw error;
   }
 
-  const archiveEnvelope = await inspectArchiveEnvelope(bytes);
-  const archiveEnvelopeSummary = await buildShareSummary(bytes, archiveEnvelope);
+  const analysis = await archiveAnalysisSlots.run(() =>
+    runArchiveAnalysis(bytes, {
+      limits: ARCHIVE_ANALYSIS_LIMITS,
+      timeoutMs: ARCHIVE_ANALYSIS_TIMEOUT_MS,
+      maxHeapMb: ARCHIVE_ANALYSIS_MAX_HEAP_MB
+    })
+  );
+
+  if (analysis.rejectReason) {
+    await writeShareAuditEvent(request, {
+      action: "upload",
+      shareId: id,
+      outcome: "blocked"
+    });
+    respondJson(response, 413, {
+      error: `Archive exceeds server analysis limits: ${analysis.rejectReason}`
+    });
+    return;
+  }
+
+  const archiveEnvelope = analysis.envelope;
+  const archiveEnvelopeSummary = analysis.summary;
   const summary = clientSummary
     ? applyArchiveEnvelopeToClientSummary(clientSummary, archiveEnvelopeSummary)
     : archiveEnvelopeSummary;
@@ -471,20 +508,9 @@ async function handleDownloadArchive(
     return;
   }
 
+  let bytes: Buffer;
   try {
-    const bytes = await readFile(archivePathForId(id));
-    // Audit first: a client that saw the response can rely on the audit entry existing.
-    await writeShareAuditEvent(request, {
-      action: "download",
-      shareId: id,
-      outcome: "ok"
-    });
-    response.writeHead(200, {
-      "content-type": "application/zip",
-      "content-length": String(bytes.byteLength),
-      "content-disposition": `attachment; filename="${record.fileName}"`
-    });
-    response.end(bytes);
+    bytes = await readFile(archivePathForId(id));
   } catch {
     await writeShareAuditEvent(request, {
       action: "download",
@@ -494,7 +520,20 @@ async function handleDownloadArchive(
     respondJson(response, 404, {
       error: "Archive file not found."
     });
+    return;
   }
+
+  await writeShareAuditEvent(request, {
+    action: "download",
+    shareId: id,
+    outcome: "ok"
+  });
+  response.writeHead(200, {
+    "content-type": "application/zip",
+    "content-length": String(bytes.byteLength),
+    "content-disposition": `attachment; filename="${record.fileName}"`
+  });
+  response.end(bytes);
 }
 
 async function handleSharePage(
@@ -542,12 +581,12 @@ async function handleSharePage(
   </body>
 </html>`;
 
-  respondHtml(response, 200, page);
   await writeShareAuditEvent(request, {
     action: "page",
     shareId: id,
     outcome: "ok"
   });
+  respondHtml(response, 200, page);
 }
 
 async function handleRevokeShare(
@@ -656,334 +695,6 @@ function respondShareUnavailable(
           ? "Share has expired."
           : "Share has been revoked."
   });
-}
-
-async function buildShareSummary(
-  bytes: Uint8Array,
-  envelope: ArchiveEnvelopeSummary
-): Promise<ShareSummary> {
-  try {
-    const player = await WebBlackboxPlayer.open(bytes);
-    const manifest = player.archive.manifest;
-    const derived = player.buildDerived();
-    const actions = player.getActionTimeline();
-    const privacyReport = player.getPrivacyProtectionReport();
-
-    return {
-      schemaVersion: 1,
-      source: "server",
-      analyzed: true,
-      encrypted: envelope.encrypted || Boolean(manifest.encryption),
-      manifest: {
-        mode: manifest.mode,
-        chunkCodec: manifest.chunkCodec,
-        recordedAt: manifest.createdAt
-      },
-      totals: {
-        events: derived.totals.events,
-        blobs: player.archive.privacyManifest?.totals.blobs,
-        privacyViolations: player.archive.privacyManifest?.totals.privacyViolations,
-        errors: derived.totals.errors,
-        requests: derived.totals.requests,
-        actions: derived.actionSpans.length,
-        durationMs: Math.round(manifest.stats.durationMs)
-      },
-      topActionTriggers: collectTopActionTriggers(actions),
-      privacy: {
-        redaction: {
-          hashSensitiveValues: privacyReport.redaction.hashSensitiveValues,
-          headerRuleCount: privacyReport.redaction.headers.length,
-          cookieRuleCount: privacyReport.redaction.cookieNames.length,
-          bodyPatternCount: privacyReport.redaction.bodyPatterns.length,
-          blockedSelectorCount: privacyReport.redaction.blockedSelectors.length
-        },
-        detected: privacyReport.detected,
-        scanner: privacyReport.scanner,
-        categories: player.archive.privacyManifest?.categories.map((category) => ({ ...category }))
-      }
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      schemaVersion: 1,
-      source: "unavailable",
-      analyzed: false,
-      encrypted: envelope.encrypted,
-      analysisError: redactText(message, 240)
-    };
-  }
-}
-
-async function inspectArchiveEnvelope(bytes: Uint8Array): Promise<ArchiveEnvelopeSummary> {
-  try {
-    const zip = await JSZip.loadAsync(bytes);
-    const manifest = asRecord(JSON.parse(await readZipText(zip, "manifest.json")));
-    const encryption = asRecord(manifest.encryption);
-    const encrypted = Object.keys(encryption).length > 0;
-    const encryptedFiles = asRecord(encryption.files);
-    const privatePaths = collectArchivePrivatePaths(zip);
-    const missingEncryptedPaths = encrypted
-      ? privatePaths.filter((path) => !isEncryptedFileMeta(encryptedFiles[path]))
-      : [];
-    const plaintextEncryptedPaths = encrypted
-      ? await collectPlaintextEncryptedPrivatePaths(zip, privatePaths, encryptedFiles)
-      : [];
-
-    return {
-      encrypted,
-      encryptedPrivatePathsComplete: encrypted && missingEncryptedPaths.length === 0,
-      missingEncryptedPaths,
-      encryptedPrivatePathsConfidential: encrypted && plaintextEncryptedPaths.length === 0,
-      plaintextEncryptedPaths
-    };
-  } catch (error) {
-    return {
-      encrypted: false,
-      encryptedPrivatePathsComplete: false,
-      missingEncryptedPaths: [],
-      encryptedPrivatePathsConfidential: false,
-      plaintextEncryptedPaths: [],
-      analysisError: redactText(error instanceof Error ? error.message : String(error), 240)
-    };
-  }
-}
-
-function collectArchivePrivatePaths(zip: JSZip): string[] {
-  return Object.entries(zip.files)
-    .filter(([, file]) => !file.dir)
-    .map(([path]) => path)
-    .filter(isArchivePrivatePath)
-    .sort();
-}
-
-function isArchivePrivatePath(path: string): boolean {
-  return (
-    path.startsWith("events/") ||
-    path.startsWith("blobs/") ||
-    path === "index/time.json" ||
-    path === "index/req.json" ||
-    path === "index/inv.json" ||
-    path === "privacy/manifest.json" ||
-    path === "meta/manifest.json"
-  );
-}
-
-function isEncryptedFileMeta(value: unknown): boolean {
-  const record = asRecord(value);
-  if (typeof record.ivBase64 !== "string") {
-    return false;
-  }
-
-  const iv = decodeBase64Strict(record.ivBase64.trim());
-  return iv !== null && iv.byteLength === AES_GCM_IV_BYTES;
-}
-
-async function collectPlaintextEncryptedPrivatePaths(
-  zip: JSZip,
-  privatePaths: string[],
-  encryptedFiles: Record<string, unknown>
-): Promise<string[]> {
-  const plaintextPaths: string[] = [];
-
-  for (const path of privatePaths) {
-    if (!isEncryptedFileMeta(encryptedFiles[path])) {
-      continue;
-    }
-
-    const file = zip.file(path);
-    if (!file) {
-      continue;
-    }
-
-    const bytes = await file.async("uint8array");
-    if (looksLikePlaintextPrivateArchiveFile(path, bytes)) {
-      plaintextPaths.push(path);
-    }
-  }
-
-  return plaintextPaths;
-}
-
-function looksLikePlaintextPrivateArchiveFile(path: string, bytes: Uint8Array): boolean {
-  if (path === "index/time.json" || path === "index/req.json" || path === "index/inv.json") {
-    return isPlainJsonBytes(bytes);
-  }
-
-  if (path === "privacy/manifest.json" || path === "meta/manifest.json") {
-    return isPlainJsonBytes(bytes);
-  }
-
-  if (path.startsWith("events/") && path.endsWith(".ndjson")) {
-    return isPlainNdjsonBytes(bytes);
-  }
-
-  if (path.startsWith("blobs/")) {
-    return looksLikePlaintextBlobFile(path, bytes);
-  }
-
-  return false;
-}
-
-function looksLikePlaintextBlobFile(path: string, bytes: Uint8Array): boolean {
-  const normalizedPath = path.toLowerCase();
-
-  if (normalizedPath.endsWith(".json")) {
-    return isPlainJsonBytes(bytes);
-  }
-
-  if (normalizedPath.endsWith(".html")) {
-    return isPlainHtmlBytes(bytes);
-  }
-
-  if (normalizedPath.endsWith(".png")) {
-    return hasPngSignature(bytes);
-  }
-
-  if (normalizedPath.endsWith(".webp")) {
-    return hasWebpSignature(bytes);
-  }
-
-  return isPlainJsonBytes(bytes) || isPlainHtmlBytes(bytes) || isPlainTextBytes(bytes);
-}
-
-function isPlainJsonBytes(bytes: Uint8Array): boolean {
-  const text = decodeUtf8Strict(bytes);
-  if (!text) {
-    return false;
-  }
-
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-    return false;
-  }
-
-  try {
-    JSON.parse(trimmed);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isPlainNdjsonBytes(bytes: Uint8Array): boolean {
-  const text = decodeUtf8Strict(bytes);
-  if (!text) {
-    return false;
-  }
-
-  const lines = text
-    .trim()
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0);
-  if (lines.length === 0) {
-    return false;
-  }
-
-  try {
-    for (const line of lines.slice(0, 32)) {
-      JSON.parse(line);
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isPlainHtmlBytes(bytes: Uint8Array): boolean {
-  const text = decodeUtf8Strict(bytes);
-  if (!text) {
-    return false;
-  }
-
-  const trimmed = text.trim().toLowerCase();
-  return (
-    trimmed.startsWith("<!doctype html") ||
-    trimmed.startsWith("<html") ||
-    trimmed.includes("<script") ||
-    trimmed.includes("<body")
-  );
-}
-
-function isPlainTextBytes(bytes: Uint8Array): boolean {
-  const text = decodeUtf8Strict(bytes);
-  if (!text) {
-    return false;
-  }
-
-  const trimmed = text.trim();
-  if (trimmed.length === 0) {
-    return false;
-  }
-
-  let printable = 0;
-
-  for (let index = 0; index < trimmed.length; index += 1) {
-    const code = trimmed.charCodeAt(index);
-
-    if (code === 0x09 || code === 0x0a || code === 0x0d || (code >= 0x20 && code !== 0x7f)) {
-      printable += 1;
-    }
-  }
-
-  return printable / trimmed.length >= 0.9;
-}
-
-function hasPngSignature(bytes: Uint8Array): boolean {
-  return (
-    bytes.length >= 8 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0d &&
-    bytes[5] === 0x0a &&
-    bytes[6] === 0x1a &&
-    bytes[7] === 0x0a
-  );
-}
-
-function hasWebpSignature(bytes: Uint8Array): boolean {
-  return (
-    bytes.length >= 12 &&
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46 &&
-    bytes[8] === 0x57 &&
-    bytes[9] === 0x45 &&
-    bytes[10] === 0x42 &&
-    bytes[11] === 0x50
-  );
-}
-
-function decodeUtf8Strict(bytes: Uint8Array): string | null {
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    return null;
-  }
-}
-
-function decodeBase64Strict(value: string): Buffer | null {
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
-    return null;
-  }
-
-  const decoded = Buffer.from(value, "base64");
-  const normalizedInput = value.replace(/=+$/, "");
-  const normalizedOutput = decoded.toString("base64").replace(/=+$/, "");
-
-  return normalizedInput === normalizedOutput ? decoded : null;
-}
-
-async function readZipText(zip: JSZip, path: string): Promise<string> {
-  const file = zip.file(path);
-
-  if (!file) {
-    throw new Error(`Archive is missing required file: ${path}`);
-  }
-
-  return file.async("string");
 }
 
 function readClientShareSummary(request: IncomingMessage): ShareSummary | null {
@@ -1127,69 +838,6 @@ function normalizeCategorySummaries(
       unredacted: readNonNegativeInteger(record.unredacted, 0)
     };
   });
-}
-
-function collectTopActionTriggers(
-  actions: ReturnType<WebBlackboxPlayer["getActionTimeline"]>
-): ShareSummary["topActionTriggers"] {
-  const counts = new Map<
-    string,
-    {
-      triggerType: string;
-      count: number;
-      actionsWithErrors: number;
-    }
-  >();
-
-  for (const action of actions) {
-    const triggerType = action.triggerType ?? "unknown";
-    const current = counts.get(triggerType) ?? {
-      triggerType,
-      count: 0,
-      actionsWithErrors: 0
-    };
-    current.count += 1;
-    if (action.errorCount > 0) {
-      current.actionsWithErrors += 1;
-    }
-    counts.set(triggerType, current);
-  }
-
-  return [...counts.values()]
-    .sort((left, right) => right.count - left.count)
-    .slice(0, 10)
-    .map((entry) => ({
-      triggerType: entry.triggerType,
-      count: entry.count,
-      errorRate: roundTo(entry.count > 0 ? entry.actionsWithErrors / entry.count : 0, 4)
-    }));
-}
-
-function redactText(input: string, maxLength = 120): string {
-  const compact = input.replace(/\s+/g, " ").trim();
-  const redacted = compact
-    .replaceAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[redacted-email]")
-    .replaceAll(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [redacted-token]")
-    .replaceAll(/([?&](?:token|auth|password|secret|api[_-]?key)=)[^&]+/gi, "$1[redacted]")
-    .replaceAll(/\b((?:token|auth|password|secret|api[_-]?key)\s*=\s*)[^\s,&;]+/gi, "$1[redacted]")
-    .replaceAll(/\b((?:token|auth|password|secret|api[_-]?key)\s*:\s*)[^\s,;]+/gi, "$1[redacted]")
-    .replaceAll(
-      /("?(?:token|auth|password|secret|api[_-]?key)"?\s*:\s*)"([^"\\]*(?:\\.[^"\\]*)*)"/gi,
-      '$1"[redacted]"'
-    )
-    .replaceAll(/[A-Fa-f0-9]{32,}/g, "[redacted-hex]")
-    .replaceAll(/[A-Za-z0-9+/]{48,}={0,2}/g, "[redacted-base64]");
-
-  if (redacted.length <= maxLength) {
-    return redacted;
-  }
-
-  return `${redacted.slice(0, Math.max(0, maxLength - 3))}...`;
-}
-
-function roundTo(value: number, digits: number): number {
-  const factor = 10 ** Math.max(0, digits);
-  return Math.round(value * factor) / factor;
 }
 
 async function ensureStorageLayout(): Promise<void> {
@@ -1396,12 +1044,6 @@ class PayloadTooLargeError extends Error {
 
 class ShareSummaryHeaderError extends Error {}
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
 function readString(value: unknown, fallback: string, maxLength: number): string {
   if (typeof value !== "string") {
     return fallback;
@@ -1589,7 +1231,7 @@ function authorizeRequest(
   requiredScope: ShareApiScope
 ): ShareAuthorizationResult {
   if (SHARE_API_CREDENTIALS.length === 0) {
-    return isLoopbackRequest(request)
+    return isKeylessLoopbackRequest(request.socket.remoteAddress, request.headers)
       ? {
           authorized: true,
           source: "loopback"
@@ -1738,35 +1380,6 @@ function requestOriginFromUrl(request: IncomingMessage, requestUrl: URL): string
   return requestOrigin(request, requestUrl);
 }
 
-function isLoopbackRequest(request: IncomingMessage): boolean {
-  const address = resolveClientAddress(request);
-  return Boolean(address && isLoopbackAddress(address));
-}
-
-function resolveClientAddress(request: IncomingMessage): string | null {
-  if (TRUST_X_FORWARDED_FOR) {
-    const forwardedFor = request.headers["x-forwarded-for"];
-    if (typeof forwardedFor === "string" && forwardedFor.length > 0) {
-      const first = forwardedFor.split(",")[0]?.trim();
-      if (first) {
-        return first;
-      }
-    }
-  }
-
-  const socketAddress = request.socket.remoteAddress;
-  return typeof socketAddress === "string" && socketAddress.length > 0 ? socketAddress : null;
-}
-
-function isLoopbackAddress(address: string): boolean {
-  return (
-    address === "127.0.0.1" ||
-    address === "::1" ||
-    address === "::ffff:127.0.0.1" ||
-    address.startsWith("127.")
-  );
-}
-
 function readAuthTokenFromRequest(request: IncomingMessage): string | null {
   const apiKeyHeader = request.headers["x-webblackbox-api-key"];
 
@@ -1905,7 +1518,12 @@ function parseDurationMs(value: string | undefined, fallback: number): number {
 }
 
 function resolveClientKey(request: IncomingMessage): string {
-  const address = resolveClientAddress(request);
+  const address = resolveClientAddress({
+    socketAddress: request.socket.remoteAddress,
+    forwardedFor: request.headers["x-forwarded-for"],
+    trustForwardedFor: TRUST_X_FORWARDED_FOR,
+    trustedProxies: TRUSTED_PROXIES
+  });
   return address ? `ip:${address}` : "ip:unknown";
 }
 

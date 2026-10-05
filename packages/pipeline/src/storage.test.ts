@@ -277,6 +277,28 @@ describe("storage", () => {
     await expect(storage.listBlobs()).resolves.toEqual([]);
   });
 
+  it("lists stored session metadata across storage implementations", async () => {
+    const memory = new MemoryPipelineStorage();
+    const indexedDb = new IndexedDbPipelineStorage(createDbName());
+    const key = await derivePipelineStorageKey("list-sessions", {
+      salt: Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
+      iterations: 1_000
+    });
+    const encrypted = new EncryptedPipelineStorage(new MemoryPipelineStorage(), { key: key.key });
+
+    for (const storage of [memory, indexedDb, encrypted]) {
+      await expect(storage.listSessions()).resolves.toEqual([]);
+
+      await storage.putSession(SESSION_A);
+      await storage.putSession(SESSION_B);
+      const listed = await storage.listSessions();
+      expect(listed.map((session) => session.sid).sort()).toEqual([SESSION_A.sid, SESSION_B.sid]);
+
+      await storage.deleteSession(SESSION_A.sid);
+      await expect(storage.listSessions()).resolves.toEqual([SESSION_B]);
+    }
+  });
+
   it("supports legacy indexeddb layouts where chunks store has no sid/seq index", async () => {
     const sid = "S-legacy-layout";
     const dbName = createDbName();

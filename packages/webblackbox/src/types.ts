@@ -29,6 +29,11 @@ export type LiteCaptureState = {
   capturePolicy?: CapturePolicy;
   /** Scan same-origin scripts for source map references (lite mode only). */
   scriptSourceMaps?: boolean;
+  /**
+   * Per-session secret the host also handed to the injected hooks. Once set, injected
+   * bridge messages without this nonce are dropped.
+   */
+  injectedBridgeNonce?: string;
 };
 
 /**

@@ -118,6 +118,20 @@ export function isEnterpriseOriginAllowed(
   return policy.siteAllowlist.some((pattern) => matchesOriginPattern(normalizedOrigin, pattern));
 }
 
+/** Why a session cannot start on `origin`, or null when it may. */
+export function getSessionStartBlockReason(
+  origin: string,
+  policy: EnterpriseRecorderPolicy
+): string | null {
+  if (origin.trim().length === 0) {
+    return "This tab has no web origin to record; open an http(s) page first.";
+  }
+
+  return isEnterpriseOriginAllowed(origin, policy)
+    ? null
+    : "Recording is blocked by enterprise site policy.";
+}
+
 export function applyEnterprisePolicyToRecorderConfig(
   config: RecorderConfig,
   policy: EnterpriseRecorderPolicy

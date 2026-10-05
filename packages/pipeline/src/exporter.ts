@@ -2,6 +2,8 @@ import JSZip from "jszip";
 
 import {
   ARCHIVE_FORMAT_VERSION,
+  ARCHIVE_KDF_DEFAULT_ITERATIONS,
+  assertArchiveKdfIterations,
   assertExportPassphrase,
   ENCRYPTED_MANIFEST_PATH,
   inferBlobFileExtension,
@@ -49,7 +51,6 @@ export type ArchiveReadOptions = {
   passphrase?: string;
 };
 
-const ENCRYPTION_KEY_DERIVATION_ITERATIONS = 120_000;
 const AES_GCM_IV_BYTES = 12;
 
 export async function createWebBlackboxArchive(
@@ -330,12 +331,7 @@ type ArchiveEncryptionState = {
 
 async function createArchiveEncryptionState(passphrase: string): Promise<ArchiveEncryptionState> {
   const salt = randomBytes(16);
-  const key = await deriveArchiveKey(
-    passphrase,
-    salt,
-    ENCRYPTION_KEY_DERIVATION_ITERATIONS,
-    "encrypt"
-  );
+  const key = await deriveArchiveKey(passphrase, salt, ARCHIVE_KDF_DEFAULT_ITERATIONS, "encrypt");
 
   return {
     key,
@@ -344,7 +340,7 @@ async function createArchiveEncryptionState(passphrase: string): Promise<Archive
       kdf: {
         name: "PBKDF2",
         hash: "SHA-256",
-        iterations: ENCRYPTION_KEY_DERIVATION_ITERATIONS,
+        iterations: ARCHIVE_KDF_DEFAULT_ITERATIONS,
         saltBase64: toBase64(salt)
       },
       files: {}
@@ -385,6 +381,8 @@ async function resolveArchiveReadKey(
   if (!passphrase) {
     throw new Error("Archive is encrypted. Provide a passphrase to read it.");
   }
+
+  assertArchiveKdfIterations(encryption.kdf.iterations);
 
   const candidates = [...new Set([passphrase.trim(), passphrase])].filter(
     (candidate) => candidate.length > 0

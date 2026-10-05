@@ -102,6 +102,21 @@ export function resolveShareServerOrigin(value: string | null): string | null {
   }
 }
 
+export function isTrustedShareOrigin(
+  baseUrl: string,
+  trustedBaseUrls: ReadonlyArray<string | null | undefined>
+): boolean {
+  const origin = resolveShareServerOrigin(baseUrl);
+
+  if (!origin) {
+    return false;
+  }
+
+  return trustedBaseUrls.some(
+    (candidate) => resolveShareServerOrigin(candidate ?? null) === origin
+  );
+}
+
 function buildAuthQuerySuffix(url: URL): string {
   const key = url.searchParams.get("key");
   if (!key) {

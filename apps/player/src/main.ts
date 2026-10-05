@@ -79,6 +79,7 @@ import {
   setShareServerApiKeyForBaseUrl
 } from "./lib/share-api-key.js";
 import {
+  isTrustedShareOrigin,
   normalizeShareServerBaseUrl,
   resolveShareArchiveRequest,
   resolveShareServerOrigin
@@ -603,6 +604,7 @@ const refs = {
   sharePrivacyPreview: getElement<HTMLElement>("share-privacy-preview"),
   sharePrivacySamples: getElement<HTMLUListElement>("share-privacy-samples"),
   shareLoadDialog: getElement<HTMLDialogElement>("share-load-dialog"),
+  shareLoadDescription: getElement<HTMLElement>("share-load-description"),
   shareLoadReference: getElement<HTMLInputElement>("share-load-reference"),
   shareLoadApiKey: getElement<HTMLInputElement>("share-load-api-key"),
   archivePassphraseDialog: getElement<HTMLDialogElement>("archive-passphrase-dialog"),
@@ -1966,7 +1968,11 @@ async function loadArchiveFromSharePrompt(): Promise<void> {
   await loadArchiveFromShareReference(shareInput.reference, shareInput.apiKey);
 }
 
-async function loadArchiveFromShareReference(reference: string, apiKey: string): Promise<void> {
+async function loadArchiveFromShareReference(
+  reference: string,
+  apiKey: string,
+  options: { persistServer: boolean } = { persistServer: true }
+): Promise<void> {
   const trimmedReference = reference.trim();
   const trimmedApiKey = apiKey.trim();
 
@@ -1977,9 +1983,11 @@ async function loadArchiveFromShareReference(reference: string, apiKey: string):
     return;
   }
 
-  state.shareServerBaseUrl = resolved.baseUrl;
-  writeStoredText(SHARE_SERVER_BASE_URL_STORAGE_KEY, resolved.baseUrl);
-  rememberShareServerApiKey(resolved.baseUrl, trimmedApiKey);
+  if (options.persistServer) {
+    state.shareServerBaseUrl = resolved.baseUrl;
+    writeStoredText(SHARE_SERVER_BASE_URL_STORAGE_KEY, resolved.baseUrl);
+    rememberShareServerApiKey(resolved.baseUrl, trimmedApiKey);
+  }
 
   try {
     const headers: Record<string, string> = {};
@@ -2013,12 +2021,49 @@ async function maybeAutoLoadSharedArchiveFromLocation(): Promise<void> {
     return;
   }
 
-  if (!shareRef || shareRef.trim().length === 0) {
+  const trimmedShareRef = shareRef?.trim() ?? "";
+
+  if (trimmedShareRef.length === 0) {
+    return;
+  }
+
+  const resolved = resolveShareArchiveRequest(trimmedShareRef, state.shareServerBaseUrl);
+
+  if (!resolved) {
+    setFeedback(i18n.messages.feedbackInvalidShareReference);
+    return;
+  }
+
+  // A ?share= link is attacker-controllable: it must never change the saved share server or keys,
+  // and archives from unknown origins load only after the user confirms the target.
+  const loadOptions = { persistServer: false };
+  const isTrustedOrigin = isTrustedShareOrigin(resolved.baseUrl, [
+    window.location.origin,
+    DEFAULT_SHARE_SERVER_BASE_URL,
+    state.shareServerBaseUrl
+  ]);
+
+  if (isTrustedOrigin) {
+    setFeedback(i18n.messages.feedbackSharedArchiveLoadingFromUrl);
+    await loadArchiveFromShareReference(
+      trimmedShareRef,
+      getShareServerApiKeyForBaseUrl(state.shareServerApiKeysByOrigin, resolved.baseUrl),
+      loadOptions
+    );
+    return;
+  }
+
+  const confirmed = await promptShareReferenceInput({
+    reference: trimmedShareRef,
+    untrustedOrigin: resolved.baseUrl
+  });
+
+  if (!confirmed) {
     return;
   }
 
   setFeedback(i18n.messages.feedbackSharedArchiveLoadingFromUrl);
-  await loadArchiveFromShareReference(shareRef, "");
+  await loadArchiveFromShareReference(confirmed.reference, confirmed.apiKey, loadOptions);
 }
 
 async function promptShareUploadConfig(): Promise<{
@@ -2222,8 +2267,13 @@ function formatSensitivePreviewReason(reason: string): string {
   return reason.replaceAll("-", " ");
 }
 
-async function promptShareReferenceInput(): Promise<{ reference: string; apiKey: string } | null> {
-  refs.shareLoadReference.value = `${state.shareServerBaseUrl}/share/`;
+async function promptShareReferenceInput(
+  options: { reference?: string; untrustedOrigin?: string } = {}
+): Promise<{ reference: string; apiKey: string } | null> {
+  refs.shareLoadReference.value = options.reference ?? `${state.shareServerBaseUrl}/share/`;
+  refs.shareLoadDescription.textContent = options.untrustedOrigin
+    ? i18n.t("loadSharedArchiveUntrustedOrigin", { origin: options.untrustedOrigin })
+    : i18n.messages.loadSharedArchiveDescription;
   const detachBinding = bindShareApiKeyInputToTargetOrigin(
     refs.shareLoadReference,
     refs.shareLoadApiKey,
@@ -5734,7 +5784,11 @@ function setFeedback(text: string): void {
 }
 
 function rememberShareServerApiKey(baseUrl: string, apiKey: string): void {
-  setShareServerApiKeyForBaseUrl(state.shareServerApiKeysByOrigin, baseUrl, apiKey);
+  state.shareServerApiKeysByOrigin = setShareServerApiKeyForBaseUrl(
+    state.shareServerApiKeysByOrigin,
+    baseUrl,
+    apiKey
+  );
   persistShareServerApiKeys(state.shareServerApiKeysByOrigin);
 }
 
