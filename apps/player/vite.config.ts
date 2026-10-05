@@ -27,6 +27,11 @@ export default defineConfig({
   // Relative URLs: the build is served from a GitHub Pages sub-path and from /player/ in e2e.
   base: "./",
   plugins: [react(), devContentSecurityPolicy()],
+  // Bundle `@webblackbox/*` from their sources via tsconfig `paths` (as tsup did): the Pages
+  // release job and `pnpm player` build only this package, without the dependencies' `dist/`.
+  resolve: {
+    tsconfigPaths: true
+  },
   define: {
     __PLAYER_VERSION__: JSON.stringify(playerVersion)
   },
@@ -48,7 +53,7 @@ export default defineConfig({
     rolldownOptions: {
       // player-sdk imports these only on Node (behind a `process.versions.node` check); the
       // browser never evaluates the dynamic import, so leave it as is instead of a stub chunk.
-      external: ["zlib", "crypto"],
+      external: ["node:zlib", "node:crypto"],
       output: {
         // Both UIs share React and the archive SDK: name those chunks so they cache across
         // releases and read clearly in the bundle report. Everything else splits automatically.
