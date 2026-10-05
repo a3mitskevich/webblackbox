@@ -6,7 +6,7 @@ import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import JSZip from "jszip";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,11 +14,21 @@ import { afterEach, describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const tsxCli = require.resolve("tsx/cli");
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const delayAuditAppendPreload = resolve(appRoot, "src/test-support/delay-audit-append.mjs");
 const apiKey = "share-test-key";
+const MIN_SHARE_TTL_MS = 1_000;
 const BLOB_FIXTURE_PATH =
   "blobs/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json";
 const TEXT_BLOB_FIXTURE_PATH =
   "blobs/sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bin";
+
+type AuditedRequestStep = {
+  path: string;
+  method?: string;
+  status: number;
+  action: string;
+  outcome: string;
+};
 
 type RunningShareServer = {
   baseUrl: string;
@@ -412,6 +422,66 @@ describe("share-server", () => {
     expect(auditLog).not.toContain("webblackbox-share-");
   });
 
+  it("persists the audit event before sending each response", async () => {
+    const server = await startShareServer({
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${pathToFileURL(delayAuditAppendPreload)}`]
+        .filter(Boolean)
+        .join(" ")
+    });
+    const { shareId } = await uploadEncryptedFixture(server);
+    const { shareId: expiringShareId } = await uploadEncryptedFixture(server, apiKey, {
+      "x-webblackbox-share-ttl-ms": String(MIN_SHARE_TTL_MS)
+    });
+    const expiresBy = Date.now() + MIN_SHARE_TTL_MS;
+    const assertAuditedBeforeResponse = async (step: AuditedRequestStep): Promise<void> => {
+      const response = await fetch(`${server.baseUrl}${step.path}`, {
+        method: step.method ?? "GET",
+        headers: { "x-webblackbox-api-key": apiKey }
+      });
+      await response.arrayBuffer();
+      expect(response.status).toBe(step.status);
+
+      const auditEvents = await readAuditEvents(server);
+      expect(auditEvents.at(-1)).toMatchObject({ action: step.action, outcome: step.outcome });
+    };
+    const steps: AuditedRequestStep[] = [
+      { path: `/api/share/${shareId}/meta`, status: 200, action: "metadata", outcome: "ok" },
+      { path: `/share/${shareId}`, status: 200, action: "page", outcome: "ok" },
+      { path: `/api/share/${shareId}/archive`, status: 200, action: "download", outcome: "ok" },
+      {
+        path: `/api/share/${shareId}/revoke`,
+        method: "POST",
+        status: 200,
+        action: "revoke",
+        outcome: "ok"
+      },
+      {
+        path: `/api/share/${shareId}/archive`,
+        status: 410,
+        action: "download",
+        outcome: "revoked"
+      },
+      {
+        path: `/api/share/${"0".repeat(32)}/meta`,
+        status: 404,
+        action: "metadata",
+        outcome: "not-found"
+      }
+    ];
+
+    for (const step of steps) {
+      await assertAuditedBeforeResponse(step);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, expiresBy - Date.now() + 100)));
+    await assertAuditedBeforeResponse({
+      path: `/api/share/${expiringShareId}/archive`,
+      status: 410,
+      action: "download",
+      outcome: "expired"
+    });
+  });
+
   it("enforces scoped API keys", async () => {
     const uploadKey = "upload-scope-key";
     const readKey = "read-scope-key";
@@ -790,13 +860,24 @@ async function reservePort(): Promise<number> {
   return address.port;
 }
 
+async function readAuditEvents(
+  server: RunningShareServer
+): Promise<Array<{ action: string; outcome: string }>> {
+  const auditLog = await readFile(resolve(server.dataDir, "audit/share-access.jsonl"), "utf8");
+  return auditLog
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { action: string; outcome: string });
+}
+
 function readSetCookiePair(response: Response): string {
   return response.headers.get("set-cookie")?.split(";")[0] ?? "";
 }
 
 async function uploadEncryptedFixture(
   server: RunningShareServer,
-  credential = apiKey
+  credential = apiKey,
+  extraHeaders: Record<string, string> = {}
 ): Promise<{ shareId: string }> {
   const response = await fetch(`${server.baseUrl}/api/share/upload`, {
     method: "POST",
@@ -804,7 +885,8 @@ async function uploadEncryptedFixture(
       "content-type": "application/octet-stream",
       "x-webblackbox-api-key": credential,
       "x-webblackbox-filename": "fixture.webblackbox",
-      "x-webblackbox-share-summary": encodeURIComponent(JSON.stringify(buildPassedShareSummary()))
+      "x-webblackbox-share-summary": encodeURIComponent(JSON.stringify(buildPassedShareSummary())),
+      ...extraHeaders
     },
     body: Buffer.from(await createEncryptedEnvelopeArchive())
   });

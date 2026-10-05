@@ -507,12 +507,12 @@ async function handleGetMetadata(
     return;
   }
 
-  respondJson(response, 200, buildPublicShareMetadata(record));
   await writeShareAuditEvent(request, {
     action: "metadata",
     shareId: id,
     outcome: "ok"
   });
+  respondJson(response, 200, buildPublicShareMetadata(record));
 }
 
 async function handleDownloadArchive(
@@ -526,29 +526,32 @@ async function handleDownloadArchive(
     return;
   }
 
+  let bytes: Buffer;
   try {
-    const bytes = await readFile(archivePathForId(id));
-    response.writeHead(200, {
-      "content-type": "application/zip",
-      "content-length": String(bytes.byteLength),
-      "content-disposition": `attachment; filename="${record.fileName}"`
-    });
-    response.end(bytes);
-    await writeShareAuditEvent(request, {
-      action: "download",
-      shareId: id,
-      outcome: "ok"
-    });
+    bytes = await readFile(archivePathForId(id));
   } catch {
-    respondJson(response, 404, {
-      error: "Archive file not found."
-    });
     await writeShareAuditEvent(request, {
       action: "download",
       shareId: id,
       outcome: "not-found"
     });
+    respondJson(response, 404, {
+      error: "Archive file not found."
+    });
+    return;
   }
+
+  await writeShareAuditEvent(request, {
+    action: "download",
+    shareId: id,
+    outcome: "ok"
+  });
+  response.writeHead(200, {
+    "content-type": "application/zip",
+    "content-length": String(bytes.byteLength),
+    "content-disposition": `attachment; filename="${record.fileName}"`
+  });
+  response.end(bytes);
 }
 
 async function handleSharePage(
@@ -596,12 +599,12 @@ async function handleSharePage(
   </body>
 </html>`;
 
-  respondHtml(response, 200, page);
   await writeShareAuditEvent(request, {
     action: "page",
     shareId: id,
     outcome: "ok"
   });
+  respondHtml(response, 200, page);
 }
 
 async function handleRevokeShare(
@@ -643,32 +646,32 @@ async function readAvailableShareRecord(
   const record = await readRecord(id);
 
   if (!record) {
-    respondShareUnavailable(response, action, "not-found");
     await writeShareAuditEvent(request, {
       action,
       shareId: id,
       outcome: "not-found"
     });
+    respondShareUnavailable(response, action, "not-found");
     return null;
   }
 
   if (isShareExpired(record, Date.now())) {
-    respondShareUnavailable(response, action, "expired");
     await writeShareAuditEvent(request, {
       action,
       shareId: id,
       outcome: "expired"
     });
+    respondShareUnavailable(response, action, "expired");
     return null;
   }
 
   if (!allowRevoked && record.revokedAt) {
-    respondShareUnavailable(response, action, "revoked");
     await writeShareAuditEvent(request, {
       action,
       shareId: id,
       outcome: "revoked"
     });
+    respondShareUnavailable(response, action, "revoked");
     return null;
   }
 
