@@ -77,6 +77,9 @@ jobs:
           - surface: player
             command: pnpm --filter @webblackbox/player e2e:playback
             needsChrome: true
+          - surface: player-next
+            command: pnpm --filter @webblackbox/player e2e:player-next
+            needsChrome: true
           - surface: player-pressure
             command: pnpm --filter @webblackbox/player-sdk test:pressure
             needsChrome: false
