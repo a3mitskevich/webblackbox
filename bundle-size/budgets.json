@@ -30,9 +30,9 @@
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 919600,
-      "maxGzipBytes": 164800,
-      "note": "Measured 892,782 / 159,934 B (+3%): the service worker recovery (#8) and the CDP Network allowlist (#9) plus recording profiles, redaction rules and the linear regex engine (#10)."
+      "maxBytes": 943700,
+      "maxGzipBytes": 170800,
+      "note": "Measured 916,224 / 165,785 B (+3%): the service worker recovery (#8), the CDP Network allowlist (#9), recording profiles with cookie value capture (#10) and source map symbolication (#11)."
     }
   ]
 }
