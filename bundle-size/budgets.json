@@ -2,19 +2,20 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 72400,
-      "maxGzipBytes": 16900,
-      "note": "Measured 70,996 / 16,558 B (+2%): CDP allowlists and runtime error policy (#9), per-profile redaction rules (#10) and the parallel-tabs events (validated with the protocol schema, no copy of it)."
+      "maxBytes": 80800,
+      "maxGzipBytes": 19000,
+      "note": "Measured 78,433 / 18,422 B (+3%): full console detail, the CDP cache tracker and byte-capped stream bodies (#9), per-profile redaction rules (#10) and the parallel-tabs events (#16)."
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 76000,
+      "maxBytes": 79000,
       "maxGzipBytes": 18000
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 90000,
-      "maxGzipBytes": 22000
+      "maxBytes": 94700,
+      "maxGzipBytes": 22700,
+      "note": "Measured 91,931 / 21,992 B (+3%): profile cancellation reading (#10) plus parallel tabs and their bug-report section (#16)."
     },
     {
       "path": "apps/player/build/main.js",
@@ -23,14 +24,15 @@
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 48000,
-      "maxGzipBytes": 13000
+      "maxBytes": 53400,
+      "maxGzipBytes": 14100,
+      "note": "Measured 51,816 / 13,675 B (+3%): content.js bundles the shared UI dictionary, which grew with the profile-change and profile-deletion strings; #14 moves the dictionary out of the content script."
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 890000,
-      "maxGzipBytes": 158700,
-      "note": "Measured 872,234 / 155,548 B (+2%): recording profiles, redaction rules, the linear regex engine and the parallel-tabs tracker run in the service worker."
+      "maxBytes": 909900,
+      "maxGzipBytes": 163200,
+      "note": "Measured 883,321 / 158,373 B (+3%): recording profiles, profile cancellation, redaction rules, the linear regex engine (#10) and the parallel-tabs tracker (#16) run in the service worker."
     }
   ]
 }

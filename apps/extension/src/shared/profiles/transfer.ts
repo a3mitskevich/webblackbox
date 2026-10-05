@@ -1,14 +1,12 @@
 import { z } from "zod";
 
 import {
-  isReadOnlyProfileId,
   PROFILES_SCHEMA_VERSION,
   recordingProfilesStoreSchema,
   type ProfileRule,
   type RecordingProfile,
   type RecordingProfilesStore
 } from "./model.js";
-import { findBuiltInProfile } from "./presets.js";
 import { describeIssues, parseProfilesStore } from "./storage.js";
 
 export const PROFILES_EXPORT_FORMAT = "webblackbox-recording-profiles";
@@ -35,6 +33,8 @@ export type ProfilesDiff = {
   rules: EntityDiff;
   defaultProfileId?: { from: string; to: string };
   extendedCaptureHosts: { added: string[]; removed: string[] };
+  /** Deleted recommended profiles before and after the import, when they differ. */
+  removedRecommendedProfileIds?: { from: string[]; to: string[] };
   hasChanges: boolean;
 };
 
@@ -58,7 +58,10 @@ export function createProfilesExportFile(
     defaultProfileId: store.defaultProfileId,
     profiles: structuredClone(store.profiles),
     rules: structuredClone(store.rules),
-    extendedCaptureHosts: [...store.extendedCaptureHosts]
+    extendedCaptureHosts: [...store.extendedCaptureHosts],
+    ...(store.removedRecommendedProfileIds?.length
+      ? { removedRecommendedProfileIds: [...store.removedRecommendedProfileIds] }
+      : {})
   };
 }
 
@@ -94,21 +97,18 @@ export function previewProfilesImport(
     defaultProfileId: envelope.data.defaultProfileId,
     profiles: envelope.data.profiles,
     rules: envelope.data.rules,
-    extendedCaptureHosts: envelope.data.extendedCaptureHosts
+    extendedCaptureHosts: envelope.data.extendedCaptureHosts,
+    removedRecommendedProfileIds: envelope.data.removedRecommendedProfileIds
   });
 
   if (!parsed) {
     return { ok: false, error: "File is not a WebBlackbox recording profiles export." };
   }
 
+  // Rules and a default that point to a missing profile are kept, as deleting a profile keeps
+  // them: the rule engine skips such rules, the default falls back, and Options flags both.
   if (parsed.issues.length > 0) {
     return { ok: false, error: describeIssues(parsed.issues) };
-  }
-
-  const unknownReference = findUnknownProfileReference(parsed.store);
-
-  if (unknownReference) {
-    return { ok: false, error: unknownReference };
   }
 
   return { ok: true, next: parsed.store, diff: diffProfilesStores(current, parsed.store) };
@@ -130,16 +130,24 @@ export function diffProfilesStores(
     current.defaultProfileId !== next.defaultProfileId
       ? { from: current.defaultProfileId, to: next.defaultProfileId }
       : undefined;
+  const removedFrom = current.removedRecommendedProfileIds ?? [];
+  const removedTo = next.removedRecommendedProfileIds ?? [];
+  const removedRecommendedProfileIds =
+    JSON.stringify(removedFrom) !== JSON.stringify(removedTo)
+      ? { from: [...removedFrom], to: [...removedTo] }
+      : undefined;
 
   return {
     profiles,
     rules,
     ...(defaultProfileId ? { defaultProfileId } : {}),
     extendedCaptureHosts,
+    ...(removedRecommendedProfileIds ? { removedRecommendedProfileIds } : {}),
     hasChanges:
       hasEntityChanges(profiles) ||
       hasEntityChanges(rules) ||
       defaultProfileId !== undefined ||
+      removedRecommendedProfileIds !== undefined ||
       extendedCaptureHosts.added.length > 0 ||
       extendedCaptureHosts.removed.length > 0
   };
@@ -192,19 +200,4 @@ function changedFields(left: object, right: object): string[] {
 
 function hasEntityChanges(diff: EntityDiff): boolean {
   return diff.added.length > 0 || diff.removed.length > 0 || diff.changed.length > 0;
-}
-
-function findUnknownProfileReference(store: RecordingProfilesStore): string | null {
-  const known = new Set(store.profiles.map((profile) => profile.id));
-  const isKnown = (id: string): boolean =>
-    known.has(id) || (isReadOnlyProfileId(id) && findBuiltInProfile(id) !== undefined);
-
-  if (!isKnown(store.defaultProfileId)) {
-    return `Default profile "${store.defaultProfileId}" is not in the file.`;
-  }
-
-  const rule = store.rules.find((entry) => !isKnown(entry.profileId));
-  return rule
-    ? `Rule "${rule.name ?? rule.id}" points to unknown profile "${rule.profileId}".`
-    : null;
 }

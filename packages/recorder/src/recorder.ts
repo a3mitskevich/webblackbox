@@ -55,7 +55,9 @@ export class WebBlackboxRecorder {
   public constructor(
     private config: RecorderConfig,
     private readonly hooks: RecorderHooks = {},
-    private readonly normalizer: EventNormalizer = new DefaultEventNormalizer(),
+    private readonly normalizer: EventNormalizer = new DefaultEventNormalizer({
+      consoleDetail: config.capturePolicy?.categories.console === "allow" ? "full" : "compact"
+    }),
     private readonly plugins: RecorderPlugin[] = []
   ) {
     this.ringBuffer = new EventRingBuffer(config.ringBufferMinutes);
@@ -100,6 +102,7 @@ export class WebBlackboxRecorder {
     const redactedPayload = attachInlineNetworkBody(maskedPayload, detached.body, {
       capturePolicy: this.config.capturePolicy,
       redaction: rules,
+      maxBodyBytes: this.config.sampling.bodyCaptureMaxBytes,
       isBodyAllowed: shouldKeepBody
         ? () =>
             shouldKeepBody(

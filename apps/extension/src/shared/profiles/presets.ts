@@ -151,14 +151,14 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
   name: "Full capture",
   description:
     "Everything, recorded raw (no content masking): console with stacks, all textual bodies, " +
-    "input values and keys (passwords included), storage values, screenshots, optional tab " +
-    "video, 60 Hz pointer, other tabs of the site. No raw DOM: duplicate the profile to record it.",
+    "input values and keys (passwords included), storage values, the raw DOM, screenshots, " +
+    "optional tab video, 60 Hz pointer, other tabs of the site.",
   base: "full",
   categories: {
     actions: "allow",
     inputs: "allow",
-    // Raw DOM stays opt-in (a duplicated profile): page text and markup can hold secrets.
-    dom: DEFAULT_CATEGORIES.dom,
+    // The page itself as captured (owner decision, backlog item 10); the archive is encrypted.
+    dom: "allow",
     screenshots: "allow",
     screenRecordings: "allow",
     console: "allow",
@@ -202,6 +202,19 @@ export const BUILT_IN_PROFILES: readonly RecordingProfile[] = [
   QA_PRESET,
   FULL_CAPTURE_PRESET
 ];
+
+/**
+ * Profiles "Restore recommended profiles" brings back: the editable Default and every preset.
+ * Each of them can be deleted.
+ */
+export const RECOMMENDED_PROFILE_IDS: readonly string[] = [
+  DEFAULT_PROFILE_ID,
+  ...BUILT_IN_PROFILES.map((profile) => profile.id)
+];
+
+export function isRecommendedProfileId(id: string): boolean {
+  return RECOMMENDED_PROFILE_IDS.includes(id);
+}
 
 export function findBuiltInProfile(id: string): RecordingProfile | undefined {
   return BUILT_IN_PROFILES.find((profile) => profile.id === id);

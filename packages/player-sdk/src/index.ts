@@ -213,8 +213,15 @@ export type NetworkWaterfallEntry = {
   requestBodyText?: string;
   responseBodyHash?: string;
   responseBodySize?: number;
+  /** Where the response came from when it skipped the network (CDP cache / service-worker flags). */
+  fromCache?: NetworkCacheSource;
+  /** Set when the archive holds no response, finish or failure: still open when recording stopped. */
+  pending?: true;
   eventIds: string[];
 };
+
+/** Cache layer that served a request, from CDP `requestServedFromCache` and response flags. */
+export type NetworkCacheSource = "memory" | "disk" | "prefetch" | "service-worker";
 
 /** Realtime network stream entry (WebSocket/SSE). */
 export type RealtimeNetworkEntry = {
@@ -230,6 +237,10 @@ export type RealtimeNetworkEntry = {
   opcode?: number;
   payloadLength?: number;
   payloadPreview?: string;
+  /** Blob hash of the full payload when it was too large to keep inline (see `getRealtimePayloadText`). */
+  payloadHash?: string;
+  /** The recorder hit the profile body limit; the stored payload is a prefix. */
+  payloadTruncated?: boolean;
   snapshot?: unknown;
 };
 
@@ -1221,10 +1232,37 @@ export class WebBlackboxPlayer {
             asString(frame?.payloadPreview) ??
             asString(payload?.data) ??
             asString(asRecord(payload?.response)?.payloadData),
+          payloadHash: asString(frame?.payloadHash) ?? asString(payload?.dataHash),
+          payloadTruncated: asBoolean(frame?.payloadTruncated) ?? asBoolean(payload?.dataTruncated),
           snapshot: payload
         };
       })
       .sort((left, right) => left.mono - right.mono);
+  }
+
+  /**
+   * Full text of a WebSocket frame or SSE message: the inline payload, or the blob the pipeline moved
+   * a large one into. Null for unknown events and events without a payload. Rejects when the event
+   * references a blob the archive does not hold, rather than returning the inline head as the frame.
+   */
+  public async getRealtimePayloadText(eventId: string): Promise<string | null> {
+    const entry = this.getRealtimeNetworkTimeline().find((item) => item.eventId === eventId);
+
+    if (!entry) {
+      return null;
+    }
+
+    if (!entry.payloadHash) {
+      return entry.payloadPreview ?? null;
+    }
+
+    const blob = await this.getBlob(entry.payloadHash);
+
+    if (!blob) {
+      throw new Error(`Realtime payload blob ${entry.payloadHash} is missing from the archive.`);
+    }
+
+    return new TextDecoder().decode(blob.bytes);
   }
 
   /** Returns storage timeline entries (cookie/local/session/idb/cache/sw). */
@@ -1988,8 +2026,29 @@ function toNetworkEntry(bucket: MutableNetworkBucket): NetworkWaterfallEntry {
     requestBodyText,
     responseBodyHash: asString(bodyPayload?.contentHash),
     responseBodySize: asNumber(bodyPayload?.size) ?? asNumber(bodyPayload?.sampledSize),
+    fromCache: readNetworkCacheSource(responseObject ?? responsePayload, finishedPayload),
+    pending: bucket.response || bucket.finished || bucket.failed ? undefined : true,
     eventIds: bucket.events.map((event) => event.id)
   };
+}
+
+function readNetworkCacheSource(
+  response: Record<string, unknown> | null,
+  finished: Record<string, unknown> | null
+): NetworkCacheSource | undefined {
+  if (response?.fromDiskCache === true) {
+    return "disk";
+  }
+
+  if (response?.fromMemoryCache === true || finished?.fromMemoryCache === true) {
+    return "memory";
+  }
+
+  if (response?.fromPrefetchCache === true) {
+    return "prefetch";
+  }
+
+  return response?.fromServiceWorker === true ? "service-worker" : undefined;
 }
 
 function detectStorageKind(type: WebBlackboxEventType): StorageTimelineEntry["kind"] {
@@ -2810,6 +2869,10 @@ function asString(value: unknown): string | undefined {
   }
 
   return undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function asNumber(value: unknown): number | undefined {

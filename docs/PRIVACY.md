@@ -26,8 +26,9 @@ What the extension records is decided by the recording profile in effect. The `D
 
 - `Lite` / `Full`: the defaults above on each transport (Full adds CDP screenshots).
 - `QA`: console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots, paths and titles of other tabs of the site. Content masking stays on (QA debugs real sites with the default rules).
-- `Full capture`: everything above plus input values and keys, storage values, all textual bodies up to 1 MiB, optional tab video and 60 Hz pointer sampling, **recorded raw**: content masking is off and no blocked selectors are kept.
-- No preset records the raw DOM (the page HTML). It stays opt-in: duplicate a preset and set `dom` to `allow`.
+- `Full capture`: everything above plus input values and keys, storage values, the raw DOM (the page HTML), all textual bodies up to 1 MiB, optional tab video and 60 Hz pointer sampling, **recorded raw**: content masking is off and no blocked selectors are kept.
+- The other presets do not record the raw DOM; a duplicated profile can set `dom` to `allow`.
+- Any profile can be deleted, the `Default` profile and the presets included; "Restore recommended profiles" in Options brings back the deleted ones. Recording needs at least one profile: with none left, the popup asks for one and links to Options → Profiles. Profiles from the enterprise policy (`managed:*`) cannot be deleted by the user. Site rules that point at a deleted profile are kept, flagged in Options, and skipped until the profile exists again.
 
 ## Parallel Tabs
 
@@ -49,11 +50,12 @@ Each profile carries its redaction rules (Options → Profiles):
 - While masking is on, password, one-time-code and payment card fields are never recorded (fields that are or were `type="password"`, password-like names, `current-password`, `new-password`, `one-time-code` and `cc-*` autocomplete fields). The development build watches for revealed password fields from page load; the store-safe build injects its content script on Start, so a field revealed before Start is caught only by its name or autocomplete. Values of fields inside `blockedSelectors` are not recorded unless an unmask selector at least as close to the field re-allows them; unmask selectors never expose password fields.
 - The redaction sandbox in Options applies the same functions as capture, so a profile's rules can be tested on pasted samples.
 
-Profiles above the standard Full ceiling, with any unmask selector, or with masking off are **extended**:
+Profiles above the standard Full ceiling, with any unmask selector, or with masking off are marked **extended** in the popup and Options. The mark is informational:
 
-- Extended profiles only run on hosts named by a site rule that selects them, by the profile store's extended-capture host list, or by the enterprise site allowlist. Elsewhere the profile runs at the Full preset levels with masking on: nothing it turned down is turned back on, unmask selectors are dropped, a profile that had masking off gets the Full preset's rules, and the archive records the downgrade. Leaving an allowed host applies the downgrade at once, before the page is probed for DOM-based rules.
+- A profile runs as chosen on every host. (Earlier builds limited extended profiles to hosts named by their rules and ran them as `Full` elsewhere; the Player still flags such archives.)
 - Site rules only pick a profile; recording always starts manually.
-- Enterprise `dataCategoryCaps` remain a ceiling for every profile.
+- A recording keeps the profile it started with. If the effective profile changes after Start (on navigation the site rules pick another profile, the profile is deleted or edited, or the enterprise policy changes what it may record), the recording is stopped. Rules that read the page title, meta tags or selectors are checked once the new page has loaded. What was captured until then is kept for export or deletion, the archive records the reason (`meta.config.profileCancel`), the toolbar badge shows `!`, and the popup says what changed and how to fix it (choose the profile explicitly instead of `Auto`, add a site rule, or start a new recording). The Player shows a banner for such archives.
+- Enterprise `dataCategoryCaps` remain a ceiling for every profile. The popup names the capped categories before Start, and the archive records them (`profile.enterpriseCapped`).
 
 ## Local Storage
 

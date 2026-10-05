@@ -226,7 +226,38 @@ export function describeNetworkStatus(
     return String(entry.status);
   }
 
-  return i18n.messages.networkStatusPending;
+  if (entry.pending) {
+    return i18n.messages.networkStatusPending;
+  }
+
+  // Closed without a response event: a cache hit Chrome finished directly, or a lost response.
+  return entry.fromCache
+    ? i18n.messages.networkStatusFromCache
+    : i18n.messages.networkStatusNoResponse;
+}
+
+/** Short status for compact UI (hover card, nearby requests): failure, HTTP status or state. */
+export function describeNetworkStatusPlain(
+  entry: NetworkWaterfallEntry,
+  locale: PlayerLocale = "en"
+): string {
+  const i18n = createPlayerI18n(locale);
+
+  if (entry.failed) {
+    return i18n.messages.networkStatusFailed;
+  }
+
+  if (typeof entry.status === "number") {
+    return String(entry.status);
+  }
+
+  if (entry.pending) {
+    return i18n.messages.networkStatusPendingPlain;
+  }
+
+  return entry.fromCache
+    ? i18n.messages.networkStatusFromCachePlain
+    : i18n.messages.networkStatusNoResponsePlain;
 }
 
 export function resolveNetworkStatusClass(entry: NetworkWaterfallEntry): string {

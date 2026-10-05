@@ -112,8 +112,16 @@ export type RecordingProfilesStore = {
   /** User profiles, including the editable "Default" one; built-in presets are never stored. */
   profiles: RecordingProfile[];
   rules: ProfileRule[];
-  /** Hosts where extended profiles (QA, Full capture) may run without a matching rule. */
+  /**
+   * Kept so older stores and exports still parse. Extended profiles are no longer limited to
+   * hosts, so nothing reads it.
+   */
   extendedCaptureHosts: string[];
+  /**
+   * Recommended profiles (Default and the built-in presets) the user deleted. Absent when none
+   * was, so stores that never deleted one keep their exact shape.
+   */
+  removedRecommendedProfileIds?: string[];
 };
 
 const idSchema = z
@@ -247,13 +255,14 @@ export const recordingProfilesStoreSchema = z
     defaultProfileId: idSchema,
     profiles: z.array(z.unknown()).max(MAX_PROFILES),
     rules: z.array(z.unknown()).max(MAX_RULES),
-    extendedCaptureHosts: patternListSchema
+    extendedCaptureHosts: patternListSchema,
+    removedRecommendedProfileIds: z.array(idSchema).max(MAX_LIST_ENTRIES).optional()
   })
   .strict();
 
 /**
  * Drops `unmaskSelectors` from a redaction profile. A profile keeps its unmask list only in
- * `RecordingProfile.unmaskSelectors`, which the extended-capture gate checks; a second copy
+ * `RecordingProfile.unmaskSelectors`, which marks the profile as extended; a second copy
  * inside `redaction` would unmask fields without making the profile extended.
  */
 export function withoutRedactionUnmask(redaction: RedactionProfile): RedactionProfile {
@@ -270,7 +279,10 @@ export function isManagedProfileId(id: string): boolean {
   return id.startsWith(MANAGED_PROFILE_ID_PREFIX);
 }
 
-/** Built-in and enterprise-managed profiles cannot be edited or deleted, only duplicated. */
+/**
+ * Built-in and enterprise-managed profiles cannot be edited, only duplicated. Built-in presets can
+ * be deleted (and restored); managed ones cannot.
+ */
 export function isReadOnlyProfileId(id: string): boolean {
   return isBuiltInProfileId(id) || isManagedProfileId(id);
 }
