@@ -67,6 +67,7 @@ import {
   shouldStopForCaptureScopeOriginChange,
   shouldStopForEnterpriseOriginPolicy as shouldStopForEnterpriseOriginPolicyInput
 } from "./capture-scope.js";
+import { primeChildSession } from "./child-session-prime.js";
 import { withCdpCommandTimeout, type CdpCommandOutcome } from "./cdp-command.js";
 import {
   buildLiteNetworkFailureRawEvent,
@@ -452,6 +453,8 @@ const OFFSCREEN_PORT_READY_MAX_ATTEMPTS = 200;
 const OFFSCREEN_PORT_READY_WAIT_MS = 25;
 const STOP_DRAIN_ACK_TIMEOUT_MS = 3_000;
 const CDP_ARTIFACT_TIMEOUT_MS = 5_000;
+// Priming a live child session takes milliseconds; see primeChildSession.
+const CHILD_SESSION_PRIME_TIMEOUT_MS = 5_000;
 const CDP_HEAP_SNAPSHOT_TIMEOUT_MS = 8_000;
 const SCREEN_RECORDING_OFFSCREEN_SOURCE = "tab";
 
@@ -2401,16 +2404,14 @@ async function primeChildCdpSession(
 
   runtime.enabledCdpSessions.add(childSessionId);
 
-  try {
-    await runtime.cdpRouter.enableBaseline(runtime.tabId, childSessionId);
-    await runtime.cdpRouter.enableAutoAttach(runtime.tabId, undefined, childSessionId);
-    await runtime.cdpRouter
-      .send({ tabId: runtime.tabId, sessionId: childSessionId }, "DOMStorage.enable")
-      .catch(() => undefined);
-    await runtime.cdpRouter
-      .send({ tabId: runtime.tabId, sessionId: childSessionId }, "Performance.enable")
-      .catch(() => undefined);
-  } catch {
+  const primed = await primeChildSession(
+    runtime.cdpRouter,
+    runtime.tabId,
+    childSessionId,
+    CHILD_SESSION_PRIME_TIMEOUT_MS
+  );
+
+  if (!primed) {
     runtime.enabledCdpSessions.delete(childSessionId);
   }
 }
