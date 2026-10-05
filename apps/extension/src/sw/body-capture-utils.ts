@@ -106,6 +106,28 @@ export function resolveFullBodyCaptureRule(
   return policyRule ?? fallbackRule;
 }
 
+export type InlineRequestBodyGateContext = {
+  eventType: string;
+  url?: string;
+  mimeType?: string;
+};
+
+/**
+ * Gate for request body text the recorder would inline under `body-allowlist`: it must also pass
+ * the body-capture rule (site policies, MIME allowlist, max bytes) that governs response bodies.
+ * Other inline bodies (WebSocket, SSE) carry no request URL and stay on the category gate.
+ */
+export function isInlineRequestBodyAllowed(
+  context: InlineRequestBodyGateContext,
+  resolveRule: (url: string, mimeType: string | undefined) => BodyCaptureRule
+): boolean {
+  if (context.eventType !== "network.request" || !context.url) {
+    return true;
+  }
+
+  return resolveRule(context.url, normalizeMimeType(context.mimeType)).enabled;
+}
+
 export function normalizeBodyCaptureMaxBytes(
   candidate: unknown,
   fallbackMaxBytes: number = DEFAULT_FALLBACK_MAX_BYTES

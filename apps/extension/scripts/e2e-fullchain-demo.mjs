@@ -32,6 +32,13 @@ import {
   waitFor
 } from "./lib/e2e-utils.mjs";
 import { waitForIndicatorGone, waitForIndicatorText } from "./lib/extension-ui.mjs";
+import {
+  attachFidelitySocketServer,
+  runCaptureFidelityScenario,
+  serveFidelityImage,
+  verifyCaptureFidelityArchive,
+  verifyPlayerRealtimePayload
+} from "./lib/e2e-capture-fidelity.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(root, "..");
@@ -69,6 +76,9 @@ const recordScreenInFullMode =
 const captureScreenshotsInFullMode =
   captureMode === "full" && (fullVisualCapture === "screenshots" || fullVisualCapture === "both");
 const configureRecorderOptions = (process.env.WB_E2E_CONFIGURE_OPTIONS ?? "1") !== "0";
+// Needs the configured console: allow / network: body-allowlist policy and CDP capture.
+const checkCaptureFidelity = captureMode === "full" && configureRecorderOptions;
+const playerSdkEntry = resolve(workspaceRoot, "packages/player-sdk/dist/index.js");
 const usePopupUiActions =
   process.env.WB_E2E_USE_POPUP_UI === undefined
     ? !headless
@@ -101,6 +111,7 @@ const state = {
   openedTargetIds: [],
   tempExtensionDir: null,
   server: null,
+  fidelitySockets: null,
   baseUrl: null
 };
 
@@ -132,6 +143,7 @@ async function main() {
   });
 
   state.server = server.server;
+  state.fidelitySockets = server.fidelitySockets;
 
   const demoUrl = `http://127.0.0.1:${server.port}/demo/`;
   const playerUrl = `http://127.0.0.1:${server.port}/player/`;
@@ -425,6 +437,11 @@ async function main() {
   const scenarioResult = await runDemoScenario(demoClient);
   assert(scenarioResult?.ok === true, "Demo scenario failed", scenarioResult);
 
+  const fidelityScenario = checkCaptureFidelity
+    ? await runCaptureFidelityScenario(demoClient)
+    : { ok: true, skipped: "needs-full-mode-with-configured-options" };
+  assert(fidelityScenario?.ok === true, "Capture fidelity scenario failed", fidelityScenario);
+
   const realWorldResult = await runRealWorldScenarioAddons({
     scenario: realWorldScenario,
     demoClient,
@@ -515,6 +532,20 @@ async function main() {
     archiveEvidenceResult.ok,
     "Exported archive missing real-world captured evidence",
     archiveEvidenceResult
+  );
+
+  const fidelityArchiveResult = checkCaptureFidelity
+    ? await verifyCaptureFidelityArchive({
+        archivePath: exportedPath,
+        passphrase: exportPassphrase,
+        playerSdkEntry,
+        scenario: fidelityScenario
+      })
+    : fidelityScenario;
+  assert(
+    fidelityArchiveResult.ok,
+    "Exported archive lost console text, WebSocket payloads or cache status",
+    fidelityArchiveResult
   );
 
   const screenRecordingArchiveResult = recordScreenInFullMode
@@ -627,6 +658,15 @@ async function main() {
     hoverResponseResult
   );
 
+  const playerRealtimeResult = checkCaptureFidelity
+    ? await verifyPlayerRealtimePayload(playerClient, fidelityScenario.sentChars, 20_000)
+    : fidelityScenario;
+  assert(
+    playerRealtimeResult.ok,
+    "Player does not show the full WebSocket frame",
+    playerRealtimeResult
+  );
+
   const playerScreenRecordingResult = recordScreenInFullMode
     ? await verifyPlayerScreenRecording(playerClient, 25_000)
     : { ok: true, skipped: "screen-recording-e2e-disabled" };
@@ -656,6 +696,8 @@ async function main() {
   console.log("Demo URL:", demoUrl);
   console.log("Player URL:", playerUrl);
   console.log("Capture mode:", captureMode);
+  console.log("Capture fidelity (archive):", JSON.stringify(fidelityArchiveResult));
+  console.log("Capture fidelity (player):", JSON.stringify(playerRealtimeResult));
   console.log("Full visual capture:", fullVisualCapture);
   console.log("Record screen:", recordScreenInFullMode);
   console.log("Capture screenshots:", captureScreenshotsInFullMode);
@@ -759,6 +801,10 @@ async function startDemoServer({ demoDir, playerDir, artifactsDir }) {
         return;
       }
 
+      if (serveFidelityImage(pathname, response)) {
+        return;
+      }
+
       if (pathname.startsWith("/api/")) {
         await handleApiRequest(request, response, requestUrl, tasks);
         return;
@@ -821,7 +867,8 @@ async function startDemoServer({ demoDir, playerDir, artifactsDir }) {
 
   return {
     server,
-    port: address.port
+    port: address.port,
+    fidelitySockets: attachFidelitySocketServer(server)
   };
 }
 
@@ -4009,6 +4056,9 @@ async function cleanup() {
     });
     state.logStream = null;
   }
+
+  state.fidelitySockets?.closeAll();
+  state.fidelitySockets = null;
 
   if (state.server) {
     await new Promise((resolve) => {
