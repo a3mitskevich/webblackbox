@@ -454,12 +454,17 @@ function describeWhere(draft: Draft, thirdParty: boolean): string {
 }
 
 function finishGroup(draft: Draft): ProblemGroup {
-  const { places: _places, thirdPartyFlags, ...group } = draft;
   const occurrences = [...draft.occurrences].sort((left, right) => left.mono - right.mono);
-  const thirdParty = thirdPartyFlags.every(Boolean);
+  const thirdParty = draft.thirdPartyFlags.every(Boolean);
 
   return {
-    ...group,
+    key: draft.key,
+    category: draft.category,
+    ...(draft.status !== undefined ? { status: draft.status } : {}),
+    ...(draft.reason !== undefined ? { reason: draft.reason } : {}),
+    ...(draft.errorCode !== undefined ? { errorCode: draft.errorCode } : {}),
+    ...(draft.message !== undefined ? { message: draft.message } : {}),
+    hosts: draft.hosts,
     where: describeWhere(draft, thirdParty),
     thirdParty,
     count: occurrences.length,
@@ -479,7 +484,5 @@ function compareGroups(left: ProblemGroup, right: ProblemGroup): number {
 
 /** Every occurrence of every group in time order (E / Shift+E, the Errors lane). */
 export function listProblemOccurrences(groups: readonly ProblemGroup[]): ProblemOccurrence[] {
-  return groups
-    .flatMap((group) => group.occurrences)
-    .sort((left, right) => left.mono - right.mono);
+  return groups.flatMap((group) => group.occurrences).sort((left, right) => left.mono - right.mono);
 }
