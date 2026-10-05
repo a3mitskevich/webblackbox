@@ -30,8 +30,8 @@ type Categories = CapturePolicy["categories"];
 export function capturesPageStorageInFullMode(categories: Categories): boolean {
   return (
     ["names-only", "lengths-only", "allow"].includes(categories.storage) ||
-    categories.indexedDb === "names-only" ||
-    categories.cookies === "names-only"
+    ["names-only", "allow"].includes(categories.indexedDb) ||
+    ["names-only", "allow"].includes(categories.cookies)
   );
 }
 
@@ -42,10 +42,11 @@ export function capturesRawDom(categories: Categories): boolean {
 
 /**
  * Whether a page-side raw event that full mode normally drops (CDP covers it) is kept because
- * the profile asks for something CDP does not record: storage details or the raw DOM.
+ * the profile asks for something CDP does not record: storage details, or the raw DOM and how it
+ * changes (mutation summaries; the agent re-snapshots the page after changes).
  */
 export function isPageEventKeptInFullMode(rawType: string, categories: Categories): boolean {
-  if (rawType === "snapshot") {
+  if (rawType === "snapshot" || rawType === "mutation") {
     return capturesRawDom(categories);
   }
 

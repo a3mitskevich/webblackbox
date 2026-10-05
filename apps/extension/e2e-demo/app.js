@@ -303,18 +303,27 @@ const FIDELITY_SOCKET_TIMEOUT_MS = 5_000;
  * loaded again by a same-origin iframe, which Chrome serves from its memory cache.
  */
 async function runFidelityScenario() {
-  const consoleText = `${FIDELITY_CONSOLE_MARKER} ${"lobby state segment ".repeat(300)}`;
-  logFromDeepStack(FIDELITY_STACK_DEPTH, consoleText);
-
+  const consoleResult = runConsoleFidelityScenario();
   const socket = await exchangeSignalRFrames();
   const image = await loadImageTwice(FIDELITY_IMAGE_PATH);
 
   return {
+    ...consoleResult,
     ok: socket.ok && image.ok,
-    consoleMarker: FIDELITY_CONSOLE_MARKER,
-    consoleChars: consoleText.length,
     ...socket,
     ...image
+  };
+}
+
+/** The console part of the fidelity scenario; lite mode records it through the page hook. */
+function runConsoleFidelityScenario() {
+  const consoleText = `${FIDELITY_CONSOLE_MARKER} ${"lobby state segment ".repeat(300)}`;
+  logFromDeepStack(FIDELITY_STACK_DEPTH, consoleText);
+
+  return {
+    ok: true,
+    consoleMarker: FIDELITY_CONSOLE_MARKER,
+    consoleChars: consoleText.length
   };
 }
 
@@ -391,6 +400,7 @@ async function loadImageTwice(src) {
 window.__wbDemo = {
   runScenario,
   runFidelityScenario,
+  runConsoleFidelityScenario,
   snapshot() {
     return {
       tasks: state.tasks.length,
