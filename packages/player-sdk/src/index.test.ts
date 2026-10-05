@@ -6,6 +6,10 @@ import type { ChunkTimeIndexEntry, ExportManifest, WebBlackboxEvent } from "@web
 
 import { WebBlackboxPlayer } from "./index.js";
 
+// Building and opening a 16 MB, 30k-event archive asserts memory, not speed; vitest's 5 s default
+// is too tight for shared CI runners.
+const LARGE_ARCHIVE_TEST_TIMEOUT_MS = 30_000;
+
 describe("WebBlackboxPlayer", () => {
   it("surfaces pointer actions, rage clicks and dead clicks in the bug report", async () => {
     const player = await WebBlackboxPlayer.open(await createPointerFixtureArchive());
@@ -228,42 +232,46 @@ describe("WebBlackboxPlayer", () => {
     }
   });
 
-  it("keeps large archive player pressure paths bounded", async () => {
-    const bytes = await createLargePressureArchive();
-    const heapSamples = [process.memoryUsage().heapUsed];
-    const player = await WebBlackboxPlayer.open(bytes);
-    heapSamples.push(process.memoryUsage().heapUsed);
+  it(
+    "keeps large archive player pressure paths bounded",
+    async () => {
+      const bytes = await createLargePressureArchive();
+      const heapSamples = [process.memoryUsage().heapUsed];
+      const player = await WebBlackboxPlayer.open(bytes);
+      heapSamples.push(process.memoryUsage().heapUsed);
 
-    const searchResults = player.search("large-session-checkpoint", 25);
-    heapSamples.push(process.memoryUsage().heapUsed);
-    const networkWaterfall = player.getNetworkWaterfall();
-    heapSamples.push(process.memoryUsage().heapUsed);
-    const actionTimeline = player.getActionTimeline();
-    heapSamples.push(process.memoryUsage().heapUsed);
-    const replayDiagnostics = player.getReplayDiagnostics({
-      actions: actionTimeline,
-      waterfall: networkWaterfall
-    });
-    heapSamples.push(process.memoryUsage().heapUsed);
-    const domSnapshots = player.getDomSnapshots();
-    heapSamples.push(process.memoryUsage().heapUsed);
-    const firstScreenshot = await player.getBlob("large-shot-0000");
-    const firstResponseBody = await player.getBlob("large-body-0000");
-    heapSamples.push(process.memoryUsage().heapUsed);
-    const heapPeak = Math.max(...heapSamples);
-    const heapBaseline = Math.min(...heapSamples);
+      const searchResults = player.search("large-session-checkpoint", 25);
+      heapSamples.push(process.memoryUsage().heapUsed);
+      const networkWaterfall = player.getNetworkWaterfall();
+      heapSamples.push(process.memoryUsage().heapUsed);
+      const actionTimeline = player.getActionTimeline();
+      heapSamples.push(process.memoryUsage().heapUsed);
+      const replayDiagnostics = player.getReplayDiagnostics({
+        actions: actionTimeline,
+        waterfall: networkWaterfall
+      });
+      heapSamples.push(process.memoryUsage().heapUsed);
+      const domSnapshots = player.getDomSnapshots();
+      heapSamples.push(process.memoryUsage().heapUsed);
+      const firstScreenshot = await player.getBlob("large-shot-0000");
+      const firstResponseBody = await player.getBlob("large-body-0000");
+      heapSamples.push(process.memoryUsage().heapUsed);
+      const heapPeak = Math.max(...heapSamples);
+      const heapBaseline = Math.min(...heapSamples);
 
-    expect(bytes.byteLength).toBeGreaterThan(16 * 1024 * 1024);
-    expect(player.events.length).toBeGreaterThan(30_000);
-    expect(searchResults).toHaveLength(25);
-    expect(networkWaterfall).toHaveLength(6_000);
-    expect(actionTimeline).toHaveLength(6_000);
-    expect(replayDiagnostics).toHaveLength(6_000);
-    expect(domSnapshots).toHaveLength(300);
-    expect(firstScreenshot?.bytes.byteLength).toBe(32 * 1024);
-    expect(firstResponseBody?.bytes.byteLength).toBe(16 * 1024);
-    expect(heapPeak - heapBaseline).toBeLessThan(512 * 1024 * 1024);
-  });
+      expect(bytes.byteLength).toBeGreaterThan(16 * 1024 * 1024);
+      expect(player.events.length).toBeGreaterThan(30_000);
+      expect(searchResults).toHaveLength(25);
+      expect(networkWaterfall).toHaveLength(6_000);
+      expect(actionTimeline).toHaveLength(6_000);
+      expect(replayDiagnostics).toHaveLength(6_000);
+      expect(domSnapshots).toHaveLength(300);
+      expect(firstScreenshot?.bytes.byteLength).toBe(32 * 1024);
+      expect(firstResponseBody?.bytes.byteLength).toBe(16 * 1024);
+      expect(heapPeak - heapBaseline).toBeLessThan(512 * 1024 * 1024);
+    },
+    LARGE_ARCHIVE_TEST_TIMEOUT_MS
+  );
 
   it("opens archives with compressed chunk codecs", async () => {
     const codecs = supportedCompressedCodecsForTest();
