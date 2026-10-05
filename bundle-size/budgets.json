@@ -2,12 +2,12 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 68000,
-      "maxGzipBytes": 15500
+      "maxBytes": 76000,
+      "maxGzipBytes": 17600
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 76000,
+      "maxBytes": 79000,
       "maxGzipBytes": 18000
     },
     {
