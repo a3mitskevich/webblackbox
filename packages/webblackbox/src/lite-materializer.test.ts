@@ -152,7 +152,8 @@ describe("lite-materializer", () => {
     expect(result).not.toBeNull();
     expect(putBlobCalls).toHaveLength(1);
     expect(putBlobCalls[0]?.mime).toBe("application/x-www-form-urlencoded");
-    expect(putBlobCalls[0]?.text).toContain("[REDACTED]");
+    expect(putBlobCalls[0]?.text.startsWith("token=[REDACTED]&mode=lite&chunk=")).toBe(true);
+    expect(putBlobCalls[0]?.text).not.toContain("secret-token");
     expect(putBlobCalls[0]?.bytes.byteLength).toBeLessThanOrEqual(4 * 1024);
     expect(putBlobCalls[0]?.bytes.byteLength).toBeLessThan(
       new TextEncoder().encode(body).byteLength
@@ -164,6 +165,71 @@ describe("lite-materializer", () => {
       redacted: true,
       truncated: true
     });
+  });
+
+  it("redacts base64-encoded textual network bodies", async () => {
+    const config = cloneConfig();
+    config.sampling.bodyCaptureMaxBytes = 4 * 1024;
+    const putBlobCalls: string[] = [];
+    const body = "login=qa%40example.test&password=hunter2&remember=1";
+
+    const result = await materializeLiteRawEvent(
+      createRawEvent("networkBody", {
+        reqId: "R-b64",
+        url: "https://example.test/api/login",
+        mimeType: "application/x-www-form-urlencoded; charset=UTF-8",
+        encoding: "base64",
+        body: Buffer.from(body, "utf8").toString("base64")
+      }),
+      {
+        config,
+        putBlob: async (_mime, bytes) => {
+          putBlobCalls.push(new TextDecoder().decode(bytes));
+          return "hash-b64";
+        }
+      }
+    );
+
+    expect(putBlobCalls).toEqual(["login=qa%40example.test&password=[REDACTED]&remember=1"]);
+    expect(result?.payload).toMatchObject({ contentHash: "hash-b64", redacted: true });
+  });
+
+  it("keeps base64 binary network bodies byte-exact and unredacted", async () => {
+    const config = cloneConfig();
+    config.sampling.bodyCaptureMaxBytes = 4 * 1024;
+    config.sitePolicies = [
+      {
+        originPattern: "https://example.test",
+        mode: "lite",
+        enabled: true,
+        allowBodyCapture: true,
+        bodyMimeAllowlist: ["application/octet-stream"],
+        pathAllowlist: [],
+        pathDenylist: []
+      }
+    ];
+    const bytes = new Uint8Array([0, 1, 2, ...new TextEncoder().encode("password=hunter2")]);
+    const putBlobCalls: Uint8Array[] = [];
+
+    const result = await materializeLiteRawEvent(
+      createRawEvent("networkBody", {
+        reqId: "R-bin",
+        url: "https://example.test/api/blob",
+        mimeType: "application/octet-stream",
+        encoding: "base64",
+        body: Buffer.from(bytes).toString("base64")
+      }),
+      {
+        config,
+        putBlob: async (_mime, blobBytes) => {
+          putBlobCalls.push(blobBytes);
+          return "hash-bin";
+        }
+      }
+    );
+
+    expect([...(putBlobCalls[0] ?? [])]).toEqual([...bytes]);
+    expect(result?.payload).toMatchObject({ redacted: false });
   });
 
   it("respects site policy deny rules for body capture", async () => {

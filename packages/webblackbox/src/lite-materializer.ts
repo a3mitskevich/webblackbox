@@ -1,4 +1,4 @@
-import type { RecorderConfig } from "@webblackbox/protocol";
+import { redactBodyBytes, redactBodyText, type RecorderConfig } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
 import { decodeScreenshotDataUrl } from "./screenshot-data-url.js";
@@ -20,7 +20,6 @@ const DEFAULT_BODY_MIME_ALLOWLIST = [
   "application/javascript",
   "application/x-www-form-urlencoded"
 ];
-const REDACTED_TOKEN = "[REDACTED]";
 const DEFAULT_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
 const DEFAULT_DOM_SNAPSHOT_MAX_BYTES = 1_500 * 1024;
@@ -271,15 +270,18 @@ async function materializeLiteNetworkBody(
     return null;
   }
 
+  const patterns = context.config.redaction.redactBodyPatterns;
   let bytes: Uint8Array;
   let redacted = payload.redacted === true;
 
   if (encoding === "utf8") {
-    const redaction = redactBodyText(body, context.config.redaction.redactBodyPatterns);
+    const redaction = redactBodyText(body, patterns);
     redacted = redacted || redaction.redacted;
     bytes = new TextEncoder().encode(redaction.value);
   } else {
-    bytes = decodeBase64(body);
+    const redaction = redactBodyBytes(decodeBase64(body), patterns, { mimeType });
+    redacted = redacted || redaction.redacted;
+    bytes = redaction.bytes;
   }
 
   if (bytes.byteLength === 0) {
@@ -482,46 +484,6 @@ function normalizeMimeType(value: string | null): string | undefined {
   const [mime] = value.split(";");
   const normalized = mime?.trim().toLowerCase();
   return normalized && normalized.length > 0 ? normalized : undefined;
-}
-
-function redactBodyText(
-  value: string,
-  patterns: string[]
-): {
-  value: string;
-  redacted: boolean;
-} {
-  if (patterns.length === 0 || value.length === 0) {
-    return {
-      value,
-      redacted: false
-    };
-  }
-
-  let output = value;
-  let touched = false;
-
-  for (const pattern of patterns) {
-    const normalized = pattern.trim();
-
-    if (!normalized) {
-      continue;
-    }
-
-    const regex = new RegExp(normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-
-    if (!regex.test(output)) {
-      continue;
-    }
-
-    output = output.replace(regex, REDACTED_TOKEN);
-    touched = true;
-  }
-
-  return {
-    value: output,
-    redacted: touched
-  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

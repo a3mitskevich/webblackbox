@@ -9,6 +9,8 @@ import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_EXPORT_POLICY,
   DEFAULT_RECORDER_CONFIG,
+  redactBodyBytes,
+  redactBodyText,
   sanitizeUrlForPrivacy,
   type CapturePolicy,
   type CaptureMode,
@@ -60,7 +62,6 @@ import {
   normalizeBodyCaptureMaxBytes as normalizeBodyCaptureMaxBytesUtil,
   isTextualMimeType as isTextualMimeTypeUtil,
   normalizeMimeType as normalizeMimeTypeUtil,
-  redactBodyText as redactBodyTextUtil,
   resolveFullBodyCaptureRule as resolveFullBodyCaptureRuleUtil,
   resolveLiteBodyCaptureRule as resolveLiteBodyCaptureRuleUtil,
   transformResponseBodyForCapture
@@ -1666,15 +1667,21 @@ async function materializeLiteNetworkBody(
     return null;
   }
 
+  const patterns = runtime.config.redaction.redactBodyPatterns;
   let bytes: Uint8Array;
   let redacted = payload.redacted === true;
 
   if (encoding === "utf8") {
-    const redaction = redactBodyText(body, runtime.config.redaction.redactBodyPatterns);
+    const redaction = redactBodyText(body, patterns, LITE_BODY_REDACTED_TOKEN);
     redacted = redacted || redaction.redacted;
     bytes = new TextEncoder().encode(redaction.value);
   } else {
-    bytes = decodeBase64(body);
+    const redaction = redactBodyBytes(decodeBase64(body), patterns, {
+      mimeType,
+      redactionToken: LITE_BODY_REDACTED_TOKEN
+    });
+    redacted = redacted || redaction.redacted;
+    bytes = redaction.bytes;
   }
 
   if (bytes.byteLength === 0) {
@@ -2532,6 +2539,7 @@ async function captureResponseBody(
     base64Encoded: response.base64Encoded === true,
     redactPatterns: runtime.config.redaction.redactBodyPatterns,
     maxBytes: captureRule.maxBytes,
+    mimeType: normalizedMime,
     redactionToken: LITE_BODY_REDACTED_TOKEN,
     decodeBase64
   });
@@ -3496,16 +3504,6 @@ function isMimeAllowed(allowlist: string[], mimeType: string | undefined): boole
 
 function normalizeMimeType(value: string | null): string | undefined {
   return normalizeMimeTypeUtil(value);
-}
-
-function redactBodyText(
-  value: string,
-  patterns: string[]
-): {
-  value: string;
-  redacted: boolean;
-} {
-  return redactBodyTextUtil(value, patterns, LITE_BODY_REDACTED_TOKEN);
 }
 
 function normalizeFullModePayload(method: string, params: unknown): unknown {

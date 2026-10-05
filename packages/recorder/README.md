@@ -189,24 +189,36 @@ Freeze conditions:
 ## Redaction
 
 ```typescript
-import { redactPayload } from "@webblackbox/recorder";
+import { createRedactionHashKey, redactPayload } from "@webblackbox/recorder";
 
-const redacted = redactPayload(payload, {
-  redactHeaders: ["authorization", "cookie", "set-cookie"],
-  redactCookieNames: ["token", "session"],
-  redactBodyPatterns: ["password", "secret"],
-  blockedSelectors: [".secret", "input[type='password']"],
-  hashSensitiveValues: true // SHA-256 hash instead of [REDACTED]
-});
+// One key per session, kept in memory only (never export it with the archive).
+const hashKey = createRedactionHashKey();
+
+const redacted = redactPayload(
+  payload,
+  {
+    redactHeaders: ["authorization", "cookie", "set-cookie"],
+    redactCookieNames: ["token", "session"],
+    redactBodyPatterns: ["password", "secret"],
+    blockedSelectors: [".secret", "input[type='password']"],
+    hashSensitiveValues: true // keyed HMAC-SHA-256 hash instead of [REDACTED]
+  },
+  { hashKey }
+);
 ```
+
+`WebBlackboxRecorder` creates its own per-session key; without `hashKey`, `redactPayload` falls back to a random key shared by the current JS realm.
 
 Redaction is applied recursively through nested objects and supports:
 
-- HTTP header value masking by header name
+- HTTP header value masking by header name, including unlisted credential-like names (e.g. `X-Access-Token`)
+- Query/fragment stripping for URL-valued headers (`Location`, `Referer`, `:path`, …) and URL fields
 - Cookie value masking by cookie name
-- Body content masking by regex pattern
+- Payload key and string masking by body pattern
 - DOM element masking by CSS selector
-- Optional SHA-256 hashing for value correlation
+- Optional HMAC-SHA-256 hashing (per-session key) for value correlation within a session
+
+Network body blobs are redacted separately with `redactBodyText` / `redactBodyBytes` from `@webblackbox/protocol`, which mask the values of sensitive keys in JSON, form, query, XML and `key: value` text.
 
 ## Plugins
 
