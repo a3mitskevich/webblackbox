@@ -1,11 +1,6 @@
 import type { ChromeApi } from "../shared/chrome-api.js";
 import type { ExtensionMessageKey } from "../shared/i18n.js";
 import {
-  normalizeEnterprisePolicy,
-  readManagedEnterprisePolicy
-} from "../shared/options-storage.js";
-import { CAPTURE_CATEGORY_KEYS } from "../shared/profiles/categories.js";
-import {
   isReadOnlyProfileId,
   PROFILES_STORAGE_KEY,
   type ProfileRule,
@@ -14,20 +9,30 @@ import {
 } from "../shared/profiles/model.js";
 import {
   describeIssues,
-  parseManagedProfilesPolicy,
-  resolveProfilesState,
   serializeProfilesStore,
   syncDefaultProfileWithLegacyOptions,
   type ProfilesState
 } from "../shared/profiles/storage.js";
-import {
-  createProfilesExportFile,
-  previewProfilesImport,
-  type ProfilesDiff
-} from "../shared/profiles/transfer.js";
+import { previewProfilesImport, type ProfilesDiff } from "../shared/profiles/transfer.js";
 import { openConfirmDialog } from "../shared/ui/dialogs.js";
 import { preserveFocus } from "../shared/ui/focus.js";
-import { el, readCheckbox, readField } from "./dom.js";
+import { el, readField } from "./dom.js";
+import {
+  changedItemIds,
+  comparableStoreJson,
+  diffEditorSections,
+  guardEditorClose,
+  markUnsavedItems,
+  revertRule,
+  type EditorChanges,
+  type EditorCloseHost
+} from "./editor-close-guard.js";
+import { readProfileForm, readRulesFromDom } from "./editor-dom-read.js";
+import {
+  downloadProfilesExport,
+  loadEnterpriseSiteAllowlist,
+  loadProfilesState
+} from "./editor-storage.js";
 import {
   blocksLeavingProfileForm,
   captureInvalidRangeInputs,
@@ -40,12 +45,10 @@ import { bindRuleDragging, shownRuleIds } from "./rules-drag.js";
 import { readSandboxInputs, runRedactionSandbox, type SandboxState } from "./sandbox-model.js";
 import { createProfileForm } from "./profile-form.js";
 import {
-  applyProfileFormValues,
   createUniqueId,
   deleteProfileFromStore,
   duplicateIntoStore,
   reorderRules,
-  ruleFromFormValues,
   sortRulesForDisplay,
   stableJson
 } from "./profile-form-model.js";
@@ -63,6 +66,13 @@ export type ProfilesEditorDeps = {
   enterprisePolicyKey: string;
   /** Called after any change of the draft (typing included) so the page can show dirty state. */
   onChange?: () => void;
+  /**
+   * Saves everything unsaved on the page (a close prompt's "Save changes"); resolves true when
+   * nothing is left unsaved. Without it the prompt saves the editor alone.
+   */
+  requestSave?: () => Promise<boolean>;
+  /** False while the page blocks Save (an invalid field): close prompts then offer no Save. */
+  canSave?: () => boolean;
 };
 
 /** Where each part of the editor renders; the settings page puts them in different sections. */
@@ -80,6 +90,8 @@ export type ProfilesEditorHandle = {
   applyGeneralOptions(payload: unknown): void;
   /** The draft (including open forms and rule rows) differs from what was loaded or saved. */
   isDirty(): boolean;
+  /** Which settings sections (profiles, rules) hold the unsaved changes. */
+  changedSections(): EditorChanges;
   /** A v2 profiles store exists in storage (otherwise Default mirrors the general options). */
   hasStoredStore(): boolean;
   /** Checks that the draft can be saved, without writing anything. */
@@ -105,8 +117,10 @@ type EditorState = {
   test: { url: string; title: string; incognito: boolean };
   /** Managed-policy hosts where extended profiles may run (Test URL applies them too). */
   enterpriseSiteAllowlist: readonly string[];
-  /** Stable JSON of the draft as last loaded/saved, after one DOM round trip. */
-  baseline: string;
+  /** The draft as last loaded/saved, after one DOM round trip: what "unsaved" compares with. */
+  savedStore: RecordingProfilesStore;
+  /** Stable JSON of the open profile as its form first rendered; later edits differ from it. */
+  formBaseline?: string;
 };
 
 type Editor = {
@@ -129,7 +143,7 @@ export async function mountProfilesEditor(
   providedSlots?: ProfilesEditorSlots
 ): Promise<ProfilesEditorHandle> {
   const slots = providedSlots ?? createDefaultSlots(root);
-  const profilesState = await loadState(deps);
+  const profilesState = await loadProfilesState(deps);
   const enterpriseSiteAllowlist = await loadEnterpriseSiteAllowlist(deps);
   const editor: Editor = {
     root,
@@ -142,7 +156,7 @@ export async function mountProfilesEditor(
       openRuleIds: new Set(),
       test: { url: "", title: "", incognito: false },
       enterpriseSiteAllowlist,
-      baseline: ""
+      savedStore: structuredClone(profilesState.store)
     }
   };
 
@@ -161,9 +175,15 @@ export async function mountProfilesEditor(
         ? syncDefaultProfileWithLegacyOptions({ ...state.draft, profiles: [snapshot] }, payload)
             .profiles[0]
         : undefined;
+      // Not an edit made in the form: it must not make closing the form ask.
+      state.formBaseline = undefined;
       render(editor);
     },
     isDirty: () => isDirty(editor),
+    changedSections: () => {
+      syncDraftFromDom(editor);
+      return diffEditorSections(editor.state.draft, editor.state.savedStore);
+    },
     hasStoredStore: () => !editor.state.profilesState.legacy,
     validate: () => {
       syncDraftFromDom(editor);
@@ -180,27 +200,9 @@ export async function mountProfilesEditor(
         };
       }
     },
-    save: async () => {
-      syncDraftFromDom(editor);
-      await saveDraft(editor);
-      const { state } = editor;
-
-      // What was just saved is the new baseline for Cancel.
-      if (state.editingId && !state.status?.error) {
-        openProfileForm(state, state.editingId);
-      }
-
-      render(editor);
-
-      if (state.status?.error) {
-        return { ok: false, error: state.status.text };
-      }
-
-      resetBaseline(editor);
-      return { ok: true };
-    },
+    save: () => saveEditor(editor),
     reload: async () => {
-      editor.state.profilesState = await loadState(deps);
+      editor.state.profilesState = await loadProfilesState(deps);
       editor.state.enterpriseSiteAllowlist = await loadEnterpriseSiteAllowlist(deps);
       discardDraft(editor);
     },
@@ -208,35 +210,30 @@ export async function mountProfilesEditor(
   };
 }
 
+async function saveEditor(editor: Editor): Promise<ProfilesSaveResult> {
+  syncDraftFromDom(editor);
+  await saveDraft(editor);
+  const { state } = editor;
+
+  // What was just saved is the new baseline for Cancel.
+  if (state.editingId && !state.status?.error) {
+    openProfileForm(state, state.editingId);
+  }
+
+  render(editor);
+
+  if (state.status?.error) {
+    return { ok: false, error: state.status.text };
+  }
+
+  resetBaseline(editor);
+  return { ok: true };
+}
+
 function createDefaultSlots(root: HTMLElement): ProfilesEditorSlots {
   const slots = { profiles: el("div"), rules: el("div"), sandbox: el("div"), transfer: el("div") };
   root.append(slots.profiles, slots.rules, slots.sandbox, slots.transfer);
   return slots;
-}
-
-async function loadEnterpriseSiteAllowlist(deps: ProfilesEditorDeps): Promise<string[]> {
-  const managedPolicy = await readManagedEnterprisePolicy(
-    deps.chromeApi?.storage?.managed,
-    deps.enterprisePolicyKey
-  );
-
-  return normalizeEnterprisePolicy(managedPolicy).siteAllowlist;
-}
-
-async function loadState(deps: ProfilesEditorDeps): Promise<ProfilesState> {
-  const local = await deps.chromeApi?.storage?.local
-    ?.get([PROFILES_STORAGE_KEY, deps.legacyOptionsKey])
-    .catch(() => undefined);
-  const managedPolicy = await readManagedEnterprisePolicy(
-    deps.chromeApi?.storage?.managed,
-    deps.enterprisePolicyKey
-  );
-
-  return resolveProfilesState({
-    rawProfilesStore: local?.[PROFILES_STORAGE_KEY],
-    rawLegacyOptions: local?.[deps.legacyOptionsKey],
-    managed: parseManagedProfilesPolicy(managedPolicy)
-  });
 }
 
 function discardDraft(editor: Editor): void {
@@ -253,12 +250,19 @@ function discardDraft(editor: Editor): void {
 /** The baseline goes through the same DOM read-back as later edits, so it compares equal. */
 function resetBaseline(editor: Editor): void {
   syncDraftFromDom(editor);
-  editor.state.baseline = stableJson(editor.state.draft);
+  editor.state.savedStore = structuredClone(editor.state.draft);
+  refreshUnsavedMarks(editor);
 }
 
 function isDirty(editor: Editor): boolean {
   syncDraftFromDom(editor);
-  return stableJson(editor.state.draft) !== editor.state.baseline;
+  return comparableStoreJson(editor.state.draft) !== comparableStoreJson(editor.state.savedStore);
+}
+
+/** "Unsaved" badges on the profile cards and rule rows, from what is typed in the page. */
+function refreshUnsavedMarks(editor: Editor): void {
+  syncDraftFromDom(editor);
+  markUnsavedItems(editor.root, changedItemIds(editor.state.draft, editor.state.savedStore));
 }
 
 function buildCatalog(state: EditorState): RecordingProfile[] {
@@ -355,6 +359,14 @@ function render(editor: Editor): void {
       void importFile(editor, event.currentTarget as HTMLInputElement);
     });
   validateRuleTextFields(slots.rules, t);
+
+  if (editing && state.formBaseline === undefined) {
+    syncOpenProfileForm(editor);
+    const shown = state.draft.profiles.find((profile) => profile.id === state.editingId);
+    state.formBaseline = shown ? stableJson(shown) : undefined;
+  }
+
+  markUnsavedItems(editor.root, changedItemIds(state.draft, state.savedStore));
 }
 
 function runTester(editor: Editor, catalog = buildCatalog(editor.state)) {
@@ -386,12 +398,28 @@ function refreshTester(editor: Editor): void {
     ?.replaceChildren(...describeTestResult(runTester(editor), deps.t));
 }
 
-function handleAction(editor: Editor, target: HTMLElement, action: string, update: Update): void {
+function handleAction(
+  editor: Editor,
+  target: HTMLElement,
+  action: string,
+  update: Update,
+  confirmed = false
+): void {
   const { state } = editor;
   const profileId = target.closest<HTMLElement>("[data-profile-id]")?.dataset.profileId ?? "";
   const ruleIndex = Number(target.closest<HTMLElement>("[data-rule-index]")?.dataset.ruleIndex);
 
   if (blocksLeavingProfileForm(action, editor.root)) {
+    return;
+  }
+
+  // Closing a profile form or a rule row with unsaved edits waits for the user's answer.
+  if (
+    !confirmed &&
+    guardEditorClose(closeGuardHost(editor, update), target, action, () =>
+      handleAction(editor, target, action, update, true)
+    )
+  ) {
     return;
   }
 
@@ -453,7 +481,7 @@ function handleAction(editor: Editor, target: HTMLElement, action: string, updat
       return toggleRule(state, target);
     case "profiles-export":
       syncDraftFromDom(editor);
-      return downloadExport(state.draft);
+      return downloadProfilesExport(state.draft);
     case "profiles-import-apply":
       return update(() => {
         if (state.importPreview) {
@@ -491,6 +519,7 @@ function bindEditor(editor: Editor): void {
       restoreInvalidRangeInputs(root, invalidRanges, deps.t);
     };
     preserveFocus(root, rerender, { scopeAttributes: FOCUS_SCOPES });
+    refreshUnsavedMarks(editor);
     deps.onChange?.();
   };
 
@@ -519,7 +548,7 @@ function bindEditor(editor: Editor): void {
     }
 
     validateRuleTextInput(target, deps.t);
-
+    refreshUnsavedMarks(editor);
     deps.onChange?.();
   });
   root.addEventListener("change", (event) => {
@@ -534,6 +563,7 @@ function bindEditor(editor: Editor): void {
       target?.name !== "profilesImport" &&
       target?.closest("[data-profile-form], .wb-rules-panel")
     ) {
+      refreshUnsavedMarks(editor);
       deps.onChange?.();
     }
   });
@@ -545,6 +575,30 @@ function bindEditor(editor: Editor): void {
       };
     })
   );
+}
+
+/** What the close prompts need from the editor, read when the action happens. */
+function closeGuardHost(editor: Editor, update: Update): EditorCloseHost {
+  const { state, deps } = editor;
+
+  return {
+    t: deps.t,
+    canSave: deps.canSave?.() ?? true,
+    save: deps.requestSave ?? (async () => (await saveEditor(editor)).ok),
+    readDraft: () => {
+      syncDraftFromDom(editor);
+      return state.draft;
+    },
+    saved: state.savedStore,
+    editingId: state.editingId,
+    formBaseline: state.formBaseline,
+    revertRule: (ruleId) =>
+      update(() => {
+        state.draft = revertRule(state.draft, state.savedStore, ruleId);
+      }),
+    collapseRule: (ruleId) => update(() => state.openRuleIds.delete(ruleId)),
+    discardFormEdits: () => update(() => cancelProfileForm(state), { discardFormEdits: true })
+  };
 }
 
 /** Rows that tell apart equal buttons ("Move up" of each rule) when focus is restored. */
@@ -643,11 +697,13 @@ function openProfileForm(state: EditorState, id: string): void {
 
   state.editingId = id;
   state.editingSnapshot = profile ? structuredClone(profile) : undefined;
+  state.formBaseline = undefined;
 }
 
 function closeProfileForm(state: EditorState): void {
   state.editingId = undefined;
   state.editingSnapshot = undefined;
+  state.formBaseline = undefined;
 }
 
 /** Edits kept by other actions while the form was open are rolled back too. */
@@ -679,30 +735,7 @@ function syncOpenProfileForm(editor: Editor): void {
     return;
   }
 
-  const next = applyProfileFormValues(profile, {
-    name: readField(form, "name"),
-    base: readField(form, "base"),
-    categories: Object.fromEntries(
-      CAPTURE_CATEGORY_KEYS.map((key) => [key, readField(form, `category-${key}`)])
-    ),
-    contentRedaction: readCheckbox(form, "contentRedaction"),
-    builtInHeuristics: readCheckbox(form, "builtInHeuristics"),
-    blockedSelectors: readField(form, "blockedSelectors"),
-    unmaskSelectors: readField(form, "unmaskSelectors"),
-    redactHeaders: readField(form, "redactHeaders"),
-    redactCookieNames: readField(form, "redactCookieNames"),
-    redactBodyPatterns: readField(form, "redactBodyPatterns"),
-    redactQueryParams: readField(form, "redactQueryParams"),
-    redactStorageKeys: readField(form, "redactStorageKeys"),
-    valuePatterns: readField(form, "valuePatterns"),
-    bodyMimeAllowlist: readField(form, "bodyMimeAllowlist"),
-    bodyMaxBytes: readField(form, "bodyMaxBytes"),
-    includeUrls: readField(form, "includeUrls"),
-    excludeUrls: readField(form, "excludeUrls"),
-    mousemoveHz: readField(form, "mousemoveHz"),
-    visual: readField(form, "visual")
-  });
-
+  const next = readProfileForm(form, profile);
   state.draft = {
     ...state.draft,
     profiles: state.draft.profiles.map((entry) => (entry.id === profile.id ? next : entry))
@@ -712,42 +745,9 @@ function syncOpenProfileForm(editor: Editor): void {
 /** Rule rows and the extended host list are plain inputs; fold them into the draft. */
 function syncRulesFromDom(editor: Editor): void {
   const { state, root } = editor;
-  const rules: ProfileRule[] = [
-    ...root.querySelectorAll<HTMLElement>(".wb-profiles__rule")
-  ].flatMap((row) => {
-    const id = row.dataset.ruleId;
-
-    return id
-      ? [
-          ruleFromFormValues({
-            id,
-            name: readField(row, "ruleName"),
-            profileId: readField(row, "ruleProfile"),
-            priority: readField(row, "rulePriority"),
-            enabled: readCheckbox(row, "ruleEnabled"),
-            hosts: readField(row, "ruleHosts"),
-            paths: readField(row, "rulePaths"),
-            query: readField(row, "ruleQuery"),
-            titleRegex: readField(row, "ruleTitleRegex"),
-            selectorPresent: readField(row, "ruleSelector"),
-            metaName: readField(row, "ruleMetaName"),
-            metaValue: readField(row, "ruleMetaValue"),
-            incognito: readField(row, "ruleIncognito")
-          })
-        ]
-      : [];
-  });
-  const hostsField = root.querySelector<HTMLInputElement>('[name="extendedCaptureHosts"]');
-
   state.draft = {
     ...state.draft,
-    rules,
-    extendedCaptureHosts: hostsField
-      ? hostsField.value
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter(Boolean)
-      : state.draft.extendedCaptureHosts
+    ...readRulesFromDom(root, state.draft.extendedCaptureHosts)
   };
 }
 
@@ -770,7 +770,7 @@ async function saveDraft(editor: Editor): Promise<void> {
   try {
     const serialized = serializeProfilesStore(state.draft);
     await deps.chromeApi?.storage?.local.set({ [PROFILES_STORAGE_KEY]: serialized });
-    state.profilesState = await loadState(deps);
+    state.profilesState = await loadProfilesState(deps);
     state.draft = structuredClone(state.profilesState.store);
     state.status = {
       text: deps.t("optionsProfilesSaved", { time: new Date().toLocaleTimeString(deps.locale) }),
@@ -784,15 +784,4 @@ async function saveDraft(editor: Editor): Promise<void> {
       error: true
     };
   }
-}
-
-function downloadExport(store: RecordingProfilesStore): void {
-  const blob = new Blob([JSON.stringify(createProfilesExportFile(store), null, 2)], {
-    type: "application/json"
-  });
-  const url = URL.createObjectURL(blob);
-  const anchor = el("a", { attrs: { href: url, download: "webblackbox-profiles.json" } });
-
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

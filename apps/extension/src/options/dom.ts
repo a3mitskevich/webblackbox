@@ -43,6 +43,17 @@ export function iconButton(
   return element;
 }
 
+/** "Unsaved" badge of a profile card or rule row; the editor shows it while the item differs. */
+export function unsavedItemBadge(label: string): HTMLElement {
+  const badge = el("span", {
+    className: "wb-badge wb-badge--unsaved",
+    text: label,
+    dataset: { unsavedBadge: "" }
+  });
+  badge.hidden = true;
+  return badge;
+}
+
 /**
  * Reads a named control inside `scope` as text: the checked radio of a group, checkbox state as
  * "true"/"false", otherwise the value.

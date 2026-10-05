@@ -212,6 +212,26 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   optionsAllSaved: "所有更改已保存",
   optionsArchiveSaveFailed: "浏览器拒绝保存归档设置。",
   optionsSaveBarLabel: "保存更改",
+  optionsUnsavedIn: "位于：{sections}",
+  optionsNavUnsaved: "有未保存的更改",
+  optionsItemUnsaved: "未保存",
+  optionsDiscardChanges: "放弃更改",
+  optionsKeepEditing: "继续编辑",
+  optionsLeaveTitle: "“{section}”中有未保存的更改",
+  optionsLeaveBody: "切换分区前请先保存，或放弃这些更改。放弃会丢弃所有未保存的更改：{sections}。",
+  optionsLeaveBlockedBody:
+    "部分字段无效，暂时无法保存。留在此处修正，或放弃所有未保存的更改：{sections}。",
+  optionsLeaveStay: "留在此处",
+  optionsProfileCloseTitle: "“{name}”有未保存的修改",
+  optionsProfileCloseBody:
+    "“应用”只会关闭表单，保存前不会写入任何内容。“保存更改”会保存所有未保存的设置，“放弃更改”会把此配置恢复到打开时的状态。",
+  optionsProfileDiscardTitle: "放弃对“{name}”的修改？",
+  optionsProfileDiscardBody: "配置将恢复到打开时的状态。",
+  optionsRuleCloseTitle: "规则“{name}”尚未保存",
+  optionsRuleCloseBody:
+    "规则保存后才会生效。“保存更改”会保存所有未保存的设置，“放弃更改”会把规则恢复到已保存的状态。",
+  optionsRuleCloseBodyNew:
+    "新规则保存后才会生效。“保存更改”会保存所有未保存的设置，“放弃更改”会删除这条规则。",
   optionsNavLabel: "设置分区",
   optionsResetSection: "重置本分区",
   optionsHelpAbout: "关于“{label}”的更多说明",

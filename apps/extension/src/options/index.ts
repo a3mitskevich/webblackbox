@@ -24,7 +24,9 @@ import {
   type PendingErrorDetail
 } from "./fields.js";
 import {
+  changedGeneralSections,
   createDefaultGeneralDraft,
+  findField,
   isArchiveChanged,
   isStoredOptionsChanged,
   normalizeOptionsConfig,
@@ -34,7 +36,14 @@ import {
   type GeneralSectionId
 } from "./general-model.js";
 import { applyGeneralFieldInput, renderGeneralSection } from "./general-sections.js";
-import { createSettingsShell, sectionFromHash, type SettingsShell } from "./layout.js";
+import {
+  createSettingsShell,
+  isSettingsSectionId,
+  sectionFromHash,
+  type SettingsSectionId,
+  type SettingsShell
+} from "./layout.js";
+import { installSectionLeaveGuard } from "./leave-guard.js";
 import { mountProfilesEditor, type ProfilesEditorHandle } from "./profiles-editor.js";
 
 const STORAGE_KEY = "webblackbox.options";
@@ -102,7 +111,6 @@ async function bootstrap(container: HTMLElement): Promise<void> {
   renderGeneral(page);
   container.replaceChildren(shell.root);
   shell.showSection(sectionFromHash(location.hash));
-  window.addEventListener("hashchange", () => shell.showSection(sectionFromHash(location.hash)));
 
   page.editor = await mountProfilesEditor(
     shell.content,
@@ -112,7 +120,9 @@ async function bootstrap(container: HTMLElement): Promise<void> {
       locale,
       legacyOptionsKey: STORAGE_KEY,
       enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY,
-      onChange: () => refreshSaveBar(page)
+      onChange: () => refreshSaveBar(page),
+      requestSave: () => saveAndConfirm(page),
+      canSave: () => page.errors.size === 0
     },
     {
       profiles: shell.bodies.profiles,
@@ -182,11 +192,26 @@ function bindPage(page: PageState): void {
     void saveAll(page);
   });
   shell.cancelButton.addEventListener("click", () => cancelAll(page));
+  installSectionLeaveGuard({
+    shell,
+    t,
+    dirtySections: () => dirtySections(page),
+    canSave: () => page.errors.size === 0,
+    save: () => saveAndConfirm(page),
+    discard: () => cancelAll(page)
+  });
   window.addEventListener("beforeunload", (event) => {
-    if (isDirty(page)) {
+    // A replaced page instance (tests re-import the module) has nothing to lose.
+    if (shell.root.isConnected && (isDirty(page) || page.errors.size > 0)) {
       event.preventDefault();
     }
   });
+}
+
+/** Saves everything; true when nothing is left unsaved (a failed save keeps the user in place). */
+async function saveAndConfirm(page: PageState): Promise<boolean> {
+  await saveAll(page);
+  return !isDirty(page) && page.errors.size === 0;
 }
 
 function clearSectionErrors(page: PageState, section: GeneralSectionId): void {
@@ -222,11 +247,30 @@ function isDirty(page: PageState): boolean {
   );
 }
 
+/** Sections holding unsaved changes or invalid input; they are marked and guarded. */
+function dirtySections(page: PageState): Set<SettingsSectionId> {
+  const editorChanges = page.editor?.changedSections() ?? { profiles: false, rules: false };
+  const withErrors = [...page.errors.keys()].flatMap((key) => {
+    const section =
+      page.pendingSources.get(key)?.closest<HTMLElement>("[data-options-section]")?.dataset
+        .optionsSection ?? findField(key)?.section;
+    return section && isSettingsSectionId(section) ? [section] : [];
+  });
+
+  return new Set<SettingsSectionId>([
+    ...(editorChanges.profiles ? (["profiles"] as const) : []),
+    ...(editorChanges.rules ? (["rules"] as const) : []),
+    ...changedGeneralSections(page.draft, page.baseline),
+    ...withErrors
+  ]);
+}
+
 function refreshSaveBar(page: PageState): void {
   const { shell } = page;
   dropDetachedPendingErrors(page);
   const dirty = isDirty(page);
   const errorCount = page.errors.size;
+  shell.setDirtySections(dirtySections(page));
 
   shell.saveButton.closest(".wb-savebar")?.setAttribute("data-dirty", String(dirty));
   shell.saveState.classList.toggle(

@@ -8,7 +8,7 @@ import {
 import { isExtendedCaptureProfile } from "../shared/profiles/resolve.js";
 import type { ProfilesDiff } from "../shared/profiles/transfer.js";
 import type { RedactionSandboxKind } from "../shared/redaction-sandbox.js";
-import { button, el } from "./dom.js";
+import { button, el, unsavedItemBadge } from "./dom.js";
 import { fieldGroup, selectField } from "./fields.js";
 import { categoryLabel, levelLabel } from "./profile-form.js";
 
@@ -78,7 +78,8 @@ export function createProfileCard(options: {
         el("span", {
           className: "wb-profile-card__mode",
           text: profile.base === "full" ? t("modeFull") : t("modeLite")
-        })
+        }),
+        unsavedItemBadge(t("optionsItemUnsaved"))
       ]),
       ...(badges.length > 0
         ? [el("span", { className: "wb-profile-card__badges", text: badges.join(" · ") })]

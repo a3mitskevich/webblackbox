@@ -2,7 +2,7 @@ import type { ExtensionMessageKey } from "../shared/i18n.js";
 import type { ProfileRule, RecordingProfile } from "../shared/profiles/model.js";
 import { MAX_RULE_PRIORITY, MIN_RULE_PRIORITY } from "../shared/profiles/model.js";
 import { icon } from "../shared/ui/icons.js";
-import { button, el, iconButton } from "./dom.js";
+import { button, el, iconButton, unsavedItemBadge } from "./dom.js";
 import {
   chipListField,
   fieldGroup,
@@ -207,6 +207,7 @@ function createRuleRow(rule: ProfileRule, index: number, options: RulesViewOptio
             el("span", { className: "wb-rule__summary", text: describeRuleSummary(rule, t) })
           ]
         ),
+        unsavedItemBadge(t("optionsItemUnsaved")),
         ...(rule.enabled
           ? []
           : [el("span", { className: "wb-badge", text: t("optionsRuleDisabledBadge") })]),

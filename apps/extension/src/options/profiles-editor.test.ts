@@ -81,6 +81,13 @@ function setField(root: ParentNode, name: string, value: string): void {
 
 let lastHandle: Awaited<ReturnType<typeof mountProfilesEditor>> | undefined;
 
+/** Closing a profile form with edits asks first (backlog item 1); picks an answer. */
+async function answerPrompt(selector: string): Promise<void> {
+  await flush();
+  click(document, selector);
+  await flush();
+}
+
 async function saveProfiles(): Promise<void> {
   await lastHandle?.save();
   await flush();
@@ -145,6 +152,7 @@ describe("profiles editor", () => {
     setField(container, "name", "Stage QA");
     setField(container, "category-inputs", "allow");
     click(container, "[data-action='profile-apply']");
+    await answerPrompt("[data-action='editor-close-save']");
     click(container, "[data-action='rule-add']");
     setField(container, "ruleProfile", "profile-2");
     setField(container, "ruleHosts", "*.stage.example.com");
@@ -206,6 +214,7 @@ describe("profiles editor", () => {
     setField(container, "redactStorageKeys", "auth");
     setField(container, "valuePatterns", "[bodies, console] sk_live_\\w+\nacct-\\d+");
     click(container, "[data-action='profile-apply']");
+    await answerPrompt("[data-action='editor-close-save']");
     await saveProfiles();
 
     expect(savedStore(storage).profiles[1]?.redaction).toMatchObject({
@@ -307,6 +316,7 @@ describe("profiles editor", () => {
     click(rowOf(container, "default"), "[data-action='profile-edit']");
     setField(container, "name", "Discarded");
     click(container, "[data-action='profile-cancel']");
+    await answerPrompt("[data-confirm-accept]");
     await saveProfiles();
 
     expect(savedStore(storage).profiles.map((profile) => profile.name)).not.toContain("Discarded");
@@ -320,6 +330,7 @@ describe("profiles editor", () => {
     setField(container, "category-inputs", "allow");
     click(container, "[data-action='rule-add']");
     click(container, "[data-action='profile-cancel']");
+    await answerPrompt("[data-confirm-accept]");
     await saveProfiles();
 
     const saved = storage.data[PROFILES_STORAGE_KEY] as {

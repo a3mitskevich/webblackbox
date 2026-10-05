@@ -33,6 +33,7 @@
   --wb-warn-soft: #fff4dc;
   --wb-warn-border: #e7c27a;
   --wb-warn-ink: #5c3b00;
+  --wb-warn: #b86e00;
   --wb-rec: #e0362b;
   --wb-focus: #1b86d9;
   --wb-focus-ring: 0 0 0 3px rgba(27, 134, 217, 0.32);
@@ -73,6 +74,7 @@
     --wb-warn-soft: #33270f;
     --wb-warn-border: #7a5d22;
     --wb-warn-ink: #f2d79e;
+    --wb-warn: #e9a63c;
     --wb-rec: #ff5a4e;
     --wb-focus: #5eaef0;
     --wb-focus-ring: 0 0 0 3px rgba(94, 174, 240, 0.38);

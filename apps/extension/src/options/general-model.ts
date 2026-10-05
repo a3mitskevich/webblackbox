@@ -425,3 +425,23 @@ export function isStoredOptionsChanged(draft: GeneralDraft, baseline: GeneralDra
 export function isArchiveChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
   return JSON.stringify(draft.archive) !== JSON.stringify(baseline.archive);
 }
+
+const GENERAL_SECTION_IDS: readonly GeneralSectionId[] = [
+  "sensitivity",
+  "pointer",
+  "sampling",
+  "budgets",
+  "export"
+];
+
+/** Sections with a field whose draft value differs from the baseline's. */
+export function changedGeneralSections(
+  draft: GeneralDraft,
+  baseline: GeneralDraft
+): GeneralSectionId[] {
+  return GENERAL_SECTION_IDS.filter((section) =>
+    fieldsOfSection(section).some(
+      (spec) => JSON.stringify(spec.get(draft)) !== JSON.stringify(spec.get(baseline))
+    )
+  );
+}

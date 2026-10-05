@@ -217,6 +217,27 @@ export const EN_MESSAGES = {
   optionsAllSaved: "All changes saved",
   optionsArchiveSaveFailed: "The browser refused to store the archive settings.",
   optionsSaveBarLabel: "Save changes",
+  optionsUnsavedIn: "In: {sections}",
+  optionsNavUnsaved: "unsaved changes",
+  optionsItemUnsaved: "Unsaved",
+  optionsDiscardChanges: "Discard changes",
+  optionsKeepEditing: "Keep editing",
+  optionsLeaveTitle: "Unsaved changes in {section}",
+  optionsLeaveBody:
+    "Save them before you switch sections, or discard them. Discard drops every unsaved change: {sections}.",
+  optionsLeaveBlockedBody:
+    "Some fields are invalid, so nothing can be saved yet. Stay to fix them, or discard every unsaved change: {sections}.",
+  optionsLeaveStay: "Stay",
+  optionsProfileCloseTitle: "Unsaved edits to {name}",
+  optionsProfileCloseBody:
+    "Apply only closes the form; nothing is stored until you save. Save changes stores every unsaved setting, Discard changes puts this profile back as it was when you opened it.",
+  optionsProfileDiscardTitle: "Discard your edits to {name}?",
+  optionsProfileDiscardBody: "The profile goes back to how it was when you opened it.",
+  optionsRuleCloseTitle: "Unsaved rule {name}",
+  optionsRuleCloseBody:
+    "This rule does not apply until it is saved. Save changes stores every unsaved setting, Discard changes puts the rule back as it was saved.",
+  optionsRuleCloseBodyNew:
+    "This new rule does not apply until it is saved. Save changes stores every unsaved setting, Discard changes removes the rule.",
   optionsNavLabel: "Settings sections",
   optionsResetSection: "Reset section",
   optionsHelpAbout: "More about {label}",
