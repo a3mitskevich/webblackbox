@@ -1,8 +1,40 @@
 import { sanitizeUrlForPrivacy, type RedactionProfile } from "@webblackbox/protocol";
 
+export type RedactionOptions = {
+  /**
+   * Secret key for HMAC-SHA-256 hashing of sensitive values. Keep it per session and in memory
+   * only; it must never be exported with the archive. Defaults to a random key per JS realm.
+   */
+  hashKey?: Uint8Array;
+};
+
+type RedactionContext = {
+  profile: RedactionProfile;
+  hashKey: Uint8Array;
+};
+
 const REDACTED = "[REDACTED]";
+const REDACTION_HASH_KEY_BYTES = 32;
+const HMAC_BLOCK_BYTES = 64;
+const HMAC_INNER_PAD = 0x36;
+const HMAC_OUTER_PAD = 0x5c;
+// Header values that carry URLs: their query/fragment can hold OAuth codes or tokens.
+const URL_VALUED_HEADERS = new Set([
+  "location",
+  "content-location",
+  "referer",
+  "referrer",
+  ":path",
+  "src"
+]);
+// Unlisted headers whose name suggests a credential (e.g. X-Access-Token, X-Session-Id).
+const SENSITIVE_HEADER_NAME_PATTERN =
+  /token|secret|session|auth|key|passw(?:or)?d|credential|signature/;
+// Auth challenges carry no secret and explain 401/407 responses, so keep them readable.
+// `:authority` is the HTTP/2 host pseudo-header; it only matches the name pattern via "auth".
+const READABLE_AUTH_HEADERS = new Set(["www-authenticate", "proxy-authenticate", ":authority"]);
 // Redaction runs on the synchronous ingest hot path (service worker + content/injected contexts).
-// We intentionally keep hashing sync to avoid async pipeline stalls from crypto.subtle.digest.
+// We intentionally keep hashing sync to avoid async pipeline stalls from crypto.subtle.
 const SHA_256_K = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
   0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -14,13 +46,44 @@ const SHA_256_K = [
   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 ];
 
-function hashValue(value: string): string {
-  return sha256Hex(value);
+let defaultHashKey: Uint8Array | null = null;
+
+/** Creates a random per-session key for {@link redactPayload}'s keyed hashing. */
+export function createRedactionHashKey(): Uint8Array {
+  const cryptoApi = globalThis.crypto;
+
+  if (!cryptoApi || typeof cryptoApi.getRandomValues !== "function") {
+    throw new Error("WebBlackbox redaction requires crypto.getRandomValues for keyed hashing.");
+  }
+
+  return cryptoApi.getRandomValues(new Uint8Array(REDACTION_HASH_KEY_BYTES));
 }
 
-export function redactPayload(input: unknown, profile: RedactionProfile): unknown {
+export function redactPayload(
+  input: unknown,
+  profile: RedactionProfile,
+  options: RedactionOptions = {}
+): unknown {
+  return redactValue(input, {
+    profile,
+    hashKey: options.hashKey ?? getDefaultHashKey()
+  });
+}
+
+function getDefaultHashKey(): Uint8Array {
+  defaultHashKey ??= createRedactionHashKey();
+  return defaultHashKey;
+}
+
+function hashValue(value: string, context: RedactionContext): string {
+  return hmacSha256Hex(context.hashKey, value);
+}
+
+function redactValue(input: unknown, context: RedactionContext): unknown {
+  const { profile } = context;
+
   if (Array.isArray(input)) {
-    return input.map((item) => redactPayload(item, profile));
+    return input.map((item) => redactValue(item, context));
   }
 
   if (input !== null && typeof input === "object") {
@@ -37,24 +100,23 @@ export function redactPayload(input: unknown, profile: RedactionProfile): unknow
 
       if (normalizedKey === "selector" && typeof value === "string") {
         output[key] = profile.hashSensitiveValues
-          ? `selector:${hashValue(value).slice(0, 12)}`
+          ? `selector:${hashValue(value, context).slice(0, 12)}`
           : "[REDACTED_SELECTOR]";
         continue;
       }
 
       if (profile.redactHeaders.includes(normalizedKey) || isSensitiveKey(normalizedKey, profile)) {
-        output[key] =
-          profile.hashSensitiveValues && typeof value === "string" ? hashValue(value) : REDACTED;
+        output[key] = maskUnknown(value, context);
         continue;
       }
 
       if (normalizedKey === "headers" && value !== null && typeof value === "object") {
-        output[key] = redactHeaders(value as Record<string, unknown>, profile);
+        output[key] = redactHeaders(value as Record<string, unknown>, context);
         continue;
       }
 
       if (isCookieField(normalizedKey)) {
-        output[key] = redactCookieField(value, profile, normalizedKey);
+        output[key] = redactCookieField(value, context, normalizedKey);
         continue;
       }
 
@@ -62,19 +124,18 @@ export function redactPayload(input: unknown, profile: RedactionProfile): unknow
         (normalizedKey === "value" || normalizedKey === "text") &&
         (shouldMaskBySelector(source, profile) || shouldMaskByCookieName(source, profile))
       ) {
-        output[key] =
-          typeof value === "string" ? maskString(value, profile.hashSensitiveValues) : REDACTED;
+        output[key] = typeof value === "string" ? maskString(value, context) : REDACTED;
         continue;
       }
 
-      output[key] = redactPayload(value, profile);
+      output[key] = redactValue(value, context);
     }
 
     return output;
   }
 
   if (typeof input === "string" && containsSensitivePattern(input, profile)) {
-    return maskString(input, profile.hashSensitiveValues);
+    return maskString(input, context);
   }
 
   return input;
@@ -82,44 +143,62 @@ export function redactPayload(input: unknown, profile: RedactionProfile): unknow
 
 function redactHeaders(
   headers: Record<string, unknown>,
-  profile: RedactionProfile
+  context: RedactionContext
 ): Record<string, unknown> {
   const next: Record<string, unknown> = {};
 
   for (const [header, value] of Object.entries(headers)) {
     const normalized = header.toLowerCase();
 
-    if (profile.redactHeaders.includes(normalized)) {
-      if (typeof value === "string") {
-        next[header] = profile.hashSensitiveValues ? hashValue(value) : REDACTED;
-      } else {
-        next[header] = REDACTED;
-      }
+    if (context.profile.redactHeaders.includes(normalized)) {
+      next[header] = maskUnknown(value, context);
       continue;
     }
 
     if (typeof value === "string" && (normalized === "cookie" || normalized === "set-cookie")) {
-      next[header] = redactCookieHeaderValue(value, profile, normalized);
+      next[header] = redactCookieHeaderValue(value, context, normalized);
       continue;
     }
 
-    next[header] = redactPayload(value, profile);
+    if (typeof value === "string" && isUrlValuedHeader(normalized)) {
+      next[header] = sanitizeUrlForPrivacy(value);
+      continue;
+    }
+
+    if (isSensitiveHeaderName(normalized, context.profile)) {
+      next[header] = maskUnknown(value, context);
+      continue;
+    }
+
+    next[header] = redactValue(value, context);
   }
 
   return next;
+}
+
+function isUrlValuedHeader(header: string): boolean {
+  return URL_VALUED_HEADERS.has(header) || isUrlLikeField(header);
+}
+
+function isSensitiveHeaderName(header: string, profile: RedactionProfile): boolean {
+  if (READABLE_AUTH_HEADERS.has(header)) {
+    return false;
+  }
+
+  return SENSITIVE_HEADER_NAME_PATTERN.test(header) || isSensitiveKey(header, profile);
 }
 
 function isCookieField(key: string): boolean {
   return key === "cookie" || key === "cookies" || key === "set-cookie" || key === "setcookie";
 }
 
-function redactCookieField(value: unknown, profile: RedactionProfile, fieldName: string): unknown {
+function redactCookieField(value: unknown, context: RedactionContext, fieldName: string): unknown {
   if (typeof value === "string") {
-    return redactCookieHeaderValue(value, profile, fieldName);
+    return redactCookieHeaderValue(value, context, fieldName);
   }
 
   if (Array.isArray(value)) {
-    return value.map((entry) => redactCookieField(entry, profile, fieldName));
+    return value.map((entry) => redactCookieField(entry, context, fieldName));
   }
 
   if (!value || typeof value !== "object") {
@@ -129,18 +208,17 @@ function redactCookieField(value: unknown, profile: RedactionProfile, fieldName:
   const source = value as Record<string, unknown>;
   const output: Record<string, unknown> = {};
   const cookieName = readCookieName(source);
-  const shouldMaskValue = cookieName ? shouldRedactCookieName(cookieName, profile) : false;
+  const shouldMaskValue = cookieName ? shouldRedactCookieName(cookieName, context.profile) : false;
 
   for (const [key, entry] of Object.entries(source)) {
     const normalizedKey = key.toLowerCase();
 
     if (shouldMaskValue && (normalizedKey === "value" || normalizedKey === "text")) {
-      output[key] =
-        typeof entry === "string" ? maskString(entry, profile.hashSensitiveValues) : REDACTED;
+      output[key] = typeof entry === "string" ? maskString(entry, context) : REDACTED;
       continue;
     }
 
-    output[key] = redactPayload(entry, profile);
+    output[key] = redactValue(entry, context);
   }
 
   return output;
@@ -148,9 +226,11 @@ function redactCookieField(value: unknown, profile: RedactionProfile, fieldName:
 
 function redactCookieHeaderValue(
   value: string,
-  profile: RedactionProfile,
+  context: RedactionContext,
   headerName: string
 ): string {
+  const { profile } = context;
+
   if (profile.redactCookieNames.length === 0) {
     return value;
   }
@@ -174,7 +254,7 @@ function redactCookieHeaderValue(
         }
 
         const rawValue = trimmed.slice(equalsIndex + 1);
-        return `${cookieName}=${maskString(rawValue, profile.hashSensitiveValues)}`;
+        return `${cookieName}=${maskString(rawValue, context)}`;
       })
       .join("; ");
   }
@@ -202,7 +282,7 @@ function redactCookieHeaderValue(
       }
 
       const cookieValue = firstPair.slice(equalsIndex + 1).trim();
-      const masked = `${cookieName}=${maskString(cookieValue, profile.hashSensitiveValues)}`;
+      const masked = `${cookieName}=${maskString(cookieValue, context)}`;
       return semiIndex >= 0 ? `${masked}${line.slice(semiIndex)}` : masked;
     })
     .join("\n");
@@ -264,6 +344,9 @@ function isUrlLikeField(key: string): boolean {
     key === "responseurl" ||
     key === "documenturl" ||
     key === "requesturl" ||
+    key === "referrer" ||
+    key === "referer" ||
+    key === "src" ||
     key.endsWith("url")
   );
 }
@@ -283,16 +366,37 @@ function shouldMaskBySelector(source: Record<string, unknown>, profile: Redactio
   return profile.blockedSelectors.some((blocked) => selector.includes(blocked));
 }
 
-function maskString(value: string, hashed: boolean): string {
-  if (hashed) {
-    return hashValue(value);
+function maskString(value: string, context: RedactionContext): string {
+  if (context.profile.hashSensitiveValues) {
+    return hashValue(value, context);
   }
 
   return REDACTED;
 }
 
-function sha256Hex(value: string): string {
+function maskUnknown(value: unknown, context: RedactionContext): string {
+  return typeof value === "string" ? maskString(value, context) : REDACTED;
+}
+
+function hmacSha256Hex(key: Uint8Array, value: string): string {
+  const blockKey = key.byteLength > HMAC_BLOCK_BYTES ? sha256(key) : key;
   const message = new TextEncoder().encode(value);
+  const inner = new Uint8Array(HMAC_BLOCK_BYTES + message.byteLength);
+  const outer = new Uint8Array(HMAC_BLOCK_BYTES + 32);
+
+  for (let index = 0; index < HMAC_BLOCK_BYTES; index += 1) {
+    const keyByte = blockKey[index] ?? 0;
+    inner[index] = keyByte ^ HMAC_INNER_PAD;
+    outer[index] = keyByte ^ HMAC_OUTER_PAD;
+  }
+
+  inner.set(message, HMAC_BLOCK_BYTES);
+  outer.set(sha256(inner), HMAC_BLOCK_BYTES);
+
+  return Array.from(sha256(outer), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function sha256(message: Uint8Array): Uint8Array {
   const bitLength = message.length * 8;
   const totalLength = ((message.length + 9 + 63) >> 6) << 6;
   const padded = new Uint8Array(totalLength);
@@ -370,9 +474,13 @@ function sha256Hex(value: string): string {
     h7 = (h7 + h) >>> 0;
   }
 
-  return [h0, h1, h2, h3, h4, h5, h6, h7]
-    .map((part) => part.toString(16).padStart(8, "0"))
-    .join("");
+  const digest = new Uint8Array(32);
+  const digestView = new DataView(digest.buffer);
+  [h0, h1, h2, h3, h4, h5, h6, h7].forEach((part, index) => {
+    digestView.setUint32(index * 4, part);
+  });
+
+  return digest;
 }
 
 function rightRotate(value: number, amount: number): number {
