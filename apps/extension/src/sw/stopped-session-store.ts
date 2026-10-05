@@ -14,6 +14,8 @@ import type { CapturedVisuals } from "./profile-runtime.js";
  */
 export const STOPPED_SESSION_SNAPSHOTS_KEY = "webblackbox.atRest.stoppedSessions";
 export const MAX_STOPPED_SESSION_SNAPSHOTS = 50;
+/** After this many failed purges a recording is given up on; it ends with the browser session. */
+export const MAX_STOPPED_SESSION_PURGE_ATTEMPTS = 3;
 const RETENTION_ALARM_PREFIX = "webblackbox.retention:";
 
 export type StoppedSessionSnapshot = {
@@ -40,6 +42,8 @@ export type StoppedSessionSnapshot = {
     sizeBytes: number;
     budgetAlertCount: number;
   };
+  /** Failed purges so far; such a recording is retried by its alarm, not at worker start. */
+  purgeAttempts?: number;
 };
 
 export type SnapshotStorageAreaLike = {
@@ -51,6 +55,8 @@ export type StoppedSessionStore = {
   list(): Promise<StoppedSessionSnapshot[]>;
   remember(snapshot: StoppedSessionSnapshot): Promise<void>;
   forget(sid: string): Promise<void>;
+  /** Counts a failed purge; resolves the new count, or null without a snapshot. */
+  recordPurgeFailure(sid: string): Promise<number | null>;
   clear(): Promise<void>;
 };
 
@@ -81,14 +87,26 @@ export function removeStoppedSessionSnapshot(
   return snapshots.filter((row) => row.sid !== sid);
 }
 
-/** Splits snapshots into those still inside their retention and those past it. */
-export function partitionByRetention(
+export type StoppedSessionRestorePlan = {
+  /** Inside their retention: restored, listed and exportable. */
+  kept: StoppedSessionSnapshot[];
+  /** Past their retention: purged at worker start. */
+  purgeNow: StoppedSessionSnapshot[];
+  /** Past their retention after a failed purge: left to their retry alarm, off the start path. */
+  purgeLater: StoppedSessionSnapshot[];
+};
+
+/** What a new worker does with each snapshot an earlier worker left. */
+export function planStoppedSessionRestore(
   snapshots: readonly StoppedSessionSnapshot[],
   now: number
-): { kept: StoppedSessionSnapshot[]; expired: StoppedSessionSnapshot[] } {
+): StoppedSessionRestorePlan {
+  const expired = snapshots.filter((row) => row.expiresAt <= now);
+
   return {
     kept: snapshots.filter((row) => row.expiresAt > now),
-    expired: snapshots.filter((row) => row.expiresAt <= now)
+    purgeNow: expired.filter((row) => (row.purgeAttempts ?? 0) === 0),
+    purgeLater: expired.filter((row) => (row.purgeAttempts ?? 0) > 0)
   };
 }
 
@@ -164,6 +182,23 @@ export function createStoppedSessionStore(
     list: () => enqueue(read),
     remember: (snapshot) => update((rows) => upsertStoppedSessionSnapshot(rows, snapshot)),
     forget: (sid) => update((rows) => removeStoppedSessionSnapshot(rows, sid)),
+    recordPurgeFailure: (sid) =>
+      enqueue(async () => {
+        const rows = await read();
+        const row = rows.find((candidate) => candidate.sid === sid);
+
+        if (!row || !area) {
+          return null;
+        }
+
+        const purgeAttempts = (row.purgeAttempts ?? 0) + 1;
+        await area.set({
+          [STOPPED_SESSION_SNAPSHOTS_KEY]: rows.map((candidate) =>
+            candidate.sid === sid ? { ...candidate, purgeAttempts } : candidate
+          )
+        });
+        return purgeAttempts;
+      }),
     clear: () => update(() => [])
   };
 }
@@ -206,6 +241,7 @@ function parseStoppedSessionSnapshot(value: unknown): StoppedSessionSnapshot | n
   // The snapshot was written by this extension into a trusted-contexts-only area.
   return {
     ...(value as unknown as StoppedSessionSnapshot),
+    purgeAttempts: isFiniteNumber(value.purgeAttempts) ? Math.max(0, value.purgeAttempts) : 0,
     counters: {
       eventCount: count("eventCount"),
       errorCount: count("errorCount"),

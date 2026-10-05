@@ -9,7 +9,7 @@ import {
   createStoppedSessionStore,
   MAX_STOPPED_SESSION_SNAPSHOTS,
   parseStoppedSessionSnapshots,
-  partitionByRetention,
+  planStoppedSessionRestore,
   retentionAlarmName,
   scheduleRetentionAlarm,
   sidFromRetentionAlarm,
@@ -45,6 +45,7 @@ function snapshot(
     },
     config: DEFAULT_RECORDER_CONFIG,
     counters: { eventCount: 12, errorCount: 1, sizeBytes: 4_096, budgetAlertCount: 0 },
+    purgeAttempts: 0,
     ...overrides
   };
 }
@@ -136,14 +137,26 @@ describe("stopped session store", () => {
 });
 
 describe("retention", () => {
-  it("splits recordings by their retention at worker start", () => {
+  it("restores recordings inside their retention and purges the expired ones at worker start", () => {
     const kept = snapshot("S-kept", { expiresAt: 10_000 });
     const expired = snapshot("S-expired", { expiresAt: 5_000 });
+    const retrying = snapshot("S-retrying", { expiresAt: 4_000, purgeAttempts: 1 });
 
-    expect(partitionByRetention([kept, expired], 5_000)).toEqual({
+    expect(planStoppedSessionRestore([kept, expired, retrying], 5_000)).toEqual({
       kept: [kept],
-      expired: [expired]
+      purgeNow: [expired],
+      purgeLater: [retrying]
     });
+  });
+
+  it("counts failed purges of a snapshot and reports a missing one", async () => {
+    const store = createStoppedSessionStore(createArea());
+    await store.remember(snapshot("S-1"));
+
+    await expect(store.recordPurgeFailure("S-1")).resolves.toBe(1);
+    await expect(store.recordPurgeFailure("S-1")).resolves.toBe(2);
+    await expect(store.recordPurgeFailure("S-missing")).resolves.toBeNull();
+    expect((await store.list())[0]?.purgeAttempts).toBe(2);
   });
 
   it("names one alarm per recording and reads the session back from it", () => {

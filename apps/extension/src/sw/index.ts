@@ -108,7 +108,8 @@ import { withCdpCommandTimeout, type CdpCommandOutcome } from "./cdp-command.js"
 import {
   clearRetentionAlarm,
   createStoppedSessionStore,
-  partitionByRetention,
+  MAX_STOPPED_SESSION_PURGE_ATTEMPTS,
+  planStoppedSessionRestore,
   scheduleRetentionAlarm,
   sidFromRetentionAlarm,
   type StoppedSessionSnapshot
@@ -4487,27 +4488,43 @@ async function restoreStoppedSessions(): Promise<void> {
     return;
   }
 
-  const { kept, expired } = partitionByRetention(await stoppedSessionStore.list(), Date.now());
+  const plan = planStoppedSessionRestore(await stoppedSessionStore.list(), Date.now());
 
-  if (kept.length + expired.length === 0) {
+  if (plan.kept.length + plan.purgeNow.length + plan.purgeLater.length === 0) {
     return;
   }
 
   const performanceBudget = await loadPerformanceBudgetConfig();
 
-  for (const snapshot of kept) {
+  for (const snapshot of plan.kept) {
     scheduleStoppedRuntimeCleanup(restoreStoppedRuntime(snapshot, performanceBudget));
   }
 
-  // Awaited one by one before any message is answered: a parallel purge would race offscreen
+  for (const snapshot of plan.purgeLater) {
+    await scheduleRetentionAlarm(
+      chromeApi?.alarms,
+      snapshot.sid,
+      Date.now() + STOPPED_SESSION_PURGE_RETRY_MS
+    ).catch(() => undefined);
+  }
+
+  // All registered first, so the offscreen document is closed once, after the last purge. The
+  // purges run one by one before any message is answered: in parallel they would race offscreen
   // creation, and one finishing late could close the document of a Start that just began.
-  for (const snapshot of expired) {
-    await disposeStoppedSession(restoreStoppedRuntime(snapshot, performanceBudget));
+  const expired = plan.purgeNow.map((snapshot) =>
+    restoreStoppedRuntime(snapshot, performanceBudget)
+  );
+
+  for (const runtime of expired) {
+    await disposeStoppedSession(runtime).catch((error) => {
+      console.warn("[WebBlackbox] failed to delete an expired recording", error);
+    });
   }
 
   console.info("[WebBlackbox] restored stopped recordings", {
-    kept: kept.length,
-    expired: expired.length
+    kept: plan.kept.length,
+    purged: plan.purgeNow.length,
+    retrying: plan.purgeLater.length
   });
 }
 
@@ -4608,6 +4625,16 @@ async function restoreStoppedSnapshot(sid: string): Promise<SessionRuntime | und
 }
 
 async function retryStoppedSessionPurge(sid: string): Promise<void> {
+  const attempts = await stoppedSessionStore.recordPurgeFailure(sid).catch(() => null);
+
+  if (attempts === null || attempts >= MAX_STOPPED_SESSION_PURGE_ATTEMPTS) {
+    console.warn("[WebBlackbox] giving up on deleting a recording; it ends with the browser", {
+      attempts
+    });
+    await forgetStoppedSession(sid);
+    return;
+  }
+
   detachedPipelineSids.add(sid);
   await scheduleRetentionAlarm(
     chromeApi?.alarms,
