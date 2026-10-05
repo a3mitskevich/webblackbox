@@ -9,7 +9,13 @@ import type { FullModeVisualCapture } from "../messages.js";
 import { applyFullModeVisualCapture, resolveModeBaseConfig } from "../mode-profile.js";
 import { resolveModeRecorderConfig } from "../recorder-config.js";
 import { findCategoriesAboveCeiling, type CaptureCategoryKey } from "./categories.js";
-import { DEFAULT_PROFILE_ID, withoutRedactionUnmask, type RecordingProfile } from "./model.js";
+import {
+  DEFAULT_PROFILE_ID,
+  DEFAULT_SOURCE_MAP_MAX_BYTES,
+  withoutRedactionUnmask,
+  type ProfileSourceMapMode,
+  type RecordingProfile
+} from "./model.js";
 import { STANDARD_CAPTURE_CEILING } from "./presets.js";
 import { findMatchingRule, type ProfilePageContext } from "./rules.js";
 import type { ProfilesState } from "./storage.js";
@@ -189,5 +195,24 @@ export function toArchivedProfileInfo(
     ...(selection.rule?.name ? { ruleName: selection.rule.name } : {}),
     extended: selection.extended,
     ...(enterpriseCapped.length > 0 ? { enterpriseCapped: [...enterpriseCapped] } : {})
+  };
+}
+
+export type SourceMapCapture = {
+  mode: ProfileSourceMapMode;
+  maxMapBytes: number;
+};
+
+/**
+ * Effective source map capture for a profile on a transport. Without an explicit setting, Full
+ * mode records map references (the debugger reports them for free) and Lite records nothing.
+ */
+export function resolveSourceMapCapture(
+  profile: Pick<RecordingProfile, "sourceMaps">,
+  mode: CaptureMode
+): SourceMapCapture {
+  return {
+    mode: profile.sourceMaps?.mode ?? (mode === "full" ? "metadata" : "off"),
+    maxMapBytes: profile.sourceMaps?.maxMapBytes ?? DEFAULT_SOURCE_MAP_MAX_BYTES
   };
 }

@@ -21,6 +21,7 @@ import {
   userSelectionDataSchema,
   userWheelDataSchema
 } from "./pointer.js";
+import { scriptSourceMapDataSchema } from "./script.js";
 
 const recordStringUnknown = z.record(z.string(), z.unknown());
 
@@ -663,7 +664,8 @@ const specializedDataSchemas = {
   "user.drag.end": userDragDataSchema,
   "user.selection": userSelectionDataSchema,
   "user.wheel": userWheelDataSchema,
-  "user.hover": userHoverDataSchema
+  "user.hover": userHoverDataSchema,
+  "sys.script": scriptSourceMapDataSchema
 } as const;
 
 export function getEventPayloadSchema(type: z.infer<typeof webBlackboxEventTypeSchema>): z.ZodType {

@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { constants } from "node:fs";
 import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import JSZip from "jszip";
 
 import { CdpClient } from "./lib/cdp-client.mjs";
@@ -76,6 +76,9 @@ const recordScreenInFullMode =
 const captureScreenshotsInFullMode =
   captureMode === "full" && (fullVisualCapture === "screenshots" || fullVisualCapture === "both");
 const configureRecorderOptions = (process.env.WB_E2E_CONFIGURE_OPTIONS ?? "1") !== "0";
+// Full mode records script → source map references unless a profile turns them off.
+const verifySourceMaps =
+  captureMode === "full" && (process.env.WB_E2E_VERIFY_SOURCE_MAPS ?? "1") !== "0";
 // Needs the configured console: allow / network: body-allowlist policy and CDP capture.
 const checkCaptureFidelity = captureMode === "full" && configureRecorderOptions;
 const playerSdkEntry = resolve(workspaceRoot, "packages/player-sdk/dist/index.js");
@@ -437,6 +440,13 @@ async function main() {
   const scenarioResult = await runDemoScenario(demoClient);
   assert(scenarioResult?.ok === true, "Demo scenario failed", scenarioResult);
 
+  const minifiedErrorResult = verifySourceMaps ? await logMinifiedBundleError(demoClient) : null;
+  assert(
+    !verifySourceMaps || minifiedErrorResult?.ok === true,
+    "Minified demo bundle did not throw",
+    minifiedErrorResult
+  );
+
   const fidelityScenario = checkCaptureFidelity
     ? await runCaptureFidelityScenario(demoClient)
     : { ok: true, skipped: "needs-full-mode-with-configured-options" };
@@ -557,6 +567,15 @@ async function main() {
     screenRecordingArchiveResult
   );
 
+  const sourceMapResult = verifySourceMaps
+    ? await verifyScriptSourceMapEvidence(exportedPath)
+    : { ok: true, skipped: "lite-mode-records-no-source-maps-by-default" };
+  assert(
+    sourceMapResult.ok,
+    "Exported archive missing script source map evidence",
+    sourceMapResult
+  );
+
   const playerTarget = await openTarget(baseUrl, playerUrl);
   state.openedTargetIds.push(playerTarget.id);
 
@@ -619,6 +638,15 @@ async function main() {
   for (const eventType of requiredEventTypes) {
     await waitForPlayerEventType(playerClient, eventType, 20_000);
   }
+
+  const playerSymbolicationResult = verifySourceMaps
+    ? await verifyPlayerSymbolication(playerClient, `${demoUrl}vendor/`, 20_000)
+    : { ok: true, skipped: "source-map-verification-disabled" };
+  assert(
+    playerSymbolicationResult.ok,
+    "Player did not show the original source of the minified error",
+    playerSymbolicationResult
+  );
 
   const markerResult =
     captureMode === "full" && captureScreenshotsInFullMode && !recordScreenInFullMode
@@ -715,7 +743,9 @@ async function main() {
   console.log("Real-world scenario:", JSON.stringify(realWorldResult));
   console.log("Real-world archive evidence:", JSON.stringify(archiveEvidenceResult));
   console.log("Screen recording archive evidence:", JSON.stringify(screenRecordingArchiveResult));
+  console.log("Source maps:", JSON.stringify(sourceMapResult));
   console.log("Player:", JSON.stringify(playerResult));
+  console.log("Player symbolication:", JSON.stringify(playerSymbolicationResult));
   console.log("Screenshot marker:", JSON.stringify(markerResult));
   console.log("Screenshot suppression:", JSON.stringify(screenshotSuppressionResult));
   console.log("Hover response:", JSON.stringify(hoverResponseResult));
@@ -725,6 +755,68 @@ async function main() {
   console.log("Fullchain E2E passed.");
 
   await cleanup();
+}
+
+/** Logs an error thrown inside the minified demo bundle (captured as a console stack). */
+async function logMinifiedBundleError(demoClient) {
+  return demoClient.evaluate(`
+    (() => {
+      if (!window.wbStackDemo) {
+        return { ok: false, reason: 'bundle-not-loaded' };
+      }
+
+      try {
+        window.wbStackDemo.failCheckout();
+        return { ok: false, reason: 'did-not-throw' };
+      } catch (error) {
+        console.error(error);
+        return { ok: true, firstFrame: String(error.stack).split('\\n')[1]?.trim() ?? null };
+      }
+    })()
+  `);
+}
+
+/**
+ * The archive records the minified demo bundle's source map reference (Full mode records
+ * references by default), and the logged stack maps back to the bundle's original source.
+ */
+async function verifyScriptSourceMapEvidence(archivePath) {
+  const sdk = await import(pathToFileURL(playerSdkEntry).href);
+  const player = await sdk.WebBlackboxPlayer.open(new Uint8Array(await readFile(archivePath)), {
+    passphrase: exportPassphrase || undefined
+  });
+  const scripts = [
+    ...sdk.collectScriptSourceMaps(player.query({ types: ["sys.script"] })).values()
+  ];
+  const bundle = scripts.find((entry) => entry.script.endsWith("/demo/vendor/checkout.min.js"));
+  const errorEvent = player.events.find(
+    (event) =>
+      event.type === "console.entry" &&
+      sdk.extractEventStack(event).some((frame) => frame.url.includes("checkout.min.js"))
+  );
+  const mapPath = resolve(demoDir, "vendor", "checkout.min.js.map");
+  const symbolicator = sdk.createArchiveSymbolicator(player, [
+    sdk.createSourceMapFileProvider([
+      { path: "vendor/checkout.min.js.map", load: () => readFile(mapPath) }
+    ])
+  ]);
+  const frames = errorEvent
+    ? await symbolicator.symbolicateFrames(sdk.extractEventStack(errorEvent))
+    : [];
+  const top = frames[0];
+
+  return {
+    ok:
+      bundle?.sourceMap?.endsWith("/demo/vendor/checkout.min.js.map") === true &&
+      top?.status === "mapped" &&
+      top.original?.source.endsWith("vendor-src/checkout.js") === true &&
+      top.original?.line === 9,
+    scripts: scripts.map((entry) => ({ script: entry.script, sourceMap: entry.sourceMap })),
+    errorEventId: errorEvent?.id ?? null,
+    topFrame: top
+      ? { raw: top.frame.raw, status: top.status, original: top.original, error: top.error }
+      : null
+  };
 }
 
 function safeStringify(value) {
@@ -1095,7 +1187,7 @@ function mimeTypeFor(path) {
     return "text/css; charset=utf-8";
   }
 
-  if (extension === ".json") {
+  if (extension === ".json" || extension === ".map") {
     return "application/json; charset=utf-8";
   }
 
@@ -3410,6 +3502,49 @@ async function waitForPlayerEventType(playerClient, eventType, timeoutMs) {
     250,
     `Timeline did not include event type: ${eventType}`
   );
+}
+
+/**
+ * Points the Player's symbol server at the demo's map folder and waits for the console row of
+ * the minified error to show its original location.
+ */
+async function verifyPlayerSymbolication(playerClient, symbolServerUrl, timeoutMs) {
+  const applied = await playerClient.evaluate(`
+    (() => {
+      const root = document.querySelector('#event-stack');
+      const input = root?.querySelector('[data-stack-input="server"]');
+      const apply = root?.querySelector('[data-stack-action="server"]');
+
+      if (!input || !apply) {
+        return false;
+      }
+
+      input.value = ${JSON.stringify(symbolServerUrl)};
+      apply.click();
+      return true;
+    })()
+  `);
+
+  if (!applied) {
+    return { ok: false, reason: "symbol-server-controls-missing" };
+  }
+
+  const origin = await waitFor(
+    async () => {
+      const text = await playerClient.evaluate(`
+        (() => Array.from(document.querySelectorAll('#console-list .signal-origin'))
+          .map((node) => node.textContent ?? '')
+          .find((value) => value.includes('vendor-src/checkout.js')) ?? null)()
+      `);
+
+      return typeof text === "string" ? text : null;
+    },
+    timeoutMs,
+    250,
+    "Console row did not show the original source location"
+  ).catch(() => null);
+
+  return { ok: typeof origin === "string" && origin.includes("checkout.js:9:"), origin };
 }
 
 async function verifyPlayerEventTypeAbsent(playerClient, eventType) {

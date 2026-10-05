@@ -66,6 +66,9 @@ import {
 export * from "./playwright-actions.js";
 export * from "./pointer-insights.js";
 export * from "./recording-profile.js";
+export * from "./source-map.js";
+export * from "./stack-trace.js";
+export * from "./symbolicate.js";
 
 export type PlayerStatus = "idle" | "loaded";
 

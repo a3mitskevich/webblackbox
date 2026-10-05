@@ -13,5 +13,6 @@ export * from "./pointer.js";
 export * from "./privacy.js";
 export * from "./redaction-rules.js";
 export * from "./schemas.js";
+export * from "./script.js";
 export * from "./secret-detection.js";
 export * from "./types.js";

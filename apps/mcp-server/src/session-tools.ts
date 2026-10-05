@@ -1213,7 +1213,7 @@ export async function compareSessions(args: CompareSessionsArgs): Promise<{
   };
 }
 
-async function openArchivePlayer(
+export async function openArchivePlayer(
   path: string,
   passphrase?: string,
   range?: { monoStart?: number; monoEnd?: number }
@@ -1231,7 +1231,7 @@ async function openArchivePlayer(
   }
 }
 
-function resolveArchivePath(pathLike: string): string {
+export function resolveArchivePath(pathLike: string): string {
   return resolve(process.cwd(), pathLike);
 }
 

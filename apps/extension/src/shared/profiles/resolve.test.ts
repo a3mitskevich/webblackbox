@@ -26,6 +26,7 @@ import {
   AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
   isExtendedCaptureProfile,
+  resolveSourceMapCapture,
   selectRecordingProfile,
   toArchivedProfileInfo
 } from "./resolve.js";
@@ -517,5 +518,29 @@ describe("selectRecordingProfile", () => {
         requestedProfileId: BUILT_IN_PROFILE_IDS.qa
       })
     ).toBeNull();
+  });
+});
+
+describe("resolveSourceMapCapture", () => {
+  it("records references in Full mode and nothing in Lite unless the profile says otherwise", () => {
+    const profile = createDefaultProfile();
+
+    expect(resolveSourceMapCapture(profile, "full")).toEqual({
+      mode: "metadata",
+      maxMapBytes: 8 * 1024 * 1024
+    });
+    expect(resolveSourceMapCapture(profile, "lite").mode).toBe("off");
+    expect(resolveSourceMapCapture({ sourceMaps: { mode: "off" } }, "full").mode).toBe("off");
+    expect(
+      resolveSourceMapCapture({ sourceMaps: { mode: "metadata", maxMapBytes: 1024 } }, "lite")
+    ).toEqual({ mode: "metadata", maxMapBytes: 1024 });
+  });
+
+  it("embeds maps for the QA and Full capture presets only", () => {
+    expect(
+      BUILT_IN_PROFILES.filter(
+        (profile) => resolveSourceMapCapture(profile, "full").mode === "embed"
+      ).map((profile) => profile.id)
+    ).toEqual([BUILT_IN_PROFILE_IDS.qa, BUILT_IN_PROFILE_IDS.fullCapture]);
   });
 });
