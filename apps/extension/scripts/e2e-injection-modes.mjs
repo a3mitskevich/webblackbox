@@ -6,7 +6,9 @@
 // "on-start": no page runs content.js until Start; then the recorded tab gets it in every frame,
 // including after a reload, a navigation and in an iframe added after Start, while other tabs
 // stay clean. Presence is checked over CDP: an isolated-world execution context of the extension
-// in which the content-script guard is set.
+// in which the content-script guard is set. The recorded tab also embeds a cross-origin
+// (out-of-process) iframe; its CDP contexts are not visible from the page target, so it is checked
+// by the events it sends to the service worker after Start, a reload and a navigation.
 //
 // WB_E2E_INJECTION_BENCH=1 runs the idle-cost bench instead: N tabs (WB_E2E_INJECTION_BENCH_TABS,
 // default 50) of a page with one iframe, per mode, reporting what reached the service worker and
@@ -26,6 +28,7 @@ const benchTabs = readPositiveInteger(process.env.WB_E2E_INJECTION_BENCH_TABS, 5
 const SCRIPT_ID = "webblackbox-content";
 const CONTENT_PORT = "webblackbox:content";
 const SETTLE_MS = 1_500;
+const CROSS_ORIGIN_FRAME_PATH = "/xframe/";
 
 main().catch(async (error) => {
   console.error("Injection E2E failed:", error instanceof Error ? error.message : String(error));
@@ -72,12 +75,13 @@ async function runScenarios(origin, extension, extensionId) {
   await extension.waitForRegistration(false);
 
   // On demand: nothing before Start.
-  const recorded = await openTrackedPage(`${origin}/page/?tab=recorded`, extensionId);
+  const recordedUrl = `${origin}/page/?tab=recorded&xo=1`;
+  const recorded = await openTrackedPage(recordedUrl, extensionId);
   report.onDemandIdle = await recorded.contentScriptFrames();
   assert(report.onDemandIdle.length === 0, "On demand: content.js ran before Start", report);
   assert(!(await recorded.hasIndicator()), "On demand: indicator before Start", report);
 
-  const tabId = await extension.tabIdFor(`${origin}/page/?tab=recorded`);
+  const tabId = await extension.tabIdFor(recordedUrl);
   await extension.readSwStats(true);
   const start = await extension.start(tabId);
   assert(start?.ok !== false, "Start was rejected", start);
@@ -93,12 +97,14 @@ async function runScenarios(origin, extension, extensionId) {
   })()`);
   report.onDemandLateIframe = await recorded.waitForFrames(3);
   await recorded.clickInFrames();
+  report.crossOriginAfterStart = await expectCrossOriginFrameEvents(recorded, extension);
 
   await recorded.reload();
   await recorded.waitForIndicator(true);
   report.onDemandAfterReload = await recorded.waitForFrames(2);
+  report.crossOriginAfterReload = await expectCrossOriginFrameEvents(recorded, extension);
 
-  await recorded.evaluate(`(location.assign("/next/?tab=recorded"), true)`);
+  await recorded.evaluate(`(location.assign("/next/?tab=recorded&xo=1"), true)`);
   await waitFor(
     () =>
       recorded.evaluate(
@@ -109,6 +115,7 @@ async function runScenarios(origin, extension, extensionId) {
   );
   await recorded.waitForIndicator(true);
   report.onDemandAfterNavigation = await recorded.waitForFrames(2);
+  report.crossOriginAfterNavigation = await expectCrossOriginFrameEvents(recorded, extension);
   await recorded.clickInFrames();
 
   // Another tab opened during the recording stays clean.
@@ -209,11 +216,37 @@ async function runBench(origin, extension, extensionId) {
     results
   );
 
-  console.table(
-    results.map(({ swMessagesByKind: _kinds, ...row }) => row),
-    undefined
-  );
+  console.table(results, [
+    "mode",
+    "tabs",
+    "framesPerTab",
+    "tabsWithContentScript",
+    "framesWithContentScript",
+    "swRuntimeMessages",
+    "swContentPortConnects",
+    "avgJsHeapKbPerTab",
+    "openAllTabsMs"
+  ]);
   return { bench: results };
+}
+
+/**
+ * Clicks inside the cross-origin iframe and waits until its content script delivers events: the
+ * frame lives in another renderer, so only the service worker sees whether it runs content.js.
+ */
+async function expectCrossOriginFrameEvents(page, extension) {
+  await extension.readSwStats(true);
+  await page.clickCrossOriginFrame();
+
+  return waitFor(
+    async () => {
+      const stats = await extension.readSwStats(false);
+      const events = stats.contentEventsByPath[CROSS_ORIGIN_FRAME_PATH] ?? 0;
+      return events > 0 ? { events } : null;
+    },
+    15_000,
+    "No events from the cross-origin iframe reached the service worker"
+  );
 }
 
 function summarizeFrames(report) {
@@ -229,7 +262,7 @@ function createExtensionControl(popup, sw, swWarnings) {
   return {
     async installSwStats() {
       await sw.evaluate(`(() => {
-        const stats = { messages: {}, connects: 0, contentEvents: {} };
+        const stats = { messages: {}, connects: 0, contentEvents: {}, contentEventsByPath: {} };
         globalThis.__wbInjectionE2e = stats;
         chrome.runtime.onMessage.addListener((message) => {
           const kind = typeof message?.kind === "string" ? message.kind : "unknown";
@@ -242,9 +275,15 @@ function createExtensionControl(popup, sw, swWarnings) {
 
           stats.connects += 1;
           const frameId = port.sender?.frameId ?? -1;
+          let path = "unknown";
+          try {
+            path = new URL(port.sender?.url ?? "").pathname;
+          } catch {}
           port.onMessage.addListener((message) => {
             if (message?.kind === "content.events" && Array.isArray(message.events)) {
               stats.contentEvents[frameId] = (stats.contentEvents[frameId] ?? 0) + message.events.length;
+              stats.contentEventsByPath[path] =
+                (stats.contentEventsByPath[path] ?? 0) + message.events.length;
             }
           });
         });
@@ -261,6 +300,7 @@ function createExtensionControl(popup, sw, swWarnings) {
           stats.messages = {};
           stats.connects = 0;
           stats.contentEvents = {};
+          stats.contentEventsByPath = {};
         }
 
         return snapshot;
@@ -401,6 +441,24 @@ async function openTrackedPage(url, extensionId, { settleMs = SETTLE_MS } = {}) 
         return true;
       })()`);
     },
+    /** A real pointer click routed by the browser into the out-of-process iframe. */
+    async clickCrossOriginFrame() {
+      const rect = await evaluate(`(() => {
+        const box = document.getElementById("xchild")?.getBoundingClientRect();
+        return box ? { x: box.x + box.width / 2, y: box.y + box.height / 2 } : null;
+      })()`);
+      assert(rect, "Cross-origin iframe missing", { url });
+
+      for (const type of ["mousePressed", "mouseReleased"]) {
+        await client.send("Input.dispatchMouseEvent", {
+          type,
+          x: rect.x,
+          y: rect.y,
+          button: "left",
+          clickCount: 1
+        });
+      }
+    },
     async reload() {
       await client.send("Page.reload", { ignoreCache: true });
       await sleep(300);
@@ -419,7 +477,8 @@ async function openTrackedPage(url, extensionId, { settleMs = SETTLE_MS } = {}) 
 }
 
 async function startPageServer() {
-  const page = (title) => `<!doctype html>
+  let crossOrigin = "";
+  const page = (title, withCrossOriginFrame) => `<!doctype html>
 <html>
   <head><meta charset="utf-8" /><title>${title}</title></head>
   <body>
@@ -427,6 +486,11 @@ async function startPageServer() {
     <button id="act" type="button">Act</button>
     <a id="next" href="/next/">Next</a>
     <iframe id="child" src="/frame/" width="240" height="80"></iframe>
+    ${
+      withCrossOriginFrame
+        ? `<iframe id="xchild" src="${crossOrigin}${CROSS_ORIGIN_FRAME_PATH}" width="240" height="80"></iframe>`
+        : ""
+    }
     <script>
       document.getElementById("act").addEventListener("click", () => {
         console.log("injection-e2e act");
@@ -435,13 +499,15 @@ async function startPageServer() {
     </script>
   </body>
 </html>`;
+  const frame = `<!doctype html><html><body style="margin:0"><button id="inner" type="button" style="width:100%;height:100vh">Inner</button></body></html>`;
   const routes = {
-    "/page/": page("Injection page"),
-    "/next/": page("Injection next"),
-    "/frame/": `<!doctype html><html><body><button id="inner" type="button">Inner</button></body></html>`
+    "/page/": (withCrossOriginFrame) => page("Injection page", withCrossOriginFrame),
+    "/next/": (withCrossOriginFrame) => page("Injection next", withCrossOriginFrame),
+    "/frame/": () => frame,
+    [CROSS_ORIGIN_FRAME_PATH]: () => frame
   };
   const server = createServer((request, response) => {
-    const { pathname } = new URL(request.url ?? "/", "http://127.0.0.1");
+    const { pathname, searchParams } = new URL(request.url ?? "/", "http://127.0.0.1");
 
     if (pathname === "/api/ping") {
       response.writeHead(200, { "content-type": "application/json" });
@@ -449,14 +515,17 @@ async function startPageServer() {
       return;
     }
 
-    const body = routes[pathname];
+    const body = routes[pathname]?.(searchParams.has("xo"));
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
     response.end(body ?? "not found");
   });
 
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   harness.trackServer(server);
-  return `http://127.0.0.1:${server.address().port}`;
+  const { port } = server.address();
+  // Another site than the page (127.0.0.1), so Chrome puts the iframe in its own process.
+  crossOrigin = `http://localhost:${port}`;
+  return `http://127.0.0.1:${port}`;
 }
 
 function readPositiveInteger(value, fallback) {
