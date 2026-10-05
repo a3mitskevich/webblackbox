@@ -1,4 +1,4 @@
-import { useRef, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { memo, useRef, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
 
 import {
   formatClock,
@@ -41,7 +41,6 @@ export function Timeline() {
   const archive = usePlayerState((state) => state.archive);
   const playheadMono = usePlayerState((state) => state.playheadMono);
   const locale = usePlayerState((state) => state.locale);
-  const selection = usePlayerState((state) => state.selection);
   const scrubbing = useRef(false);
 
   if (!archive) {
@@ -52,8 +51,6 @@ export function Timeline() {
   const span = view.window;
   const ratio = ratioOf(playheadMono, span);
   const offset = playheadMono - model.minMono;
-  const maxBin = Math.max(1, ...view.densityBins.map((bin) => bin.count));
-  const selectedEventId = selection?.kind === "event" ? selection.id : null;
   const valueText = i18n.tn("timelineValue", {
     time: i18n.formatSeconds(offset),
     duration: i18n.formatSeconds(model.durationMono)
@@ -152,54 +149,8 @@ export function Timeline() {
   return (
     <div className="tl" data-testid="timeline">
       <div className="tl-body" style={style}>
-        <div className="tl-row">
-          <span className="tl-label">{i18n.tn("routesLane")}</span>
-          <div className="chapters" data-testid="chapters">
-            {view.chapters.map((chapter) => (
-              <button
-                key={`${chapter.startMono}-${chapter.label}`}
-                type="button"
-                className={chapter.isErrorRoute ? "chapter bad" : "chapter"}
-                style={{
-                  left: `${(ratioOf(chapter.startMono, span) * 100).toFixed(3)}%`,
-                  width: `${(
-                    (ratioOf(chapter.endMono, span) - ratioOf(chapter.startMono, span)) *
-                    100
-                  ).toFixed(3)}%`
-                }}
-                title={`${chapter.label} · ${formatOffset(chapter.startMono - model.minMono, locale)}`}
-                onClick={() => controller.seek(chapter.startMono)}
-                data-testid="chapter"
-              >
-                {chapter.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="tl-row">
-          <span className="tl-label">{i18n.tn("actionsLane")}</span>
-          <div className="tl-track" data-testid="lane-actions">
-            {view.actionMarks.map((mark) => {
-              const event = model.eventById.get(mark.eventId);
-              const label = `${mark.triggerType ?? mark.actId} · ${formatOffset(mark.mono - model.minMono, locale)}`;
-
-              return (
-                <button
-                  key={mark.actId}
-                  type="button"
-                  className={`act act-${mark.kind}${selectedEventId === mark.eventId ? " cur" : ""}`}
-                  style={{ left: `${(mark.ratio * 100).toFixed(3)}%` }}
-                  aria-label={label}
-                  title={label}
-                  onClick={() =>
-                    event ? controller.selectEvent(event) : controller.seek(mark.mono)
-                  }
-                  data-testid="action-mark"
-                />
-              );
-            })}
-          </div>
-        </div>
+        <ChaptersRow archive={archive} />
+        <ActionsRow archive={archive} />
         <div
           className="scrub"
           role="slider"
@@ -216,58 +167,7 @@ export function Timeline() {
           onKeyDown={handleKeyDown}
           data-testid="scrubber"
         >
-          <div className="tl-row" aria-hidden="true">
-            <span className="tl-label">{i18n.tn("errorsLane")}</span>
-            <div className="tl-track" data-lane="errors" data-testid="lane-errors">
-              {view.errorTicks.map((tick) => (
-                <i
-                  key={tick}
-                  className="tick err"
-                  style={{ left: `${(tick * 100).toFixed(3)}%` }}
-                />
-              ))}
-            </div>
-          </div>
-          <div className="tl-row" aria-hidden="true">
-            <span className="tl-label">{i18n.tn("networkLane")}</span>
-            <div className="tl-track tall" data-lane="network" data-testid="lane-network">
-              {view.densityBins.map((bin, index) =>
-                bin.count > 0 ? (
-                  <i
-                    key={index}
-                    className={bin.failed ? "bar hot" : "bar"}
-                    style={{
-                      left: `${((index / view.densityBins.length) * 100).toFixed(3)}%`,
-                      width: `calc(${(100 / view.densityBins.length).toFixed(3)}% - 1px)`,
-                      height: `${Math.max(18, (bin.count / maxBin) * 100).toFixed(1)}%`
-                    }}
-                  />
-                ) : null
-              )}
-            </div>
-          </div>
-          <div className="tl-row" aria-hidden="true">
-            <span className="tl-label">{i18n.tn("realtimeLane")}</span>
-            <div className="tl-track" data-lane="realtime" data-testid="lane-realtime">
-              {view.realtimeTicks.map((tick) => (
-                <i key={tick} className="tick ws" style={{ left: `${(tick * 100).toFixed(3)}%` }} />
-              ))}
-            </div>
-          </div>
-          <div className="tl-row" aria-hidden="true">
-            <span />
-            <div className="ruler">
-              {rulerTicks(archive).map((tick) => (
-                <span
-                  key={tick.ms}
-                  className={tick.last ? "ruler-tick last" : "ruler-tick"}
-                  style={{ left: `${(tick.ratio * 100).toFixed(3)}%` }}
-                >
-                  {formatRulerSeconds(tick.ms, locale, tick.last ? 1 : 0)}
-                </span>
-              ))}
-            </div>
-          </div>
+          <ScrubLanes archive={archive} />
         </div>
         <i
           className="playhead"
@@ -280,3 +180,137 @@ export function Timeline() {
     </div>
   );
 }
+
+type LaneProps = { archive: LoadedArchive };
+
+// The lanes only change with the archive, the locale or the selection; memo keeps them out of the
+// per-frame re-render that the playhead causes while playing.
+const ChaptersRow = memo(function ChaptersRow({ archive }: LaneProps) {
+  const controller = useController();
+  const i18n = useI18n();
+  const locale = usePlayerState((state) => state.locale);
+  const { view, model } = archive;
+  const span = view.window;
+
+  return (
+    <div className="tl-row">
+      <span className="tl-label">{i18n.tn("routesLane")}</span>
+      <div className="chapters" data-testid="chapters">
+        {view.chapters.map((chapter) => (
+          <button
+            key={`${chapter.startMono}-${chapter.label}`}
+            type="button"
+            className={chapter.isErrorRoute ? "chapter bad" : "chapter"}
+            style={{
+              left: `${(ratioOf(chapter.startMono, span) * 100).toFixed(3)}%`,
+              width: `${(
+                (ratioOf(chapter.endMono, span) - ratioOf(chapter.startMono, span)) *
+                100
+              ).toFixed(3)}%`
+            }}
+            title={`${chapter.label} · ${formatOffset(chapter.startMono - model.minMono, locale)}`}
+            onClick={() => controller.seek(chapter.startMono)}
+            data-testid="chapter"
+          >
+            {chapter.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+});
+
+const ActionsRow = memo(function ActionsRow({ archive }: LaneProps) {
+  const controller = useController();
+  const i18n = useI18n();
+  const locale = usePlayerState((state) => state.locale);
+  const selectedEventId = usePlayerState((state) =>
+    state.selection?.kind === "event" ? state.selection.id : null
+  );
+  const { view, model } = archive;
+
+  return (
+    <div className="tl-row">
+      <span className="tl-label">{i18n.tn("actionsLane")}</span>
+      <div className="tl-track" data-testid="lane-actions">
+        {view.actionMarks.map((mark) => {
+          const event = model.eventById.get(mark.eventId);
+          const label = `${mark.triggerType ?? mark.actId} · ${formatOffset(mark.mono - model.minMono, locale)}`;
+
+          return (
+            <button
+              key={mark.actId}
+              type="button"
+              className={`act act-${mark.kind}${selectedEventId === mark.eventId ? " cur" : ""}`}
+              style={{ left: `${(mark.ratio * 100).toFixed(3)}%` }}
+              aria-label={label}
+              title={label}
+              onClick={() => (event ? controller.selectEvent(event) : controller.seek(mark.mono))}
+              data-testid="action-mark"
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+});
+
+const ScrubLanes = memo(function ScrubLanes({ archive }: LaneProps) {
+  const i18n = useI18n();
+  const locale = usePlayerState((state) => state.locale);
+  const { view } = archive;
+  const maxBin = Math.max(1, ...view.densityBins.map((bin) => bin.count));
+
+  return (
+    <>
+      <div className="tl-row" aria-hidden="true">
+        <span className="tl-label">{i18n.tn("errorsLane")}</span>
+        <div className="tl-track" data-lane="errors" data-testid="lane-errors">
+          {view.errorTicks.map((tick) => (
+            <i key={tick} className="tick err" style={{ left: `${(tick * 100).toFixed(3)}%` }} />
+          ))}
+        </div>
+      </div>
+      <div className="tl-row" aria-hidden="true">
+        <span className="tl-label">{i18n.tn("networkLane")}</span>
+        <div className="tl-track tall" data-lane="network" data-testid="lane-network">
+          {view.densityBins.map((bin, index) =>
+            bin.count > 0 ? (
+              <i
+                key={index}
+                className={bin.failed ? "bar hot" : "bar"}
+                style={{
+                  left: `${((index / view.densityBins.length) * 100).toFixed(3)}%`,
+                  width: `calc(${(100 / view.densityBins.length).toFixed(3)}% - 1px)`,
+                  height: `${Math.max(18, (bin.count / maxBin) * 100).toFixed(1)}%`
+                }}
+              />
+            ) : null
+          )}
+        </div>
+      </div>
+      <div className="tl-row" aria-hidden="true">
+        <span className="tl-label">{i18n.tn("realtimeLane")}</span>
+        <div className="tl-track" data-lane="realtime" data-testid="lane-realtime">
+          {view.realtimeTicks.map((tick) => (
+            <i key={tick} className="tick ws" style={{ left: `${(tick * 100).toFixed(3)}%` }} />
+          ))}
+        </div>
+      </div>
+      <div className="tl-row" aria-hidden="true">
+        <span />
+        <div className="ruler">
+          {rulerTicks(archive).map((tick) => (
+            <span
+              key={tick.ms}
+              className={tick.last ? "ruler-tick last" : "ruler-tick"}
+              style={{ left: `${(tick.ratio * 100).toFixed(3)}%` }}
+            >
+              {formatRulerSeconds(tick.ms, locale, tick.last ? 1 : 0)}
+            </span>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+});
