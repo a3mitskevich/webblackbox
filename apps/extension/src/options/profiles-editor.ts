@@ -425,7 +425,10 @@ function handleAction(
 
   switch (action) {
     case "profile-edit":
-      return update(() => openProfileForm(state, profileId));
+      // Re-opening the open form would make its edits the new snapshot: Cancel would keep them.
+      return profileId === state.editingId
+        ? undefined
+        : update(() => openProfileForm(state, profileId));
     case "profile-duplicate":
       return update(() => {
         const source = buildCatalog(state).find((entry) => entry.id === profileId);

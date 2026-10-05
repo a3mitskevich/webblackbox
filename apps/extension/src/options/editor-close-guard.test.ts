@@ -137,6 +137,29 @@ describe("profiles editor: unsaved edits guard", () => {
     expect(find<HTMLInputElement>(container, "#pf-name").value).toBe("Renamed");
   });
 
+  it("keeps guarding a form's edits when Edit of the open profile is clicked again", async () => {
+    const { container, handle } = await mount();
+
+    editDefault(container);
+    type(container, "#pf-name", "Renamed");
+    editDefault(container);
+    await flush();
+
+    expect(dialog()).toBeNull();
+    expect(find<HTMLInputElement>(container, "#pf-name").value).toBe("Renamed");
+
+    find(container, "[data-action='profile-cancel']").click();
+    await flush();
+
+    expect(dialog()?.textContent).toContain("Renamed");
+
+    find(document, "[data-confirm-accept]").click();
+    await flush();
+
+    expect(openForm(container)).toBeUndefined();
+    expect(handle.isDirty()).toBe(false);
+  });
+
   it("discards the form's edits and closes it when Discard is chosen", async () => {
     const { container, handle } = await mount();
 
