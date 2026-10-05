@@ -220,6 +220,33 @@ describe("React player", () => {
     expect(screen.getByTestId("shortcuts-dialog")).toBeInTheDocument();
   });
 
+  it("opens the shortcut sheet with ? from the scrubber, but not with Ctrl or Alt held", async () => {
+    const { controller } = renderPlayer();
+    await openArchive(controller);
+
+    screen.getByTestId("scrubber").focus();
+    key("?", { ctrlKey: true });
+    key("?", { altKey: true });
+    expect(screen.queryByTestId("shortcuts-dialog")).not.toBeInTheDocument();
+
+    key("?");
+    expect(screen.getByTestId("shortcuts-dialog")).toBeInTheDocument();
+  });
+
+  it("names each locale button by its visible label first (WCAG 2.5.3)", async () => {
+    const { controller } = renderPlayer();
+    await openArchive(controller);
+
+    for (const [id, visible] of [
+      ["locale-en", "EN"],
+      ["locale-ru", "RU"]
+    ] as const) {
+      const button = screen.getByTestId(id);
+      expect(button).toHaveTextContent(visible);
+      expect(button).toHaveAccessibleName(expect.stringMatching(new RegExp(`^${visible}\\b`)));
+    }
+  });
+
   it("opens the Base UI dialog as a modal and returns focus to its opener", async () => {
     const { controller } = renderPlayer();
     await openArchive(controller);

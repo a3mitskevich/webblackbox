@@ -9,6 +9,8 @@ type ModalDialogProps = {
   testId?: string;
   /** The element focused on open; by default the first tabbable element of the dialog. */
   initialFocus?: RefObject<HTMLElement | null>;
+  /** Only Esc or a button closes it: a stray click outside must not discard what was typed. */
+  disablePointerDismissal?: boolean;
   children: ReactNode;
 };
 
@@ -24,11 +26,13 @@ export function ModalDialog({
   className,
   testId,
   initialFocus,
+  disablePointerDismissal = false,
   children
 }: ModalDialogProps) {
   return (
     <Dialog.Root
       open={open}
+      disablePointerDismissal={disablePointerDismissal}
       onOpenChange={(next) => {
         if (!next) {
           onClose();

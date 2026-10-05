@@ -111,6 +111,7 @@ export function PassphraseDialog() {
       open
       onClose={() => controller.cancelPassphrase()}
       initialFocus={inputRef}
+      disablePointerDismissal
       testId="passphrase-dialog"
     >
       <form className="dlg-body" onSubmit={submit}>

@@ -400,20 +400,41 @@ export async function verifyHashRestore(client, origin, archivePath) {
 }
 
 export async function verifyNarrowLayout(client) {
+  const stage = testId("stage");
+  const rail = testId("rail");
+  // Marks the stage node: crossing the 900 px breakpoint must not remount it (media, playback).
+  await client.evaluate(`document.querySelector('${stage}').dataset.mark = "kept"`);
   await setViewport(client, 390, 844);
   await sleep(300);
   const narrow = await client.evaluate(`({
     scrollWidth: document.documentElement.scrollWidth,
-    railBelowStage: document.querySelector('${testId("rail")}').getBoundingClientRect().top >
-      document.querySelector('${testId("stage")}').getBoundingClientRect().bottom
+    railBelowStage: document.querySelector('${rail}').getBoundingClientRect().top >
+      document.querySelector('${stage}').getBoundingClientRect().bottom,
+    splitter: Boolean(document.querySelector('${testId("split-body")}')),
+    stageKept: document.querySelector('${stage}')?.dataset.mark === "kept"
   })`);
   await setViewport(client, 1440, 900);
+  await sleep(300);
+  const wide = await client.evaluate(`({
+    stageKept: document.querySelector('${stage}')?.dataset.mark === "kept",
+    splitter: Boolean(document.querySelector('${testId("split-body")}')),
+    railWidth: document.querySelector('${rail}').getBoundingClientRect().width
+  })`);
   assert(
-    narrow.scrollWidth <= 390 && narrow.railBelowStage,
-    "Narrow layout scrolls horizontally or is not one column",
+    narrow.scrollWidth <= 390 && narrow.railBelowStage && !narrow.splitter,
+    "Narrow layout scrolls horizontally, is not one column or keeps the splitter",
     narrow
   );
-  return narrow;
+  assert(narrow.stageKept && wide.stageKept, "Crossing the narrow breakpoint remounted the stage", {
+    narrow,
+    wide
+  });
+  assert(
+    wide.splitter && Math.abs(wide.railWidth - 520) <= 4,
+    "The wide layout did not come back with its splitter and rail width",
+    wide
+  );
+  return { narrow, wide };
 }
 
 /**

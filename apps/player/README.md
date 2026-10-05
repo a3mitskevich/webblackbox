@@ -43,7 +43,7 @@ pnpm build      # vite build → build/
 pnpm serve      # serve build/ on http://localhost:4177
 ```
 
-`build/` keeps the deploy contract of the tsup build:
+`build/` is what GitHub Pages and the extension e2e serve:
 
 - `index.html` (from `apps/player/index.html`, the Vite entry; its CSP meta is the Player CSP) and `main.js`, a small entry with a stable name that picks the UI;
 - lazily loaded chunks, CSS files and fonts under `assets/` with content hashes: the classic UI, the React UI, React, Zod and the archive SDK are separate chunks, so each UI loads only what it uses and heavy panels can `React.lazy` their own chunk;

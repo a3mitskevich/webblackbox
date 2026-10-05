@@ -117,7 +117,9 @@ export const networkMessages = defineFeatureMessages<keyof typeof EN>("network",
 
 In components: `const t = useFeatureI18n(networkMessages); t("bodyNotCaptured", { size })`.
 Keys are typed from the English file; switching the language re-renders in place (no reload).
-All feature dictionaries are merged into one catalog at startup (`FEATURE_CATALOG`), and
+All feature dictionaries are merged into one catalog at startup (`FEATURE_CATALOG`; it is the
+startup check that no two features claim the same namespace, components read their own
+dictionary through `useFeatureI18n`), and
 `src/lib/locales.test.ts` checks every feature: same keys in all three files, same `{placeholders}`,
 no empty strings. Shared player strings (`useI18n().tn(...)`) stay in `src/lib/locales/*.json`
 (the `next` section); add there only what several features use.
@@ -174,8 +176,11 @@ The context (`createScenarioContext` in `scripts/lib/next-e2e.mjs`) has `client`
 `openSynthetic`, `snapshot`, `waitForSnapshot`, `waitForSelector`, `press` (physical keys),
 `click`, `hover`, `dragBy`, `evaluate`, `setViewport`, `testId`, `assert` and `sleep`. Drive the UI
 only through `data-testid` hooks; check archive data correctness in player-sdk tests, not here.
+`openSynthetic` serves every scenario page under the strict style policy (no `style-src
+'unsafe-inline'`), so a panel that injects a `<style>` fails the run.
 `WB_E2E_NEXT_FEATURES=network pnpm --filter @webblackbox/player e2e:player-next` runs only
-your feature's scenarios (the shell scenarios and the CSP passes always run).
+your feature's scenarios (the shell scenarios and the CSP passes always run); a name without a
+scenario file, or no scenario files at all, fails the run.
 
 ## Shared files: allowed edits
 

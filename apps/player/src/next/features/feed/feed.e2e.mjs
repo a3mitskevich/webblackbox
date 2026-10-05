@@ -27,14 +27,27 @@ async function filterNarrowsTheList(ctx) {
   return { rowsBefore: before.rows, rowsAfter: filtered.rows, countBefore, countAfter };
 }
 
-/** Enter opens the details pane under the list with its own splitter; Esc closes it. */
+/**
+ * Enter opens the details pane under the list with its own splitter; Esc closes it. The list stays
+ * mounted (focus, scroll) while the pane opens and closes, and the pane comes back at its size.
+ */
 async function detailsPaneSplits(ctx) {
+  const list = ctx.testId("event-list");
   await ctx.openSynthetic();
-  await ctx.evaluate("document.activeElement?.blur()");
+  await ctx.evaluate(`document.querySelector('${list}').focus()`);
   await ctx.press("l");
   await ctx.waitForSnapshot((value) => value.selectedRow !== null, "L selected nothing");
+  // Marks this list node: a remount would drop the mark and the focus.
+  await ctx.evaluate(`document.querySelector('${list}').dataset.mark = "kept"`);
   await ctx.press("Enter", { code: "Enter", keyCode: 13 });
   await ctx.waitForSelector(ctx.testId("split-details"), "The details pane has no splitter");
+
+  const listKept = () =>
+    ctx.evaluate(`(() => {
+      const element = document.querySelector('${list}');
+      return element?.dataset.mark === "kept" && document.activeElement === element;
+    })()`);
+  ctx.assert(await listKept(), "Opening the details remounted the list or lost its focus");
 
   const height = () =>
     ctx.evaluate(
@@ -48,9 +61,20 @@ async function detailsPaneSplits(ctx) {
     dragged
   });
 
+  await ctx.evaluate(`document.querySelector('${list}').focus()`);
   await ctx.press("Escape", { code: "Escape", keyCode: 27 });
   await ctx.waitForSnapshot((value) => value.details === "", "Esc did not close the details");
-  return { initial, dragged };
+  ctx.assert(await listKept(), "Closing the details remounted the list or lost its focus");
+
+  await ctx.press("Enter", { code: "Enter", keyCode: 13 });
+  await ctx.waitForSelector(ctx.testId("details-panel"), "Enter did not reopen the details");
+  const reopened = await height();
+  ctx.assert(Math.abs(reopened - dragged) <= 4, "The details pane did not keep its size", {
+    dragged,
+    reopened
+  });
+  await ctx.press("Escape", { code: "Escape", keyCode: 27 });
+  return { initial, dragged, reopened };
 }
 
 export default {

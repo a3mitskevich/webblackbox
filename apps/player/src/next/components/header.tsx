@@ -169,7 +169,7 @@ export function Header({ searchRef }: HeaderProps) {
               type="button"
               lang={option}
               aria-pressed={option === locale}
-              aria-label={i18n.messages.localeNames[option]}
+              aria-label={`${LOCALE_SHORT_LABELS[option]} · ${i18n.messages.localeNames[option]}`}
               onClick={() => controller.setLocale(option)}
               data-testid={`locale-${option}`}
             >

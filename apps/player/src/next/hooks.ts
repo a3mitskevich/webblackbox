@@ -89,6 +89,11 @@ function isOwnedElsewhere(event: KeyboardEvent): boolean {
   );
 }
 
+/** `?` matches the typed character with any modifier; Ctrl / Alt / Meta + `?` are not the sheet. */
+function isCharacterKeyIgnored(event: KeyboardEvent): boolean {
+  return isOwnedElsewhere(event) || event.ctrlKey || event.altKey || event.metaKey;
+}
+
 function yieldsToTarget(event: KeyboardEvent, binding: KeyBinding): boolean {
   return binding.yieldsToControls === true && Boolean(targetElement(event)?.closest(ACTIVATABLE));
 }
@@ -138,7 +143,8 @@ export function useKeyboardShortcuts(searchRef: RefObject<HTMLInputElement | nul
   useHotkeys(CHARACTER_KEYS, handleHotkey, {
     useKey: true,
     ignoreModifiers: true,
-    ignoreEventWhen: isOwnedElsewhere
+    enableOnFormTags: ["slider", "option"],
+    ignoreEventWhen: isCharacterKeyIgnored
   });
 }
 

@@ -58,18 +58,16 @@ function StageColumn() {
   );
 }
 
-/** Stage and rail: side by side with a splitter on wide screens, one column below 900 px. */
+/**
+ * Stage and rail: side by side with a splitter on wide screens, one column below 900 px. One tree
+ * for both, so crossing the breakpoint (a resize, a rotation) never remounts the stage or the rail.
+ */
 function Workspace() {
   const wide = useMediaQuery(WIDE_LAYOUT_QUERY);
 
-  return wide ? (
-    <main className="body body-split">
-      <BodySplit stage={<StageColumn />} rail={<Rail />} />
-    </main>
-  ) : (
-    <main className="body">
-      <StageColumn />
-      <Rail />
+  return (
+    <main className={wide ? "body body-split" : "body body-stacked"}>
+      <BodySplit stacked={!wide} stage={<StageColumn />} rail={<Rail />} />
     </main>
   );
 }

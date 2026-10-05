@@ -1243,6 +1243,13 @@ h2 {
   width: 100%;
   height: 100%;
 }
+/* One column: the stage/rail group and its panels step aside, so the stage column and the rail are
+   laid out by .body as before; !important beats the library's inline display. */
+.body-stacked > .split,
+.body-stacked > .split > [data-panel],
+.body-stacked > .split > [data-panel] > .split-panel {
+  display: contents !important;
+}
 .rail-panel > .split {
   flex: 1 1 auto;
   height: auto;

@@ -78,6 +78,23 @@ export async function openEncrypted(client, archivePath, passphrase) {
     15_000,
     "Passphrase dialog did not open"
   );
+  // A click outside (on the backdrop) must not cancel the prompt and drop the file.
+  for (const type of ["mousePressed", "mouseReleased"]) {
+    await client.send("Input.dispatchMouseEvent", {
+      type,
+      x: 4,
+      y: 4,
+      button: "left",
+      clickCount: 1
+    });
+  }
+  await sleep(150);
+  await waitForSelector(
+    client,
+    testId("passphrase-dialog"),
+    1_000,
+    "A click outside cancelled the passphrase dialog"
+  );
   await typePassphrase(client, passphrase);
   await waitForSelector(client, testId("stage"), 20_000, "Archive did not load");
 }
@@ -305,8 +322,15 @@ export function createScenarioContext({ client, origin, archivePath, artifactsDi
     hover: (selector) => hover(client, selector),
     dragBy: (selector, dx, dy) => dragBy(client, selector, dx, dy),
     setViewport: (width, height) => setViewport(client, width, height),
+    // Feature panels bring their own markup and libraries: every scenario page is served under
+    // the strict style policy, so a panel that injects a <style> fails the run.
     openSynthetic: (options = {}) =>
-      openSyntheticArchive(client, { origin, archivePath, ...options })
+      openSyntheticArchive(client, {
+        origin,
+        archivePath,
+        ...options,
+        query: `${STRICT_CSP_QUERY}${options.query ?? ""}`
+      })
   };
 }
 
@@ -368,6 +392,20 @@ export async function loadFeatureScenarios(files, only = null) {
     }
 
     suites.push(suite);
+  }
+
+  const unknown = [...(wanted ?? [])].filter(
+    (name) => !suites.some((suite) => suite.feature === name)
+  );
+
+  if (unknown.length > 0) {
+    throw new Error(
+      `WB_E2E_NEXT_FEATURES names features without scenarios: ${unknown.map((name) => `"${name}"`).join(", ")}`
+    );
+  }
+
+  if (suites.length === 0) {
+    throw new Error("No feature scenarios found (src/next/features/<feature>/<feature>.e2e.mjs)");
   }
 
   return suites;

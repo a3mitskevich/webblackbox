@@ -57,6 +57,18 @@ describe("e2e:player-next feature scenarios", () => {
     );
   });
 
+  it("fails on a filter naming a feature without scenarios, and on no scenarios at all", async () => {
+    const root = await featureTree({
+      "feed/feed.e2e.mjs":
+        'export default { feature: "feed", scenarios: [{ name: "b", run: async () => 2 }] };'
+    });
+    const files = await findFeatureScenarioFiles(root);
+
+    await expect(loadFeatureScenarios(files, "fed")).rejects.toThrow(/"fed"/);
+    await expect(loadFeatureScenarios(files, "feed, network")).rejects.toThrow(/"network"/);
+    await expect(loadFeatureScenarios([])).rejects.toThrow(/No feature scenarios/);
+  });
+
   it("loads the scenarios shipped in src/next/features", async () => {
     const suites = await loadFeatureScenarios(await findFeatureScenarioFiles(featuresDir));
     expect(suites.map((suite) => suite.feature)).toContain("feed");

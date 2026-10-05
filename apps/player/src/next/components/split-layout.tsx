@@ -13,6 +13,7 @@ import {
   clearStoredLayouts,
   defaultBodyLayout,
   defaultDetailsLayout,
+  DETAILS_DEFAULT_PERCENT,
   defaultRailWidth,
   layoutId,
   layoutStorage,
@@ -41,13 +42,18 @@ function useLayoutReset(reset: () => void): void {
 type BodySplitProps = {
   stage: ReactNode;
   rail: ReactNode;
+  /**
+   * One column (below 900 px): no splitter, and `.body-stacked` lets the group and its panels
+   * step aside (`display: contents`), so stage and rail stack without being remounted.
+   */
+  stacked?: boolean;
 };
 
 /**
  * Stage ↔ rail of the wide layout (PROPOSAL §5): a keyboard-accessible splitter
  * (react-resizable-panels, WAI-ARIA window splitter) whose sizes persist in localStorage.
  */
-export function BodySplit({ stage, rail }: BodySplitProps) {
+export function BodySplit({ stage, rail, stacked = false }: BodySplitProps) {
   const i18n = useI18n();
   const groupRef = useGroupRef();
   const elementRef = useRef<HTMLDivElement>(null);
@@ -70,11 +76,14 @@ export function BodySplit({ stage, rail }: BodySplitProps) {
       elementRef={elementRef}
       defaultLayout={defaultLayout}
       onLayoutChanged={onLayoutChanged}
+      disabled={stacked}
     >
       <Panel id="layout-stage" className="split-panel" minSize={`${STAGE_MIN_PERCENT}%`}>
         {stage}
       </Panel>
-      <Separator id="split-body" className="split-handle" aria-label={i18n.tn("resizePanels")} />
+      {stacked ? null : (
+        <Separator id="split-body" className="split-handle" aria-label={i18n.tn("resizePanels")} />
+      )}
       <Panel
         id="layout-rail"
         className="split-panel"
@@ -96,42 +105,63 @@ type ListDetailsSplitProps = {
   details: ReactNode | null;
 };
 
-function DetailsGroup({ name, list, details }: ListDetailsSplitProps) {
+const LIST_PANEL = "layout-list";
+const DETAILS_PANEL = "layout-details";
+/** The panels while the details are open; the stored sizes are kept for this set. */
+const LIST_DETAILS_PANELS = [LIST_PANEL, DETAILS_PANEL];
+const LIST_ONLY_LAYOUT: Layout = { [LIST_PANEL]: 100 };
+
+/**
+ * A list with a details pane under it, split by a persisted, resettable splitter. The group and
+ * the list panel stay mounted while the details open and close, so the list keeps its focus,
+ * scroll position and virtualizer state; only the splitter and the details panel come and go.
+ */
+export function ListDetailsSplit({ name, list, details }: ListDetailsSplitProps) {
   const i18n = useI18n();
   const groupRef = useGroupRef();
+  const isOpen = details !== null;
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: layoutId(name),
+    panelIds: LIST_DETAILS_PANELS,
     storage: layoutStorage,
     onlySaveAfterUserInteractions: true
   });
-  const fallback: Layout = defaultDetailsLayout();
+  const openLayout = defaultLayout ?? defaultDetailsLayout();
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
 
-  useLayoutReset(() => groupRef.current?.setLayout(defaultDetailsLayout()));
+  useLayoutReset(() =>
+    groupRef.current?.setLayout(isOpenRef.current ? defaultDetailsLayout() : LIST_ONLY_LAYOUT)
+  );
 
   return (
     <Group
       className="split split-v"
       orientation="vertical"
       groupRef={groupRef}
-      defaultLayout={defaultLayout ?? fallback}
+      defaultLayout={isOpen ? openLayout : LIST_ONLY_LAYOUT}
       onLayoutChanged={onLayoutChanged}
     >
-      <Panel id="layout-list" className="split-panel" minSize="20%">
+      <Panel id={LIST_PANEL} className="split-panel" minSize="20%">
         {list}
       </Panel>
-      <Separator
-        id={`split-${name}`}
-        className="split-handle"
-        aria-label={i18n.tn("resizeDetails")}
-      />
-      <Panel id="layout-details" className="split-panel" minSize="15%">
-        {details}
-      </Panel>
+      {isOpen ? (
+        <Separator
+          id={`split-${name}`}
+          className="split-handle"
+          aria-label={i18n.tn("resizeDetails")}
+        />
+      ) : null}
+      {isOpen ? (
+        <Panel
+          id={DETAILS_PANEL}
+          className="split-panel"
+          minSize="15%"
+          defaultSize={`${openLayout[DETAILS_PANEL] ?? DETAILS_DEFAULT_PERCENT}%`}
+        >
+          {details}
+        </Panel>
+      ) : null}
     </Group>
   );
-}
-
-/** A list with a details pane under it, split by a persisted, resettable splitter. */
-export function ListDetailsSplit({ name, list, details }: ListDetailsSplitProps) {
-  return details ? <DetailsGroup name={name} list={list} details={details} /> : <>{list}</>;
 }
