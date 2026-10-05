@@ -232,6 +232,7 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   optionsLanguageHint: "界面语言。",
   optionsTransferHint: "以一个 JSON 文件与团队共享配置和规则。",
   optionsGroupMasking: "遮盖",
+  optionsGroupInjection: "页面注入",
   optionsGroupBuffer: "缓冲区",
   optionsGroupSampling: "采样",
   optionsGroupArchive: "归档",
@@ -272,6 +273,14 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   optionsActionWindowHint: "点击后此时间内的请求归属于该点击。",
   optionsActionWindowHelp:
     "用户操作后此窗口内发起的网络请求会与该操作关联，回放时可看到点击引发了什么。",
+  optionsContentInjection: "注入页面",
+  optionsContentInjectionHint: "对保存后加载的页面生效；已打开的标签页在重新加载前保持原状。",
+  optionsContentInjectionAlways: "始终（从页面开始录制）",
+  optionsContentInjectionAlwaysDescription:
+    "每个页面和框架从加载第一个字节起运行一个小脚本，因此录制能覆盖页面的最开始，包括首次导航。每次页面加载的空闲开销：向扩展发送一条消息，以及一个记住页面显示的密码字段的监视器。",
+  optionsContentInjectionOnStart: "仅在开始录制时",
+  optionsContentInjectionOnStartDescription:
+    "未录制的页面中不运行任何内容。捕获从按下“开始”时开始：开始之前的事件（包括页面的首次加载）会丢失，开始之前显示的密码字段也不会被监视。",
   optionsRingBufferHint: "保留多长时间的最近记录。",
   optionsRingBufferHelp: "新事件到达时会丢弃较旧的事件，除非冻结（错误、标记）保留了缓冲区。",
   optionsDomFlushHint: "DOM 变更的批量提交频率。",

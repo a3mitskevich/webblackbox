@@ -238,6 +238,7 @@ export const EN_MESSAGES = {
   optionsLanguageHint: "Interface language.",
   optionsTransferHint: "Share profiles and rules with your team as one JSON file.",
   optionsGroupMasking: "Masking",
+  optionsGroupInjection: "Page injection",
   optionsGroupBuffer: "Buffer",
   optionsGroupSampling: "Sampling",
   optionsGroupArchive: "Archive",
@@ -279,6 +280,15 @@ export const EN_MESSAGES = {
   optionsActionWindowHint: "Requests this soon after a click belong to it.",
   optionsActionWindowHelp:
     "Network requests that start within this window after a user action are linked to it, so the Player can show what a click caused.",
+  optionsContentInjection: "Inject into pages",
+  optionsContentInjectionHint:
+    "Applies to pages loaded after saving; open tabs keep their state until reloaded.",
+  optionsContentInjectionAlways: "Always (record from page start)",
+  optionsContentInjectionAlwaysDescription:
+    "A small script loads in every page and frame from the first byte, so a recording covers the page from its very start, including the first navigation. Idle cost per page load: one message to the extension and a watcher that remembers password fields the page reveals.",
+  optionsContentInjectionOnStart: "Only when recording starts",
+  optionsContentInjectionOnStartDescription:
+    "Nothing runs in pages you are not recording. Capture begins when you press Start: events before Start, including the page's first load, are missed, and password fields revealed before Start are not watched.",
   optionsRingBufferHint: "How much recent history is kept.",
   optionsRingBufferHelp:
     "Older events are dropped as new ones arrive, unless a freeze (error, marker) preserves the buffer.",
