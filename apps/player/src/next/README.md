@@ -39,16 +39,17 @@ Tailwind is not part of the build (see the stage V summary on PR #20).
 
 ## Building blocks (use these, do not hand-roll)
 
-| Need                                         | Use                                                                 | Notes                                                                          |
-| -------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Long list or table                           | `components/virtual-list.tsx` (`@tanstack/react-virtual`)           | `measureElement` for variable rows                                             |
-| Dialog                                       | `components/modal-dialog.tsx` (Base UI `Dialog`)                    | Name it with `<DialogTitle>`; focus returns to the opener                      |
-| Tooltip                                      | `components/hint.tsx` (Base UI `Tooltip`)                           | Instead of `title` on icon buttons                                             |
-| Tabs, menus, popovers, toasts, toggle groups | `@base-ui/react/*`                                                  | The app root has `CSPProvider disableStyleElements`                            |
-| Icon                                         | `components/icon.tsx` (`lucide-react`)                              | Add a name to `ICONS`; features ask for the player's names                     |
-| Splitter                                     | `components/split-layout.tsx` (`react-resizable-panels`)            | `ListDetailsSplit name="network"` persists per name; "Reset layout" resets all |
-| A panel that can fail or load lazily         | `components/panel-boundary.tsx` (`react-error-boundary` + Suspense) | Rail tab panels already run inside one                                         |
-| Keyboard                                     | `core/keymap.ts` + `hooks.ts` (`react-hotkeys-hook`)                | Physical keys (work on a Russian layout)                                       |
+| Need                                         | Use                                                                 | Notes                                                                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Long list or table                           | `components/virtual-list.tsx` (`@tanstack/react-virtual`)           | `measureElement` for variable rows                                                                           |
+| Dialog                                       | `components/modal-dialog.tsx` (Base UI `Dialog`)                    | Name it with `<DialogTitle>`; focus returns to the opener                                                    |
+| Tooltip                                      | `components/hint.tsx` (Base UI `Tooltip`)                           | Instead of `title` on icon buttons                                                                           |
+| Tabs, menus, popovers, toasts, toggle groups | `@base-ui/react/*`                                                  | The app root has `CSPProvider disableStyleElements`                                                          |
+| Icon                                         | `components/icon.tsx` (`lucide-react`)                              | Add a name to `ICONS`; features ask for the player's names                                                   |
+| Splitter                                     | `components/split-layout.tsx` (`react-resizable-panels`)            | `ListDetailsSplit name="network"` persists per name (`detailsPercent` sets the default); `F` widens the rail |
+| A panel that can fail or load lazily         | `components/panel-boundary.tsx` (`react-error-boundary` + Suspense) | Rail tab panels already run inside one                                                                       |
+| Keyboard                                     | `core/keymap.ts` + `hooks.ts` (`react-hotkeys-hook`)                | Physical keys (work on a Russian layout)                                                                     |
+| Highlighted code, JSON tree, hex dump        | `features/network/{code-view,viewers}.tsx`                          | Shiki (JS regex engine) loads as its own chunk; R5 may move them to components                               |
 
 Other libraries are vetted in `LIBRARIES.md` (Shiki with the JavaScript regex engine, uPlot,
 jsdiff, microdiff, uFuzzy, TanStack Table). Never inject `<style>` (no runtime CSS-in-JS), never
