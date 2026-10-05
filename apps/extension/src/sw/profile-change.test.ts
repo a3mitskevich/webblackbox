@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { resolveModeBaseConfig } from "../shared/mode-profile.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
   normalizeEnterprisePolicy
@@ -22,7 +23,11 @@ import {
   selectRecordingProfile,
   type ProfileSelection
 } from "../shared/profiles/resolve.js";
-import { resolveProfilesState, type ProfilesState } from "../shared/profiles/storage.js";
+import {
+  resolveProfilesState,
+  syncDefaultProfileWithLegacyOptions,
+  type ProfilesState
+} from "../shared/profiles/storage.js";
 import {
   buildProfileCancellation,
   detectProfileChange,
@@ -180,6 +185,19 @@ describe("detectProfileChange", () => {
     expect(
       detectProfileChange({ started, next: next(renamed), startedProfileExists: true })
     ).toBeNull();
+  });
+
+  it("keeps recording when a General settings save pins the values Default already ran with", () => {
+    const started = snapshot(select(state()));
+    // Options saves the whole normalized config: every sampling and recorder value gets pinned.
+    const synced = syncDefaultProfileWithLegacyOptions(
+      state().store,
+      structuredClone(resolveModeBaseConfig("full"))
+    );
+    const next = snapshot(select(state({ profiles: synced.profiles })));
+
+    expect(next.selection.profile).not.toEqual(started.selection.profile);
+    expect(detectProfileChange({ started, next, startedProfileExists: true })).toBeNull();
   });
 
   it("keeps recording when another rule picks the same profile", () => {

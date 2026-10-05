@@ -66,12 +66,12 @@ export function detectProfileChange(input: {
 
   if (
     !isSameRunningConfig(next.profileConfig, started.profileConfig) ||
-    // The service worker also reads body filters and other settings from the profile itself. The
-    // legacy Default is derived from v1 options, which the config comparison already covers.
+    // The service worker also reads some settings from the profile itself. The legacy Default is
+    // derived from v1 options, which the config comparison already covers.
     (!started.selection.legacy &&
       !isSameValue(
-        toProfileSettings(next.selection.profile),
-        toProfileSettings(started.selection.profile)
+        toSettingsOutsideConfig(next.selection.profile),
+        toSettingsOutsideConfig(started.selection.profile)
       ))
   ) {
     return "profile-edited";
@@ -174,11 +174,13 @@ function isSameValue(left: unknown, right: unknown): boolean {
   return stableStringify(left) === stableStringify(right);
 }
 
-/** A profile's settings: renaming it or rewording its description changes nothing recorded. */
-function toProfileSettings(profile: RecordingProfile): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(profile).filter(([key]) => key !== "name" && key !== "description")
-  );
+/**
+ * Profile settings the recorder config does not carry: body URL filters and MIME allowlist,
+ * pointer and export rules. Everything else (categories, redaction, sampling, recorder) is compared
+ * as the config it renders to, so pinning a value the session already ran with is no change.
+ */
+function toSettingsOutsideConfig(profile: RecordingProfile): Record<string, unknown> {
+  return { network: profile.network, pointer: profile.pointer, export: profile.export };
 }
 
 function isSameRunningConfig(left: RecorderConfig, right: RecorderConfig): boolean {
