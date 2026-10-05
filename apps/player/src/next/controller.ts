@@ -228,6 +228,10 @@ export function createPlayerController(
     /** Opens an archive file; encrypted archives go through the passphrase dialog. */
     async openFile(source: ArchiveSource): Promise<void> {
       const fileName = source.name;
+      // The newest file wins: an older load still waiting for its passphrase is cancelled.
+      const token = ++loadToken;
+      pendingPassphrase?.(null);
+      pendingPassphrase = null;
 
       if (!ARCHIVE_NAME_PATTERN.test(fileName)) {
         update({
@@ -237,7 +241,6 @@ export function createPlayerController(
         return;
       }
 
-      const token = ++loadToken;
       pause();
       update({ status: { phase: "loading", fileName }, dragActive: false });
 
@@ -545,6 +548,11 @@ export function createPlayerController(
 
       if (hash.tab) {
         patch.tab = hash.tab;
+      }
+
+      // An in-page anchor or a cleared hash carries no player state.
+      if (Object.keys(patch).length === 0) {
+        return;
       }
 
       pause();

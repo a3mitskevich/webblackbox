@@ -136,6 +136,28 @@ describe("opening archives", () => {
     expect(store.getState().status.phase).toBe("empty");
   });
 
+  it("settles the passphrase prompt of a file that a newer file replaces", async () => {
+    const { store, controller } = setup({ open: encryptedOpen });
+    const first = controller.openFile(source("first.zip"));
+    await waitForPhase(store, "passphrase");
+
+    await controller.openFile({ name: "notes.txt", arrayBuffer: async () => new ArrayBuffer(0) });
+    await first;
+    expect(store.getState().status).toMatchObject({ phase: "error", fileName: "notes.txt" });
+
+    const second = controller.openFile(source("second.zip"));
+    await waitForPhase(store, "passphrase");
+    const third = controller.openFile(source("third.zip"));
+    await second;
+    await vi.waitFor(() =>
+      expect(store.getState().status).toMatchObject({ phase: "passphrase", fileName: "third.zip" })
+    );
+
+    controller.submitPassphrase("right");
+    await third;
+    expect(store.getState().archive?.fileName).toBe("third.zip");
+  });
+
   it("reports archives that cannot be read", async () => {
     const { store, controller } = setup({
       open: async () => {
@@ -166,6 +188,17 @@ describe("opening archives", () => {
     expect(state.playheadMono - (state.archive?.model.minMono ?? 0)).toBe(10_890);
     expect(state.selection).toEqual({ kind: "request", id: "90080.1706" });
     expect(state.tab).toBe("network");
+  });
+
+  it("leaves playback alone for a hash without player state", async () => {
+    const { store, controller } = await loaded();
+    controller.play();
+    const before = store.getState();
+
+    controller.applyHash({});
+
+    expect(store.getState()).toBe(before);
+    expect(store.getState().isPlaying).toBe(true);
   });
 });
 
