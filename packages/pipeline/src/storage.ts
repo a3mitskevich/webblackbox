@@ -32,6 +32,11 @@ export type StoredIndexes = {
 export type PipelineStorage = {
   putSession(metadata: SessionMetadata): Promise<void>;
   getSession(sid: string): Promise<SessionMetadata | undefined>;
+  /**
+   * Lists metadata of every session that still has a stored session row.
+   * Optional so custom storages written before it existed keep type-checking.
+   */
+  listSessions?(): Promise<SessionMetadata[]>;
   putChunk(chunk: StoredChunk): Promise<void>;
   listChunks(sid: string): Promise<StoredChunk[]>;
   getLatestChunkMeta(sid: string): Promise<ChunkTimeIndexEntry | undefined>;
@@ -91,6 +96,10 @@ export class MemoryPipelineStorage implements PipelineStorage {
 
   public async getSession(sid: string): Promise<SessionMetadata | undefined> {
     return this.sessions.get(sid);
+  }
+
+  public async listSessions(): Promise<SessionMetadata[]> {
+    return [...this.sessions.values()];
   }
 
   public async putChunk(chunk: StoredChunk): Promise<void> {
@@ -279,6 +288,14 @@ export class EncryptedPipelineStorage implements PipelineStorage {
     return this.storage.getSession(sid);
   }
 
+  public async listSessions(): Promise<SessionMetadata[]> {
+    if (!this.storage.listSessions) {
+      throw new Error("Wrapped pipeline storage does not support listing sessions.");
+    }
+
+    return this.storage.listSessions();
+  }
+
   public async putChunk(chunk: StoredChunk): Promise<void> {
     await this.storage.putChunk({
       ...chunk,
@@ -457,6 +474,11 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
   public async getSession(sid: string): Promise<SessionMetadata | undefined> {
     const row = await this.get<SessionRow>("sessions", sid);
     return row?.value;
+  }
+
+  public async listSessions(): Promise<SessionMetadata[]> {
+    const rows = await this.getAll<SessionRow>("sessions");
+    return rows.map((row) => row.value);
   }
 
   public async putChunk(chunk: StoredChunk): Promise<void> {

@@ -176,6 +176,8 @@ Events are grouped into size-bounded chunks (default: 512KB). Each chunk is:
 3. Hashed with SHA-256 for integrity
 4. Stored with metadata (timestamps, event count, byte length)
 
+Events inside a chunk stay in arrival order, which is **not** `mono` order: page-side events (mouse, resize, storage) reach the recorder later than CDP events from the same moment, so they can also land in a later chunk. Chunk metadata therefore records the min/max `t` and `mono` of the chunk's events, so the time index stays correct when chunks overlap. Archives exported before this change recorded the first/last event instead.
+
 ### Indexing
 
 Three indexes are built for efficient querying:
@@ -223,7 +225,9 @@ The export process creates a `.webblackbox` ZIP file:
 
 ### Query Engine
 
-The Player SDK provides a flexible query API that filters events by:
+The Player SDK always exposes events in timeline order: `mono`, then wall-clock `t`, then event id (`compareEventsForTimeline`). Each chunk is sorted once when it is parsed. Full loads and ranged queries merge the per-chunk ordered lists, so a query never re-sorts. Ranged queries before a full load pick chunks by their time-index bounds, widened by the true bounds of chunks already parsed. On archives with legacy first/last bounds, such a query can miss a late event near a chunk edge until that chunk has been parsed or all events are loaded.
+
+The query API filters events by:
 
 - **Time range** — Monotonic timestamp start/end
 - **Event types** — Array of specific types
@@ -293,7 +297,7 @@ Page World          Extension World         Background
 ### Encryption Details
 
 - **Algorithm**: AES-GCM (256-bit key)
-- **Key Derivation**: PBKDF2 with SHA-256, 120,000 iterations
+- **Key Derivation**: PBKDF2 with SHA-256, 600,000 iterations for new exports (readers take the count from the manifest, so older 120,000-iteration archives still open; counts outside 10,000–10,000,000 are rejected)
 - **Salt**: Random 16-byte salt per archive
 - **IV**: Random 12-byte IV per file within the archive
 - **Scope**: Event chunks, indexes, and blobs; manifest remains readable and therefore holds only the sanitized origin (no page title)
