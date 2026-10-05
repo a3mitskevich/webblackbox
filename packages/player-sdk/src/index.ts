@@ -12,7 +12,41 @@ import type {
   WebBlackboxEvent,
   WebBlackboxEventType
 } from "@webblackbox/protocol";
-import { extractRequestId, inferBlobMime } from "@webblackbox/protocol";
+import { assertArchiveKdfIterations, extractRequestId, inferBlobMime } from "@webblackbox/protocol";
+
+import {
+  ArchiveLimitError,
+  assertArchiveWithinLimits,
+  concatBytes,
+  readZipEntryBytes,
+  resolveArchiveLoadLimits,
+  type ArchiveLoadLimits
+} from "./archive-limits.js";
+import {
+  parseArchiveIntegrity,
+  parseArchiveInvertedIndex,
+  parseArchiveManifest,
+  parseArchivePrivacyManifest,
+  parseArchiveRequestIndex,
+  parseArchiveTimeIndex
+} from "./archive-schema.js";
+import {
+  lowerBoundEventMono,
+  mergeSortedEventLists,
+  sortEventsForTimeline,
+  upperBoundEventMono
+} from "./event-order.js";
+
+export { compareEventsForTimeline } from "./event-order.js";
+
+export {
+  ArchiveLimitError,
+  assertArchiveWithinLimits,
+  DEFAULT_ARCHIVE_LOAD_LIMITS,
+  readZipEntryBytes,
+  resolveArchiveLoadLimits,
+  type ArchiveLoadLimits
+} from "./archive-limits.js";
 
 /** Player lifecycle status. */
 export type PlayerStatus = "idle" | "loaded";
@@ -24,6 +58,8 @@ export type PlayerOpenInput = ArrayBuffer | Uint8Array | Blob;
 export type PlayerOpenOptions = {
   passphrase?: string;
   range?: PlayerRange;
+  /** Resource limits for untrusted archives; unset fields use `DEFAULT_ARCHIVE_LOAD_LIMITS`. */
+  limits?: Partial<ArchiveLoadLimits>;
 };
 
 /** Monotonic-time query range in milliseconds. */
@@ -417,10 +453,27 @@ type ArchiveEncryptedFileMeta = {
   ivBase64: string;
 };
 
+type NodeZlibDecodeOptions = {
+  maxOutputLength: number;
+};
+
 type NodeZlibLike = {
-  gunzipSync?: (input: Uint8Array) => Uint8Array;
-  brotliDecompressSync?: (input: Uint8Array) => Uint8Array;
-  zstdDecompressSync?: (input: Uint8Array) => Uint8Array;
+  gunzipSync?: (input: Uint8Array, options?: NodeZlibDecodeOptions) => Uint8Array;
+  brotliDecompressSync?: (input: Uint8Array, options?: NodeZlibDecodeOptions) => Uint8Array;
+  zstdDecompressSync?: (input: Uint8Array, options?: NodeZlibDecodeOptions) => Uint8Array;
+};
+
+type ChunkDecodeLimit = {
+  maxBytes: number;
+  message: string;
+};
+
+type IntegrityArchiveReader = {
+  zip: JSZip;
+  integrity: HashesManifest;
+  archiveKey: CryptoKey | null;
+  encryptedFiles: Record<string, ArchiveEncryptedFileMeta>;
+  limits: ArchiveLoadLimits;
 };
 
 const ACTION_TRIGGER_TYPES = new Set<WebBlackboxEventType>([
@@ -467,6 +520,8 @@ type EventChunkSource = {
   bytes: Uint8Array;
 };
 
+type ChunkMonoBounds = Pick<EventChunkSource, "monoStart" | "monoEnd">;
+
 type EventChunkDescriptor = {
   chunkId: string;
   path: string;
@@ -492,6 +547,9 @@ export class WebBlackboxPlayer {
 
   private readonly decodedChunkCache = new Map<string, WebBlackboxEvent[]>();
 
+  /** True mono bounds of chunks parsed so far; index bounds of older archives are first/last only. */
+  private readonly parsedChunkBounds = new Map<string, ChunkMonoBounds>();
+
   private allEventsCache: WebBlackboxEvent[] | null = null;
 
   private allDerivedCache: PlayerDerivedView | null = null;
@@ -512,14 +570,18 @@ export class WebBlackboxPlayer {
 
   private readonly encryptedFiles: Record<string, ArchiveEncryptedFileMeta>;
 
+  private readonly limits: ArchiveLoadLimits;
+
   private constructor(
     zip: JSZip,
     archive: PlayerArchive,
     eventChunks: EventChunkSource[],
     archiveKey: CryptoKey | null,
-    encryptedFiles: Record<string, ArchiveEncryptedFileMeta>
+    encryptedFiles: Record<string, ArchiveEncryptedFileMeta>,
+    limits: ArchiveLoadLimits
   ) {
     this.zip = zip;
+    this.limits = limits;
     this.archive = archive;
     this.archiveKey = archiveKey;
     this.encryptedFiles = encryptedFiles;
@@ -563,54 +625,46 @@ export class WebBlackboxPlayer {
     input: PlayerOpenInput,
     options: PlayerOpenOptions = {}
   ): Promise<WebBlackboxPlayer> {
+    const limits = resolveArchiveLoadLimits(options.limits);
     const bytes = await normalizeOpenInput(input);
     const zip = await JSZip.loadAsync(bytes);
+    assertArchiveWithinLimits(zip, limits);
 
-    const integrity = await readJson<HashesManifest>(zip, "integrity/hashes.json");
+    const integrity = parseArchiveIntegrity(
+      await readZipFileBytes(zip, "integrity/hashes.json", limits)
+    );
     assertArchiveFileSet(zip, integrity);
-    await assertManifestIntegrity(zip, integrity);
-    const manifest = await readJson<ExportManifest>(zip, "manifest.json");
+    const manifestBytes = await readZipFileBytes(zip, "manifest.json", limits);
+    await assertManifestIntegrity(manifestBytes, integrity);
+    const manifest = parseArchiveManifest(manifestBytes);
     const archiveKey = await resolveArchiveReadKey(manifest, options.passphrase);
     const encryptedFiles = manifest.encryption?.files ?? {};
-    const timeIndex = await readIntegrityArchiveJson<ChunkTimeIndexEntry[]>(
-      zip,
-      integrity,
+    const reader: IntegrityArchiveReader = { zip, integrity, archiveKey, encryptedFiles, limits };
+    const timeIndex = await readIntegrityArchiveJson(
+      reader,
       "index/time.json",
-      archiveKey,
-      encryptedFiles
+      parseArchiveTimeIndex
     );
-    const requestIndex = await readIntegrityArchiveJson<RequestIndexEntry[]>(
-      zip,
-      integrity,
+    const requestIndex = await readIntegrityArchiveJson(
+      reader,
       "index/req.json",
-      archiveKey,
-      encryptedFiles
+      parseArchiveRequestIndex
     );
-    const invertedIndex = await readIntegrityArchiveJson<InvertedIndexEntry[]>(
-      zip,
-      integrity,
+    const invertedIndex = await readIntegrityArchiveJson(
+      reader,
       "index/inv.json",
-      archiveKey,
-      encryptedFiles
+      parseArchiveInvertedIndex
     );
-    const privacyManifest = await readOptionalIntegrityArchiveJson<PrivacyManifest>(
-      zip,
-      integrity,
+    const privacyManifest = await readOptionalIntegrityArchiveJson(
+      reader,
       "privacy/manifest.json",
-      archiveKey,
-      encryptedFiles
+      parseArchivePrivacyManifest
     );
-    const eventChunks = await readEventChunkSources(
-      zip,
-      archiveKey,
-      encryptedFiles,
-      {
-        range: options.range,
-        timeIndex,
-        defaultCodec: manifest.chunkCodec
-      },
-      integrity
-    );
+    const eventChunks = await readEventChunkSources(reader, {
+      range: options.range,
+      timeIndex,
+      defaultCodec: manifest.chunkCodec
+    });
 
     return new WebBlackboxPlayer(
       zip,
@@ -624,7 +678,8 @@ export class WebBlackboxPlayer {
       },
       eventChunks,
       archiveKey,
-      encryptedFiles
+      encryptedFiles,
+      limits
     );
   }
 
@@ -702,23 +757,9 @@ export class WebBlackboxPlayer {
       return matched.length >= limit;
     };
 
-    if (sourceEvents) {
-      for (const event of sourceEvents) {
-        if (collectMatch(event)) {
-          return matched;
-        }
-      }
-
-      return matched;
-    }
-
-    for (const chunk of this.getChunksForRange(query.range)) {
-      const chunkEvents = this.getChunkEvents(chunk);
-
-      for (const event of chunkEvents) {
-        if (collectMatch(event)) {
-          return matched;
-        }
+    for (const event of sourceEvents ?? this.getRangeEvents(query.range)) {
+      if (collectMatch(event)) {
+        return matched;
       }
     }
 
@@ -769,12 +810,42 @@ export class WebBlackboxPlayer {
       .slice(0, Math.max(1, limit));
   }
 
+  /**
+   * Events of a mono range in timeline order. Uses the fully loaded list when available (exact);
+   * otherwise merges the per-chunk ordered lists of the chunks that may hold the range, because
+   * chunks overlap in time when events arrive late.
+   */
+  private getRangeEvents(range?: PlayerRange): WebBlackboxEvent[] {
+    if (this.allEventsCache) {
+      return sliceEventsByMonoRange(this.allEventsCache, range);
+    }
+
+    return mergeSortedEventLists(
+      this.getChunksForRange(range).map((chunk) => this.getChunkEvents(chunk))
+    );
+  }
+
   private getChunksForRange(range?: PlayerRange): EventChunkSource[] {
     if (!range) {
       return this.eventChunks;
     }
 
-    return this.eventChunks.filter((chunk) => chunkSourceIntersectsRange(chunk, range));
+    return this.eventChunks.filter((chunk) =>
+      chunkSourceIntersectsRange(this.resolveChunkBounds(chunk), range)
+    );
+  }
+
+  private resolveChunkBounds(chunk: EventChunkSource): ChunkMonoBounds {
+    const parsed = this.parsedChunkBounds.get(chunk.chunkId);
+
+    if (!parsed) {
+      return chunk;
+    }
+
+    return {
+      monoStart: Math.min(chunk.monoStart, parsed.monoStart),
+      monoEnd: Math.max(chunk.monoEnd, parsed.monoEnd)
+    };
   }
 
   private getAllEvents(): WebBlackboxEvent[] {
@@ -782,11 +853,9 @@ export class WebBlackboxPlayer {
       return this.allEventsCache;
     }
 
-    const events: WebBlackboxEvent[] = [];
-
-    for (const chunk of this.eventChunks) {
-      events.push(...this.getChunkEvents(chunk));
-    }
+    const events = mergeSortedEventLists(
+      this.eventChunks.map((chunk) => this.getChunkEvents(chunk))
+    );
 
     this.allEventsCache = events;
     return events;
@@ -803,6 +872,7 @@ export class WebBlackboxPlayer {
 
     const parsed = parseChunkEvents(chunk);
     this.decodedChunkCache.set(chunk.chunkId, parsed);
+    this.rememberParsedChunkBounds(chunk.chunkId, parsed);
 
     while (this.decodedChunkCache.size > DEFAULT_DECODED_CHUNK_CACHE_SIZE) {
       const oldest = this.decodedChunkCache.keys().next().value;
@@ -815,6 +885,15 @@ export class WebBlackboxPlayer {
     }
 
     return parsed;
+  }
+
+  private rememberParsedChunkBounds(chunkId: string, events: WebBlackboxEvent[]): void {
+    const first = events[0];
+    const last = events[events.length - 1];
+
+    if (first && last && !this.parsedChunkBounds.has(chunkId)) {
+      this.parsedChunkBounds.set(chunkId, { monoStart: first.mono, monoEnd: last.mono });
+    }
   }
 
   private findEventById(eventId: string): WebBlackboxEvent | null {
@@ -851,8 +930,8 @@ export class WebBlackboxPlayer {
       return null;
     }
 
-    const rawBytes = await file.async("uint8array");
-    await assertArchiveFileIntegrity(this.zip, this.archive.integrity, blob.path, rawBytes);
+    const rawBytes = await readZipEntryBytes(file, this.limits);
+    await assertArchiveFileIntegrity(this.archive.integrity, blob.path, rawBytes);
     const bytes = await this.decryptArchiveFile(blob.path, rawBytes);
 
     return {
@@ -1025,8 +1104,8 @@ export class WebBlackboxPlayer {
     const screenshots = this.query({
       range,
       types: ["screen.screenshot"]
-    }).sort(compareEventsByMono);
-    const errorEvents = scopedEvents.filter(isErrorEvent).sort(compareEventsByMono);
+    });
+    const errorEvents = scopedEvents.filter(isErrorEvent);
 
     return derived.actionSpans.slice(0, limit).map((span) => {
       const spanEvents = span.eventIds
@@ -1146,7 +1225,7 @@ export class WebBlackboxPlayer {
 
   /** Returns all events that reference a specific request id. */
   public getRequestEvents(reqId: string): WebBlackboxEvent[] {
-    return this.query({ requestId: reqId }).sort((left, right) => left.mono - right.mono);
+    return this.query({ requestId: reqId });
   }
 
   /** Builds a concrete request/response diff including body sizes and missing replay inputs. */
@@ -2143,10 +2222,6 @@ function compactText(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}...`;
 }
 
-function compareEventsByMono(left: WebBlackboxEvent, right: WebBlackboxEvent): number {
-  return left.mono - right.mono || left.id.localeCompare(right.id);
-}
-
 function isErrorEvent(event: WebBlackboxEvent): boolean {
   return event.type.startsWith("error.") || event.lvl === "error";
 }
@@ -2211,40 +2286,6 @@ function findActionScreenshot(
     format: asString(payload?.format) ?? null,
     size: asNumber(payload?.size) ?? null
   };
-}
-
-function lowerBoundEventMono(events: WebBlackboxEvent[], mono: number): number {
-  let low = 0;
-  let high = events.length;
-
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2);
-
-    if ((events[mid]?.mono ?? Number.POSITIVE_INFINITY) < mono) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-
-  return low;
-}
-
-function upperBoundEventMono(events: WebBlackboxEvent[], mono: number): number {
-  let low = 0;
-  let high = events.length;
-
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2);
-
-    if ((events[mid]?.mono ?? Number.POSITIVE_INFINITY) <= mono) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-
-  return low;
 }
 
 function buildEndpointRegressions(
@@ -3040,6 +3081,8 @@ async function resolveArchiveReadKey(
     throw new Error("Archive is encrypted. Provide a passphrase to open it.");
   }
 
+  assertArchiveKdfIterations(encryption.kdf.iterations);
+
   return deriveArchiveKey(
     passphrase,
     fromBase64(encryption.kdf.saltBase64),
@@ -3048,18 +3091,17 @@ async function resolveArchiveReadKey(
 }
 
 async function readEventChunkSources(
-  zip: JSZip,
-  archiveKey: CryptoKey | null,
-  encryptedFiles: Record<string, ArchiveEncryptedFileMeta>,
+  reader: IntegrityArchiveReader,
   options: {
     range?: PlayerRange;
     timeIndex?: ChunkTimeIndexEntry[];
     defaultCodec?: ChunkCodec;
-  } = {},
-  integrity?: HashesManifest
+  } = {}
 ): Promise<EventChunkSource[]> {
+  const { zip, integrity, archiveKey, encryptedFiles, limits } = reader;
   const descriptors = buildEventChunkDescriptors(zip, options);
   const chunks: EventChunkSource[] = [];
+  let decodedTotalBytes = 0;
 
   for (const descriptor of descriptors) {
     const { path } = descriptor;
@@ -3069,14 +3111,16 @@ async function readEventChunkSources(
       continue;
     }
 
-    const rawBytes = await file.async("uint8array");
-
-    if (integrity) {
-      await assertArchiveFileIntegrity(zip, integrity, path, rawBytes);
-    }
+    const rawBytes = await readZipEntryBytes(file, limits);
+    await assertArchiveFileIntegrity(integrity, path, rawBytes);
 
     const decrypted = await decryptArchiveBytes(path, rawBytes, archiveKey, encryptedFiles);
-    const bytes = await decodeChunkBytes(decrypted, descriptor.codec);
+    const bytes = await decodeChunkBytes(
+      decrypted,
+      descriptor.codec,
+      resolveChunkDecodeLimit(path, descriptor.codec, limits, decodedTotalBytes)
+    );
+    decodedTotalBytes += bytes.byteLength;
 
     chunks.push({
       chunkId: descriptor.chunkId,
@@ -3104,6 +3148,7 @@ function buildEventChunkDescriptors(
 
   if (Array.isArray(timeIndex) && timeIndex.length > 0) {
     return timeIndex
+      .map((entry) => ({ ...entry, ...normalizeIndexedChunkBounds(entry) }))
       .filter((entry) => !range || chunkIntersectsRange(entry, range))
       .sort((left, right) => left.seq - right.seq)
       .map((entry) => ({
@@ -3129,6 +3174,7 @@ function buildEventChunkDescriptors(
     }));
 }
 
+/** Parses a chunk's NDJSON into timeline order (chunks store events in arrival order). */
 function parseChunkEvents(chunk: EventChunkSource): WebBlackboxEvent[] {
   const content = new TextDecoder().decode(chunk.bytes);
   const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
@@ -3146,10 +3192,25 @@ function parseChunkEvents(chunk: EventChunkSource): WebBlackboxEvent[] {
     }
   }
 
-  return events;
+  return sortEventsForTimeline(events);
 }
 
-function chunkSourceIntersectsRange(chunk: EventChunkSource, range: PlayerRange): boolean {
+function sliceEventsByMonoRange(
+  events: WebBlackboxEvent[],
+  range?: PlayerRange
+): WebBlackboxEvent[] {
+  if (isRangeUnbounded(range)) {
+    return events;
+  }
+
+  const start = range?.monoStart === undefined ? 0 : lowerBoundEventMono(events, range.monoStart);
+  const end =
+    range?.monoEnd === undefined ? events.length : upperBoundEventMono(events, range.monoEnd);
+
+  return events.slice(start, end);
+}
+
+function chunkSourceIntersectsRange(chunk: ChunkMonoBounds, range: PlayerRange): boolean {
   if (
     Number.isFinite(chunk.monoEnd) &&
     range.monoStart !== undefined &&
@@ -3169,7 +3230,18 @@ function chunkSourceIntersectsRange(chunk: EventChunkSource, range: PlayerRange)
   return true;
 }
 
-function chunkIntersectsRange(entry: ChunkTimeIndexEntry, range: PlayerRange): boolean {
+/**
+ * Pipelines before the ordering fix recorded the first and last event of a chunk rather than its
+ * min/max, so legacy bounds can be inverted when the last event arrived late.
+ */
+function normalizeIndexedChunkBounds(entry: ChunkTimeIndexEntry): ChunkMonoBounds {
+  return {
+    monoStart: Math.min(entry.monoStart, entry.monoEnd),
+    monoEnd: Math.max(entry.monoStart, entry.monoEnd)
+  };
+}
+
+function chunkIntersectsRange(entry: ChunkMonoBounds, range: PlayerRange): boolean {
   if (range.monoStart !== undefined && entry.monoEnd < range.monoStart) {
     return false;
   }
@@ -3200,18 +3272,51 @@ async function decryptArchiveBytes(
   return decryptBytes(bytes, archiveKey, fromBase64(encryptedFile.ivBase64));
 }
 
-async function decodeChunkBytes(bytes: Uint8Array, codec: ChunkCodec): Promise<Uint8Array> {
+function resolveChunkDecodeLimit(
+  path: string,
+  codec: ChunkCodec,
+  limits: ArchiveLoadLimits,
+  decodedTotalBytes: number
+): ChunkDecodeLimit {
+  const remainingTotalBytes = limits.maxTotalDecodedChunkBytes - decodedTotalBytes;
+
+  if (remainingTotalBytes < limits.maxDecodedChunkBytes) {
+    return {
+      maxBytes: Math.max(0, remainingTotalBytes),
+      message:
+        `Archive event chunk '${path}' (${codec}) exceeds the total decoded limit of ` +
+        `${limits.maxTotalDecodedChunkBytes} bytes.`
+    };
+  }
+
+  return {
+    maxBytes: limits.maxDecodedChunkBytes,
+    message:
+      `Archive event chunk '${path}' (${codec}) exceeds the per-chunk decoded limit of ` +
+      `${limits.maxDecodedChunkBytes} bytes.`
+  };
+}
+
+async function decodeChunkBytes(
+  bytes: Uint8Array,
+  codec: ChunkCodec,
+  limit: ChunkDecodeLimit
+): Promise<Uint8Array> {
   if (codec === "none") {
+    if (bytes.byteLength > limit.maxBytes) {
+      throw new ArchiveLimitError(limit.message);
+    }
+
     return bytes;
   }
 
-  const fromStreams = await tryDecodeChunkWithStreams(bytes, codec);
+  const fromStreams = await tryDecodeChunkWithStreams(bytes, codec, limit);
 
   if (fromStreams) {
     return fromStreams;
   }
 
-  const fromNodeZlib = await tryDecodeChunkWithNodeZlib(bytes, codec);
+  const fromNodeZlib = await tryDecodeChunkWithNodeZlib(bytes, codec, limit);
 
   if (fromNodeZlib) {
     return fromNodeZlib;
@@ -3222,7 +3327,8 @@ async function decodeChunkBytes(bytes: Uint8Array, codec: ChunkCodec): Promise<U
 
 async function tryDecodeChunkWithStreams(
   bytes: Uint8Array,
-  codec: ChunkCodec
+  codec: ChunkCodec,
+  limit: ChunkDecodeLimit
 ): Promise<Uint8Array | null> {
   if (typeof DecompressionStream === "undefined" || typeof Blob === "undefined") {
     return null;
@@ -3233,8 +3339,12 @@ async function tryDecodeChunkWithStreams(
       const stream = new Blob([toArrayBuffer(bytes)])
         .stream()
         .pipeThrough(new DecompressionStream(format as CompressionFormat));
-      return await readReadableStreamWithTimeout(stream, codec, format);
-    } catch {
+      return await readReadableStreamWithTimeout(stream, codec, format, limit);
+    } catch (error) {
+      if (error instanceof ArchiveLimitError) {
+        throw error;
+      }
+
       continue;
     }
   }
@@ -3242,8 +3352,10 @@ async function tryDecodeChunkWithStreams(
   return null;
 }
 
-async function readReadableStream(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-  const reader = stream.getReader();
+async function readReadableStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  limit: ChunkDecodeLimit
+): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let totalLength = 0;
 
@@ -3259,31 +3371,37 @@ async function readReadableStream(stream: ReadableStream<Uint8Array>): Promise<U
     }
 
     const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
-    chunks.push(chunk);
     totalLength += chunk.byteLength;
+
+    if (totalLength > limit.maxBytes) {
+      throw new ArchiveLimitError(limit.message);
+    }
+
+    chunks.push(chunk);
   }
 
-  const output = new Uint8Array(totalLength);
-  let cursor = 0;
-
-  for (const chunk of chunks) {
-    output.set(chunk, cursor);
-    cursor += chunk.byteLength;
-  }
-
-  return output;
+  return concatBytes(chunks, totalLength);
 }
 
 async function readReadableStreamWithTimeout(
   stream: ReadableStream<Uint8Array>,
   codec: ChunkCodec,
-  format: string
+  format: string,
+  limit: ChunkDecodeLimit
 ): Promise<Uint8Array> {
-  return withTimeout(
-    readReadableStream(stream),
-    STREAM_CODEC_TIMEOUT_MS,
-    `Chunk codec '${codec}' decode timed out for format '${format}'.`
-  );
+  const reader = stream.getReader();
+
+  try {
+    return await withTimeout(
+      readReadableStream(reader, limit),
+      STREAM_CODEC_TIMEOUT_MS,
+      `Chunk codec '${codec}' decode timed out for format '${format}'.`
+    );
+  } catch (error) {
+    // Stop the decompressor so an abandoned (over-limit or timed-out) decode frees its memory.
+    void reader.cancel().catch(() => undefined);
+    throw error;
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -3307,7 +3425,8 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 
 async function tryDecodeChunkWithNodeZlib(
   bytes: Uint8Array,
-  codec: ChunkCodec
+  codec: ChunkCodec,
+  limit: ChunkDecodeLimit
 ): Promise<Uint8Array | null> {
   const zlib = await loadNodeZlib();
 
@@ -3315,23 +3434,41 @@ async function tryDecodeChunkWithNodeZlib(
     return null;
   }
 
+  if (limit.maxBytes < 1) {
+    throw new ArchiveLimitError(limit.message);
+  }
+
+  const options: NodeZlibDecodeOptions = { maxOutputLength: limit.maxBytes };
+
   try {
     if (codec === "gzip" && typeof zlib.gunzipSync === "function") {
-      return cloneBytes(zlib.gunzipSync(bytes));
+      return cloneBytes(zlib.gunzipSync(bytes, options));
     }
 
     if (codec === "br" && typeof zlib.brotliDecompressSync === "function") {
-      return cloneBytes(zlib.brotliDecompressSync(bytes));
+      return cloneBytes(zlib.brotliDecompressSync(bytes, options));
     }
 
     if (codec === "zst" && typeof zlib.zstdDecompressSync === "function") {
-      return cloneBytes(zlib.zstdDecompressSync(bytes));
+      return cloneBytes(zlib.zstdDecompressSync(bytes, options));
     }
-  } catch {
+  } catch (error) {
+    if (isNodeBufferTooLargeError(error)) {
+      throw new ArchiveLimitError(limit.message);
+    }
+
     return null;
   }
 
   return null;
+}
+
+function isNodeBufferTooLargeError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "ERR_BUFFER_TOO_LARGE"
+  );
 }
 
 async function loadNodeZlib(): Promise<NodeZlibLike | null> {
@@ -3502,60 +3639,48 @@ function updateActionStats(span: ActionSpan, event: WebBlackboxEvent): void {
   }
 }
 
-async function readJson<TValue>(zip: JSZip, path: string): Promise<TValue> {
-  const content = await readZipFileText(zip, path);
-  return JSON.parse(content) as TValue;
-}
-
 async function readIntegrityArchiveJson<TValue>(
-  zip: JSZip,
-  integrity: HashesManifest,
+  reader: IntegrityArchiveReader,
   path: string,
-  archiveKey: CryptoKey | null,
-  encryptedFiles: Record<string, ArchiveEncryptedFileMeta>
+  parse: (bytes: Uint8Array) => TValue
 ): Promise<TValue> {
-  const rawBytes = await readZipFileBytes(zip, path);
-  await assertArchiveFileIntegrity(zip, integrity, path, rawBytes);
-  const bytes = await decryptArchiveBytes(path, rawBytes, archiveKey, encryptedFiles);
-  return JSON.parse(new TextDecoder().decode(bytes)) as TValue;
+  const rawBytes = await readZipFileBytes(reader.zip, path, reader.limits);
+  await assertArchiveFileIntegrity(reader.integrity, path, rawBytes);
+  const bytes = await decryptArchiveBytes(path, rawBytes, reader.archiveKey, reader.encryptedFiles);
+  return parse(bytes);
 }
 
 async function readOptionalIntegrityArchiveJson<TValue>(
-  zip: JSZip,
-  integrity: HashesManifest,
+  reader: IntegrityArchiveReader,
   path: string,
-  archiveKey: CryptoKey | null,
-  encryptedFiles: Record<string, ArchiveEncryptedFileMeta>
+  parse: (bytes: Uint8Array) => TValue
 ): Promise<TValue | null> {
-  if (!zip.file(path)) {
+  if (!reader.zip.file(path)) {
     return null;
   }
 
-  return readIntegrityArchiveJson<TValue>(zip, integrity, path, archiveKey, encryptedFiles);
+  return readIntegrityArchiveJson(reader, path, parse);
 }
 
-async function readZipFileBytes(zip: JSZip, path: string): Promise<Uint8Array> {
+async function readZipFileBytes(
+  zip: JSZip,
+  path: string,
+  limits: ArchiveLoadLimits
+): Promise<Uint8Array> {
   const file = zip.file(path);
 
   if (!file) {
     throw new Error(`Archive is missing required file: ${path}`);
   }
 
-  return file.async("uint8array");
+  return readZipEntryBytes(file, limits);
 }
 
-async function readZipFileText(zip: JSZip, path: string): Promise<string> {
-  const file = zip.file(path);
-
-  if (!file) {
-    throw new Error(`Archive is missing required file: ${path}`);
-  }
-
-  return file.async("string");
-}
-
-async function assertManifestIntegrity(zip: JSZip, integrity: HashesManifest): Promise<void> {
-  const actual = await sha256Hex(await readZipFileBytes(zip, "manifest.json"));
+async function assertManifestIntegrity(
+  manifestBytes: Uint8Array,
+  integrity: HashesManifest
+): Promise<void> {
+  const actual = await sha256Hex(manifestBytes);
 
   if (actual !== integrity.manifestSha256) {
     throw new Error("Archive integrity mismatch for manifest.json");
@@ -3582,10 +3707,9 @@ function assertArchiveFileSet(zip: JSZip, integrity: HashesManifest): void {
 }
 
 async function assertArchiveFileIntegrity(
-  zip: JSZip,
   integrity: HashesManifest,
   path: string,
-  bytes?: Uint8Array
+  bytes: Uint8Array
 ): Promise<void> {
   const expected = integrity.files[path];
 
@@ -3593,7 +3717,7 @@ async function assertArchiveFileIntegrity(
     throw new Error(`Archive integrity manifest is missing hash for ${path}`);
   }
 
-  const actual = await sha256Hex(bytes ?? (await readZipFileBytes(zip, path)));
+  const actual = await sha256Hex(bytes);
 
   if (actual !== expected) {
     throw new Error(`Archive integrity mismatch for ${path}`);

@@ -105,6 +105,19 @@ export async function fetchJson(url, timeoutMs, init) {
   return response.json();
 }
 
+/** Prints the last extension/page console lines so a CI failure shows what the browser was doing. */
+export async function printChromeConsoleTail(path, maxLines) {
+  const content = await readFile(path, "utf8").catch(() => "");
+  const lines = content
+    .split(/\r?\n/u)
+    .filter((line) => /:CONSOLE|chrome-extension:\/\//u.test(line))
+    .slice(-maxLines);
+
+  if (lines.length > 0) {
+    console.error(`Chrome console tail (${path}):\n${lines.join("\n")}`);
+  }
+}
+
 export async function readLogTail(path, maxLines) {
   const content = await readFile(path, "utf8");
   const lines = content

@@ -23,7 +23,14 @@ import {
   resolvePreferredExtensionId,
   summarizeTargetsForDebug
 } from "./lib/devtools-targets.mjs";
-import { assert, fetchJson, readPositiveInteger, sleep, waitFor } from "./lib/e2e-utils.mjs";
+import {
+  assert,
+  fetchJson,
+  printChromeConsoleTail,
+  readPositiveInteger,
+  sleep,
+  waitFor
+} from "./lib/e2e-utils.mjs";
 import { waitForIndicatorGone, waitForIndicatorText } from "./lib/extension-ui.mjs";
 import {
   attachFidelitySocketServer,
@@ -57,6 +64,7 @@ const downloadApiTimeoutMs = readPositiveInteger(
 );
 const cdpCommandTimeoutMs = readPositiveInteger(process.env.WB_E2E_CDP_COMMAND_TIMEOUT_MS, 15_000);
 const cdpClientOptions = { commandTimeoutMs: cdpCommandTimeoutMs };
+const FAILURE_CONSOLE_TAIL_LINES = 60;
 const captureMode = process.env.WB_E2E_MODE === "lite" ? "lite" : "full";
 const reloadAfterStart = (process.env.WB_E2E_RELOAD_AFTER_START ?? "0") === "1";
 const fullVisualCapture = normalizeFullVisualCaptureMode(
@@ -109,6 +117,12 @@ const state = {
 
 main().catch(async (error) => {
   console.error("Fullchain E2E failed:", error instanceof Error ? error.message : String(error));
+
+  if (error instanceof Error && error.stack) {
+    console.error(error.stack);
+  }
+
+  await printChromeConsoleTail(chromeLogPath, FAILURE_CONSOLE_TAIL_LINES);
   await cleanup();
   process.exit(1);
 });

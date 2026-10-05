@@ -13,7 +13,7 @@ import type {
 import { CHUNK_CODECS, DEFAULT_EXPORT_POLICY, sanitizeUrlForPrivacy } from "@webblackbox/protocol";
 
 import { decodeChunkEvents, encodeChunkEvents } from "./codec.js";
-import { EventChunker } from "./chunker.js";
+import { computeChunkTimeBounds, EventChunker } from "./chunker.js";
 import { createWebBlackboxArchive } from "./exporter.js";
 import { sha256Hex } from "./hash.js";
 import { EventIndexer } from "./indexer.js";
@@ -437,18 +437,13 @@ export class FlightRecorderPipeline {
 
       const encoded = await encodeChunkEvents(filtered, chunk.meta.codec);
       const bytes = encoded.bytes;
-      const first = filtered[0];
-      const last = filtered[filtered.length - 1];
 
       output.push({
         chunk: {
           sid: chunk.sid,
           meta: {
             ...chunk.meta,
-            tStart: first?.t ?? chunk.meta.tStart,
-            tEnd: last?.t ?? chunk.meta.tEnd,
-            monoStart: first?.mono ?? chunk.meta.monoStart,
-            monoEnd: last?.mono ?? chunk.meta.monoEnd,
+            ...computeChunkTimeBounds(filtered, chunk.meta),
             eventCount: filtered.length,
             byteLength: bytes.byteLength,
             codec: encoded.codec,
@@ -665,8 +660,6 @@ export class FlightRecorderPipeline {
     events: WebBlackboxEvent[],
     bytes: Uint8Array
   ): Promise<void> {
-    const first = events[0];
-    const last = events[events.length - 1];
     const hash = await sha256Hex(bytes);
 
     const chunk: StoredChunk = {
@@ -674,10 +667,7 @@ export class FlightRecorderPipeline {
       meta: {
         chunkId,
         seq,
-        tStart: first?.t ?? 0,
-        tEnd: last?.t ?? 0,
-        monoStart: first?.mono ?? 0,
-        monoEnd: last?.mono ?? 0,
+        ...computeChunkTimeBounds(events),
         eventCount: events.length,
         byteLength: bytes.byteLength,
         codec,
@@ -724,13 +714,7 @@ export class FlightRecorderPipeline {
         title: this.options.session.title
       },
       chunkCodec,
-      redactionProfile: this.options.redactionProfile ?? {
-        redactHeaders: [],
-        redactCookieNames: [],
-        redactBodyPatterns: [],
-        blockedSelectors: [],
-        hashSensitiveValues: true
-      },
+      redactionProfile: toManifestRedactionProfile(this.options.redactionProfile),
       stats: {
         eventCount: chunks.reduce((count, chunk) => count + chunk.meta.eventCount, 0),
         chunkCount: chunks.length,
@@ -739,6 +723,20 @@ export class FlightRecorderPipeline {
       }
     };
   }
+}
+
+/**
+ * Copies only the schema-known redaction fields into the manifest. Profiles merged from stored
+ * options can carry extra keys, which the strict manifest schema would reject on load.
+ */
+function toManifestRedactionProfile(profile: RedactionProfile | undefined): RedactionProfile {
+  return {
+    redactHeaders: [...(profile?.redactHeaders ?? [])],
+    redactCookieNames: [...(profile?.redactCookieNames ?? [])],
+    redactBodyPatterns: [...(profile?.redactBodyPatterns ?? [])],
+    blockedSelectors: [...(profile?.blockedSelectors ?? [])],
+    hashSensitiveValues: profile?.hashSensitiveValues ?? true
+  };
 }
 
 function resolveExportPolicy(

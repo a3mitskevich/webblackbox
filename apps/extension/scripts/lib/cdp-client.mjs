@@ -1,5 +1,6 @@
 export const DEFAULT_CDP_COMMAND_TIMEOUT_MS = 60_000;
 export const DEFAULT_CDP_CONNECT_TIMEOUT_MS = 15_000;
+const CDP_EXPRESSION_PREVIEW_CHARS = 160;
 
 /**
  * Minimal Chrome DevTools Protocol client over a DevTools WebSocket URL.
@@ -125,10 +126,15 @@ export class CdpClient {
       ...(options.sessionId ? { sessionId: options.sessionId } : {})
     });
 
+    // Created here so its stack names the caller; a timer callback has no useful stack.
+    const timeoutError = new Error(
+      `CDP command timed out after ${timeoutMs}ms: ${describeCdpCommand(method, params)}`
+    );
+
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`CDP command timed out after ${timeoutMs}ms: ${method}`));
+        reject(timeoutError);
       }, timeoutMs);
 
       this.pending.set(id, { method, resolve, reject, timer });
@@ -236,6 +242,20 @@ export class CdpSessionClient {
   close() {
     return this.rootClient.detachFromTarget(this.sessionId);
   }
+}
+
+/** Names the command in a timeout; `Runtime.evaluate` gets an expression preview to tell steps apart. */
+function describeCdpCommand(method, params) {
+  if (method !== "Runtime.evaluate" || typeof params?.expression !== "string") {
+    return method;
+  }
+
+  const preview = params.expression
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, CDP_EXPRESSION_PREVIEW_CHARS);
+
+  return `${method} (${preview})`;
 }
 
 export async function closeClient(client) {

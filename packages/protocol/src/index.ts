@@ -1,3 +1,4 @@
+export * from "./archive.js";
 export * from "./blob.js";
 export * from "./body-redaction.js";
 export * from "./constants.js";

@@ -7,13 +7,13 @@
     },
     {
       "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 79000,
+      "maxBytes": 80000,
       "maxGzipBytes": 18000
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 90000,
-      "maxGzipBytes": 22000
+      "maxBytes": 95000,
+      "maxGzipBytes": 23000
     },
     {
       "path": "apps/player/build/main.js",

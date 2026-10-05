@@ -128,6 +128,20 @@ describe("CdpClient", () => {
     expect(client.pending.size).toBe(0);
   });
 
+  it("names the evaluated expression and the caller in a timeout", async () => {
+    vi.useFakeTimers();
+    const { client } = createOpenClient({ commandTimeoutMs: 50 });
+    const pending = client.evaluate("(async () => {\n  await stopSession();\n})()");
+    const assertion = expect(pending).rejects.toMatchObject({
+      message:
+        "CDP command timed out after 50ms: Runtime.evaluate ((async () => { await stopSession(); })())",
+      stack: expect.stringContaining("e2e-harness.test.mjs")
+    });
+
+    await vi.advanceTimersByTimeAsync(60);
+    await assertion;
+  });
+
   it("routes flat-session commands and events", async () => {
     const { client, sent } = createOpenClient();
     const attach = client.attachToTarget("T-1");

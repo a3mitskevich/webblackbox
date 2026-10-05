@@ -66,6 +66,58 @@ describe("share-server", () => {
     expect(response.status).toBe(413);
   });
 
+  it("rejects archives that inflate beyond the server analysis limit and keeps serving", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_SHARE_MAX_UNCOMPRESSED_BYTES: String(64 * 1024)
+    });
+    const bomb = await JSZip.loadAsync(await createEncryptedEnvelopeArchive());
+    bomb.file("blobs/sha256-bomb.bin", new Uint8Array(8 * 1024 * 1024));
+    const bombBytes = await bomb.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+
+    expect(bombBytes.byteLength).toBeLessThan(64 * 1024);
+
+    const response = await fetch(`${server.baseUrl}/api/share/upload`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-webblackbox-api-key": apiKey,
+        "x-webblackbox-filename": "bomb.webblackbox",
+        "x-webblackbox-share-summary": encodeURIComponent(JSON.stringify(buildPassedShareSummary()))
+      },
+      body: Buffer.from(bombBytes)
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "Archive exceeds server analysis limits: Archive entry 'blobs/sha256-bomb.bin' declares " +
+        "8388608 uncompressed bytes, more than the per-entry limit of 65536 bytes."
+    });
+    await expect(uploadEncryptedFixture(server)).resolves.toHaveProperty("shareId");
+  });
+
+  it("rejects uploads whose analysis exceeds the configured timeout", async () => {
+    const server = await startShareServer({
+      WEBBLACKBOX_SHARE_ANALYSIS_TIMEOUT_MS: "1"
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/share/upload`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-webblackbox-api-key": apiKey,
+        "x-webblackbox-filename": "slow.webblackbox",
+        "x-webblackbox-share-summary": encodeURIComponent(JSON.stringify(buildPassedShareSummary()))
+      },
+      body: Buffer.from(await createEncryptedEnvelopeArchive())
+    });
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      error: "Archive exceeds server analysis limits: Archive analysis timed out after 1 ms."
+    });
+  });
+
   it("does not advertise passphrase upload headers", async () => {
     const server = await startShareServer();
 
@@ -927,7 +979,7 @@ async function createEnvelopeArchive(
       origin: "https://fixture.example",
       title: "Fixture"
     },
-    chunkCodec: "ndjson",
+    chunkCodec: "none",
     redactionProfile: {
       redactHeaders: [],
       redactCookieNames: [],
