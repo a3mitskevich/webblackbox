@@ -14,7 +14,7 @@ import { FreezePolicy } from "./freeze.js";
 import { sanitizeKeydownPayload } from "./keydown-privacy.js";
 import { DefaultEventNormalizer } from "./normalizer.js";
 import type { RecorderPlugin, RecorderPluginContext } from "./plugins.js";
-import { redactPayload } from "./redaction.js";
+import { createRedactionHashKey, redactPayload } from "./redaction.js";
 import { EventRingBuffer } from "./ring-buffer.js";
 import type { EventNormalizer, RawRecorderEvent, RecorderIngestResult } from "./types.js";
 
@@ -33,6 +33,9 @@ export class WebBlackboxRecorder {
   private readonly freezePolicy: FreezePolicy;
 
   private readonly pluginContext: RecorderPluginContext;
+
+  // Per-session HMAC key for hashed sensitive values; memory-only, never exported.
+  private readonly redactionHashKey = createRedactionHashKey();
 
   public constructor(
     private readonly config: RecorderConfig,
@@ -64,7 +67,8 @@ export class WebBlackboxRecorder {
     const redactedPayload = redactEventPayload(
       normalized.eventType,
       normalized.payload,
-      this.config
+      this.config,
+      this.redactionHashKey
     );
     const privacy = classifyPrivacy(
       normalized.eventType,
@@ -191,9 +195,10 @@ export class WebBlackboxRecorder {
 function redactEventPayload(
   eventType: WebBlackboxEventType,
   payload: unknown,
-  config: RecorderConfig
+  config: RecorderConfig,
+  hashKey: Uint8Array
 ): unknown {
-  const redacted = redactPayload(payload, config.redaction);
+  const redacted = redactPayload(payload, config.redaction, { hashKey });
 
   return eventType === "user.keydown"
     ? sanitizeKeydownPayload(redacted, config.capturePolicy)

@@ -49,6 +49,27 @@ describe("generatePlaywrightScriptFromEvents", () => {
     expect(script).toContain('await page.fill("input[name=email]", "dev@example.test");');
   });
 
+  it("keeps archive-controlled values from escaping the generated script", () => {
+    const script = generatePlaywrightScriptFromEvents(
+      [
+        event("E-1", 100, "user.input", {
+          target: {
+            selector: "#email\u2028process.exit(1)"
+          },
+          value: "[MASKED]"
+        })
+      ],
+      {
+        name: "it's a test",
+        includeHarReplay: false
+      }
+    );
+
+    expect(script).toContain('test("it\'s a test", async ({ browser }) => {');
+    expect(script).toContain("  // input on #email process.exit(1) was masked in capture");
+    expect(script).not.toMatch(/[\n\u2028]process\.exit/);
+  });
+
   it("respects maxActions after the caller applies the playback-time range", () => {
     const script = generatePlaywrightScriptFromEvents(
       [

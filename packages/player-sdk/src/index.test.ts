@@ -547,7 +547,7 @@ describe("WebBlackboxPlayer", () => {
 
     const curl = player.generateCurl("R-1");
     expect(curl).toContain("curl 'https://example.com/api'");
-    expect(curl).toContain("-X POST");
+    expect(curl).toContain("-X 'POST'");
 
     const fetchSnippet = player.generateFetch("R-1");
     expect(fetchSnippet).toContain("await fetch");
@@ -564,6 +564,19 @@ describe("WebBlackboxPlayer", () => {
     expect(har.log.entries).toHaveLength(1);
     expect(har.log.entries[0]?.request.method).toBe("POST");
     expect(har.log.entries[0]?.response.status).toBe(200);
+  });
+
+  it("keeps archive-controlled values from escaping generated replay code", async () => {
+    const bytes = await createCodegenInjectionFixtureArchive();
+    const player = await WebBlackboxPlayer.open(bytes);
+
+    const curl = player.generateCurl("R-1");
+    expect(curl).toContain(`  -X 'GET $(A=ECHO;\${A,,} PWNED)' \\`);
+
+    const script = player.generatePlaywrightScript({ name: "it's a test" });
+    expect(script).toContain('test("it\'s a test", async ({ browser }) => {');
+    expect(script).toContain("  // input on #email process.exit(1) was masked in capture");
+    expect(script).not.toMatch(/^process\.exit/m);
   });
 
   it("builds storage timeline, report, and playwright script", async () => {
@@ -774,6 +787,78 @@ async function createFixtureArchive(): Promise<Uint8Array> {
   zip.file("index/inv.json", JSON.stringify([{ term: "api", eventIds: ["E-3"] }]));
   zip.file("events/chunk-000001.ndjson", events.map((event) => JSON.stringify(event)).join("\n"));
   zip.file("blobs/sha256-blob1.webp", new Uint8Array([1, 2, 3]));
+
+  await writeIntegrityManifest(zip);
+
+  return zip.generateAsync({ type: "uint8array" });
+}
+
+async function createCodegenInjectionFixtureArchive(): Promise<Uint8Array> {
+  const zip = new JSZip();
+  const events: WebBlackboxEvent[] = [
+    {
+      v: 1,
+      sid: "S-1",
+      tab: 1,
+      t: 1000,
+      mono: 1,
+      type: "network.request",
+      id: "E-1",
+      ref: {
+        req: "R-1"
+      },
+      data: {
+        request: {
+          url: "https://example.com/api",
+          method: "GET $(A=echo;${A,,} pwned)"
+        }
+      }
+    },
+    {
+      v: 1,
+      sid: "S-1",
+      tab: 1,
+      t: 1001,
+      mono: 2,
+      type: "user.input",
+      id: "E-2",
+      data: {
+        target: {
+          selector: "#email\nprocess.exit(1)"
+        },
+        value: "[MASKED]"
+      }
+    }
+  ];
+
+  const manifest: ExportManifest = {
+    protocolVersion: 1,
+    createdAt: new Date(0).toISOString(),
+    mode: "full",
+    site: {
+      origin: "https://example.com"
+    },
+    chunkCodec: "none",
+    redactionProfile: {
+      redactHeaders: [],
+      redactCookieNames: [],
+      redactBodyPatterns: [],
+      blockedSelectors: [],
+      hashSensitiveValues: true
+    },
+    stats: {
+      eventCount: events.length,
+      chunkCount: 1,
+      blobCount: 0,
+      durationMs: 1
+    }
+  };
+
+  zip.file("manifest.json", JSON.stringify(manifest));
+  zip.file("index/time.json", JSON.stringify([]));
+  zip.file("index/req.json", JSON.stringify([{ reqId: "R-1", eventIds: ["E-1"] }]));
+  zip.file("index/inv.json", JSON.stringify([]));
+  zip.file("events/chunk-000001.ndjson", events.map((event) => JSON.stringify(event)).join("\n"));
 
   await writeIntegrityManifest(zip);
 

@@ -1,4 +1,5 @@
 export * from "./blob.js";
+export * from "./body-redaction.js";
 export * from "./constants.js";
 export * from "./defaults.js";
 export * from "./ids.js";
