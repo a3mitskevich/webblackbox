@@ -1,3 +1,5 @@
+import type { NetworkCacheSource } from "@webblackbox/player-sdk";
+
 import { readStoredText, writeStoredText } from "./storage.js";
 
 export type PlayerLocale = "en" | "zh-CN";
@@ -239,6 +241,10 @@ type PlayerMessages = {
   scopeSummaryMain: string;
   scopeSummaryIframe: string;
   realtimeNoPayload: string;
+  realtimePayloadLoading: string;
+  realtimePayloadMissing: string;
+  realtimePayloadTruncated: string;
+  realtimePayloadRecord: string;
   noScreenshotEvents: string;
   screenshotBeforePlayhead: string;
   screenshotLoading: string;
@@ -296,6 +302,11 @@ type PlayerMessages = {
   networkInitiatorActionNumber: string;
   networkStatusPending: string;
   networkStatusPendingPlain: string;
+  networkStatusFromCache: string;
+  networkStatusFromCachePlain: string;
+  networkStatusNoResponse: string;
+  networkStatusNoResponsePlain: string;
+  networkCacheSources: Record<NetworkCacheSource, string>;
   markerKinds: Record<MarkerKind, string>;
   networkTypes: Record<NetworkType, string>;
   compareSignals: Record<CompareSignal, string>;
@@ -526,6 +537,10 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     scopeSummaryMain: "main",
     scopeSummaryIframe: "iframe",
     realtimeNoPayload: "(no payload)",
+    realtimePayloadLoading: "Loading the full payload...",
+    realtimePayloadMissing: "The full payload is not in this archive; showing the stored preview.",
+    realtimePayloadTruncated: "Cut at the recording profile's body size limit.",
+    realtimePayloadRecord: "Record {index} of {count}",
     noScreenshotEvents: "No screenshot events in this archive.",
     screenshotBeforePlayhead: "No screenshot available before this playhead.",
     screenshotLoading: "Loading screenshot...",
@@ -587,6 +602,16 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     networkInitiatorActionNumber: "action #{index}",
     networkStatusPending: "(pending)",
     networkStatusPendingPlain: "Pending",
+    networkStatusFromCache: "(from cache)",
+    networkStatusFromCachePlain: "From cache",
+    networkStatusNoResponse: "(no response)",
+    networkStatusNoResponsePlain: "No response",
+    networkCacheSources: {
+      memory: "(memory cache)",
+      disk: "(disk cache)",
+      prefetch: "(prefetch cache)",
+      "service-worker": "(ServiceWorker)"
+    },
     markerKinds: {
       error: "error",
       network: "network",
@@ -842,6 +867,10 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     scopeSummaryMain: "主页面",
     scopeSummaryIframe: "子框架",
     realtimeNoPayload: "（无载荷）",
+    realtimePayloadLoading: "正在加载完整载荷...",
+    realtimePayloadMissing: "归档中没有完整载荷，显示已保存的预览。",
+    realtimePayloadTruncated: "已按录制配置的正文大小上限截断。",
+    realtimePayloadRecord: "第 {index} 条，共 {count} 条",
     noScreenshotEvents: "该归档中没有截图事件。",
     screenshotBeforePlayhead: "当前播放头之前没有可用截图。",
     screenshotLoading: "截图加载中...",
@@ -900,6 +929,16 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     networkInitiatorActionNumber: "动作 #{index}",
     networkStatusPending: "（等待中）",
     networkStatusPendingPlain: "等待中",
+    networkStatusFromCache: "（来自缓存）",
+    networkStatusFromCachePlain: "来自缓存",
+    networkStatusNoResponse: "（无响应）",
+    networkStatusNoResponsePlain: "无响应",
+    networkCacheSources: {
+      memory: "（内存缓存）",
+      disk: "（磁盘缓存）",
+      prefetch: "（预取缓存）",
+      "service-worker": "（ServiceWorker）"
+    },
     markerKinds: {
       error: "错误",
       network: "网络",

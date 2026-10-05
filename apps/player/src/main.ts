@@ -34,6 +34,7 @@ import { formatByteSize, formatNetworkSize, sumNetworkTransferBytes } from "./li
 import {
   applyNetworkViewFilters,
   describeNetworkStatus,
+  describeNetworkStatusPlain,
   resolveNetworkStatusClass,
   resolveNetworkTypeLabel,
   sortNetworkEntries,
@@ -2678,11 +2679,7 @@ async function renderProgressHoverResponse(
     return;
   }
 
-  const status = entry.failed
-    ? i18n.messages.networkStatusFailed
-    : typeof entry.status === "number"
-      ? String(entry.status)
-      : i18n.messages.networkStatusPendingPlain;
+  const status = describeNetworkStatusPlain(entry, locale);
   const isError = entry.failed || (typeof entry.status === "number" && entry.status >= 400);
   const isWarn =
     !isError && typeof entry.status === "number" && entry.status >= 300 && entry.status < 400;
@@ -2912,11 +2909,7 @@ function buildRequestHoverContext(model: ArchiveModel, mono: number): RequestHov
       break;
     }
 
-    const status = entry.failed
-      ? i18n.messages.networkStatusFailed
-      : typeof entry.status === "number"
-        ? String(entry.status)
-        : i18n.messages.networkStatusPendingPlain;
+    const status = describeNetworkStatusPlain(entry, locale);
     const method = entry.method.toUpperCase();
     const path = compactText(shortUrl(entry.url), 44);
     const failed = entry.failed || (typeof entry.status === "number" && entry.status >= 400);
@@ -3838,7 +3831,7 @@ function renderWaterfall(): void {
       const method = entry.method.toUpperCase();
       const type = resolveNetworkTypeLabel(entry.mimeType, locale);
       const initiator = resolveNetworkInitiator(entry, locale);
-      const size = formatNetworkSize(entry);
+      const size = formatNetworkSize(entry, locale);
       const elapsed = `${entry.durationMs.toFixed(1)} ms`;
       const scope = resolveRequestScope(model, entry.reqId);
       const scopeClass =
