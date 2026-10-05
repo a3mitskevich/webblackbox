@@ -46,7 +46,7 @@ import {
   type NetworkTypeFilter
 } from "./lib/network-view.js";
 import { readRealtimePayloadView } from "./lib/realtime-payload.js";
-import { asFiniteNumber, asRecord } from "./lib/parsing.js";
+import { asFiniteNumber } from "./lib/parsing.js";
 import {
   formatPrivacyViolationText,
   formatRecordingProfileBanner,
@@ -75,6 +75,17 @@ import { decodeResponsePreview, type ResponsePreview } from "./lib/response-deco
 import { highlightJsonPreview, redactPreviewText } from "./lib/response-preview.js";
 import { inferEventScope, matchesScopeFilter, type ScopeFilter } from "./lib/scope.js";
 import {
+  DEFAULT_SHARE_SERVER_BASE_URL,
+  persistShareServerApiKeys,
+  readStoredShareServerApiKeys,
+  SHARE_SERVER_BASE_URL_STORAGE_KEY
+} from "./lib/share-settings.js";
+import {
+  buildClientShareSummary,
+  encodeShareSummaryHeader,
+  SHARE_SUMMARY_HEADER
+} from "./lib/share-summary.js";
+import {
   bindShareApiKeyInputToTargetOrigin,
   getShareServerApiKeyForBaseUrl,
   setShareServerApiKeyForBaseUrl
@@ -82,8 +93,7 @@ import {
 import {
   isTrustedShareOrigin,
   normalizeShareServerBaseUrl,
-  resolveShareArchiveRequest,
-  resolveShareServerOrigin
+  resolveShareArchiveRequest
 } from "./lib/share.js";
 import { describeScreenshotMeta } from "./lib/screenshot-description.js";
 import { createStackViewController } from "./lib/stack-view.js";
@@ -92,7 +102,6 @@ import { readEventSummaryText, stringifySignalPayload } from "./lib/signal-text.
 import {
   readStoredNumber,
   readStoredText,
-  removeStoredItem,
   writeStoredNumber,
   writeStoredText
 } from "./lib/storage.js";
@@ -265,44 +274,6 @@ type PlayerState = {
   preflightDismissTimer: number | null;
 };
 
-type PublicShareSummary = {
-  schemaVersion: 1;
-  source: "client";
-  analyzed: boolean;
-  encrypted: boolean;
-  manifest: {
-    mode: string;
-    chunkCodec: string;
-    recordedAt: string;
-  };
-  totals: {
-    events: number;
-    blobs?: number;
-    privacyViolations?: number;
-    errors: number;
-    requests: number;
-    actions: number;
-    durationMs: number;
-  };
-  topActionTriggers: Array<{
-    triggerType: string;
-    count: number;
-    errorRate: number;
-  }>;
-  privacy: {
-    redaction: {
-      hashSensitiveValues: boolean;
-      headerRuleCount: number;
-      cookieRuleCount: number;
-      bodyPatternCount: number;
-      blockedSelectorCount: number;
-    };
-    detected: ReturnType<WebBlackboxPlayer["getPrivacyProtectionReport"]>["detected"];
-    scanner: ReturnType<WebBlackboxPlayer["getPrivacyProtectionReport"]>["scanner"];
-    categories?: NonNullable<WebBlackboxPlayer["archive"]["privacyManifest"]>["categories"];
-  };
-};
-
 type SetPlayheadOptions = {
   fromPlayback?: boolean;
   forcePanels?: boolean;
@@ -334,11 +305,6 @@ const LOG_GRID_SPLIT_KEY_STEP = 2;
 const LOG_GRID_SPLIT_STORAGE_KEY = "webblackbox.player.logGridSplit";
 const QUICK_TRIAGE_AUTO_DISMISS_SECONDS_STORAGE_KEY =
   "webblackbox.player.quickTriageAutoDismissSeconds";
-const SHARE_SERVER_BASE_URL_STORAGE_KEY = "webblackbox.player.shareServerBaseUrl";
-const SHARE_SERVER_API_KEYS_STORAGE_KEY = "webblackbox.player.shareServerApiKeysByOrigin";
-const LEGACY_SHARE_SERVER_API_KEY_STORAGE_KEY = "webblackbox.player.shareServerApiKey";
-const SHARE_SUMMARY_HEADER = "x-webblackbox-share-summary";
-const DEFAULT_SHARE_SERVER_BASE_URL = "http://localhost:8787";
 const STAGE_HEIGHT_MIN_PX = 220;
 const STAGE_HEIGHT_BOTTOM_GUARD_PX = 280;
 const STAGE_HEIGHT_KEY_STEP = 24;
@@ -2116,88 +2082,6 @@ function renderSharePrivacyPreflight(): void {
 
 function updateShareUploadConfirmState(): void {
   refs.shareUploadConfirm.disabled = !refs.shareUploadPrivacyReviewed.checked;
-}
-
-function buildClientShareSummary(player: WebBlackboxPlayer): PublicShareSummary {
-  const manifest = player.archive.manifest;
-  const derived = player.buildDerived();
-  const privacyReport = player.getPrivacyProtectionReport();
-
-  return {
-    schemaVersion: 1,
-    source: "client",
-    analyzed: true,
-    encrypted: Boolean(manifest.encryption),
-    manifest: {
-      mode: manifest.mode,
-      chunkCodec: manifest.chunkCodec,
-      recordedAt: manifest.createdAt
-    },
-    totals: {
-      events: derived.totals.events,
-      blobs: player.archive.privacyManifest?.totals.blobs,
-      privacyViolations: player.archive.privacyManifest?.totals.privacyViolations,
-      errors: derived.totals.errors,
-      requests: derived.totals.requests,
-      actions: derived.actionSpans.length,
-      durationMs: Math.round(manifest.stats.durationMs)
-    },
-    topActionTriggers: buildPublicActionTriggerSummary(player.getActionTimeline()),
-    privacy: {
-      redaction: {
-        hashSensitiveValues: privacyReport.redaction.hashSensitiveValues,
-        headerRuleCount: privacyReport.redaction.headers.length,
-        cookieRuleCount: privacyReport.redaction.cookieNames.length,
-        bodyPatternCount: privacyReport.redaction.bodyPatterns.length,
-        blockedSelectorCount: privacyReport.redaction.blockedSelectors.length
-      },
-      detected: privacyReport.detected,
-      scanner: privacyReport.scanner,
-      categories: player.archive.privacyManifest?.categories.map((category) => ({ ...category }))
-    }
-  };
-}
-
-function buildPublicActionTriggerSummary(
-  actions: ActionTimelineEntry[]
-): PublicShareSummary["topActionTriggers"] {
-  const counts = new Map<
-    string,
-    { triggerType: string; count: number; actionsWithErrors: number }
-  >();
-
-  for (const action of actions) {
-    const triggerType = action.triggerType ?? "unknown";
-    const current = counts.get(triggerType) ?? {
-      triggerType,
-      count: 0,
-      actionsWithErrors: 0
-    };
-
-    current.count += 1;
-    if (action.errorCount > 0) {
-      current.actionsWithErrors += 1;
-    }
-
-    counts.set(triggerType, current);
-  }
-
-  return [...counts.values()]
-    .sort((left, right) => right.count - left.count)
-    .slice(0, 10)
-    .map((entry) => ({
-      triggerType: entry.triggerType,
-      count: entry.count,
-      errorRate: roundRatio(entry.count > 0 ? entry.actionsWithErrors / entry.count : 0)
-    }));
-}
-
-function encodeShareSummaryHeader(summary: PublicShareSummary): string {
-  return encodeURIComponent(JSON.stringify(summary));
-}
-
-function roundRatio(value: number): number {
-  return Math.round(value * 10_000) / 10_000;
 }
 
 async function promptShareReferenceInput(
@@ -5042,91 +4926,4 @@ function rememberShareServerApiKey(baseUrl: string, apiKey: string): void {
     apiKey
   );
   persistShareServerApiKeys(state.shareServerApiKeysByOrigin);
-}
-
-function readStoredShareServerApiKeys(baseUrl: string): Record<string, string> {
-  const parsed = parseStoredShareServerApiKeys(readStoredText(SHARE_SERVER_API_KEYS_STORAGE_KEY));
-  const legacyApiKey = readStoredText(LEGACY_SHARE_SERVER_API_KEY_STORAGE_KEY);
-
-  if (legacyApiKey) {
-    const origin = resolveShareServerOrigin(baseUrl);
-
-    if (origin && !parsed[origin]) {
-      parsed[origin] = legacyApiKey;
-    }
-
-    removeStoredItem(LEGACY_SHARE_SERVER_API_KEY_STORAGE_KEY);
-    persistShareServerApiKeys(parsed);
-  }
-
-  return parsed;
-}
-
-function parseStoredShareServerApiKeys(raw: string | null): Record<string, string> {
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    const candidate = asRecord(JSON.parse(raw));
-
-    if (!candidate) {
-      return {};
-    }
-
-    const parsed: Record<string, string> = {};
-
-    for (const [originCandidate, apiKeyCandidate] of Object.entries(candidate)) {
-      if (typeof apiKeyCandidate !== "string") {
-        continue;
-      }
-
-      const origin = resolveShareServerOrigin(originCandidate);
-      const apiKey = apiKeyCandidate.trim();
-
-      if (!origin || apiKey.length === 0) {
-        continue;
-      }
-
-      parsed[origin] = apiKey;
-    }
-
-    return parsed;
-  } catch {
-    removeStoredItem(SHARE_SERVER_API_KEYS_STORAGE_KEY);
-    return {};
-  }
-}
-
-function persistShareServerApiKeys(apiKeysByOrigin: Record<string, string>): void {
-  const entries: Array<{ origin: string; apiKey: string }> = [];
-
-  for (const [originCandidate, apiKeyCandidate] of Object.entries(apiKeysByOrigin)) {
-    const origin = resolveShareServerOrigin(originCandidate);
-    const apiKey = apiKeyCandidate.trim();
-
-    if (!origin || apiKey.length === 0) {
-      continue;
-    }
-
-    entries.push({
-      origin,
-      apiKey
-    });
-  }
-
-  entries.sort((left, right) => left.origin.localeCompare(right.origin));
-
-  if (entries.length === 0) {
-    removeStoredItem(SHARE_SERVER_API_KEYS_STORAGE_KEY);
-    return;
-  }
-
-  const serialized: Record<string, string> = {};
-
-  for (const entry of entries) {
-    serialized[entry.origin] = entry.apiKey;
-  }
-
-  writeStoredText(SHARE_SERVER_API_KEYS_STORAGE_KEY, JSON.stringify(serialized));
 }
