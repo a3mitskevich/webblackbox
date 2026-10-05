@@ -4,6 +4,7 @@
 // a Full-capture-like profile: clicks with readable targets and geometry, right and middle clicks,
 // a long press, a pointer drag, wheel, hover dwell, mousemove samples and click reactions. The
 // player SDK finds the rage/dead clicks, and the generated Playwright script replays on the demo.
+// A DOM value pattern on a button label checks that DOM rules also mask action labels.
 
 import { spawn, spawnSync } from "node:child_process";
 import { constants, createWriteStream } from "node:fs";
@@ -59,6 +60,8 @@ const MIME_TYPES = {
   ".css": "text/css; charset=utf-8"
 };
 const BUTTON_MASKS = { left: 1, right: 2, middle: 4 };
+/** Label of the demo's `#pulse-dom` button, masked by the profile's DOM value pattern. */
+const DOM_RULE_LABEL = "Pulse DOM";
 // Every wait is bounded: a CDP command, the export answer and the whole run each have a deadline.
 const COMMAND_TIMEOUT_MS = Number(process.env.WB_E2E_COMMAND_TIMEOUT_MS ?? "30000");
 const EXPORT_TIMEOUT_MS = Number(process.env.WB_E2E_EXPORT_TIMEOUT_MS ?? "120000");
@@ -121,7 +124,11 @@ async function main() {
   const { DEFAULT_REDACTION_PROFILE } = await import(
     pathToFileURL(resolve(repoRoot, "packages/protocol/dist/index.js")).href
   );
-  const pointerProfile = createPointerProfile(DEFAULT_REDACTION_PROFILE);
+  // A DOM rule on the button label: DOM rules also apply to the labels of recorded actions.
+  const pointerProfile = createPointerProfile({
+    ...DEFAULT_REDACTION_PROFILE,
+    valuePatterns: [{ pattern: DOM_RULE_LABEL, targets: ["dom"] }]
+  });
   const appPort = await startDemoServer();
   const demoUrl = `http://127.0.0.1:${appPort}/`;
 
@@ -351,10 +358,16 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
     pulseClick.data.viewport?.w === VIEWPORT.width &&
       typeof pulseClick.data.pageY === "number" &&
       pulseClick.data.target.rect?.w > 0 &&
-      pulseClick.data.target.readable.text === "Pulse DOM",
-    `[${mode}] click geometry or readable label missing`,
+      pulseClick.data.target.readable.text === "[REDACTED]",
+    `[${mode}] click geometry or DOM-masked readable label missing`,
     pulseClick.data
   );
+  const unmaskedLabels = events.filter(
+    (event) => event.type.startsWith("user.") && JSON.stringify(event.data).includes(DOM_RULE_LABEL)
+  );
+  assert(unmaskedLabels.length === 0, `[${mode}] an action label escaped the DOM rule`, {
+    types: unmaskedLabels.map((event) => event.type)
+  });
   assert(
     events.some((event) => event.type === "user.contextmenu" && event.data?.button === 2),
     `[${mode}] right click not recorded`
