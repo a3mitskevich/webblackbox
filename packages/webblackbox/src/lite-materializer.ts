@@ -8,6 +8,11 @@ import type { RawRecorderEvent } from "@webblackbox/recorder";
 
 import { decodeScreenshotDataUrl } from "./screenshot-data-url.js";
 import { capStorageValue, STORAGE_SNAPSHOT_MAX_ITEMS } from "./capture-scope.js";
+import {
+  IDB_SNAPSHOT_MAX_DATABASES,
+  IDB_SNAPSHOT_MAX_RECORDS,
+  IDB_SNAPSHOT_MAX_STORES
+} from "./indexeddb-snapshot.js";
 import type { LiteMaterializerContext } from "./types.js";
 
 export {
@@ -237,6 +242,26 @@ async function materializeLiteStorageSnapshot(
     rawEvent.rawType === "indexedDbSnapshot" ? payload.databaseNames : payload.names,
     STORAGE_SNAPSHOT_MAX_ITEMS
   );
+  const valuesAllowed =
+    rawEvent.rawType === "indexedDbSnapshot"
+      ? categories.indexedDb === "allow"
+      : categories.cookies === "allow";
+
+  if (valuesAllowed) {
+    const count = normalizeNonNegativeInt(payload.count) ?? 0;
+    const details =
+      rawEvent.rawType === "indexedDbSnapshot"
+        ? { databaseNames: names, databases: asIdbDatabases(payload.databases) }
+        : { cookies: asCookieEntries(payload.cookies, STORAGE_SNAPSHOT_MAX_ITEMS) };
+    return storageSnapshot(rawEvent, {
+      ...base,
+      count,
+      mode: "allow",
+      redacted: false,
+      ...details
+    });
+  }
+
   const count = normalizeNonNegativeInt(payload.count) ?? names.length;
   const showsNames =
     rawEvent.rawType === "indexedDbSnapshot"
@@ -310,6 +335,81 @@ function asStorageEntries(value: unknown, limit: number): Array<Record<string, u
       }
     ];
   });
+}
+
+/** Cookie `{ name, value }` records (`cookies: allow`), values capped like other storage values. */
+function asCookieEntries(value: unknown, limit: number): Array<Record<string, unknown>> {
+  return asArray(value)
+    .slice(0, limit)
+    .flatMap((entry) => {
+      const row = asRecord(entry);
+      const name = asString(row?.name);
+
+      if (!row || name === null || name === undefined || typeof row.value !== "string") {
+        return [];
+      }
+
+      return [{ name, ...capStorageValue(row.value) }];
+    });
+}
+
+/** IndexedDB contents (`indexedDb: allow`), re-bounded to the agent's limits. */
+function asIdbDatabases(value: unknown): Array<Record<string, unknown>> {
+  return asArray(value)
+    .slice(0, IDB_SNAPSHOT_MAX_DATABASES)
+    .flatMap((entry) => {
+      const database = asRecord(entry);
+      const name = asString(database?.name);
+
+      if (!database || !name) {
+        return [];
+      }
+
+      const stores = asArray(database.stores)
+        .slice(0, IDB_SNAPSHOT_MAX_STORES)
+        .flatMap((storeEntry) => {
+          const store = asRecord(storeEntry);
+          const storeName = asString(store?.name);
+
+          if (!store || !storeName) {
+            return [];
+          }
+
+          const records = asArray(store.records)
+            .slice(0, IDB_SNAPSHOT_MAX_RECORDS)
+            .flatMap((recordEntry) => {
+              const record = asRecord(recordEntry);
+              return record && typeof record.key === "string" && typeof record.value === "string"
+                ? [{ key: capStorageValue(record.key).value, ...capStorageValue(record.value) }]
+                : [];
+            });
+
+          return [
+            {
+              name: storeName,
+              count: normalizeNonNegativeInt(store.count) ?? records.length,
+              records,
+              ...(store.truncated === true ? { truncated: true } : {})
+            }
+          ];
+        });
+
+      return [
+        {
+          name,
+          ...(normalizeNonNegativeInt(database.version) !== undefined
+            ? { version: normalizeNonNegativeInt(database.version) }
+            : {}),
+          stores,
+          ...(database.truncated === true ? { truncated: true } : {}),
+          ...(typeof database.error === "string" ? { error: database.error.slice(0, 200) } : {})
+        }
+      ];
+    });
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function asLengthArray(value: unknown, limit: number): number[] {
