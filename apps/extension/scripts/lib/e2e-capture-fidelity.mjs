@@ -2,6 +2,7 @@
 // WebSocket frames (a ~10 KB lobby update in, a 40 KB batch out) and an image served from the memory
 // cache. The demo page runs the scenario (`window.__wbDemo.runFidelityScenario`); this module serves
 // the socket and the cacheable image, and checks the exported archive with the built player-sdk.
+// Lite mode runs and checks only the console part (`consoleOnly`): the page hook records it.
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -103,15 +104,19 @@ export function serveFidelityImage(pathname, response) {
   return true;
 }
 
-export async function runCaptureFidelityScenario(demoClient) {
+export async function runCaptureFidelityScenario(demoClient, { consoleOnly = false } = {}) {
+  const scenarioName = consoleOnly ? "runConsoleFidelityScenario" : "runFidelityScenario";
+
   return demoClient.evaluate(`
     (async () => {
-      if (!window.__wbDemo || typeof window.__wbDemo.runFidelityScenario !== 'function') {
+      const scenario = window.__wbDemo?.[${JSON.stringify(scenarioName)}];
+
+      if (typeof scenario !== 'function') {
         return { ok: false, reason: 'fidelity-scenario-missing' };
       }
 
       try {
-        return await window.__wbDemo.runFidelityScenario();
+        return await scenario();
       } catch (error) {
         return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
@@ -121,19 +126,26 @@ export async function runCaptureFidelityScenario(demoClient) {
 
 /**
  * Opens the exported (encrypted) archive with the built player-sdk and checks that the console line,
- * both WebSocket frames and the cached image survived in full.
+ * both WebSocket frames and the cached image survived in full (only the console line with
+ * `consoleOnly`).
  */
 export async function verifyCaptureFidelityArchive({
   archivePath,
   passphrase,
   playerSdkEntry,
-  scenario
+  scenario,
+  consoleOnly = false
 }) {
   const { WebBlackboxPlayer } = await import(pathToFileURL(playerSdkEntry).href);
   const player = await WebBlackboxPlayer.open(new Uint8Array(await readFile(archivePath)), {
     passphrase
   });
   const consoleCheck = checkConsoleEntry(player.query({}), scenario);
+
+  if (consoleOnly) {
+    return { ok: consoleCheck.ok, console: consoleCheck };
+  }
+
   const socketCheck = await checkSocketFrames(player, scenario);
   const cacheCheck = checkCachedImage(player.getNetworkWaterfall());
 
