@@ -6,9 +6,8 @@ import type { ChunkTimeIndexEntry, ExportManifest, WebBlackboxEvent } from "@web
 
 import { WebBlackboxPlayer } from "./index.js";
 
-// Building and opening a 16 MB, 30k-event archive asserts memory, not speed; vitest's 5 s default
-// is too tight for shared CI runners.
-const LARGE_ARCHIVE_TEST_TIMEOUT_MS = 30_000;
+// Builds and parses a 16 MB+ archive; on loaded shared CI runners it outlasts vitest's 5 s default.
+const PRESSURE_TEST_TIMEOUT_MS = 30_000;
 
 describe("WebBlackboxPlayer", () => {
   it("surfaces pointer actions, rage clicks and dead clicks in the bug report", async () => {
@@ -234,6 +233,7 @@ describe("WebBlackboxPlayer", () => {
 
   it(
     "keeps large archive player pressure paths bounded",
+    { timeout: PRESSURE_TEST_TIMEOUT_MS },
     async () => {
       const bytes = await createLargePressureArchive();
       const heapSamples = [process.memoryUsage().heapUsed];
@@ -269,8 +269,7 @@ describe("WebBlackboxPlayer", () => {
       expect(firstScreenshot?.bytes.byteLength).toBe(32 * 1024);
       expect(firstResponseBody?.bytes.byteLength).toBe(16 * 1024);
       expect(heapPeak - heapBaseline).toBeLessThan(512 * 1024 * 1024);
-    },
-    LARGE_ARCHIVE_TEST_TIMEOUT_MS
+    }
   );
 
   it("opens archives with compressed chunk codecs", async () => {
@@ -473,6 +472,32 @@ describe("WebBlackboxPlayer", () => {
     expect(report).toContain("console exploded");
   });
 
+  it("skips redacted keystrokes in generated Playwright scripts", async () => {
+    const keydown = (
+      id: string,
+      mono: number,
+      data: Record<string, unknown>
+    ): WebBlackboxEvent => ({
+      v: 1,
+      sid: "S-1",
+      tab: 1,
+      t: 1000 + mono,
+      mono,
+      type: "user.keydown",
+      id,
+      data
+    });
+    const bytes = await appendFixtureEvents([
+      keydown("E-6", 6, { key: "[REDACTED]", keyRedacted: true }),
+      keydown("E-7", 7, { key: "Enter", code: "Enter" })
+    ]);
+    const player = await WebBlackboxPlayer.open(bytes);
+    const script = player.generatePlaywrightScript({ includeHarReplay: false });
+
+    expect(script).not.toContain("[REDACTED]");
+    expect(script).toContain('await page.keyboard.press("Enter");');
+  });
+
   it("builds action timeline with request, error, and screenshot context", async () => {
     const bytes = await createRichFixtureArchive();
     const player = await WebBlackboxPlayer.open(bytes);
@@ -577,7 +602,7 @@ describe("WebBlackboxPlayer", () => {
 
     const curl = player.generateCurl("R-1");
     expect(curl).toContain("curl 'https://example.com/api'");
-    expect(curl).toContain("-X POST");
+    expect(curl).toContain("-X 'POST'");
 
     const fetchSnippet = player.generateFetch("R-1");
     expect(fetchSnippet).toContain("await fetch");
@@ -594,6 +619,19 @@ describe("WebBlackboxPlayer", () => {
     expect(har.log.entries).toHaveLength(1);
     expect(har.log.entries[0]?.request.method).toBe("POST");
     expect(har.log.entries[0]?.response.status).toBe(200);
+  });
+
+  it("keeps archive-controlled values from escaping generated replay code", async () => {
+    const bytes = await createCodegenInjectionFixtureArchive();
+    const player = await WebBlackboxPlayer.open(bytes);
+
+    const curl = player.generateCurl("R-1");
+    expect(curl).toContain(`  -X 'GET $(A=ECHO;\${A,,} PWNED)' \\`);
+
+    const script = player.generatePlaywrightScript({ name: "it's a test" });
+    expect(script).toContain('test("it\'s a test", async ({ browser }) => {');
+    expect(script).toContain("  // input on #email process.exit(1) was masked in capture");
+    expect(script).not.toMatch(/^process\.exit/m);
   });
 
   it("builds storage timeline, report, and playwright script", async () => {
@@ -810,7 +848,101 @@ async function createFixtureArchive(): Promise<Uint8Array> {
   return zip.generateAsync({ type: "uint8array" });
 }
 
+async function createCodegenInjectionFixtureArchive(): Promise<Uint8Array> {
+  const zip = new JSZip();
+  const events: WebBlackboxEvent[] = [
+    {
+      v: 1,
+      sid: "S-1",
+      tab: 1,
+      t: 1000,
+      mono: 1,
+      type: "network.request",
+      id: "E-1",
+      ref: {
+        req: "R-1"
+      },
+      data: {
+        request: {
+          url: "https://example.com/api",
+          method: "GET $(A=echo;${A,,} pwned)"
+        }
+      }
+    },
+    {
+      v: 1,
+      sid: "S-1",
+      tab: 1,
+      t: 1001,
+      mono: 2,
+      type: "user.input",
+      id: "E-2",
+      data: {
+        target: {
+          selector: "#email\nprocess.exit(1)"
+        },
+        value: "[MASKED]"
+      }
+    }
+  ];
+
+  const manifest: ExportManifest = {
+    protocolVersion: 1,
+    createdAt: new Date(0).toISOString(),
+    mode: "full",
+    site: {
+      origin: "https://example.com"
+    },
+    chunkCodec: "none",
+    redactionProfile: {
+      redactHeaders: [],
+      redactCookieNames: [],
+      redactBodyPatterns: [],
+      blockedSelectors: [],
+      hashSensitiveValues: true
+    },
+    stats: {
+      eventCount: events.length,
+      chunkCount: 1,
+      blobCount: 0,
+      durationMs: 1
+    }
+  };
+
+  zip.file("manifest.json", JSON.stringify(manifest));
+  zip.file("index/time.json", JSON.stringify([]));
+  zip.file("index/req.json", JSON.stringify([{ reqId: "R-1", eventIds: ["E-1"] }]));
+  zip.file("index/inv.json", JSON.stringify([]));
+  zip.file("events/chunk-000001.ndjson", events.map((event) => JSON.stringify(event)).join("\n"));
+
+  await writeIntegrityManifest(zip);
+
+  return zip.generateAsync({ type: "uint8array" });
+}
+
 async function createLevelErrorFixtureArchive(): Promise<Uint8Array> {
+  return appendFixtureEvents([
+    {
+      v: 1,
+      sid: "S-1",
+      tab: 1,
+      t: 1005,
+      mono: 6,
+      type: "console.entry",
+      id: "E-6",
+      lvl: "error",
+      ref: {
+        act: "A-1"
+      },
+      data: {
+        level: "error",
+        text: "console exploded"
+      }
+    }
+  ]);
+}
+
+async function appendFixtureEvents(extraEvents: WebBlackboxEvent[]): Promise<Uint8Array> {
   const bytes = await createFixtureArchive();
   const zip = await JSZip.loadAsync(bytes);
   const eventPath = "events/chunk-000001.ndjson";
@@ -826,23 +958,7 @@ async function createLevelErrorFixtureArchive(): Promise<Uint8Array> {
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line) as WebBlackboxEvent);
 
-  events.push({
-    v: 1,
-    sid: "S-1",
-    tab: 1,
-    t: 1005,
-    mono: 6,
-    type: "console.entry",
-    id: "E-6",
-    lvl: "error",
-    ref: {
-      act: "A-1"
-    },
-    data: {
-      level: "error",
-      text: "console exploded"
-    }
-  });
+  events.push(...extraEvents);
 
   const manifest = JSON.parse(await manifestFile.async("string")) as ExportManifest;
   manifest.stats = {

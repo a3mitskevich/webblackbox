@@ -16,6 +16,7 @@
     "e2e:fullchain:lite:reload": "WB_E2E_MODE=lite WB_E2E_RELOAD_AFTER_START=1 node scripts/e2e-fullchain-demo.mjs",
     "e2e:fullchain:full": "WB_E2E_MODE=full node scripts/e2e-fullchain-demo.mjs",
     "e2e:fullchain:full:defaults": "WB_E2E_MODE=full WB_E2E_CONFIGURE_OPTIONS=0 node scripts/e2e-fullchain-demo.mjs",
+    "e2e:sw-restart": "node scripts/e2e-sw-restart.mjs",
     "e2e:profile:qa": "node scripts/e2e-profile-qa.mjs",
     "e2e:pointer": "node scripts/e2e-pointer-capture.mjs",
     "e2e:profile:full-capture": "node scripts/e2e-profile-full-capture.mjs",
@@ -25,7 +26,7 @@
     "e2e:memory:full": "node scripts/e2e-full-memory-regression.mjs",
     "e2e:memory:full:ci": "WB_E2E_STRESS_REQUESTS=96 WB_E2E_STRESS_CONCURRENCY=4 WB_E2E_MEMORY_SAMPLE_MS=1500 WB_E2E_MEMORY_SETTLE_SAMPLES=1 WB_E2E_MEMORY_TIMEOUT_MS=90000 node scripts/e2e-full-memory-regression.mjs",
     "e2e:perf:lite": "node scripts/e2e-lite-perf-regression.mjs",
-    "e2e:perf:lite:ci": "WB_E2E_PERF_REQUESTS=32 WB_E2E_PERF_WARMUP_REQUESTS=12 WB_E2E_PERF_INTERACTION_ROUNDS=8 WB_E2E_PERF_IFRAME_ROUNDS=6 WB_E2E_PERF_EDITOR_ROUNDS=12 WB_E2E_PERF_NAV_ROUNDS=3 WB_E2E_PERF_NAV_WAIT_MS=6000 node scripts/e2e-lite-perf-regression.mjs",
+    "e2e:perf:lite:ci": "WB_E2E_PERF_REQUESTS=32 WB_E2E_PERF_WARMUP_REQUESTS=12 WB_E2E_PERF_INTERACTION_ROUNDS=8 WB_E2E_PERF_IFRAME_ROUNDS=6 WB_E2E_PERF_EDITOR_ROUNDS=12 WB_E2E_PERF_NAV_ROUNDS=6 WB_E2E_PERF_NAV_WAIT_MS=6000 node scripts/e2e-lite-perf-regression.mjs",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"

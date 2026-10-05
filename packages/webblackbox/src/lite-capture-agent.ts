@@ -3,6 +3,8 @@ import {
   DEFAULT_POINTER_CAPTURE_OPTIONS,
   isContentRedactionEnabled,
   recordUrl,
+  redactKeystrokePayload,
+  shouldRedactKeystroke,
   type CapturePolicy,
   type PointerCaptureOptions,
   type RedactionRules
@@ -20,7 +22,11 @@ import {
   STORAGE_SNAPSHOT_MAX_VALUE_CHARS
 } from "./capture-scope.js";
 import { serializeRawDom } from "./raw-dom-snapshot.js";
-import { INJECTED_MESSAGE_SOURCE, type InjectedCaptureWindowMessage } from "./injected-hooks.js";
+import {
+  INJECTED_MESSAGE_SOURCE,
+  INJECTED_RAW_EVENT_TYPES,
+  type InjectedCaptureWindowMessage
+} from "./injected-hooks.js";
 import {
   notePasswordField,
   readCapturableInputValue,
@@ -101,6 +107,8 @@ const OBSERVED_MUTATION_ATTRIBUTES = [
   "src"
 ];
 
+const INJECTED_RAW_EVENT_TYPE_SET: ReadonlySet<string> = new Set(INJECTED_RAW_EVENT_TYPES);
+
 const LOW_PRIORITY_RAW_TYPES = new Set([
   "mousemove",
   "wheel",
@@ -125,6 +133,21 @@ const FULL_MODE_SKIPPED_RAW_TYPES = new Set([
   "indexedDbSnapshot",
   "cookieSnapshot"
 ]);
+
+// Input types whose keystrokes do not enter text (e.g. Space toggles a checkbox).
+const NON_TEXT_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit"
+]);
+const PASSWORD_INPUT_SELECTOR = "input[type='password']";
 
 const DEFAULT_SAMPLING: LiteCaptureSampling = {
   mousemoveHz: 20,
@@ -189,6 +212,7 @@ export class LiteCaptureAgent {
     trackPointer: (x, y) => this.trackPointer(x, y),
     now: monotonicTime
   });
+  private injectedBridgeNonce: string | null = null;
   private indicator: HTMLDivElement | null = null;
   private mutationObserver: MutationObserver | null = null;
   private snapshotTimer = 0;
@@ -291,6 +315,10 @@ export class LiteCaptureAgent {
 
     if (typeof state.sid === "string") {
       this.sid = state.sid;
+    }
+
+    if (typeof state.injectedBridgeNonce === "string" && state.injectedBridgeNonce.length > 0) {
+      this.injectedBridgeNonce = state.injectedBridgeNonce;
     }
 
     if (typeof state.tabId === "number" && Number.isFinite(state.tabId)) {
@@ -415,6 +443,12 @@ export class LiteCaptureAgent {
         return;
       }
 
+      // Page scripts share the window with the injected hooks and can post look-alike
+      // messages; once the host set a session nonce, unstamped messages are forgeries.
+      if (this.injectedBridgeNonce !== null && data.nonce !== this.injectedBridgeNonce) {
+        return;
+      }
+
       if (data.kind === "capture-event" && typeof data.rawType === "string") {
         this.queueInjectedRawEvent(data);
         return;
@@ -442,6 +476,10 @@ export class LiteCaptureAgent {
     t?: number;
     mono?: number;
   }): void {
+    if (!INJECTED_RAW_EVENT_TYPE_SET.has(event.rawType)) {
+      return;
+    }
+
     this.queueRawEvent({
       source: "content",
       rawType: event.rawType,
@@ -510,16 +548,7 @@ export class LiteCaptureAgent {
           this.emitMarker("Keyboard marker");
         }
 
-        this.queueEvent("keydown", {
-          key: event.key,
-          code: event.code,
-          repeat: event.repeat,
-          altKey: event.altKey,
-          ctrlKey: event.ctrlKey,
-          shiftKey: event.shiftKey,
-          metaKey: event.metaKey,
-          target: this.resolveTargetPayload(event.target, "fast")
-        });
+        this.queueEvent("keydown", this.createKeydownPayload(event));
       },
       INPUT_OPTIONS_TRUE
     );
@@ -1511,6 +1540,38 @@ export class LiteCaptureAgent {
     this.lastUserActivityMono = monotonicTime();
   }
 
+  private createKeydownPayload(event: KeyboardEvent): Record<string, unknown> {
+    const focusTarget = resolveComposedTarget(event);
+    const editable = isKeystrokeEditableTarget(focusTarget);
+    // Masking off (`contentRedaction: false`): keys are recorded as typed, passwords included.
+    const sensitive =
+      isContentRedactionEnabled(this.capturePolicy.redaction) &&
+      isSensitiveKeystrokeTarget(focusTarget, this.capturePolicy.redaction.blockedSelectors);
+    const payload = stripUndefinedRecord({
+      key: event.key,
+      code: event.code,
+      repeat: event.repeat,
+      altKey: event.altKey,
+      ctrlKey: event.ctrlKey,
+      shiftKey: event.shiftKey,
+      metaKey: event.metaKey,
+      editable: editable,
+      sensitiveTarget: sensitive,
+      target: this.resolveTargetPayload(event.target, "fast")
+    });
+    const shouldRedact = shouldRedactKeystroke({
+      key: event.key,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      altKey: event.altKey,
+      editable,
+      sensitive,
+      inputs: this.capturePolicy.categories.inputs
+    });
+
+    return shouldRedact ? redactKeystrokePayload(payload) : payload;
+  }
+
   private recordEditableInteraction(target: EventTarget | null): void {
     if (!isEditableInteractionTarget(target)) {
       return;
@@ -2487,6 +2548,46 @@ function isEditableInteractionTarget(target: EventTarget | null): boolean {
   }
 
   return isRichTextEditableTarget(target);
+}
+
+/** Real focus target, including elements inside open shadow roots (event.target is retargeted). */
+function resolveComposedTarget(event: Event): EventTarget | null {
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+  return path[0] ?? event.target;
+}
+
+function isKeystrokeEditableTarget(target: EventTarget | null): boolean {
+  if (target instanceof HTMLInputElement) {
+    return !NON_TEXT_INPUT_TYPES.has(target.type);
+  }
+
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+    return true;
+  }
+
+  return isRichTextEditableTarget(target);
+}
+
+function isSensitiveKeystrokeTarget(
+  target: EventTarget | null,
+  blockedSelectors: readonly string[]
+): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return [PASSWORD_INPUT_SELECTOR, ...blockedSelectors].some((selector) =>
+    matchesClosestSelector(target, selector)
+  );
+}
+
+function matchesClosestSelector(target: Element, selector: string): boolean {
+  try {
+    return target.closest(selector) !== null;
+  } catch {
+    // Invalid user-provided selectors must not break capture.
+    return false;
+  }
 }
 
 function resolveNavigationTarget(target: EventTarget | null): HTMLAnchorElement | null {

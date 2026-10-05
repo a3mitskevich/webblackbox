@@ -28,6 +28,11 @@ export type LiteCaptureState = {
   mode?: SessionMetadata["mode"] | "freeze";
   sampling?: Partial<LiteCaptureSampling>;
   capturePolicy?: CapturePolicy;
+  /**
+   * Per-session secret the host also handed to the injected hooks. Once set, injected
+   * bridge messages without this nonce are dropped.
+   */
+  injectedBridgeNonce?: string;
   /** Optional pointer streams (hover / drag / wheel); absent = all off. */
   pointer?: Partial<PointerCaptureOptions>;
 };

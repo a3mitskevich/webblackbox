@@ -127,6 +127,8 @@ export type RecordingStatusMessage = {
     | "bodyCaptureMaxBytes"
   >;
   capturePolicy?: CapturePolicy;
+  /** Per-session nonce the injected page hooks stamp on bridge messages (lite mode). */
+  injectedBridgeNonce?: string;
   pointer?: PointerCaptureOptions;
 };
 

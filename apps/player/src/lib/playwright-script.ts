@@ -21,7 +21,7 @@ export function generatePlaywrightScriptFromEvents(
   const lines = [
     "import { test } from '@playwright/test';",
     "",
-    `test('${name}', async ({ browser }) => {`,
+    `test(${JSON.stringify(name)}, async ({ browser }) => {`,
     "  const context = await browser.newContext();",
     includeHarReplay
       ? "  await context.routeFromHAR('./session.har', { notFound: 'fallback' });"
