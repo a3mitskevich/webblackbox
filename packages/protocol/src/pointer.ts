@@ -361,7 +361,32 @@ export function maskPointerLabels(
   return changed ? next : payload;
 }
 
-/** Readable labels through {@link maskDomText}; a changed `css` selector is dropped instead. */
+/**
+ * A readable label with the DOM rules ({@link maskDomText}) applied to its raw and to its
+ * whitespace-collapsed form: the DOM snapshot masks raw text, a reader sees the collapsed text,
+ * and a rule written for either must hide it.
+ */
+export function maskPointerLabel(text: string, rules: RedactionRules): string {
+  return maskDomText(maskDomText(text, rules).replace(/\s+/g, " ").trim(), rules);
+}
+
+/**
+ * The readable selector, or undefined when the DOM rules would change it or any attribute value
+ * or id it embeds. A selector is kept verbatim, so masking a part would leave the raw value in
+ * the rest (an anchored rule may match the value but not the selector), and a masked selector
+ * matches nothing.
+ */
+export function keepReadableSelector(css: string, rules: RedactionRules): string | undefined {
+  const embedded = [
+    css,
+    ...Array.from(css.matchAll(/="((?:[^"\\]|\\.)*)"/g), (match) => unescapeCss(match[1] ?? "")),
+    ...Array.from(css.matchAll(/#((?:[\w-]|\\.)+)/g), (match) => unescapeCss(match[1] ?? ""))
+  ];
+
+  return embedded.every((value) => maskDomText(value, rules) === value) ? css : undefined;
+}
+
+/** Readable labels through {@link maskPointerLabel}; `css` through {@link keepReadableSelector}. */
 function maskReadableLabels(
   readable: Record<string, unknown>,
   rules: RedactionRules
@@ -372,17 +397,22 @@ function maskReadableLabels(
       return [[key, value]];
     }
 
-    const masked = maskDomText(value, rules);
+    const masked =
+      key === "css" ? keepReadableSelector(value, rules) : maskPointerLabel(value, rules);
 
     if (masked === value) {
       return [[key, value]];
     }
 
     changed = true;
-    return key === "css" ? [] : [[key, masked]];
+    return masked === undefined ? [] : [[key, masked]];
   });
 
   return changed ? Object.fromEntries(entries) : readable;
+}
+
+function unescapeCss(value: string): string {
+  return value.replace(/\\(.)/g, "$1");
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

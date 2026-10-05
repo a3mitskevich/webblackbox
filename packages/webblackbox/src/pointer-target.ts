@@ -1,14 +1,14 @@
 import {
   READABLE_TARGET_TEXT_MAX_CHARS,
   allowsReadablePointerTargets,
+  keepReadableSelector,
+  maskPointerLabel,
   type CapturePolicy,
   type PointerTargetRect,
   type PointerViewportGeometry,
   type ReadablePointerTarget,
   type RedactionProfile
 } from "@webblackbox/protocol";
-
-import { maskDomText } from "@webblackbox/protocol/redaction-rules";
 
 import { isCoveredByBlockedSelector } from "./input-value-policy.js";
 
@@ -114,16 +114,15 @@ export function buildReadableTarget(
   // snapshot, so a pattern is never cut in half by the length limit.
   const rules = policy.redaction;
   const mask = (value: string | null | undefined): string | undefined =>
-    typeof value === "string" ? maskDomText(value, rules) : undefined;
+    typeof value === "string" ? maskPointerLabel(value, rules) : undefined;
   const css = buildReadableSelector(element);
   const readable: ReadablePointerTarget = {
     role: clip(mask(element.getAttribute("role") ?? resolveImplicitRole(element))),
-    ariaLabel: clip(normalizeWhitespace(mask(element.getAttribute("aria-label")))),
+    ariaLabel: clip(mask(element.getAttribute("aria-label"))),
     text: readVisibleLabel(element, policy.redaction),
     testId: clip(mask(readDataTestId(element))),
     name: clip(mask(element.getAttribute("name"))),
-    // A selector the rules would change is dropped: a masked selector matches nothing.
-    css: css !== undefined && mask(css) === css ? css : undefined
+    css: css === undefined ? undefined : keepReadableSelector(css, rules)
   };
   const entries = Object.entries(readable).filter(([, value]) => value !== undefined);
 
@@ -242,7 +241,7 @@ function readVisibleLabel(element: Element, redaction: RedactionProfile): string
   if (element instanceof HTMLInputElement) {
     // Only button-like inputs show their value as a label; other values are user data.
     return BUTTON_LIKE_INPUT_TYPES.has(element.type.toLowerCase())
-      ? clipText(maskDomText(element.value, redaction))
+      ? clipText(maskPointerLabel(element.value, redaction))
       : undefined;
   }
 
@@ -250,7 +249,7 @@ function readVisibleLabel(element: Element, redaction: RedactionProfile): string
     return undefined;
   }
 
-  return clipText(maskDomText(readLabelText(element, redaction), redaction));
+  return clipText(maskPointerLabel(readLabelText(element, redaction), redaction));
 }
 
 /**

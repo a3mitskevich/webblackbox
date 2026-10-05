@@ -145,6 +145,40 @@ describe("readable pointer targets", () => {
       expect(buildReadableTarget(element("#send"), withDomRule())?.text).toBe("Send [REDACTED]");
     });
 
+    it("drops a selector that embeds a value an anchored rule masks", () => {
+      mount(`<button data-testid="acme-12">Go</button><button id="acme-34">Go</button>`);
+      const anchored: CapturePolicy = {
+        ...READABLE_POLICY,
+        redaction: {
+          ...READABLE_POLICY.redaction,
+          valuePatterns: [{ pattern: "^acme-\\d+$", targets: ["dom"] }]
+        }
+      };
+
+      const byTestId = buildReadableTarget(element("[data-testid]"), anchored);
+      expect(byTestId).toMatchObject({ testId: "[REDACTED]" });
+      expect(byTestId?.css).toBeUndefined();
+      expect(buildReadableTarget(element("#acme-34"), anchored)?.css).toBeUndefined();
+    });
+
+    it("masks a label a rule matches only after whitespace is collapsed", () => {
+      mount(`<button id="pulse" aria-label="Pulse
+        DOM">Pulse
+        DOM</button>`);
+      const policy: CapturePolicy = {
+        ...READABLE_POLICY,
+        redaction: {
+          ...READABLE_POLICY.redaction,
+          valuePatterns: [{ pattern: "Pulse DOM", targets: ["dom"] }]
+        }
+      };
+
+      expect(buildReadableTarget(element("#pulse"), policy)).toMatchObject({
+        text: "[REDACTED]",
+        ariaLabel: "[REDACTED]"
+      });
+    });
+
     it("masks nothing when content masking is off", () => {
       mount(`<button id="pay" aria-label="Pay acct-22">Pay acct-55</button>`);
 

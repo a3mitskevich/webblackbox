@@ -30,6 +30,7 @@ export const WHEEL_BURST_MAX_MS = 1_000;
 export const SELECTION_SETTLE_MS = 300;
 
 const MAX_ACTIVE_REACTION_PROBES = 4;
+const SELECTION_MASK_SCAN_CHARS = SELECTION_TEXT_MAX_CHARS * 4;
 const MAX_TRACKED_PRESSES = 10;
 const HOVER_DWELL_MAX_MS = 60_000;
 const WEBBLACKBOX_INDICATOR_SELECTOR = "[data-webblackbox-indicator]";
@@ -719,9 +720,15 @@ function readSelectionState(policy: CapturePolicy): SelectionState | null {
 
   return {
     length: raw.length,
-    // Selected text is page text: DOM rules mask it (before the length limit) as in the snapshot.
+    // Selected text is page text: DOM rules mask it as in the snapshot, on a bounded slice (a
+    // select-all can be megabytes) that is longer than the kept text, so no match is cut in half.
     ...(textAllowed
-      ? { text: maskDomText(raw, policy.redaction).slice(0, SELECTION_TEXT_MAX_CHARS) }
+      ? {
+          text: maskDomText(raw.slice(0, SELECTION_MASK_SCAN_CHARS), policy.redaction).slice(
+            0,
+            SELECTION_TEXT_MAX_CHARS
+          )
+        }
       : {}),
     editable,
     element,

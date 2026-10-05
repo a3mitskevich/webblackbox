@@ -4,6 +4,8 @@ import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_POINTER_CAPTURE_OPTIONS,
   DEFAULT_RECORDER_CONFIG,
+  keepReadableSelector,
+  maskPointerLabel,
   maskPointerLabels,
   stripUnreadablePointerDetail,
   recorderConfigSchema,
@@ -234,5 +236,27 @@ describe("maskPointerLabels", () => {
         valuePatterns: [{ pattern: "acct-\\d+", targets: ["bodies"] }]
       })
     ).toBe(click);
+  });
+});
+
+describe("readable label helpers", () => {
+  const anchored = { valuePatterns: [{ pattern: "^acme-\\d+$", targets: ["dom" as const] }] };
+
+  it("keeps a selector only when no embedded value or id is masked", () => {
+    expect(keepReadableSelector('[data-testid="acme-12"]', anchored)).toBeUndefined();
+    expect(keepReadableSelector("main > #acme-34 > button", anchored)).toBeUndefined();
+    expect(keepReadableSelector('button[name="say \\"hi\\""]', anchored)).toBe(
+      'button[name="say \\"hi\\""]'
+    );
+    expect(
+      keepReadableSelector('[data-testid="acme-12"]', { ...anchored, contentRedaction: false })
+    ).toBe('[data-testid="acme-12"]');
+  });
+
+  it("masks a label in its raw and its collapsed form", () => {
+    const rules = { valuePatterns: [{ pattern: "Pulse DOM", targets: ["dom" as const] }] };
+
+    expect(maskPointerLabel("Pulse\n   DOM now", rules)).toBe("[REDACTED] now");
+    expect(maskPointerLabel("Pulse DOM", rules)).toBe("[REDACTED]");
   });
 });
