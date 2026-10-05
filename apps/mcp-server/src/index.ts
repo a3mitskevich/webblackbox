@@ -318,9 +318,16 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "to original sources using source maps embedded in the archive and an optional maps directory.",
     symbolicateStackInput,
     async ({ path, passphrase, eventId, stack, mapsDir, limit }) => {
-      // Both filesystem paths pass through here, so a directory guard can wrap them together.
+      // Both filesystem paths go through the --allow-dir guard, like every other tool.
       return toTextPayload(
-        await symbolicateArchiveStacks({ path, passphrase, eventId, stack, mapsDir, limit })
+        await symbolicateArchiveStacks({
+          path: await guardPath(path),
+          passphrase,
+          eventId,
+          stack,
+          mapsDir: mapsDir === undefined ? undefined : await guardPath(mapsDir),
+          limit
+        })
       );
     }
   );
