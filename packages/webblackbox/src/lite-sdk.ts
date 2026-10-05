@@ -1,8 +1,10 @@
 import {
+  DEFAULT_CAPTURE_POLICY,
   DEFAULT_EXPORT_POLICY,
   DEFAULT_RECORDER_CONFIG,
   createSessionId,
   sanitizeUrlForPrivacy,
+  type CapturePolicy,
   type ExportPolicy,
   type RecorderConfig,
   type SessionMetadata,
@@ -190,7 +192,7 @@ export class WebBlackboxLiteSdk {
       tabId: this.tabId,
       mode: "lite",
       sampling: this.config.sampling,
-      capturePolicy: this.config.capturePolicy
+      capturePolicy: resolveAgentCapturePolicy(this.config)
     });
   }
 
@@ -211,7 +213,7 @@ export class WebBlackboxLiteSdk {
         tabId: this.tabId,
         mode: "lite",
         sampling: this.config.sampling,
-        capturePolicy: this.config.capturePolicy
+        capturePolicy: resolveAgentCapturePolicy(this.config)
       });
     }
 
@@ -573,6 +575,25 @@ function mergeRecorderConfig(
           mode: "lite"
         }))
       : [...baseConfig.sitePolicies]
+  };
+}
+
+/**
+ * Capture policy handed to the capture agent. The agent only sees the capture policy, so the
+ * recorder's own blocked selectors are folded in to keep keystroke privacy honouring them.
+ */
+function resolveAgentCapturePolicy(config: RecorderConfig): CapturePolicy {
+  const policy = config.capturePolicy ?? DEFAULT_CAPTURE_POLICY;
+  const blockedSelectors = [
+    ...new Set([...policy.redaction.blockedSelectors, ...config.redaction.blockedSelectors])
+  ];
+
+  return {
+    ...policy,
+    redaction: {
+      ...policy.redaction,
+      blockedSelectors
+    }
   };
 }
 

@@ -2460,7 +2460,8 @@ function toPlaywrightLines(event: WebBlackboxEvent): string[] {
     const payload = asRecord(event.data);
     const key = asString(payload?.key);
 
-    if (!key) {
+    // Redacted keystrokes carry no replayable key.
+    if (!key || payload?.keyRedacted === true) {
       return [];
     }
 

@@ -12,6 +12,7 @@ import {
 import { ActionSpanTracker } from "./action-span.js";
 import { applyErrorTextPolicy } from "./error-text-policy.js";
 import { FreezePolicy } from "./freeze.js";
+import { sanitizeKeydownPayload } from "./keydown-privacy.js";
 import {
   attachInlineNetworkBody,
   detachInlineNetworkBody,
@@ -86,9 +87,12 @@ export class WebBlackboxRecorder {
     const detached = detachInlineNetworkBody(normalized.eventType, policyPayload);
     const shouldKeepBody = this.hooks.shouldKeepInlineNetworkBody;
     const redactedPayload = attachInlineNetworkBody(
-      redactPayload(detached.payload, this.config.redaction, {
-        hashKey: this.redactionHashKey
-      }),
+      redactEventPayload(
+        normalized.eventType,
+        detached.payload,
+        this.config,
+        this.redactionHashKey
+      ),
       detached.body,
       {
         capturePolicy: this.config.capturePolicy,
@@ -226,6 +230,19 @@ export class WebBlackboxRecorder {
 
     return nextEvent;
   }
+}
+
+function redactEventPayload(
+  eventType: WebBlackboxEventType,
+  payload: unknown,
+  config: RecorderConfig,
+  hashKey: Uint8Array
+): unknown {
+  const redacted = redactPayload(payload, config.redaction, { hashKey });
+
+  return eventType === "user.keydown"
+    ? sanitizeKeydownPayload(redacted, config.capturePolicy)
+    : redacted;
 }
 
 function normalizeTabId(value: number): number {
@@ -582,6 +599,7 @@ function hasRedactionSignal(payload: unknown): boolean {
   return (
     row.redacted === true ||
     row.valueRedacted === true ||
+    row.keyRedacted === true ||
     row.selectorRedacted === true ||
     (target !== null &&
       typeof target === "object" &&

@@ -417,6 +417,32 @@ describe("WebBlackboxPlayer", () => {
     expect(report).toContain("console exploded");
   });
 
+  it("skips redacted keystrokes in generated Playwright scripts", async () => {
+    const keydown = (
+      id: string,
+      mono: number,
+      data: Record<string, unknown>
+    ): WebBlackboxEvent => ({
+      v: 1,
+      sid: "S-1",
+      tab: 1,
+      t: 1000 + mono,
+      mono,
+      type: "user.keydown",
+      id,
+      data
+    });
+    const bytes = await appendFixtureEvents([
+      keydown("E-6", 6, { key: "[REDACTED]", keyRedacted: true }),
+      keydown("E-7", 7, { key: "Enter", code: "Enter" })
+    ]);
+    const player = await WebBlackboxPlayer.open(bytes);
+    const script = player.generatePlaywrightScript({ includeHarReplay: false });
+
+    expect(script).not.toContain("[REDACTED]");
+    expect(script).toContain('await page.keyboard.press("Enter");');
+  });
+
   it("builds action timeline with request, error, and screenshot context", async () => {
     const bytes = await createRichFixtureArchive();
     const player = await WebBlackboxPlayer.open(bytes);
@@ -840,6 +866,28 @@ async function createCodegenInjectionFixtureArchive(): Promise<Uint8Array> {
 }
 
 async function createLevelErrorFixtureArchive(): Promise<Uint8Array> {
+  return appendFixtureEvents([
+    {
+      v: 1,
+      sid: "S-1",
+      tab: 1,
+      t: 1005,
+      mono: 6,
+      type: "console.entry",
+      id: "E-6",
+      lvl: "error",
+      ref: {
+        act: "A-1"
+      },
+      data: {
+        level: "error",
+        text: "console exploded"
+      }
+    }
+  ]);
+}
+
+async function appendFixtureEvents(extraEvents: WebBlackboxEvent[]): Promise<Uint8Array> {
   const bytes = await createFixtureArchive();
   const zip = await JSZip.loadAsync(bytes);
   const eventPath = "events/chunk-000001.ndjson";
@@ -855,23 +903,7 @@ async function createLevelErrorFixtureArchive(): Promise<Uint8Array> {
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line) as WebBlackboxEvent);
 
-  events.push({
-    v: 1,
-    sid: "S-1",
-    tab: 1,
-    t: 1005,
-    mono: 6,
-    type: "console.entry",
-    id: "E-6",
-    lvl: "error",
-    ref: {
-      act: "A-1"
-    },
-    data: {
-      level: "error",
-      text: "console exploded"
-    }
-  });
+  events.push(...extraEvents);
 
   const manifest = JSON.parse(await manifestFile.async("string")) as ExportManifest;
   manifest.stats = {

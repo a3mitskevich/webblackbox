@@ -180,6 +180,32 @@ describe("WebBlackboxLiteSdk", () => {
     expect(agent?.disposeCalls).toBe(1);
   });
 
+  it("hands recorder blocked selectors to the capture agent", async () => {
+    const sdk = new WebBlackboxLiteSdk({
+      sid: "S-sdk-blocked-selectors",
+      useDefaultPlugins: false,
+      config: {
+        redaction: {
+          blockedSelectors: [".pin-pad", "input[type='password']"]
+        }
+      }
+    });
+
+    await sdk.start();
+    const policy = mockRuntime.instances.at(-1)?.statusHistory.at(-1)?.capturePolicy as
+      | CapturePolicy
+      | undefined;
+    const blockedSelectors = policy?.redaction.blockedSelectors ?? [];
+
+    expect(blockedSelectors).toEqual(
+      expect.arrayContaining([...DEFAULT_CAPTURE_POLICY.redaction.blockedSelectors, ".pin-pad"])
+    );
+    expect(new Set(blockedSelectors).size).toBe(blockedSelectors.length);
+    expect(sdk.getRecorderConfig().capturePolicy).toEqual(DEFAULT_CAPTURE_POLICY);
+
+    await sdk.dispose();
+  });
+
   it("exports normalized events and materialized screenshot payloads", async () => {
     const sdk = new WebBlackboxLiteSdk({
       sid: "S-sdk-export",
