@@ -356,21 +356,36 @@ describe("LiteCaptureAgent", () => {
     agent.dispose();
   });
 
-  it("does not install page performance observers in full mode", () => {
-    const observe = vi.fn();
+  it("records long tasks and vitals in full mode without the frame-pressure loop", () => {
+    const callbacks: Array<(list: { getEntries: () => unknown[] }) => void> = [];
     const requestAnimationFrame = vi.fn(() => 1);
-    const PerformanceObserverMock = vi.fn(() => ({
-      observe,
-      disconnect: vi.fn()
-    }));
+    const PerformanceObserverMock = vi.fn(function (
+      callback: (list: { getEntries: () => unknown[] }) => void
+    ) {
+      callbacks.push(callback);
+      return { observe: vi.fn(), disconnect: vi.fn() };
+    });
 
     vi.stubGlobal("PerformanceObserver", PerformanceObserverMock);
     vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
 
-    const { agent } = createAgent({ mode: "full" });
+    const { agent, emitBatch } = createAgent({ mode: "full" });
 
-    expect(PerformanceObserverMock).not.toHaveBeenCalled();
+    // CDP has no stream for these page-only signals, so full mode keeps them.
+    expect(PerformanceObserverMock).toHaveBeenCalledTimes(4);
     expect(requestAnimationFrame).not.toHaveBeenCalled();
+
+    for (const callback of callbacks) {
+      callback({ getEntries: () => [{ name: "self", startTime: 5, duration: 120, value: 0.1 }] });
+    }
+
+    agent.flush();
+    const rawTypes = emitBatch.mock.calls.flatMap(([events]) =>
+      (events as Array<{ rawType: string }>).map((event) => event.rawType)
+    );
+
+    expect(rawTypes.filter((type) => type === "longtask")).toHaveLength(1);
+    expect(rawTypes.filter((type) => type === "vitals")).toHaveLength(3);
 
     agent.dispose();
   });

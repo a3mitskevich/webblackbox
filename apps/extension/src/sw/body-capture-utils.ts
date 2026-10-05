@@ -1,5 +1,6 @@
 import {
   BODY_REDACTION_TOKEN,
+  type BodySkipReason,
   isTextualMimeType,
   maskBodyBytes,
   type CaptureMode,
@@ -118,16 +119,27 @@ export type InlineRequestBodyGateContext = {
  * Gate for request body text the recorder would inline under `body-allowlist`: it must also pass
  * the body-capture rule (site policies, MIME allowlist, max bytes) that governs response bodies.
  * Other inline bodies (WebSocket, SSE) carry no request URL and stay on the category gate.
+ * Returns `true` to keep the body, otherwise why it is left out.
  */
 export function isInlineRequestBodyAllowed(
   context: InlineRequestBodyGateContext,
   resolveRule: (url: string, mimeType: string | undefined) => BodyCaptureRule
-): boolean {
+): true | BodySkipReason {
   if (context.eventType !== "network.request" || !context.url) {
     return true;
   }
 
-  return resolveRule(context.url, normalizeMimeType(context.mimeType)).enabled;
+  const mimeType = normalizeMimeType(context.mimeType);
+  const rule = resolveRule(context.url, mimeType);
+  return rule.enabled ? true : ruleSkipReason(rule, mimeType);
+}
+
+/** Why a disabled body rule left a body out: its MIME allowlist, or a URL or site rule. */
+export function ruleSkipReason(
+  rule: BodyCaptureRule,
+  mimeType: string | undefined
+): BodySkipReason {
+  return mimeType && !isMimeAllowed(rule.mimeAllowlist, mimeType) ? "mime-not-allowed" : "filtered";
 }
 
 /** Profile URL filters for body capture (`network.includeUrls` / `network.excludeUrls`). */

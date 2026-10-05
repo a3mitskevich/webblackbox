@@ -132,8 +132,6 @@ const LOW_PRIORITY_RAW_TYPES = new Set([
 const FULL_MODE_SKIPPED_RAW_TYPES = new Set([
   "scroll",
   "mutation",
-  "vitals",
-  "longtask",
   "snapshot",
   "screenshot",
   "localStorageSnapshot",
@@ -749,13 +747,10 @@ export class LiteCaptureAgent {
     }
 
     try {
+      // Long tasks and vitals are page-only signals (CDP has no stream for them): kept in full mode.
       const longTaskObserver = new PerformanceObserver((list) => {
-        if (this.mode === "full") {
-          return;
-        }
-
         for (const entry of list.getEntries()) {
-          if (entry.duration >= LONG_TASK_PRESSURE_THRESHOLD_MS) {
+          if (this.mode !== "full" && entry.duration >= LONG_TASK_PRESSURE_THRESHOLD_MS) {
             this.extendLongTaskPressure(entry.duration);
           }
 
@@ -773,7 +768,8 @@ export class LiteCaptureAgent {
       void 0;
     }
 
-    if (typeof window.requestAnimationFrame === "function") {
+    // Frame-gap pressure only tunes lite capture; full mode does not need the rAF loop.
+    if (this.mode !== "full" && typeof window.requestAnimationFrame === "function") {
       let lastFrameMono = monotonicTime();
       let rafHandle = 0;
 
@@ -806,10 +802,6 @@ export class LiteCaptureAgent {
     for (const item of vitalTypes) {
       try {
         const observer = new PerformanceObserver((list) => {
-          if (this.mode === "full") {
-            return;
-          }
-
           for (const entry of list.getEntries()) {
             this.queueEvent(item.rawType, {
               metric: item.type,
@@ -1074,7 +1066,7 @@ export class LiteCaptureAgent {
 
     this.installInputAndLifecycleCapture();
 
-    if (this.isTopLevelFrame && this.mode !== "full") {
+    if (this.isTopLevelFrame) {
       this.installPerformanceCapture();
     }
 
