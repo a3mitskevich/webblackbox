@@ -136,6 +136,37 @@ describe("pipeline", () => {
     expect(indexes.request.some((entry) => entry.reqId === "R-1")).toBe(true);
   });
 
+  it("records min/max chunk time bounds when events arrive out of order", async () => {
+    const storage = new MemoryPipelineStorage();
+    const pipeline = new FlightRecorderPipeline({
+      session: SESSION,
+      storage,
+      maxChunkBytes: 1024 * 1024
+    });
+
+    await pipeline.start();
+    await pipeline.ingest(createEvent("E-200", "user.click", 200));
+    await pipeline.ingest(createEvent("E-100-late", "user.mousemove", 100));
+    await pipeline.ingest(createEvent("E-300", "network.request", 300));
+    await pipeline.ingest(createEvent("E-250", "screen.screenshot", 250, { shotId: "shot" }));
+    await pipeline.ingest(createEvent("E-150-late", "user.mousemove", 150));
+    await pipeline.flush();
+
+    const [stored] = await storage.listChunks(SESSION.sid);
+    expect(stored?.meta).toMatchObject({ tStart: 100, tEnd: 300, monoStart: 100, monoEnd: 300 });
+
+    const exported = await pipeline.exportBundle({
+      ...FULL_EXPORT_OPTIONS,
+      includeScreenshots: false
+    });
+    const parsed = await readWebBlackboxArchive(exported.bytes);
+
+    expect(parsed.events.map((event) => event.id)).not.toContain("E-250");
+    expect(parsed.timeIndex).toEqual([
+      expect.objectContaining({ tStart: 100, tEnd: 300, monoStart: 100, monoEnd: 300 })
+    ]);
+  });
+
   it("indexes request ids from nested request payloads", async () => {
     const storage = new MemoryPipelineStorage();
     const pipeline = new FlightRecorderPipeline({

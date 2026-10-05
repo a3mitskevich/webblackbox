@@ -13,7 +13,7 @@ import type {
 import { CHUNK_CODECS, DEFAULT_EXPORT_POLICY, sanitizeUrlForPrivacy } from "@webblackbox/protocol";
 
 import { decodeChunkEvents, encodeChunkEvents } from "./codec.js";
-import { EventChunker } from "./chunker.js";
+import { computeChunkTimeBounds, EventChunker } from "./chunker.js";
 import { createWebBlackboxArchive } from "./exporter.js";
 import { sha256Hex } from "./hash.js";
 import { EventIndexer } from "./indexer.js";
@@ -431,18 +431,13 @@ export class FlightRecorderPipeline {
 
       const encoded = await encodeChunkEvents(filtered, chunk.meta.codec);
       const bytes = encoded.bytes;
-      const first = filtered[0];
-      const last = filtered[filtered.length - 1];
 
       output.push({
         chunk: {
           sid: chunk.sid,
           meta: {
             ...chunk.meta,
-            tStart: first?.t ?? chunk.meta.tStart,
-            tEnd: last?.t ?? chunk.meta.tEnd,
-            monoStart: first?.mono ?? chunk.meta.monoStart,
-            monoEnd: last?.mono ?? chunk.meta.monoEnd,
+            ...computeChunkTimeBounds(filtered, chunk.meta),
             eventCount: filtered.length,
             byteLength: bytes.byteLength,
             codec: encoded.codec,
@@ -659,8 +654,6 @@ export class FlightRecorderPipeline {
     events: WebBlackboxEvent[],
     bytes: Uint8Array
   ): Promise<void> {
-    const first = events[0];
-    const last = events[events.length - 1];
     const hash = await sha256Hex(bytes);
 
     const chunk: StoredChunk = {
@@ -668,10 +661,7 @@ export class FlightRecorderPipeline {
       meta: {
         chunkId,
         seq,
-        tStart: first?.t ?? 0,
-        tEnd: last?.t ?? 0,
-        monoStart: first?.mono ?? 0,
-        monoEnd: last?.mono ?? 0,
+        ...computeChunkTimeBounds(events),
         eventCount: events.length,
         byteLength: bytes.byteLength,
         codec,
