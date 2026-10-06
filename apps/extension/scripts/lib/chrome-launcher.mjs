@@ -43,7 +43,10 @@ export const CHROME_LAUNCH_PROFILES = Object.freeze({
     disableLinuxSandbox: true
   }),
   fullchain: DEVTOOLS_AUTOMATION_PROFILE,
-  litePerf: DEVTOOLS_AUTOMATION_PROFILE
+  litePerf: DEVTOOLS_AUTOMATION_PROFILE,
+  // Profile e2e harness (`lib/profile-e2e-harness.mjs`): hosted Linux CI runners need the
+  // sandbox switches, or Chrome exits before its DevTools endpoint comes up.
+  profileHarness: Object.freeze({ disableLinuxSandbox: true })
 });
 
 const TERMINATE_GRACE_MS = 5_000;

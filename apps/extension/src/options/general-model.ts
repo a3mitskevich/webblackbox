@@ -18,6 +18,7 @@ import {
   normalizePerformanceBudget,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
+import { DEFAULT_START_RELOAD_OFFER } from "../shared/start-reload-offer.js";
 
 /**
  * Pure model of the general settings (everything outside the profiles editor): the draft being
@@ -30,6 +31,8 @@ export type GeneralDraft = {
   archive: ExportPolicyPrefs;
   /** Stored under its own key (`webblackbox.injection`), not in `webblackbox.options`. */
   injection: ContentInjectionMode;
+  /** Stored under its own key (`webblackbox.startReloadOffer`), not in `webblackbox.options`. */
+  startReloadOffer: boolean;
 };
 
 export type GeneralSectionId = "sensitivity" | "pointer" | "sampling" | "budgets" | "export";
@@ -186,6 +189,15 @@ export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
     ],
     get: (draft) => draft.injection,
     set: (draft, value) => (isContentInjectionMode(value) ? { ...draft, injection: value } : draft)
+  },
+  {
+    kind: "toggle",
+    id: "startReloadOffer",
+    section: "sampling",
+    label: "optionsStartReloadOffer",
+    hint: "optionsStartReloadOfferHint",
+    get: (draft) => draft.startReloadOffer,
+    set: (draft, value) => ({ ...draft, startReloadOffer: value })
   },
   redactionList("blockedSelectors", {
     label: "optionsBlockedSelectors",
@@ -429,7 +441,8 @@ export function createDefaultGeneralDraft(): GeneralDraft {
     recorderConfig: normalizeOptionsConfig(structuredClone(DEFAULT_RECORDER_CONFIG)),
     performanceBudget: { ...DEFAULT_PERFORMANCE_BUDGET },
     archive: { ...DEFAULT_EXPORT_POLICY_PREFS },
-    injection: DEFAULT_CONTENT_INJECTION_MODE
+    injection: DEFAULT_CONTENT_INJECTION_MODE,
+    startReloadOffer: DEFAULT_START_RELOAD_OFFER
   };
 }
 
@@ -474,6 +487,10 @@ export function isArchiveChanged(draft: GeneralDraft, baseline: GeneralDraft): b
 
 export function isInjectionChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
   return draft.injection !== baseline.injection;
+}
+
+export function isStartReloadOfferChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
+  return draft.startReloadOffer !== baseline.startReloadOffer;
 }
 
 const GENERAL_SECTION_IDS: readonly GeneralSectionId[] = [

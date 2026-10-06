@@ -40,6 +40,7 @@ const SECTION_LAYOUT: Record<
   pointer: [{ title: null, fields: ["mousemoveHz", "scrollHz", "actionWindowMs"] }],
   sampling: [
     { title: "optionsGroupInjection", fields: ["contentInjection"] },
+    { title: "optionsGroupStart", fields: ["startReloadOffer"] },
     { title: "optionsGroupBuffer", fields: ["ringBufferMinutes", "freezeOnError"] },
     {
       title: "optionsGroupSampling",
