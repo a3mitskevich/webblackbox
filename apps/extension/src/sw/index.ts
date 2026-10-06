@@ -83,14 +83,11 @@ import {
   type SourceMapCapture
 } from "../shared/profiles/resolve.js";
 import {
-  createConcurrencyLimiter,
   DEBUGGER_SCRIPT_CACHE_BYTES,
   loadSourceMapForEmbedding,
   SCRIPT_RAW_TYPE,
-  SOURCE_MAP_FETCH_CONCURRENCY,
   scriptRecordFromResponse,
   scriptRecordFromScriptParsed,
-  ScriptSourceMapTracker,
   type RawScriptRecord
 } from "./source-maps.js";
 import { resolveStartEngine } from "../shared/profiles/engine.js";
@@ -163,8 +160,7 @@ import {
   createOffscreenClient,
   createSessionPipelineClient,
   OFFSCREEN_DISCONNECTED_ERROR,
-  type OffscreenEventMessage,
-  type SessionPipelineClient
+  type OffscreenEventMessage
 } from "./offscreen-client.js";
 import { createOffscreenPortConnector } from "./offscreen-port.js";
 import { createPortTrafficMeter } from "./port-traffic.js";
@@ -196,16 +192,23 @@ import {
   capturedVisualsOf,
   isTabLoading,
   NO_RECORDING_PROFILE_ERROR,
-  readTabPageContext,
-  type CapturedVisuals
+  readTabPageContext
 } from "./profile-runtime.js";
 import {
   buildRequestMetaKey,
   deleteRequestMeta,
   getRequestMeta,
-  upsertRequestMeta,
-  type RequestMetaEntry
+  upsertRequestMeta
 } from "./request-meta.js";
+import {
+  createSessionRegistry,
+  createSessionRuntime,
+  rememberablePageUrl,
+  resolveUrlOrigin,
+  type ScreenRecordingRuntime,
+  type SessionAnnotation,
+  type SessionRuntime
+} from "./session-registry.js";
 import { resolveRawEventSession } from "./session-routing.js";
 import {
   parseStoppedSessionRecords,
@@ -232,122 +235,6 @@ import {
 } from "./tabs-context/tracker.js";
 import { resolveUiActionTabId } from "./ui-action-target.js";
 
-/**
- * Recording profile bookkeeping for one session. A session records with one profile only: when
- * the effective profile changes after Start, the recording is cancelled (`cancellation`).
- */
-type SessionProfileState = {
-  /** What Start asked for: a profile id or `auto` (site rules decide on every navigation). */
-  request: string;
-  visualCapture?: FullModeVisualCapture;
-  selection: ProfileSelection;
-  /** Recorder config the profile rendered to at Start, before enterprise policy. */
-  profileConfig: typeof DEFAULT_RECORDER_CONFIG;
-  /** Visual data the profile allowed; the export keeps what was captured. */
-  visualsCaptured: CapturedVisuals;
-  reevaluation: Promise<void>;
-  /** Bumped on every re-evaluation request; one from an older request is dropped. */
-  generation: number;
-  /** Why the recording was stopped after its profile changed. */
-  cancellation?: ProfileCancellation;
-  /** The popup has shown the cancellation notice. */
-  cancellationAcknowledged?: boolean;
-};
-
-type SessionRuntime = {
-  sid: string;
-  tabId: number;
-  mode: CaptureMode;
-  profile: SessionProfileState;
-  url: string;
-  scopeOrigin: string | null;
-  title?: string;
-  tags: string[];
-  note?: string;
-  config: typeof DEFAULT_RECORDER_CONFIG;
-  startedAt: number;
-  stoppedAt?: number;
-  /** Set once Stop received the page's last events; later page snapshots are dropped. */
-  stopDrained?: boolean;
-  /** Secret shared with the injected page hooks and the content script of this session. */
-  injectedBridgeNonce: string;
-  recorder: WebBlackboxRecorder;
-  pipeline: SessionPipelineClient;
-  cdpRouter: CdpRouter | null;
-  enabledCdpSessions: Set<string>;
-  /** Page URLs the tab showed while recording (memory only): cookie values are read for all. */
-  visitedPageUrls: Set<string>;
-  requestMeta: Map<string, RequestMetaEntry>;
-  screenshotInterval: ReturnType<typeof setInterval> | null;
-  screenRecording: ScreenRecordingRuntime | null;
-  lastPointer: PointerState | null;
-  lastViewport: ViewportState | null;
-  lastActionScreenshotMono: number;
-  lastIncidentCaptureAt: number;
-  queueDepth: number;
-  droppedBestEffortTasks: number;
-  pipelineEventBuffer: WebBlackboxEvent[];
-  pipelineFlushTimer: ReturnType<typeof setTimeout> | null;
-  pipelineFlushQueued: boolean;
-  stopping: boolean;
-  /** Full-mode response bodies: a body or a recorded skip for every textual response. */
-  fullBodyCapture: FullBodyCapture;
-  /** CDP events wait here, in order, while a request body CDP left out is being read. */
-  cdpIngestChain: Promise<void>;
-  cdpIngestBacklog: number;
-  capturedEventCount: number;
-  capturedErrorCount: number;
-  capturedSizeBytes: number;
-  budgetAlertCount: number;
-  performanceBudget: PerformanceBudgetConfig;
-  networkBudgetSample: {
-    total: number;
-    failed: number;
-  };
-  lastFreezeNotices: Map<string, number>;
-  lastBudgetBreachAt: Map<string, number>;
-  queue: Promise<void>;
-  removeCdpListeners: Array<() => void>;
-  heapSnapshotCapture: HeapSnapshotCaptureState | null;
-  cleanupTimer: ReturnType<typeof setTimeout> | null;
-  scriptSourceMaps: ScriptSourceMapTracker;
-  scriptSourceMapFetches: <T>(task: () => Promise<T>) => Promise<T>;
-};
-
-type ScreenRecordingRuntime = {
-  recordingId: string;
-  source: "tab";
-  startedAt: number;
-  startedMono: number;
-  mime: string;
-  width?: number;
-  height?: number;
-  frameRate?: number;
-  chunks: string[];
-  chunkCount: number;
-  sizeBytes: number;
-  stopPromise: Promise<void> | null;
-};
-
-type PointerState = {
-  x: number;
-  y: number;
-  t: number;
-  mono: number;
-};
-
-type ViewportState = {
-  width: number;
-  height: number;
-  dpr: number;
-};
-
-type HeapSnapshotCaptureState = {
-  chunks: string[];
-  bytes: number;
-  truncated: boolean;
-};
-
 type ExportAuditEvent = {
   schemaVersion: 1;
   timestamp: string;
@@ -362,11 +249,6 @@ type ExportAuditEvent = {
   sizeBytes?: number;
   downloadId?: number;
   error?: string;
-};
-
-type SessionAnnotation = {
-  tags: string[];
-  note?: string;
 };
 
 type RecordingSampling = {
@@ -386,8 +268,7 @@ type LiteBodyCaptureRule = {
 
 const chromeApi = getChromeApi();
 
-const sessionsByTab = new Map<number, SessionRuntime>();
-const sessionsBySid = new Map<string, SessionRuntime>();
+const sessionRegistry = createSessionRegistry();
 const sessionAnnotations = new Map<string, SessionAnnotation>();
 const connectedPorts = new Set<PortLike>();
 let offscreenPort: PortLike | null = null;
@@ -694,7 +575,7 @@ chromeApi?.runtime?.onConnect.addListener((port) => {
       offscreenClient.rejectPending(OFFSCREEN_DISCONNECTED_ERROR);
       markStoppedPipelinesDetached();
 
-      if (sessionsByTab.size > 0) {
+      if (sessionRegistry.tabCount() > 0) {
         void recoverAllActiveOffscreenPipelines().catch((error) => {
           console.warn("[WebBlackbox] failed to recover active offscreen pipelines", error);
         });
@@ -740,7 +621,7 @@ async function syncContentPortStateOnConnect(port: PortLike): Promise<void> {
     return;
   }
 
-  const runtime = sessionsByTab.get(tabId);
+  const runtime = sessionRegistry.getByTab(tabId);
 
   if (!runtime || runtime.stoppedAt) {
     return;
@@ -760,7 +641,7 @@ function syncContentPortRecordingState(port: PortLike): void {
     return;
   }
 
-  const runtime = sessionsByTab.get(tabId);
+  const runtime = sessionRegistry.getByTab(tabId);
 
   if (!runtime || runtime.stoppedAt) {
     return;
@@ -851,7 +732,7 @@ function handleRecordedTabUpdated(tabId: number, changeInfo: ChromeTabChangeInfo
  * committed frame (reload, navigation, iframe added later) gets the content script right away.
  */
 function handleRecordedFrameCommitted(details: FrameCommittedDetails): void {
-  const runtime = sessionsByTab.get(details.tabId);
+  const runtime = sessionRegistry.getByTab(details.tabId);
 
   if (
     !runtime ||
@@ -872,7 +753,7 @@ chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
     return;
   }
 
-  for (const runtime of sessionsByTab.values()) {
+  for (const runtime of sessionRegistry.tabRuntimes()) {
     scheduleProfileReevaluation(runtime, "settings-changed");
   }
 });
@@ -973,7 +854,7 @@ async function handleInboundMessage(
         source: "content",
         rawType: "marker",
         tabId,
-        sid: sessionsByTab.get(tabId)?.sid ?? "",
+        sid: sessionRegistry.getByTab(tabId)?.sid ?? "",
         t: Date.now(),
         mono: monotonicTime(),
         frame,
@@ -996,7 +877,7 @@ async function handleInboundMessage(
       };
     }
 
-    const runtime = sessionsByTab.get(tabId);
+    const runtime = sessionRegistry.getByTab(tabId);
 
     if (!runtime || runtime.stoppedAt) {
       return {
@@ -1074,7 +955,7 @@ async function handleInboundMessage(
 }
 
 async function deleteSessionBySid(sid: string): Promise<void> {
-  const runtime = sessionsBySid.get(sid);
+  const runtime = sessionRegistry.getBySid(sid);
 
   if (!runtime) {
     if (sessionAnnotations.delete(sid)) {
@@ -1124,7 +1005,7 @@ function createTabsContextTracker(): TabsContextTracker | null {
 }
 
 function ingestTabsContext(recordedTabId: number, emission: TabsContextEmission): void {
-  const runtime = sessionsByTab.get(recordedTabId);
+  const runtime = sessionRegistry.getByTab(recordedTabId);
 
   if (!runtime || runtime.stoppedAt) {
     return;
@@ -1147,7 +1028,7 @@ async function startSession(
   requestedMode: CaptureMode,
   options: { visualCapture?: FullModeVisualCapture; profileId?: string } = {}
 ): Promise<CaptureMode> {
-  const existing = sessionsByTab.get(tabId);
+  const existing = sessionRegistry.getByTab(tabId);
 
   if (existing) {
     await stopSession(tabId);
@@ -1209,27 +1090,30 @@ async function startSession(
   const pipeline = createSessionPipelineClient(offscreenClient, sid);
   await pipeline.start(metadata, recorderConfig.redaction, recorderConfig.capturePolicy);
 
-  const runtime = createSessionRuntime({
-    sid,
-    tabId,
-    mode,
-    profile: {
-      request: toSessionProfileRequest(profileRequest, profileSelection),
-      visualCapture: options.visualCapture,
-      selection: profileSelection,
-      profileConfig: loadedRecorderConfig,
-      visualsCaptured: capturedVisualsOf(recorderConfig)
+  const runtime = createSessionRuntime(
+    {
+      sid,
+      tabId,
+      mode,
+      profile: {
+        request: toSessionProfileRequest(profileRequest, profileSelection),
+        visualCapture: options.visualCapture,
+        selection: profileSelection,
+        profileConfig: loadedRecorderConfig,
+        visualsCaptured: capturedVisualsOf(recorderConfig)
+      },
+      url: metadata.url,
+      title: metadata.title,
+      annotation,
+      config: recorderConfig,
+      startedAt,
+      pipeline,
+      recorderPlugins,
+      performanceBudget,
+      pageUrl: tabMetadata.url
     },
-    url: metadata.url,
-    title: metadata.title,
-    annotation,
-    config: recorderConfig,
-    startedAt,
-    pipeline,
-    recorderPlugins,
-    performanceBudget,
-    pageUrl: tabMetadata.url
-  });
+    { createFullBodyCapture }
+  );
 
   runtime.recorder = new WebBlackboxRecorder(
     {
@@ -1257,8 +1141,7 @@ async function startSession(
     recorderPlugins
   );
 
-  sessionsByTab.set(tabId, runtime);
-  sessionsBySid.set(sid, runtime);
+  sessionRegistry.register(runtime);
   recordedTabWatch.sync(true);
 
   if (mode === "lite") {
@@ -1343,7 +1226,7 @@ async function reloadRecordingTab(tabId: number): Promise<void> {
 }
 
 async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<void> {
-  const runtime = sessionsByTab.get(tabId);
+  const runtime = sessionRegistry.getByTab(tabId);
 
   if (!runtime || runtime.stopping || runtime.stoppedAt) {
     return;
@@ -1366,7 +1249,7 @@ async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<
 }
 
 async function stopSession(tabId: number): Promise<void> {
-  const runtime = sessionsByTab.get(tabId);
+  const runtime = sessionRegistry.getByTab(tabId);
 
   if (!runtime || runtime.stopping) {
     return;
@@ -1398,8 +1281,8 @@ async function stopSession(tabId: number): Promise<void> {
   await runtime.cdpIngestChain;
   await flushBufferedPipelineEvents(runtime);
   await teardownCaptureInstrumentation(runtime);
-  sessionsByTab.delete(runtime.tabId);
-  recordedTabWatch.sync(sessionsByTab.size > 0);
+  sessionRegistry.unregisterTab(runtime.tabId);
+  recordedTabWatch.sync(sessionRegistry.tabCount() > 0);
   uninstallLiteWebRequestCaptureIfUnused();
   runtime.stoppedAt = Date.now();
   scheduleStoppedRuntimeCleanup(runtime);
@@ -1449,7 +1332,7 @@ async function exportSession(
   | { ok: true; fileName: string; privacyWarning?: ExportPrivacyWarning }
   | { ok: false; error: string }
 > {
-  const runtime = sessionsBySid.get(sid);
+  const runtime = sessionRegistry.getBySid(sid);
 
   if (!runtime) {
     const error = "Session not found for export.";
@@ -1776,12 +1659,12 @@ async function cancelSessionForProfileChange(
  * no badge.
  */
 async function refreshActionBadge(): Promise<void> {
-  if (sessionsByTab.size > 0) {
+  if (sessionRegistry.tabCount() > 0) {
     await setRecordingBadge();
     return;
   }
 
-  const unread = [...sessionsBySid.values()].some(
+  const unread = [...sessionRegistry.sidRuntimes()].some(
     (runtime) => runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
   );
 
@@ -1795,7 +1678,7 @@ async function refreshActionBadge(): Promise<void> {
 }
 
 async function acknowledgeProfileCancel(sid: string): Promise<void> {
-  const runtime = sessionsBySid.get(sid);
+  const runtime = sessionRegistry.getBySid(sid);
 
   if (!runtime?.profile.cancellation || runtime.profile.cancellationAcknowledged) {
     return;
@@ -1831,7 +1714,7 @@ function ingestRawEvent(
   rawEvent: RawRecorderEvent,
   options: { arrivedBeforeStop?: boolean } = {}
 ): void {
-  const runtime = resolveRawEventSession(rawEvent, sessionsByTab, sessionsBySid);
+  const runtime = resolveRawEventSession(rawEvent, sessionRegistry.byTab, sessionRegistry.bySid);
 
   if (!runtime) {
     return;
@@ -2485,7 +2368,7 @@ function handleOffscreenEvent(message: OffscreenEventMessage): void {
 }
 
 async function recoverAllActiveOffscreenPipelines(): Promise<void> {
-  for (const runtime of sessionsByTab.values()) {
+  for (const runtime of sessionRegistry.tabRuntimes()) {
     if (runtime.stopping || runtime.stoppedAt) {
       continue;
     }
@@ -2503,7 +2386,7 @@ async function recoverOffscreenSession(sid: string): Promise<void> {
   }
 
   const task = (async () => {
-    const runtime = sessionsBySid.get(sid);
+    const runtime = sessionRegistry.getBySid(sid);
 
     if (!runtime || runtime.stopping || runtime.stoppedAt) {
       return;
@@ -3324,7 +3207,7 @@ async function stopScreenRecording(runtime: SessionRuntime, reason: string): Pro
 
 /** The offscreen document has already stored the chunk; the worker records where it is. */
 function handleOffscreenScreenRecordingChunk(message: ScreenRecordingChunkMessage): void {
-  const runtime = sessionsBySid.get(message.sid);
+  const runtime = sessionRegistry.getBySid(message.sid);
   const recording = runtime?.screenRecording;
 
   if (!runtime || !recording || recording.recordingId !== message.recordingId) {
@@ -3359,7 +3242,7 @@ function handleOffscreenScreenRecordingChunk(message: ScreenRecordingChunkMessag
 async function handleOffscreenScreenRecordingEnded(
   message: ScreenRecordingEndedMessage
 ): Promise<void> {
-  const runtime = sessionsBySid.get(message.sid);
+  const runtime = sessionRegistry.getBySid(message.sid);
 
   if (!runtime?.screenRecording) {
     return;
@@ -3369,7 +3252,7 @@ async function handleOffscreenScreenRecordingEnded(
 }
 
 function handleOffscreenScreenRecordingError(message: ScreenRecordingErrorMessage): void {
-  const runtime = sessionsBySid.get(message.sid);
+  const runtime = sessionRegistry.getBySid(message.sid);
   const recording = runtime?.screenRecording;
 
   if (!runtime) {
@@ -3460,17 +3343,6 @@ function createScreenRecordingId(sid: string): string {
 }
 
 const VISITED_PAGE_URLS_MAX = 20;
-
-/** An http(s) page URL without its fragment, or null for other schemes. */
-function rememberablePageUrl(rawUrl: string | undefined): [string] | null {
-  try {
-    const url = new URL(rawUrl ?? "");
-    url.hash = "";
-    return url.protocol === "http:" || url.protocol === "https:" ? [url.href] : null;
-  } catch {
-    return null;
-  }
-}
 
 function rememberVisitedPageUrl(runtime: SessionRuntime, rawUrl: string): void {
   const [url] = rememberablePageUrl(rawUrl) ?? [];
@@ -4255,10 +4127,6 @@ function applyInjectedBridgeNonce(setterKey: string, nonce: string): void {
   }
 }
 
-function createInjectedBridgeNonce(): string {
-  return crypto.randomUUID();
-}
-
 /**
  * Runs on Start and after navigations of a recorded tab, whatever the injection mode: frames that
  * already run the content script ignore the second copy (see content/script-guard.ts), and tabs
@@ -4425,7 +4293,7 @@ function uninstallLiteWebRequestCaptureIfUnused(): void {
 }
 
 function hasActiveLiteRuntime(): boolean {
-  for (const runtime of sessionsByTab.values()) {
+  for (const runtime of sessionRegistry.tabRuntimes()) {
     if (runtime.mode === "lite" && !runtime.stopping && !runtime.stoppedAt) {
       return true;
     }
@@ -4439,7 +4307,7 @@ function resolveLiteRuntimeForWebRequest(tabId: number): SessionRuntime | undefi
     return undefined;
   }
 
-  const runtime = sessionsByTab.get(tabId);
+  const runtime = sessionRegistry.getByTab(tabId);
 
   if (!runtime || runtime.mode !== "lite" || runtime.stopping) {
     return undefined;
@@ -4511,7 +4379,7 @@ async function sendAtRestKeyToOffscreen(port: PortLike): Promise<void> {
 
 /** Snapshot of a stopped recording, so a later worker can list, export or expire it. */
 async function rememberStoppedSession(runtime: SessionRuntime): Promise<void> {
-  if (!runtime.stoppedAt || !sessionsBySid.has(runtime.sid)) {
+  if (!runtime.stoppedAt || !sessionRegistry.hasSid(runtime.sid)) {
     return;
   }
 
@@ -4624,30 +4492,33 @@ function restoreStoppedRuntime(
   snapshot: StoppedSessionSnapshot,
   performanceBudget: PerformanceBudgetConfig
 ): SessionRuntime {
-  const existing = sessionsBySid.get(snapshot.sid);
+  const existing = sessionRegistry.getBySid(snapshot.sid);
 
   if (existing) {
     return existing;
   }
 
-  const runtime = createSessionRuntime({
-    sid: snapshot.sid,
-    tabId: snapshot.tabId,
-    mode: snapshot.mode,
-    profile: snapshot.profile,
-    url: snapshot.url,
-    title: snapshot.title,
-    annotation: getSessionAnnotation(snapshot.sid),
-    config: snapshot.config,
-    startedAt: snapshot.startedAt,
-    stoppedAt: snapshot.stoppedAt,
-    pipeline: createSessionPipelineClient(offscreenClient, snapshot.sid),
-    recorderPlugins: createDefaultRecorderPlugins(),
-    performanceBudget,
-    counters: snapshot.counters
-  });
+  const runtime = createSessionRuntime(
+    {
+      sid: snapshot.sid,
+      tabId: snapshot.tabId,
+      mode: snapshot.mode,
+      profile: snapshot.profile,
+      url: snapshot.url,
+      title: snapshot.title,
+      annotation: getSessionAnnotation(snapshot.sid),
+      config: snapshot.config,
+      startedAt: snapshot.startedAt,
+      stoppedAt: snapshot.stoppedAt,
+      pipeline: createSessionPipelineClient(offscreenClient, snapshot.sid),
+      recorderPlugins: createDefaultRecorderPlugins(),
+      performanceBudget,
+      counters: snapshot.counters
+    },
+    { createFullBodyCapture }
+  );
 
-  sessionsBySid.set(runtime.sid, runtime);
+  sessionRegistry.registerBySid(runtime);
   detachedPipelineSids.add(runtime.sid);
   return runtime;
 }
@@ -4687,7 +4558,7 @@ function attachStoppedPipeline(runtime: SessionRuntime): Promise<void> {
 function markStoppedPipelinesDetached(): void {
   offscreenGeneration += 1;
 
-  for (const runtime of sessionsBySid.values()) {
+  for (const runtime of sessionRegistry.sidRuntimes()) {
     if (runtime.stoppedAt) {
       detachedPipelineSids.add(runtime.sid);
     }
@@ -4696,7 +4567,7 @@ function markStoppedPipelinesDetached(): void {
 
 async function expireStoppedSession(sid: string): Promise<void> {
   await runtimeStateRestored;
-  const runtime = sessionsBySid.get(sid) ?? (await restoreStoppedSnapshot(sid));
+  const runtime = sessionRegistry.getBySid(sid) ?? (await restoreStoppedSnapshot(sid));
 
   if (!runtime) {
     await forgetStoppedSession(sid);
@@ -4733,106 +4604,6 @@ async function retryStoppedSessionPurge(sid: string): Promise<void> {
     sid,
     Date.now() + STOPPED_SESSION_PURGE_RETRY_MS
   ).catch(() => undefined);
-}
-
-type SessionRuntimeInit = {
-  sid: string;
-  tabId: number;
-  mode: CaptureMode;
-  profile: Pick<
-    SessionProfileState,
-    | "request"
-    | "visualCapture"
-    | "selection"
-    | "profileConfig"
-    | "visualsCaptured"
-    | "cancellation"
-    | "cancellationAcknowledged"
-  >;
-  url: string;
-  title?: string;
-  annotation: SessionAnnotation;
-  config: typeof DEFAULT_RECORDER_CONFIG;
-  startedAt: number;
-  stoppedAt?: number;
-  pipeline: SessionPipelineClient;
-  recorderPlugins: ReturnType<typeof createDefaultRecorderPlugins>;
-  performanceBudget: PerformanceBudgetConfig;
-  counters?: StoppedSessionSnapshot["counters"];
-  /** Unsanitized URL of the recorded page at Start (memory only; cookie values are read for it). */
-  pageUrl?: string;
-};
-
-/** A session runtime with its capture state reset; Start wires its recorder afterwards. */
-function createSessionRuntime(init: SessionRuntimeInit): SessionRuntime {
-  const runtime: SessionRuntime = {
-    sid: init.sid,
-    tabId: init.tabId,
-    mode: init.mode,
-    profile: {
-      ...init.profile,
-      reevaluation: Promise.resolve(),
-      generation: 0
-    },
-    url: init.url,
-    scopeOrigin: resolveUrlOrigin(init.url),
-    title: init.title,
-    tags: [...init.annotation.tags],
-    note: init.annotation.note,
-    config: init.config,
-    startedAt: init.startedAt,
-    stoppedAt: init.stoppedAt,
-    injectedBridgeNonce: createInjectedBridgeNonce(),
-    recorder: new WebBlackboxRecorder(
-      {
-        ...init.config,
-        mode: init.mode
-      },
-      {},
-      undefined,
-      init.recorderPlugins
-    ),
-    pipeline: init.pipeline,
-    cdpRouter: null,
-    enabledCdpSessions: new Set<string>(),
-    visitedPageUrls: new Set(rememberablePageUrl(init.pageUrl) ?? []),
-    requestMeta: new Map(),
-    screenshotInterval: null,
-    screenRecording: null,
-    lastPointer: null,
-    lastViewport: null,
-    lastActionScreenshotMono: Number.NEGATIVE_INFINITY,
-    lastIncidentCaptureAt: Number.NEGATIVE_INFINITY,
-    queueDepth: 0,
-    droppedBestEffortTasks: 0,
-    pipelineEventBuffer: [],
-    pipelineFlushTimer: null,
-    pipelineFlushQueued: false,
-    stopping: false,
-    // The callbacks read `runtime` only after the session started.
-    fullBodyCapture: createFullBodyCapture(() => runtime),
-    cdpIngestChain: Promise.resolve(),
-    cdpIngestBacklog: 0,
-    capturedEventCount: init.counters?.eventCount ?? 0,
-    capturedErrorCount: init.counters?.errorCount ?? 0,
-    capturedSizeBytes: init.counters?.sizeBytes ?? 0,
-    budgetAlertCount: init.counters?.budgetAlertCount ?? 0,
-    performanceBudget: init.performanceBudget,
-    networkBudgetSample: {
-      total: 0,
-      failed: 0
-    },
-    lastFreezeNotices: new Map<string, number>(),
-    lastBudgetBreachAt: new Map<string, number>(),
-    queue: Promise.resolve(),
-    removeCdpListeners: [],
-    heapSnapshotCapture: null,
-    cleanupTimer: null,
-    scriptSourceMaps: new ScriptSourceMapTracker(),
-    scriptSourceMapFetches: createConcurrencyLimiter(SOURCE_MAP_FETCH_CONCURRENCY)
-  };
-
-  return runtime;
 }
 
 /** Concurrent callers share one check-then-create: Chrome allows a single offscreen document. */
@@ -4876,7 +4647,7 @@ async function hasOffscreenDocument(): Promise<boolean> {
  * re-attached on demand, so close it and let the next request create a fresh one.
  */
 async function closeOrphanedOffscreenDocument(): Promise<void> {
-  if (sessionsBySid.size > 0 || !(await hasOffscreenDocument())) {
+  if (sessionRegistry.sidCount() > 0 || !(await hasOffscreenDocument())) {
     return;
   }
 
@@ -5071,7 +4842,7 @@ async function sweepStalePipelineSessions(): Promise<void> {
     (session) =>
       shouldSweepStoredSession({
         session,
-        liveSids: new Set(sessionsBySid.keys()),
+        liveSids: new Set(sessionRegistry.bySid.keys()),
         records: recordsBySid,
         now,
         bootedAt: SERVICE_WORKER_BOOTED_AT
@@ -5092,7 +4863,7 @@ async function sweepStalePipelineSessions(): Promise<void> {
 }
 
 async function disposeStoppedSession(runtime: SessionRuntime): Promise<void> {
-  if (!sessionsBySid.has(runtime.sid) || disposingSids.has(runtime.sid)) {
+  if (!sessionRegistry.hasSid(runtime.sid) || disposingSids.has(runtime.sid)) {
     return;
   }
 
@@ -5124,7 +4895,7 @@ async function purgeStoppedSession(runtime: SessionRuntime): Promise<void> {
       return false;
     }
   );
-  sessionsBySid.delete(runtime.sid);
+  sessionRegistry.unregisterSid(runtime.sid);
   await forgetStoppedSessionRecord(runtime.sid).catch((error) => {
     console.warn("[WebBlackbox] failed to drop stopped session record", error);
   });
@@ -5145,7 +4916,7 @@ async function purgeStoppedSession(runtime: SessionRuntime): Promise<void> {
 }
 
 async function closeOffscreenIfUnused(): Promise<void> {
-  if (sessionsBySid.size > 0) {
+  if (sessionRegistry.sidCount() > 0) {
     return;
   }
 
@@ -5170,7 +4941,7 @@ async function downloadExportedBundle(
 }
 
 function toSessionListItem(runtime: SessionRuntime): SessionListItem {
-  const activeRuntime = sessionsByTab.get(runtime.tabId);
+  const activeRuntime = sessionRegistry.getByTab(runtime.tabId);
   const active = activeRuntime?.sid === runtime.sid;
 
   return {
@@ -5302,7 +5073,7 @@ function pushSessionList(): void {
 }
 
 function buildSessionListMessage(): SessionListMessage {
-  const sessions: SessionListItem[] = [...sessionsBySid.values()]
+  const sessions: SessionListItem[] = [...sessionRegistry.sidRuntimes()]
     .map((runtime) => toSessionListItem(runtime))
     .sort((left, right) => {
       const activeDiff = Number(right.active) - Number(left.active);
@@ -5321,7 +5092,7 @@ function buildSessionListMessage(): SessionListMessage {
 }
 
 async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void> {
-  const runtime = sessionsByTab.get(tabId);
+  const runtime = sessionRegistry.getByTab(tabId);
 
   if (!runtime || runtime.stoppedAt) {
     return;
@@ -5376,15 +5147,6 @@ function isActiveTabScopedBuild(): boolean {
   const hostPermissions = manifest?.host_permissions ?? [];
 
   return permissions.has("activeTab") && hostPermissions.length === 0;
-}
-
-function resolveUrlOrigin(value: string): string | null {
-  try {
-    const url = new URL(value);
-    return url.origin === "null" ? null : url.origin;
-  } catch {
-    return null;
-  }
 }
 
 function broadcast(message: ExtensionOutboundMessage): void {
@@ -5480,7 +5242,7 @@ async function updateSessionAnnotation(
 ): Promise<void> {
   const tags = normalizeSessionTags(tagsInput);
   const note = normalizeSessionNote(noteInput);
-  const runtime = sessionsBySid.get(sid);
+  const runtime = sessionRegistry.getBySid(sid);
 
   if (runtime) {
     runtime.tags = [...tags];
@@ -5614,7 +5376,7 @@ async function persistRuntimeState(): Promise<void> {
     return;
   }
 
-  const sessions = [...sessionsByTab.values()].map((runtime) => ({
+  const sessions = [...sessionRegistry.tabRuntimes()].map((runtime) => ({
     sid: runtime.sid,
     tabId: runtime.tabId,
     mode: runtime.mode,
@@ -5696,8 +5458,8 @@ function notifyOffscreenPipelineStatus(): void {
   try {
     const message: SwPipelineStatusMessage = {
       kind: "sw.pipeline-status",
-      activeSessions: sessionsByTab.size,
-      sessions: [...sessionsByTab.values()].map((runtime) => ({
+      activeSessions: sessionRegistry.tabCount(),
+      sessions: [...sessionRegistry.tabRuntimes()].map((runtime) => ({
         sid: runtime.sid,
         tabId: runtime.tabId,
         mode: runtime.mode,
@@ -5721,7 +5483,7 @@ function notifyOffscreenPipelineStatus(): void {
     }
 
     logPortSendFailure("sw.pipeline-status", error, {
-      activeSessions: sessionsByTab.size
+      activeSessions: sessionRegistry.tabCount()
     });
   }
 }
@@ -5740,7 +5502,7 @@ async function notifyTabStatus(
     return;
   }
 
-  const runtime = active ? sessionsByTab.get(tabId) : undefined;
+  const runtime = active ? sessionRegistry.getByTab(tabId) : undefined;
 
   await chromeApi.tabs
     .sendMessage(tabId, {
@@ -5830,7 +5592,7 @@ function resolveStopDrainAckIfReady(pending: {
   pendingStopDrainAcks.delete(pending.sid);
   clearTimeout(pending.timeout);
 
-  const runtime = sessionsBySid.get(pending.sid);
+  const runtime = sessionRegistry.getBySid(pending.sid);
 
   if (!runtime) {
     pending.resolve();
@@ -5865,7 +5627,7 @@ function resolveUiActionTarget(
         (await chromeApi?.tabs?.query?.({ active: true, currentWindow: true })) ?? [];
       return activeTabs[0]?.id;
     },
-    fallbackTabId: () => sessionsByTab.keys().next().value
+    fallbackTabId: () => sessionRegistry.byTab.keys().next().value
   });
 }
 
@@ -5903,7 +5665,7 @@ async function setFreezeBadge(): Promise<void> {
   freezeBadgeTimer = setTimeout(() => {
     freezeBadgeTimer = null;
 
-    if (sessionsByTab.size > 0) {
+    if (sessionRegistry.tabCount() > 0) {
       void setRecordingBadge();
       return;
     }
