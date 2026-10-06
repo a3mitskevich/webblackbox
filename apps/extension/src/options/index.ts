@@ -1,6 +1,10 @@
 import { DEFAULT_RECORDER_CONFIG, type RecorderConfig } from "@webblackbox/protocol";
 
 import { getChromeApi } from "../shared/chrome-api.js";
+import {
+  CONTENT_INJECTION_STORAGE_KEY,
+  normalizeContentInjectionMode
+} from "../shared/content-injection.js";
 import { loadExportPolicyPrefs, saveExportPolicyPrefs } from "../shared/export-policy-prefs.js";
 import {
   createExtensionI18n,
@@ -39,6 +43,7 @@ import {
   createDefaultGeneralDraft,
   findField,
   isArchiveChanged,
+  isInjectionChanged,
   isStartReloadOfferChanged,
   isStoredOptionsChanged,
   normalizeOptionsConfig,
@@ -264,6 +269,7 @@ function isDirty(page: PageState): boolean {
   return (
     isStoredOptionsChanged(page.draft, page.baseline) ||
     isArchiveChanged(page.draft, page.baseline) ||
+    isInjectionChanged(page.draft, page.baseline) ||
     isStartReloadOfferChanged(page.draft, page.baseline) ||
     (page.editor?.isDirty() ?? false)
   );
@@ -330,6 +336,7 @@ async function saveAll(page: PageState): Promise<void> {
     const editor = await page.editorReady;
     const generalChanged = isStoredOptionsChanged(page.draft, page.baseline);
     const archiveChanged = isArchiveChanged(page.draft, page.baseline);
+    const injectionChanged = isInjectionChanged(page.draft, page.baseline);
     const startReloadOfferChanged = isStartReloadOfferChanged(page.draft, page.baseline);
     const profilesChanged = editor.isDirty();
     // Nothing is written when the profiles draft cannot be saved, so a failed Save never leaves
@@ -348,6 +355,7 @@ async function saveAll(page: PageState): Promise<void> {
       page.baseline = {
         ...page.draft,
         archive: page.baseline.archive,
+        injection: page.baseline.injection,
         startReloadOffer: page.baseline.startReloadOffer
       };
 
@@ -371,6 +379,13 @@ async function saveAll(page: PageState): Promise<void> {
 
     if (archiveChanged && !saveExportPolicyPrefs(page.draft.archive)) {
       throw new Error(t("optionsArchiveSaveFailed"));
+    }
+
+    if (injectionChanged) {
+      // The service worker watches this key and re-registers (or drops) the content script.
+      await chromeApi?.storage?.local.set({
+        [CONTENT_INJECTION_STORAGE_KEY]: page.draft.injection
+      });
     }
 
     if (startReloadOfferChanged) {
@@ -416,6 +431,7 @@ async function loadGeneralDraft(): Promise<GeneralDraft> {
   const values = await chromeApi?.storage?.local.get([
     STORAGE_KEY,
     PROFILES_STORAGE_KEY,
+    CONTENT_INJECTION_STORAGE_KEY,
     START_RELOAD_OFFER_STORAGE_KEY
   ]);
   const legacy = toLegacyGeneralFields(values?.[STORAGE_KEY]);
@@ -427,13 +443,14 @@ async function loadGeneralDraft(): Promise<GeneralDraft> {
       ? applyDefaultProfileToGeneralForm(legacy.recorderConfig, parsed.store)
       : legacy.recorderConfig,
     archive: loadExportPolicyPrefs(),
+    injection: normalizeContentInjectionMode(values?.[CONTENT_INJECTION_STORAGE_KEY]),
     startReloadOffer: normalizeStartReloadOffer(values?.[START_RELOAD_OFFER_STORAGE_KEY])
   };
 }
 
 function toLegacyGeneralFields(
   stored: unknown
-): Omit<GeneralDraft, "archive" | "startReloadOffer"> {
+): Omit<GeneralDraft, "archive" | "injection" | "startReloadOffer"> {
   if (!stored || typeof stored !== "object") {
     const defaults = createDefaultGeneralDraft();
     return {

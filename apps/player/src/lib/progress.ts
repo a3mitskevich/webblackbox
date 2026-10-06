@@ -1,4 +1,10 @@
-export type ProgressMarkerKind = "error" | "network" | "screenshot" | "recording" | "action";
+export type ProgressMarkerKind =
+  | "error"
+  | "network"
+  | "screenshot"
+  | "recording"
+  | "action"
+  | "tabs";
 export type ProgressPanelKey =
   | "timeline"
   | "details"
@@ -23,7 +29,7 @@ export function markerKindToPanel(kind: ProgressMarkerKind | undefined): Progres
     return "network";
   }
 
-  if (kind === "screenshot" || kind === "recording") {
+  if (kind === "screenshot" || kind === "recording" || kind === "tabs") {
     return "details";
   }
 

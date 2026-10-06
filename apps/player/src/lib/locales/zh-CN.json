@@ -314,7 +314,48 @@
     "network": "网络",
     "screenshot": "截图",
     "recording": "录屏",
-    "action": "动作"
+    "action": "动作",
+    "pointer": "指针",
+    "tabs": "其他标签页"
+  },
+  "pointerLaneLabel": "指针操作",
+  "pointerKinds": {
+    "click": "点击",
+    "double": "双击",
+    "right": "右键点击",
+    "middle": "中键点击",
+    "hold": "长按",
+    "drag": "拖动",
+    "dnd": "拖放",
+    "wheel": "滚轮",
+    "zoom": "Ctrl+滚轮缩放",
+    "hover": "悬停",
+    "selection": "文本选择",
+    "rage": "狂点",
+    "dead": "无响应点击"
+  },
+  "pointerRippleLabels": {
+    "double": "双击",
+    "right": "右键",
+    "middle": "中键",
+    "hold": "长按",
+    "drag": "拖动",
+    "dnd": "放下"
+  },
+  "stackView": {
+    "heading": "堆栈",
+    "showOriginal": "显示源码位置",
+    "showRaw": "显示原始堆栈",
+    "loadMapFiles": "加载 .map 文件",
+    "loadMapFolder": "加载 map 文件夹",
+    "symbolServerPlaceholder": "符号服务器 URL（按文件名获取 map）",
+    "symbolServerApply": "使用",
+    "mapsLoaded": "已加载 {count} 个 source map 文件。",
+    "resolving": "正在解析源码位置…",
+    "noMap": "无 source map",
+    "noMapping": "该位置无映射",
+    "mapError": "source map 错误",
+    "invalidSymbolServer": "符号服务器 URL 必须是 http(s)。"
   },
   "privacyHiddenByProfile": "已被配置隐藏：{what}",
   "privacySubjects": {
@@ -329,6 +370,8 @@
     "tab-recording": "标签页录制",
     "storage": "存储",
     "storage-details": "存储详情",
+    "tabs": "本站点的其他标签页",
+    "tab-details": "其他标签页的路径和标题",
     "profile": "性能分析数据",
     "unknown": "数据"
   },
@@ -348,6 +391,8 @@
   "profileBannerDowngraded": "使用 {name} 而不是 {requested} 录制：{requested} 在此站点不可用，因此缺少只有 {requested} 才会录制的数据。",
   "profileBannerCapped": "组织策略限制了 {name}：{categories}。",
   "profileBannerUnknownProfile": "未知配置",
+  "summaryParallelTabs": "此站点的其他标签页：{count} 个",
+  "summaryParallelTabsDetail": "最多同时打开 {max} 个，开始录制时 {start} 个；同源 {sameOrigin} 个，同站点 {sameSite} 个。点击查看详情。",
   "networkTypes": {
     "document": "文档",
     "fetch": "Fetch/XHR",

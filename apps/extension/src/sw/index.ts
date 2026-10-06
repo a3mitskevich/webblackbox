@@ -8,6 +8,7 @@ import {
   createSessionId,
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_EXPORT_POLICY,
+  DEFAULT_POINTER_CAPTURE_OPTIONS,
   DEFAULT_RECORDER_CONFIG,
   assertExportPassphrase,
   isValidExportPassphrase,
@@ -20,6 +21,7 @@ import {
   type ExportPolicy,
   type FreezeReason,
   type HashesManifest,
+  type PointerCaptureOptions,
   type PrivacyScannerFinding,
   type PrivacyScannerFindingKind,
   type PrivacyScannerResult,
@@ -36,7 +38,15 @@ import {
 import { INJECTED_BRIDGE_NONCE_SETTER_KEY } from "webblackbox/injected-hooks";
 import { decodeScreenshotDataUrl } from "webblackbox/lite-materializer";
 
-import { getChromeApi, type PortLike, type RuntimeMessageSender } from "../shared/chrome-api.js";
+import { PIPELINE_DB_NAME } from "../shared/at-rest.js";
+import {
+  getChromeApi,
+  type ChromeTabChangeInfo,
+  type FrameCommittedDetails,
+  type PortLike,
+  type RuntimeMessageSender
+} from "../shared/chrome-api.js";
+import { CONTENT_INJECTION_STORAGE_KEY } from "../shared/content-injection.js";
 import {
   PORT_NAMES,
   type ExportPrivacyWarning,
@@ -66,12 +76,29 @@ import {
   AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
   listEnterpriseCappedCategories,
+  resolveSourceMapCapture,
   selectRecordingProfile,
   toArchivedProfileInfo,
-  type ProfileSelection
+  type ProfileSelection,
+  type SourceMapCapture
 } from "../shared/profiles/resolve.js";
+import {
+  createConcurrencyLimiter,
+  DEBUGGER_SCRIPT_CACHE_BYTES,
+  loadSourceMapForEmbedding,
+  SCRIPT_RAW_TYPE,
+  SOURCE_MAP_FETCH_CONCURRENCY,
+  scriptRecordFromResponse,
+  scriptRecordFromScriptParsed,
+  ScriptSourceMapTracker,
+  type RawScriptRecord
+} from "./source-maps.js";
 import { resolveStartEngine } from "../shared/profiles/engine.js";
 import type { ProfilesState } from "../shared/profiles/storage.js";
+import {
+  resolveLocalDataSettings,
+  resolveUnexportedRetentionMs
+} from "../shared/profiles/local-data.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
   createBoundedManagedPolicyReader,
@@ -97,8 +124,19 @@ import {
   shouldStopForCaptureScopeOriginChange,
   shouldStopForEnterpriseOriginPolicy as shouldStopForEnterpriseOriginPolicyInput
 } from "./capture-scope.js";
+import {
+  bootstrapAtRestKey,
+  isOffscreenDocumentPort,
+  toStorageKeyMessage,
+  type AtRestKeyRecord
+} from "./at-rest-key.js";
 import { primeChildSession } from "./child-session-prime.js";
 import { withCdpCommandTimeout, type CdpCommandOutcome } from "./cdp-command.js";
+import {
+  createContentInjectionController,
+  injectContentScriptIntoFrame,
+  isInjectableFrameUrl
+} from "./content-injection.js";
 import {
   completeRequestPostData,
   FullBodyCapture,
@@ -107,12 +145,22 @@ import {
   type ReadBody
 } from "./full-body-capture.js";
 import {
+  clearRetentionAlarm,
+  createStoppedSessionStore,
+  MAX_STOPPED_SESSION_PURGE_ATTEMPTS,
+  planStoppedSessionRestore,
+  scheduleRetentionAlarm,
+  sidFromRetentionAlarm,
+  type StoppedSessionSnapshot
+} from "./stopped-session-store.js";
+import {
   buildLiteNetworkFailureRawEvent,
   buildLiteNetworkRequestRawEvent,
   buildLiteNetworkResponseRawEvent
 } from "./lite-network-baseline.js";
 import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
 import { createOffscreenPortConnector, OFFSCREEN_UNAVAILABLE_ERROR } from "./offscreen-port.js";
+import { createRecordedTabWatch } from "./recorded-tab-watch.js";
 import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
   classifyMessageSender,
@@ -168,6 +216,11 @@ import {
   parseStorageSnapshotMeta,
   type LocalStorageSnapshotMode
 } from "./storage-snapshot.js";
+import {
+  resolveTabsContextLevel,
+  TabsContextTracker,
+  type TabsContextEmission
+} from "./tabs-context/tracker.js";
 import { resolveUiActionTabId } from "./ui-action-target.js";
 
 /**
@@ -248,6 +301,8 @@ type SessionRuntime = {
   removeCdpListeners: Array<() => void>;
   heapSnapshotCapture: HeapSnapshotCaptureState | null;
   cleanupTimer: ReturnType<typeof setTimeout> | null;
+  scriptSourceMaps: ScriptSourceMapTracker;
+  scriptSourceMapFetches: <T>(task: () => Promise<T>) => Promise<T>;
 };
 
 type ScreenRecordingRuntime = {
@@ -473,7 +528,6 @@ let stoppedSessionRecordsQueue: Promise<unknown> = Promise.resolve();
 let liteWebRequestCaptureCleanup: (() => void) | null = null;
 
 const OFFSCREEN_PATH = "offscreen.html";
-const PIPELINE_DB_NAME = "webblackbox-flight-recorder";
 const SERVICE_WORKER_BOOTED_AT = Date.now();
 const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
 const POINTER_STALE_MS = 2_500;
@@ -500,8 +554,8 @@ const PIPELINE_BATCH_MAX_EVENTS = 160;
 const PIPELINE_BATCH_DRAIN_CHUNK_EVENTS = 160;
 const PIPELINE_BATCH_FLUSH_MS = 120;
 const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
+// Pointer samples are kept: the page samples them at the profile rate and drops them under load.
 const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
-  "mousemove",
   "scroll",
   "mutation",
   "snapshot",
@@ -518,7 +572,8 @@ const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
   "unhandledrejection",
   "resourceError",
   "sse",
-  "notice"
+  "notice",
+  SCRIPT_RAW_TYPE
 ]);
 // Network bookkeeping for bodies runs inline (see `trackFullModeNetworkEvent`), never through
 // the best-effort queue, which drops tasks under load.
@@ -553,7 +608,6 @@ const ACTIVE_SESSION_STORAGE_KEY = "webblackbox.runtime.sessions";
 const SESSION_ANNOTATIONS_STORAGE_KEY = "webblackbox.runtime.sessionAnnotations";
 const EXPORT_AUDIT_STORAGE_KEY = "webblackbox.audit.exports";
 const EXPORT_AUDIT_MAX_EVENTS = 200;
-const STOPPED_SESSION_TTL_MS = 10 * 60_000;
 const ACTION_SCREENSHOT_RAW_TYPES = new Set(["click", "dblclick", "submit", "marker"]);
 const STOP_DRAIN_CONTENT_RAW_TYPES = new Set([
   "snapshot",
@@ -579,8 +633,18 @@ const ENTERPRISE_POLICY_READ_TIMEOUT_MS = 3_000;
 const CDP_HEAP_SNAPSHOT_TIMEOUT_MS = 8_000;
 const SCREEN_RECORDING_OFFSCREEN_SOURCE = "tab";
 
+const tabsContextTracker = createTabsContextTracker();
+
 console.info("[WebBlackbox] service worker booted");
 
+const contentInjection = createContentInjectionController(chromeApi);
+const recordedTabWatch = createRecordedTabWatch(chromeApi, {
+  onTabUpdated: handleRecordedTabUpdated,
+  onTabRemoved: (tabId) => {
+    void stopSession(tabId);
+  },
+  onFrameCommitted: handleRecordedFrameCommitted
+});
 const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
   {
     getPort: () => offscreenPort,
@@ -612,7 +676,52 @@ const orphanedOffscreenCleanup = closeOrphanedOffscreenDocument().catch((error) 
   console.warn("[WebBlackbox] failed to close orphaned offscreen document", error);
 });
 
-void restoreRuntimeState();
+let atRestKeyReady: Promise<AtRestKeyRecord> | null = null;
+/** This worker minted the key: a new browser session, nothing stored before is readable. */
+let atRestKeyMinted = false;
+const stoppedSessionStore = createStoppedSessionStore(chromeApi?.storage?.session);
+/** Stopped sessions whose pipeline the current offscreen document does not hold (yet). */
+const detachedPipelineSids = new Set<string>();
+const pipelineAttachments = new Map<string, Promise<void>>();
+/** Bumped when the offscreen document goes away: attachments started before it are void. */
+let offscreenGeneration = 0;
+const disposingSids = new Set<string>();
+let offscreenDocumentReady: Promise<void> | null = null;
+/** A failed purge of a stopped recording is retried this much later. */
+const STOPPED_SESSION_PURGE_RETRY_MS = 5 * 60_000;
+
+void getAtRestKey().catch((error) => {
+  console.warn("[WebBlackbox] at-rest encryption key unavailable", error);
+});
+const runtimeStateRestored = restoreRuntimeState().catch((error) => {
+  console.warn("[WebBlackbox] failed to restore runtime state", error);
+});
+
+// Retention of stopped, unexported recordings: alarms outlive the worker, timers do not.
+chromeApi?.alarms?.onAlarm.addListener((alarm) => {
+  const sid = sidFromRetentionAlarm(alarm.name);
+
+  if (sid) {
+    void expireStoppedSession(sid).catch((error) => {
+      console.warn("[WebBlackbox] failed to delete an expired recording", error);
+    });
+  }
+});
+
+// Wakes the worker at browser start, so the previous browser session's leftovers are deleted
+// right away instead of on the first click.
+chromeApi?.runtime?.onStartup?.addListener(() => {
+  void getAtRestKey().catch(() => undefined);
+});
+
+// Every boot re-applies the setting: it also restores a registration an update dropped.
+void contentInjection.sync();
+
+chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
+  if (areaName === "local" && Object.hasOwn(changes, CONTENT_INJECTION_STORAGE_KEY)) {
+    void contentInjection.sync();
+  }
+});
 
 chromeApi?.runtime?.onInstalled.addListener(() => {
   void setIdleBadge();
@@ -639,10 +748,22 @@ chromeApi?.runtime?.onConnect.addListener((port) => {
     return;
   }
 
+  // The offscreen port carries the at-rest key and every recorded event: only the extension's own
+  // offscreen document may take it. The sender check above already covers this; the explicit
+  // check keeps the key from depending on that classification alone.
+  if (port.name === PORT_NAMES.offscreen && !isTrustedOffscreenPort(port)) {
+    console.warn("[WebBlackbox] refused an offscreen port from another context", {
+      tabId: port.sender?.tab?.id
+    });
+    port.disconnect?.();
+    return;
+  }
+
   connectedPorts.add(port);
 
   if (port.name === PORT_NAMES.offscreen) {
     offscreenPort = port;
+    void sendAtRestKeyToOffscreen(port);
     notifyOffscreenPipelineStatus();
   }
 
@@ -674,6 +795,7 @@ chromeApi?.runtime?.onConnect.addListener((port) => {
     if (offscreenPort === port) {
       offscreenPort = null;
       rejectPendingOffscreenRequests("Offscreen pipeline disconnected.");
+      markStoppedPipelinesDetached();
 
       if (sessionsByTab.size > 0) {
         void recoverAllActiveOffscreenPipelines().catch((error) => {
@@ -759,7 +881,9 @@ function syncContentPortRecordingState(port: PortLike): void {
       mode: runtime.mode,
       sampling,
       capturePolicy: runtime.config.capturePolicy,
-      injectedBridgeNonce: runtime.injectedBridgeNonce
+      injectedBridgeNonce: runtime.injectedBridgeNonce,
+      pointer: toStatusPointer(runtime),
+      ...toScriptScanStatus(runtime)
     });
   } catch (error) {
     logPortSendFailure("sw.recording-status", error, {
@@ -817,20 +941,36 @@ chromeApi?.commands?.onCommand.addListener((command) => {
   void relayMarkerCommand();
 });
 
-chromeApi?.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
-  if (typeof changeInfo.url !== "string" || changeInfo.url.length === 0) {
-    if (changeInfo.status === "complete") {
-      void restoreTabInstrumentationAfterNavigation(tabId);
-    }
-    return;
+function handleRecordedTabUpdated(tabId: number, changeInfo: ChromeTabChangeInfo): void {
+  if (typeof changeInfo.url === "string" && changeInfo.url.length > 0) {
+    void handleTabUrlChanged(tabId, changeInfo.url);
   }
-
-  void handleTabUrlChanged(tabId, changeInfo.url);
 
   if (changeInfo.status === "complete") {
     void restoreTabInstrumentationAfterNavigation(tabId);
   }
-});
+}
+
+/**
+ * With injection on Start only, nothing registered covers a recorded tab's new documents, so each
+ * committed frame (reload, navigation, iframe added later) gets the content script right away.
+ */
+function handleRecordedFrameCommitted(details: FrameCommittedDetails): void {
+  const runtime = sessionsByTab.get(details.tabId);
+
+  if (
+    !runtime ||
+    runtime.stopping ||
+    runtime.stoppedAt ||
+    !shouldInjectHooksForMode(runtime.mode) ||
+    contentInjection.currentMode() !== "on-start" ||
+    !isInjectableFrameUrl(details.url)
+  ) {
+    return;
+  }
+
+  void injectContentScriptIntoFrame(chromeApi, details.tabId, details.frameId);
+}
 
 // Deleting or editing a profile, or a policy change, re-checks running recordings at once.
 chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
@@ -843,16 +983,16 @@ chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
   }
 });
 
-chromeApi?.tabs?.onRemoved?.addListener((tabId) => {
-  void stopSession(tabId);
-});
-
 async function handleInboundMessage(
   message: ExtensionInboundMessage,
   port?: PortLike,
   senderTabId?: number,
   senderFrameId?: number
 ): Promise<unknown> {
+  // A message may be what woke this worker: answer it once an earlier worker's stopped recordings
+  // are restored, so they are listed and exportable.
+  await runtimeStateRestored;
+
   if (message.kind === "ui.start") {
     const tabId = await resolveUiActionTarget(message.tabId, senderTabId);
 
@@ -996,7 +1136,9 @@ async function handleInboundMessage(
       mode: runtime.mode,
       sampling,
       capturePolicy: runtime.config.capturePolicy,
-      injectedBridgeNonce: runtime.injectedBridgeNonce
+      injectedBridgeNonce: runtime.injectedBridgeNonce,
+      pointer: toStatusPointer(runtime),
+      ...toScriptScanStatus(runtime)
     };
   }
 
@@ -1061,6 +1203,52 @@ async function deleteSessionBySid(sid: string): Promise<void> {
   }
 }
 
+function createTabsContextTracker(): TabsContextTracker | null {
+  const tabs = chromeApi?.tabs;
+
+  if (!tabs?.onCreated || !tabs.onUpdated || !tabs.onRemoved || !tabs.onActivated) {
+    return null;
+  }
+
+  return new TabsContextTracker(
+    {
+      tabs: {
+        query: (queryInfo) => tabs.query(queryInfo),
+        get: (tabId) => tabs.get(tabId),
+        onCreated: tabs.onCreated,
+        onUpdated: tabs.onUpdated,
+        onRemoved: tabs.onRemoved,
+        onActivated: tabs.onActivated
+      },
+      windows: chromeApi?.windows
+    },
+    {
+      emit: ingestTabsContext,
+      onError: (error) => {
+        console.warn("[WebBlackbox] other tabs of the site could not be read", error);
+      }
+    }
+  );
+}
+
+function ingestTabsContext(recordedTabId: number, emission: TabsContextEmission): void {
+  const runtime = sessionsByTab.get(recordedTabId);
+
+  if (!runtime || runtime.stoppedAt) {
+    return;
+  }
+
+  ingestRawEvent({
+    source: "system",
+    rawType: emission.rawType,
+    sid: runtime.sid,
+    tabId: recordedTabId,
+    t: Date.now(),
+    mono: monotonicTime(),
+    payload: emission.payload
+  });
+}
+
 /** Starts recording the tab; resolves with the engine it runs in. */
 async function startSession(
   tabId: number,
@@ -1073,6 +1261,8 @@ async function startSession(
     await stopSession(tabId);
   }
 
+  // Nothing is recorded unless it can be encrypted at rest.
+  await getAtRestKey();
   await ensureOffscreenDocument();
 
   const sid = createSessionId();
@@ -1127,7 +1317,7 @@ async function startSession(
   const pipeline = createOffscreenPipelineClient(sid);
   await pipeline.start(metadata, recorderConfig.redaction, recorderConfig.capturePolicy);
 
-  const runtime: SessionRuntime = {
+  const runtime = createSessionRuntime({
     sid,
     tabId,
     mode,
@@ -1136,65 +1326,18 @@ async function startSession(
       visualCapture: options.visualCapture,
       selection: profileSelection,
       profileConfig: loadedRecorderConfig,
-      visualsCaptured: capturedVisualsOf(recorderConfig),
-      reevaluation: Promise.resolve(),
-      generation: 0
+      visualsCaptured: capturedVisualsOf(recorderConfig)
     },
     url: metadata.url,
-    scopeOrigin: resolveUrlOrigin(metadata.url),
     title: metadata.title,
-    tags: [...annotation.tags],
-    note: annotation.note,
+    annotation,
     config: recorderConfig,
     startedAt,
-    stoppedAt: undefined,
-    injectedBridgeNonce: createInjectedBridgeNonce(),
-    recorder: new WebBlackboxRecorder(
-      {
-        ...recorderConfig,
-        mode
-      },
-      {},
-      undefined,
-      recorderPlugins
-    ),
     pipeline,
-    cdpRouter: null,
-    enabledCdpSessions: new Set<string>(),
-    visitedPageUrls: new Set(rememberablePageUrl(tabMetadata.url) ?? []),
-    requestMeta: new Map(),
-    screenshotInterval: null,
-    screenRecording: null,
-    lastPointer: null,
-    lastViewport: null,
-    lastActionScreenshotMono: Number.NEGATIVE_INFINITY,
-    lastIncidentCaptureAt: Number.NEGATIVE_INFINITY,
-    queueDepth: 0,
-    droppedBestEffortTasks: 0,
-    pipelineEventBuffer: [],
-    pipelineFlushTimer: null,
-    pipelineFlushQueued: false,
-    stopping: false,
-    // The callbacks read `runtime` only after the session started.
-    fullBodyCapture: createFullBodyCapture(() => runtime),
-    cdpIngestChain: Promise.resolve(),
-    cdpIngestBacklog: 0,
-    capturedEventCount: 0,
-    capturedErrorCount: 0,
-    capturedSizeBytes: 0,
-    budgetAlertCount: 0,
+    recorderPlugins,
     performanceBudget,
-    networkBudgetSample: {
-      total: 0,
-      failed: 0
-    },
-    lastFreezeNotices: new Map<string, number>(),
-    lastBudgetBreachAt: new Map<string, number>(),
-    queue: Promise.resolve(),
-    removeCdpListeners: [],
-    heapSnapshotCapture: null,
-    cleanupTimer: null
-  };
+    pageUrl: tabMetadata.url
+  });
 
   runtime.recorder = new WebBlackboxRecorder(
     {
@@ -1224,6 +1367,7 @@ async function startSession(
 
   sessionsByTab.set(tabId, runtime);
   sessionsBySid.set(sid, runtime);
+  recordedTabWatch.sync(true);
 
   if (mode === "lite") {
     installLiteWebRequestCapture();
@@ -1243,6 +1387,12 @@ async function startSession(
         listEnterpriseCappedCategories(loadedRecorderConfig, recorderConfig)
       )
     }
+  });
+
+  // Other tabs of the site right after the config, before instrumentation can take a while.
+  await tabsContextTracker?.startSession(tabId, {
+    url: tabMetadata.url,
+    level: resolveTabsContextLevel(recorderConfig.capturePolicy)
   });
 
   if (shouldInjectHooksForMode(mode)) {
@@ -1266,6 +1416,8 @@ async function startSession(
   const sampling = toStatusSampling(runtime);
 
   await setRecordingBadge();
+  const pointer = toStatusPointer(runtime);
+
   await notifyTabStatus(
     tabId,
     true,
@@ -1273,7 +1425,8 @@ async function startSession(
     mode,
     sampling,
     recorderConfig.capturePolicy,
-    runtime.injectedBridgeNonce
+    runtime.injectedBridgeNonce,
+    pointer
   );
   broadcast({
     kind: "sw.recording-status",
@@ -1281,7 +1434,9 @@ async function startSession(
     sid,
     mode,
     sampling,
-    capturePolicy: recorderConfig.capturePolicy
+    capturePolicy: recorderConfig.capturePolicy,
+    pointer,
+    ...toScriptScanStatus(runtime)
   });
   pushSessionList();
   await persistRuntimeState();
@@ -1318,7 +1473,8 @@ async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<
     runtime.mode,
     toStatusSampling(runtime),
     runtime.config.capturePolicy,
-    runtime.injectedBridgeNonce
+    runtime.injectedBridgeNonce,
+    toStatusPointer(runtime)
   );
   // Title, meta tags and selectors are only reliable once the page has loaded.
   scheduleProfileReevaluation(runtime, "page-loaded");
@@ -1332,6 +1488,9 @@ async function stopSession(tabId: number): Promise<void> {
   }
 
   runtime.stopping = true;
+  // Changes of other tabs seen before Stop still belong to the session.
+  await tabsContextTracker?.settle();
+  tabsContextTracker?.stopSession(tabId);
   const stopDrainAck = createStopDrainAck(runtime);
   await stopScreenRecording(runtime, "session-stop").catch((error) => {
     console.warn("[WebBlackbox] failed to stop screen recording", error);
@@ -1355,12 +1514,15 @@ async function stopSession(tabId: number): Promise<void> {
   await flushBufferedPipelineEvents(runtime);
   await teardownCaptureInstrumentation(runtime);
   sessionsByTab.delete(runtime.tabId);
+  recordedTabWatch.sync(sessionsByTab.size > 0);
   uninstallLiteWebRequestCaptureIfUnused();
   runtime.stoppedAt = Date.now();
   scheduleStoppedRuntimeCleanup(runtime);
-  await rememberStoppedSession(runtime).catch((error) => {
+  await rememberStoppedSessionRecord(runtime).catch((error) => {
     console.warn("[WebBlackbox] failed to persist stopped session record", error);
   });
+  // Written now and again after the final flush: the worker may die while the page drains.
+  await rememberStoppedSession(runtime);
 
   await refreshActionBadge();
 
@@ -1385,6 +1547,12 @@ async function stopSession(tabId: number): Promise<void> {
   await stopDrainAck;
   await flushBufferedPipelineEvents(runtime);
   runtime.stopDrained = true;
+  // The recording now waits for its export, possibly in a later worker: its tail goes to the
+  // encrypted store and a snapshot lets that worker list and export it.
+  await enqueueWithResult(runtime, () => runtime.pipeline.flush()).catch((error) => {
+    console.warn("[WebBlackbox] failed to flush the stopped recording", error);
+  });
+  await rememberStoppedSession(runtime);
 }
 
 async function exportSession(
@@ -1426,6 +1594,7 @@ async function exportSession(
     }
 
     await flushBufferedPipelineEvents(runtime);
+    await attachStoppedPipeline(runtime);
 
     const exported = await enqueueWithResult(runtime, async () => {
       return runtime.pipeline.exportAndDownload({
@@ -1461,7 +1630,11 @@ async function exportSession(
       privacyWarning
     });
 
-    if (runtime.stoppedAt) {
+    // The profile decides whether the local copy goes now or waits out its retention.
+    if (
+      runtime.stoppedAt &&
+      resolveLocalDataSettings(runtime.profile.selection.profile).deleteAfterExport
+    ) {
       await disposeStoppedSession(runtime);
     }
 
@@ -1765,6 +1938,8 @@ async function acknowledgeProfileCancel(sid: string): Promise<void> {
   runtime.profile = { ...runtime.profile, cancellationAcknowledged: true };
   pushSessionList();
   await refreshActionBadge();
+  // A later worker restores the acknowledged notice, not the unread one.
+  await rememberStoppedSession(runtime);
 }
 
 function resolveSessionExportPolicy(runtime: SessionRuntime, policy: ExportPolicy): ExportPolicy {
@@ -1806,6 +1981,11 @@ function ingestRawEvent(
   }
 
   if (shouldSkipFullModeContentRawEvent(runtime, rawEvent)) {
+    return;
+  }
+
+  if (rawEvent.source === "content" && rawEvent.rawType === SCRIPT_RAW_TYPE) {
+    recordScriptSourceMap(runtime, readContentScriptRecord(rawEvent.payload));
     return;
   }
 
@@ -2130,11 +2310,7 @@ function updateRuntimeInteractionState(runtime: SessionRuntime, rawEvent: RawRec
     return;
   }
 
-  if (
-    rawEvent.rawType === "mousemove" ||
-    rawEvent.rawType === "click" ||
-    rawEvent.rawType === "dblclick"
-  ) {
+  if (POINTER_TRACKING_RAW_TYPES.has(rawEvent.rawType)) {
     const x = asFiniteNumber(payload.x);
     const y = asFiniteNumber(payload.y);
 
@@ -2148,6 +2324,16 @@ function updateRuntimeInteractionState(runtime: SessionRuntime, rawEvent: RawRec
     }
   }
 }
+
+const POINTER_TRACKING_RAW_TYPES = new Set([
+  "mousemove",
+  "click",
+  "dblclick",
+  "pointerdown",
+  "pointerup",
+  "contextmenu",
+  "auxclick"
+]);
 
 function shouldCaptureActionScreenshot(
   rawEvent: RawRecorderEvent,
@@ -2712,6 +2898,13 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
         }
       }
 
+      // One event per parsed script (eval and extension code included): handled inline instead
+      // of through the recorder or the best-effort follow-up queue.
+      if (event.method === "Debugger.scriptParsed") {
+        recordScriptSourceMap(runtime, scriptRecordFromScriptParsed(cdpPayload));
+        return;
+      }
+
       const rawEvent: RawRecorderEvent = {
         source: "cdp",
         rawType: event.method,
@@ -2764,6 +2957,7 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
     await router.enableAutoAttach(runtime.tabId);
     await router.send({ tabId: runtime.tabId }, "DOMStorage.enable").catch(() => undefined);
     await router.send({ tabId: runtime.tabId }, "Performance.enable").catch(() => undefined);
+    await enableScriptDebugger(runtime, router, { tabId: runtime.tabId });
 
     runtime.cdpRouter = router;
 
@@ -2861,7 +3055,157 @@ async function primeChildCdpSession(
 
   if (!primed) {
     runtime.enabledCdpSessions.delete(childSessionId);
+    return;
   }
+
+  // Bounded like the priming: a child that is gone may never answer, and this runs on the
+  // session's serial queue. enableScriptDebugger logs its own failures.
+  await withCdpCommandTimeout(
+    enableScriptDebugger(runtime, runtime.cdpRouter, {
+      tabId: runtime.tabId,
+      sessionId: childSessionId
+    }),
+    CHILD_SESSION_PRIME_TIMEOUT_MS
+  );
+}
+
+function resolveRuntimeSourceMapCapture(runtime: SessionRuntime): SourceMapCapture {
+  return resolveSourceMapCapture(runtime.profile.selection.profile, runtime.mode);
+}
+
+/** Lite pages scan their own scripts for map references when the profile asks for it. */
+function toScriptScanStatus(runtime: SessionRuntime): { scriptSourceMaps?: true } {
+  return runtime.mode === "lite" && resolveRuntimeSourceMapCapture(runtime).mode !== "off"
+    ? { scriptSourceMaps: true }
+    : {};
+}
+
+/**
+ * Turns on `Debugger.scriptParsed` (which also reports scripts loaded before recording started)
+ * when the profile records source maps. Pauses are skipped so `debugger;` statements and
+ * breakpoints never stop the page.
+ */
+async function enableScriptDebugger(
+  runtime: SessionRuntime,
+  router: CdpRouter,
+  target: { tabId: number; sessionId?: string }
+): Promise<void> {
+  if (resolveRuntimeSourceMapCapture(runtime).mode === "off") {
+    return;
+  }
+
+  try {
+    await router.send(target, "Debugger.enable", {
+      maxScriptsCacheSize: DEBUGGER_SCRIPT_CACHE_BYTES
+    });
+    await router.send(target, "Debugger.setSkipAllPauses", { skip: true });
+  } catch (error) {
+    console.warn("[WebBlackbox] failed to enable script source map capture", {
+      sid: runtime.sid,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+/** Lite scanner records arrive as content events with full URLs. */
+function readContentScriptRecord(payload: unknown): RawScriptRecord | null {
+  const row = asRecord(payload);
+  const url = typeof row?.url === "string" ? row.url : "";
+  const sourceMapUrl = typeof row?.sourceMapUrl === "string" ? row.sourceMapUrl : "";
+  const origin = row?.origin === "header" ? "header" : row?.origin === "comment" ? "comment" : null;
+
+  return url && sourceMapUrl && origin ? { url, sourceMapUrl, origin } : null;
+}
+
+/**
+ * Records a script's source map reference once per session and, when the profile embeds maps,
+ * stores the map as a blob and records it in a follow-up event.
+ */
+function recordScriptSourceMap(runtime: SessionRuntime, record: RawScriptRecord | null): void {
+  if (!record || runtime.stopping) {
+    return;
+  }
+
+  const capture = resolveRuntimeSourceMapCapture(runtime);
+
+  if (capture.mode === "off" || !runtime.scriptSourceMaps.markRecorded(record)) {
+    return;
+  }
+
+  ingestScriptRecord(runtime, record);
+
+  if (capture.mode !== "embed" || !runtime.scriptSourceMaps.reserveEmbed(record)) {
+    return;
+  }
+
+  // Fetched outside the session queue (which also carries pipeline flushes and CDP follow-ups),
+  // so slow or large maps never hold up capture; only the blob write is queued.
+  void runtime
+    .scriptSourceMapFetches(() => embedScriptSourceMap(runtime, record, capture.maxMapBytes))
+    .catch((error: unknown) => {
+      console.warn("[WebBlackbox] failed to embed source map", {
+        sid: runtime.sid,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+}
+
+async function embedScriptSourceMap(
+  runtime: SessionRuntime,
+  record: RawScriptRecord,
+  maxMapBytes: number
+): Promise<void> {
+  if (runtime.stopping) {
+    return;
+  }
+
+  const tracker = runtime.scriptSourceMaps;
+  const result = await loadSourceMapForEmbedding(record, {
+    maxBytes: Math.min(maxMapBytes, tracker.remainingEmbedBytes())
+  });
+
+  // A late result must not land in a later session on the same tab.
+  if (runtime.stopping) {
+    return;
+  }
+
+  if (!result.ok) {
+    ingestScriptRecord(runtime, { ...record, mapError: result.error });
+    return;
+  }
+
+  if (!tracker.tryAddEmbeddedBytes(result.bytes.byteLength)) {
+    ingestScriptRecord(runtime, { ...record, mapError: "session source map budget exhausted" });
+    return;
+  }
+
+  enqueue(runtime, async () => {
+    if (runtime.stopping) {
+      return;
+    }
+
+    const contentHash = await runtime.pipeline.putBlob("application/json", result.bytes);
+
+    ingestScriptRecord(runtime, {
+      ...record,
+      map: { contentHash, size: result.bytes.byteLength }
+    });
+  });
+}
+
+function ingestScriptRecord(
+  runtime: SessionRuntime,
+  payload: RawScriptRecord & { map?: { contentHash: string; size: number }; mapError?: string }
+): void {
+  ingestRawEvent({
+    source: "system",
+    rawType: SCRIPT_RAW_TYPE,
+    sid: runtime.sid,
+    tabId: runtime.tabId,
+    t: Date.now(),
+    mono: monotonicTime(),
+    payload
+  });
 }
 
 function isFullBodyCaptureEnabled(runtime: SessionRuntime): boolean {
@@ -2979,6 +3323,7 @@ function trackFullModeNetworkEvent(
   }
 
   if (method === "Network.responseReceived") {
+    recordScriptSourceMap(runtime, scriptRecordFromResponse(payload));
     const response = asRecord(payload?.response);
     upsertRequestMeta(runtime.requestMeta, metaKey, {
       url: typeof response?.url === "string" ? response.url : undefined,
@@ -4259,6 +4604,10 @@ function normalizeExportBoundedInt(
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
+function toStatusPointer(runtime: SessionRuntime): PointerCaptureOptions {
+  return { ...DEFAULT_POINTER_CAPTURE_OPTIONS, ...runtime.config.pointer };
+}
+
 function toStatusSampling(runtime: SessionRuntime): RecordingSampling {
   const sampling = runtime.config.sampling;
 
@@ -4480,11 +4829,12 @@ function createInjectedBridgeNonce(): string {
   return crypto.randomUUID();
 }
 
+/**
+ * Runs on Start and after navigations of a recorded tab, whatever the injection mode: frames that
+ * already run the content script ignore the second copy (see content/script-guard.ts), and tabs
+ * opened before the extension was installed or registered get it too.
+ */
 async function ensureContentScriptInjected(tabId: number): Promise<void> {
-  if (manifestDeclaresStaticContentScript()) {
-    return;
-  }
-
   await chromeApi?.scripting
     ?.executeScript({
       target: { tabId, allFrames: true },
@@ -4492,15 +4842,6 @@ async function ensureContentScriptInjected(tabId: number): Promise<void> {
       files: ["content.js"]
     })
     .catch(() => undefined);
-}
-
-function manifestDeclaresStaticContentScript(): boolean {
-  const manifest = chromeApi?.runtime?.getManifest?.();
-  const contentScripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
-
-  return contentScripts.some(
-    (entry) => Array.isArray(entry?.js) && entry.js.includes("content.js")
-  );
 }
 
 function installLiteWebRequestCapture(): void {
@@ -4683,7 +5024,399 @@ function normalizeLiteNetworkTimestamp(candidate: unknown): number {
     : Date.now();
 }
 
-async function ensureOffscreenDocument(): Promise<void> {
+/**
+ * This browser session's at-rest key. Each worker instance deletes the pipeline database before
+ * any offscreen document opens it (see `bootstrapAtRestKey`). A failure is retried on the next
+ * call.
+ */
+function getAtRestKey(): Promise<AtRestKeyRecord> {
+  if (!atRestKeyReady) {
+    atRestKeyReady = initializeAtRestKey().catch((error: unknown) => {
+      atRestKeyReady = null;
+      throw error;
+    });
+  }
+
+  return atRestKeyReady;
+}
+
+async function initializeAtRestKey(): Promise<AtRestKeyRecord> {
+  const state = await bootstrapAtRestKey(
+    chromeApi?.storage?.session,
+    globalThis.indexedDB,
+    PIPELINE_DB_NAME,
+    {
+      onAccessLevelError: (error) => {
+        console.warn("[WebBlackbox] failed to restrict storage.session access", error);
+      }
+    }
+  );
+
+  atRestKeyMinted = state.fresh;
+
+  if (state.database === "unavailable") {
+    console.warn("[WebBlackbox] IndexedDB is unavailable: leftover recordings were not cleared");
+  } else if (state.fresh) {
+    // "blocked": the deletion is queued and completes before the database is opened again.
+    console.info("[WebBlackbox] new browser session: cleared unexported recordings", {
+      outcome: state.database
+    });
+  }
+
+  return state.record;
+}
+
+function isTrustedOffscreenPort(port: PortLike): boolean {
+  return isOffscreenDocumentPort(port, chromeApi?.runtime?.getURL(OFFSCREEN_PATH) ?? "");
+}
+
+/** Hands the key to the offscreen document; the port was checked on connect. */
+async function sendAtRestKeyToOffscreen(port: PortLike): Promise<void> {
+  try {
+    port.postMessage(toStorageKeyMessage(await getAtRestKey()));
+  } catch (error) {
+    console.warn("[WebBlackbox] failed to send the at-rest key to the offscreen document", error);
+  }
+}
+
+/** Snapshot of a stopped recording, so a later worker can list, export or expire it. */
+async function rememberStoppedSession(runtime: SessionRuntime): Promise<void> {
+  if (!runtime.stoppedAt || !sessionsBySid.has(runtime.sid)) {
+    return;
+  }
+
+  await stoppedSessionStore.remember(toStoppedSessionSnapshot(runtime)).catch((error) => {
+    console.warn("[WebBlackbox] failed to keep the stopped recording restorable", error);
+  });
+}
+
+async function forgetStoppedSession(sid: string): Promise<void> {
+  detachedPipelineSids.delete(sid);
+  await stoppedSessionStore.forget(sid).catch((error) => {
+    console.warn("[WebBlackbox] failed to drop a stopped recording's snapshot", error);
+  });
+  await clearRetentionAlarm(chromeApi?.alarms, sid).catch(() => undefined);
+}
+
+function toStoppedSessionSnapshot(runtime: SessionRuntime): StoppedSessionSnapshot {
+  const stoppedAt = runtime.stoppedAt ?? Date.now();
+
+  return {
+    sid: runtime.sid,
+    tabId: runtime.tabId,
+    mode: runtime.mode,
+    startedAt: runtime.startedAt,
+    stoppedAt,
+    expiresAt: resolveStoppedSessionExpiresAt(runtime),
+    url: runtime.url,
+    title: runtime.title,
+    profile: {
+      request: runtime.profile.request,
+      visualCapture: runtime.profile.visualCapture,
+      selection: runtime.profile.selection,
+      profileConfig: runtime.profile.profileConfig,
+      visualsCaptured: runtime.profile.visualsCaptured,
+      ...(runtime.profile.cancellation
+        ? {
+            cancellation: runtime.profile.cancellation,
+            cancellationAcknowledged: runtime.profile.cancellationAcknowledged ?? false
+          }
+        : {})
+    },
+    config: runtime.config,
+    counters: {
+      eventCount: runtime.capturedEventCount,
+      errorCount: runtime.capturedErrorCount,
+      sizeBytes: runtime.capturedSizeBytes,
+      budgetAlertCount: runtime.budgetAlertCount
+    }
+  };
+}
+
+/**
+ * Rebuilds the stopped recordings an earlier worker of this browser session left: they are listed
+ * and exportable again, and those past their retention are deleted. Nothing is restored under a
+ * freshly minted key: the database was deleted with the old one.
+ */
+async function restoreStoppedSessions(): Promise<void> {
+  try {
+    await getAtRestKey();
+  } catch {
+    return;
+  }
+
+  if (atRestKeyMinted) {
+    await stoppedSessionStore.clear().catch(() => undefined);
+    return;
+  }
+
+  const plan = planStoppedSessionRestore(await stoppedSessionStore.list(), Date.now());
+
+  if (plan.kept.length + plan.purgeNow.length + plan.purgeLater.length === 0) {
+    return;
+  }
+
+  const performanceBudget = await loadPerformanceBudgetConfig();
+
+  for (const snapshot of plan.kept) {
+    scheduleStoppedRuntimeCleanup(restoreStoppedRuntime(snapshot, performanceBudget));
+  }
+
+  for (const snapshot of plan.purgeLater) {
+    await scheduleRetentionAlarm(
+      chromeApi?.alarms,
+      snapshot.sid,
+      Date.now() + STOPPED_SESSION_PURGE_RETRY_MS
+    ).catch(() => undefined);
+  }
+
+  // All registered first, so the offscreen document is closed once, after the last purge. The
+  // purges run one by one before any message is answered: in parallel they would race offscreen
+  // creation, and one finishing late could close the document of a Start that just began.
+  const expired = plan.purgeNow.map((snapshot) =>
+    restoreStoppedRuntime(snapshot, performanceBudget)
+  );
+
+  for (const runtime of expired) {
+    await disposeStoppedSession(runtime).catch((error) => {
+      console.warn("[WebBlackbox] failed to delete an expired recording", error);
+    });
+  }
+
+  console.info("[WebBlackbox] restored stopped recordings", {
+    kept: plan.kept.length,
+    purged: plan.purgeNow.length,
+    retrying: plan.purgeLater.length
+  });
+}
+
+function restoreStoppedRuntime(
+  snapshot: StoppedSessionSnapshot,
+  performanceBudget: PerformanceBudgetConfig
+): SessionRuntime {
+  const existing = sessionsBySid.get(snapshot.sid);
+
+  if (existing) {
+    return existing;
+  }
+
+  const runtime = createSessionRuntime({
+    sid: snapshot.sid,
+    tabId: snapshot.tabId,
+    mode: snapshot.mode,
+    profile: snapshot.profile,
+    url: snapshot.url,
+    title: snapshot.title,
+    annotation: getSessionAnnotation(snapshot.sid),
+    config: snapshot.config,
+    startedAt: snapshot.startedAt,
+    stoppedAt: snapshot.stoppedAt,
+    pipeline: createOffscreenPipelineClient(snapshot.sid),
+    recorderPlugins: createDefaultRecorderPlugins(),
+    performanceBudget,
+    counters: snapshot.counters
+  });
+
+  sessionsBySid.set(runtime.sid, runtime);
+  detachedPipelineSids.add(runtime.sid);
+  return runtime;
+}
+
+/** Gives the offscreen document the pipeline of a stopped recording it does not hold. */
+function attachStoppedPipeline(runtime: SessionRuntime): Promise<void> {
+  const sid = runtime.sid;
+
+  if (!detachedPipelineSids.has(sid)) {
+    return Promise.resolve();
+  }
+
+  const pending = pipelineAttachments.get(sid);
+
+  if (pending) {
+    return pending;
+  }
+
+  const generation = offscreenGeneration;
+  const attachment = runtime.pipeline
+    .start(toSessionMetadata(runtime), runtime.config.redaction, runtime.config.capturePolicy)
+    .then(() => {
+      // An offscreen document that went away meanwhile took the pipeline with it.
+      if (generation === offscreenGeneration) {
+        detachedPipelineSids.delete(sid);
+      }
+    })
+    .finally(() => {
+      pipelineAttachments.delete(sid);
+    });
+
+  pipelineAttachments.set(sid, attachment);
+  return attachment;
+}
+
+/** A new offscreen document holds no pipeline of the stopped recordings. */
+function markStoppedPipelinesDetached(): void {
+  offscreenGeneration += 1;
+
+  for (const runtime of sessionsBySid.values()) {
+    if (runtime.stoppedAt) {
+      detachedPipelineSids.add(runtime.sid);
+    }
+  }
+}
+
+async function expireStoppedSession(sid: string): Promise<void> {
+  await runtimeStateRestored;
+  const runtime = sessionsBySid.get(sid) ?? (await restoreStoppedSnapshot(sid));
+
+  if (!runtime) {
+    await forgetStoppedSession(sid);
+    return;
+  }
+
+  if (runtime.stoppedAt) {
+    await disposeStoppedSession(runtime);
+  }
+}
+
+/** Rebuilds a recording whose earlier purge failed, so it can be deleted again. */
+async function restoreStoppedSnapshot(sid: string): Promise<SessionRuntime | undefined> {
+  const snapshot = (await stoppedSessionStore.list()).find((row) => row.sid === sid);
+  return snapshot
+    ? restoreStoppedRuntime(snapshot, await loadPerformanceBudgetConfig())
+    : undefined;
+}
+
+async function retryStoppedSessionPurge(sid: string): Promise<void> {
+  const attempts = await stoppedSessionStore.recordPurgeFailure(sid).catch(() => null);
+
+  if (attempts === null || attempts >= MAX_STOPPED_SESSION_PURGE_ATTEMPTS) {
+    console.warn("[WebBlackbox] giving up on deleting a recording; it ends with the browser", {
+      attempts
+    });
+    await forgetStoppedSession(sid);
+    return;
+  }
+
+  detachedPipelineSids.add(sid);
+  await scheduleRetentionAlarm(
+    chromeApi?.alarms,
+    sid,
+    Date.now() + STOPPED_SESSION_PURGE_RETRY_MS
+  ).catch(() => undefined);
+}
+
+type SessionRuntimeInit = {
+  sid: string;
+  tabId: number;
+  mode: CaptureMode;
+  profile: Pick<
+    SessionProfileState,
+    | "request"
+    | "visualCapture"
+    | "selection"
+    | "profileConfig"
+    | "visualsCaptured"
+    | "cancellation"
+    | "cancellationAcknowledged"
+  >;
+  url: string;
+  title?: string;
+  annotation: SessionAnnotation;
+  config: typeof DEFAULT_RECORDER_CONFIG;
+  startedAt: number;
+  stoppedAt?: number;
+  pipeline: SessionPipelineClient;
+  recorderPlugins: ReturnType<typeof createDefaultRecorderPlugins>;
+  performanceBudget: PerformanceBudgetConfig;
+  counters?: StoppedSessionSnapshot["counters"];
+  /** Unsanitized URL of the recorded page at Start (memory only; cookie values are read for it). */
+  pageUrl?: string;
+};
+
+/** A session runtime with its capture state reset; Start wires its recorder afterwards. */
+function createSessionRuntime(init: SessionRuntimeInit): SessionRuntime {
+  const runtime: SessionRuntime = {
+    sid: init.sid,
+    tabId: init.tabId,
+    mode: init.mode,
+    profile: {
+      ...init.profile,
+      reevaluation: Promise.resolve(),
+      generation: 0
+    },
+    url: init.url,
+    scopeOrigin: resolveUrlOrigin(init.url),
+    title: init.title,
+    tags: [...init.annotation.tags],
+    note: init.annotation.note,
+    config: init.config,
+    startedAt: init.startedAt,
+    stoppedAt: init.stoppedAt,
+    injectedBridgeNonce: createInjectedBridgeNonce(),
+    recorder: new WebBlackboxRecorder(
+      {
+        ...init.config,
+        mode: init.mode
+      },
+      {},
+      undefined,
+      init.recorderPlugins
+    ),
+    pipeline: init.pipeline,
+    cdpRouter: null,
+    enabledCdpSessions: new Set<string>(),
+    visitedPageUrls: new Set(rememberablePageUrl(init.pageUrl) ?? []),
+    requestMeta: new Map(),
+    screenshotInterval: null,
+    screenRecording: null,
+    lastPointer: null,
+    lastViewport: null,
+    lastActionScreenshotMono: Number.NEGATIVE_INFINITY,
+    lastIncidentCaptureAt: Number.NEGATIVE_INFINITY,
+    queueDepth: 0,
+    droppedBestEffortTasks: 0,
+    pipelineEventBuffer: [],
+    pipelineFlushTimer: null,
+    pipelineFlushQueued: false,
+    stopping: false,
+    // The callbacks read `runtime` only after the session started.
+    fullBodyCapture: createFullBodyCapture(() => runtime),
+    cdpIngestChain: Promise.resolve(),
+    cdpIngestBacklog: 0,
+    capturedEventCount: init.counters?.eventCount ?? 0,
+    capturedErrorCount: init.counters?.errorCount ?? 0,
+    capturedSizeBytes: init.counters?.sizeBytes ?? 0,
+    budgetAlertCount: init.counters?.budgetAlertCount ?? 0,
+    performanceBudget: init.performanceBudget,
+    networkBudgetSample: {
+      total: 0,
+      failed: 0
+    },
+    lastFreezeNotices: new Map<string, number>(),
+    lastBudgetBreachAt: new Map<string, number>(),
+    queue: Promise.resolve(),
+    removeCdpListeners: [],
+    heapSnapshotCapture: null,
+    cleanupTimer: null,
+    scriptSourceMaps: new ScriptSourceMapTracker(),
+    scriptSourceMapFetches: createConcurrencyLimiter(SOURCE_MAP_FETCH_CONCURRENCY)
+  };
+
+  return runtime;
+}
+
+/** Concurrent callers share one check-then-create: Chrome allows a single offscreen document. */
+function ensureOffscreenDocument(): Promise<void> {
+  if (!offscreenDocumentReady) {
+    offscreenDocumentReady = createOffscreenDocumentIfMissing().finally(() => {
+      offscreenDocumentReady = null;
+    });
+  }
+
+  return offscreenDocumentReady;
+}
+
+async function createOffscreenDocumentIfMissing(): Promise<void> {
   await orphanedOffscreenCleanup;
 
   if (await hasOffscreenDocument()) {
@@ -4708,8 +5441,9 @@ async function hasOffscreenDocument(): Promise<boolean> {
 
 /**
  * An offscreen document that outlives a service worker restart keeps pipelines and
- * capture streams the new worker no longer tracks (runtime sessions are not restored),
- * and its port died with the old worker. Close it so the next session starts clean.
+ * capture streams the new worker does not track, and its port died with the old worker.
+ * Stopped recordings were flushed to the encrypted store when they stopped and are
+ * re-attached on demand, so close it and let the next request create a fresh one.
  */
 async function closeOrphanedOffscreenDocument(): Promise<void> {
   if (sessionsBySid.size > 0 || !(await hasOffscreenDocument())) {
@@ -4823,32 +5557,48 @@ async function cleanupCdpInstrumentation(
 function scheduleStoppedRuntimeCleanup(runtime: SessionRuntime): void {
   if (runtime.cleanupTimer !== null) {
     clearTimeout(runtime.cleanupTimer);
+    runtime.cleanupTimer = null;
   }
 
-  runtime.cleanupTimer = setTimeout(() => {
-    void disposeStoppedSession(runtime);
-  }, resolveRuntimeStoppedSessionTtlMs(runtime));
+  const expiresAt = resolveStoppedSessionExpiresAt(runtime);
+
+  if (chromeApi?.alarms) {
+    void scheduleRetentionAlarm(chromeApi.alarms, runtime.sid, expiresAt).catch((error) => {
+      console.warn("[WebBlackbox] failed to schedule the recording's retention", error);
+    });
+    return;
+  }
+
+  runtime.cleanupTimer = setTimeout(
+    () => {
+      void disposeStoppedSession(runtime);
+    },
+    Math.max(0, expiresAt - Date.now())
+  );
+}
+
+function resolveStoppedSessionExpiresAt(runtime: SessionRuntime): number {
+  return (runtime.stoppedAt ?? Date.now()) + resolveRuntimeStoppedSessionTtlMs(runtime);
 }
 
 function resolveRuntimeStoppedSessionTtlMs(runtime: SessionRuntime): number {
   return resolveStoppedSessionTtlMs(
-    STOPPED_SESSION_TTL_MS,
+    resolveUnexportedRetentionMs(runtime.profile.selection.profile),
     runtime.config.capturePolicy?.retention.localTtlMs
   );
 }
 
-async function rememberStoppedSession(runtime: SessionRuntime): Promise<void> {
-  const stoppedAt = runtime.stoppedAt ?? Date.now();
+async function rememberStoppedSessionRecord(runtime: SessionRuntime): Promise<void> {
   const record: StoppedSessionRecord = {
     sid: runtime.sid,
-    stoppedAt,
-    expiresAt: stoppedAt + resolveRuntimeStoppedSessionTtlMs(runtime)
+    stoppedAt: runtime.stoppedAt ?? Date.now(),
+    expiresAt: resolveStoppedSessionExpiresAt(runtime)
   };
 
   await updateStoppedSessionRecords((records) => upsertStoppedSessionRecord(records, record));
 }
 
-async function forgetStoppedSession(sid: string): Promise<void> {
+async function forgetStoppedSessionRecord(sid: string): Promise<void> {
   await updateStoppedSessionRecords((records) => removeStoppedSessionRecord(records, sid));
 }
 
@@ -4912,27 +5662,49 @@ async function sweepStalePipelineSessions(): Promise<void> {
 }
 
 async function disposeStoppedSession(runtime: SessionRuntime): Promise<void> {
-  if (!sessionsBySid.has(runtime.sid)) {
+  if (!sessionsBySid.has(runtime.sid) || disposingSids.has(runtime.sid)) {
     return;
   }
 
+  disposingSids.add(runtime.sid);
+
+  try {
+    await purgeStoppedSession(runtime);
+  } finally {
+    disposingSids.delete(runtime.sid);
+  }
+}
+
+async function purgeStoppedSession(runtime: SessionRuntime): Promise<void> {
   if (runtime.cleanupTimer !== null) {
     clearTimeout(runtime.cleanupTimer);
     runtime.cleanupTimer = null;
   }
 
+  await attachStoppedPipeline(runtime).catch((error) => {
+    console.warn("[WebBlackbox] cannot reach a restored recording to delete it", error);
+  });
   await flushBufferedPipelineEvents(runtime);
   await runtime.queue;
   await runtime.pipeline.flush().catch(() => undefined);
-  await runtime.pipeline
-    .close({
-      purge: true
-    })
-    .catch(() => undefined);
+  const purged = await runtime.pipeline.close({ purge: true }).then(
+    () => true,
+    (error: unknown) => {
+      console.warn("[WebBlackbox] failed to delete a stopped recording; retrying later", error);
+      return false;
+    }
+  );
   sessionsBySid.delete(runtime.sid);
-  await forgetStoppedSession(runtime.sid).catch((error) => {
+  await forgetStoppedSessionRecord(runtime.sid).catch((error) => {
     console.warn("[WebBlackbox] failed to drop stopped session record", error);
   });
+
+  if (purged) {
+    await forgetStoppedSession(runtime.sid);
+  } else {
+    // The snapshot stays, so the retry (or the next worker start) can rebuild and delete it.
+    await retryStoppedSessionPurge(runtime.sid);
+  }
 
   await refreshActionBadge();
 
@@ -5144,6 +5916,8 @@ async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void>
     pushSessionList();
   }
 
+  // Relations to other tabs are computed against the recorded tab's origin.
+  void tabsContextTracker?.updateSession(tabId, { url: rawUrl });
   rememberVisitedPageUrl(runtime, rawUrl);
 
   scheduleProfileReevaluation(runtime, "navigation");
@@ -5321,16 +6095,21 @@ function getSessionAnnotation(sid: string): SessionAnnotation {
   };
 }
 
+/**
+ * Tags and notes describe recordings that do not survive a browser restart, so they live in the
+ * in-memory `storage.session` area too; a copy left on disk by older builds is removed.
+ */
 async function loadSessionAnnotations(): Promise<void> {
   sessionAnnotations.clear();
+  await chromeApi?.storage?.local?.remove?.(SESSION_ANNOTATIONS_STORAGE_KEY).catch(() => undefined);
 
-  if (!chromeApi?.storage?.local?.get) {
+  const area = chromeApi?.storage?.session;
+
+  if (!area) {
     return;
   }
 
-  const values = await chromeApi.storage.local
-    .get(SESSION_ANNOTATIONS_STORAGE_KEY)
-    .catch(() => undefined);
+  const values = await area.get(SESSION_ANNOTATIONS_STORAGE_KEY).catch(() => undefined);
   const raw = asRecord(values?.[SESSION_ANNOTATIONS_STORAGE_KEY]);
 
   if (!raw) {
@@ -5350,7 +6129,9 @@ async function loadSessionAnnotations(): Promise<void> {
 }
 
 async function persistSessionAnnotations(): Promise<void> {
-  if (!chromeApi?.storage?.local?.set) {
+  const area = chromeApi?.storage?.session;
+
+  if (!area) {
     return;
   }
 
@@ -5363,7 +6144,7 @@ async function persistSessionAnnotations(): Promise<void> {
     };
   }
 
-  await chromeApi.storage.local.set({
+  await area.set({
     [SESSION_ANNOTATIONS_STORAGE_KEY]: serialized
   });
 }
@@ -5480,6 +6261,7 @@ async function restoreRuntimeState(): Promise<void> {
     }
   }
 
+  await restoreStoppedSessions();
   await setIdleBadge();
   pushSessionList();
   notifyOffscreenPipelineStatus();
@@ -5535,11 +6317,14 @@ async function notifyTabStatus(
   mode?: CaptureMode,
   sampling?: RecordingSampling,
   capturePolicy?: CapturePolicy,
-  injectedBridgeNonce?: string
+  injectedBridgeNonce?: string,
+  pointer?: PointerCaptureOptions
 ): Promise<void> {
   if (!chromeApi?.tabs?.sendMessage) {
     return;
   }
+
+  const runtime = active ? sessionsByTab.get(tabId) : undefined;
 
   await chromeApi.tabs
     .sendMessage(tabId, {
@@ -5549,7 +6334,9 @@ async function notifyTabStatus(
       mode,
       sampling,
       capturePolicy,
-      injectedBridgeNonce
+      injectedBridgeNonce,
+      pointer,
+      ...(runtime ? toScriptScanStatus(runtime) : {})
     })
     .catch(() => undefined);
 }

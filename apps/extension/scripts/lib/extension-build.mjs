@@ -68,7 +68,13 @@ export const EXTENSION_MANIFEST_PROFILES = ["dev", "store-safe"];
 // Cookie snapshots are collected through the CDP Storage domain via `debugger`,
 // and persistent host access comes from `<all_urls>`, so neither `cookies`
 // nor `activeTab` belongs in the dev/enterprise permission set.
+// The content script is not declared here: the service worker registers it with
+// `scripting.registerContentScripts` ("always" injection) or injects it on Start and re-injects
+// it into each committed frame of a recorded tab (`webNavigation`, "on-start" injection).
+// `<all_urls>` stays: webRequest, executeScript, registerContentScripts and captureVisibleTab
+// all need host access.
 const DEV_PERMISSIONS = [
+  "alarms",
   "debugger",
   "downloads",
   "offscreen",
@@ -76,10 +82,12 @@ const DEV_PERMISSIONS = [
   "storage",
   "tabCapture",
   "tabs",
+  "webNavigation",
   "webRequest"
 ];
 const STORE_SAFE_PERMISSIONS = [
   "activeTab",
+  "alarms",
   "downloads",
   "offscreen",
   "scripting",
@@ -159,17 +167,6 @@ export function createExtensionManifest({ version, release = false, profile = "d
       }
     }
   };
-
-  if (!storeSafe) {
-    manifest.content_scripts = [
-      {
-        matches: [...URL_MATCHES],
-        js: ["content.js"],
-        all_frames: true,
-        run_at: "document_start"
-      }
-    ];
-  }
 
   return manifest;
 }
@@ -458,17 +455,10 @@ function validateDevManifest(manifest, issues) {
     issues.push("Dev manifest must include <all_urls> host permission.");
   }
 
-  const contentScripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
-  const hasAllSitesContentScript = contentScripts.some(
-    (entry) =>
-      Array.isArray(entry?.matches) &&
-      entry.matches.includes("<all_urls>") &&
-      Array.isArray(entry?.js) &&
-      entry.js.includes("content.js")
-  );
-
-  if (!hasAllSitesContentScript) {
-    issues.push("Dev manifest must include the all-sites content script.");
+  if (Array.isArray(manifest?.content_scripts) && manifest.content_scripts.length > 0) {
+    issues.push(
+      "Dev manifest must not declare static content_scripts; the service worker registers the content script at runtime."
+    );
   }
 }
 

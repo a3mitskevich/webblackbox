@@ -130,6 +130,15 @@ export function maskValuePatterns(
 }
 
 /**
+ * Page text as recorded from the DOM, with the user's `dom` value patterns masked. The raw DOM
+ * snapshot and the readable labels of recorded actions (click, drag, hover, selection) both go
+ * through here, so a DOM rule masks the same text wherever it is recorded.
+ */
+export function maskDomText(text: string, rules: RedactionRules): string {
+  return maskValuePatterns(text, rules, "dom");
+}
+
+/**
  * A URL as recorded: as-is when masking is off; through the built-in sanitizer (query and
  * fragment stripped, ids templated) when its heuristics are on; otherwise with the user's query
  * parameters and URL value patterns masked.

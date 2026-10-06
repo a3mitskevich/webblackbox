@@ -2,6 +2,7 @@ import { EXTENSION_UNIT_LABEL_KEYS, type ExtensionMessageKey } from "../shared/i
 import { el } from "../shared/ui/dom.js";
 import {
   chipListField,
+  choiceField,
   fieldGroup,
   numberField,
   setFieldError,
@@ -38,6 +39,7 @@ const SECTION_LAYOUT: Record<
   ],
   pointer: [{ title: null, fields: ["mousemoveHz", "scrollHz", "actionWindowMs"] }],
   sampling: [
+    { title: "optionsGroupInjection", fields: ["contentInjection"] },
     { title: "optionsGroupStart", fields: ["startReloadOffer"] },
     { title: "optionsGroupBuffer", fields: ["ringBufferMinutes", "freezeOnError"] },
     {
@@ -102,6 +104,17 @@ function renderField(spec: GeneralFieldSpec, draft: GeneralDraft, t: Translate):
       });
     case "toggle":
       return toggleField({ ...text, id: spec.id, checked: spec.get(draft) });
+    case "choice":
+      return choiceField({
+        ...text,
+        id: spec.id,
+        value: spec.get(draft),
+        options: spec.options.map((option) => ({
+          value: option.value,
+          label: t(option.label),
+          description: t(option.description)
+        }))
+      });
     case "list":
       return chipListField({
         ...text,
@@ -176,6 +189,11 @@ export function applyGeneralFieldInput(
     }
     case "toggle":
       return { draft: spec.set(draft, control.checked), fieldId: spec.id, error: null };
+    case "choice":
+      // Only the radio that became checked fires; it carries the new value.
+      return control.checked
+        ? { draft: spec.set(draft, control.value), fieldId: spec.id, error: null }
+        : null;
     case "list":
       return {
         draft: spec.set(

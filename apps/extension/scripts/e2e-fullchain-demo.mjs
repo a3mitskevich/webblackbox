@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { constants } from "node:fs";
 import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   checkArchiveBasics,
@@ -76,6 +76,9 @@ const cdpClientOptions = { commandTimeoutMs: cdpCommandTimeoutMs };
 const FAILURE_CONSOLE_TAIL_LINES = 60;
 const captureMode = process.env.WB_E2E_MODE === "lite" ? "lite" : "full";
 const reloadAfterStart = (process.env.WB_E2E_RELOAD_AFTER_START ?? "0") === "1";
+// "on-start": the content script is injected on Start only, so the run controls the extension
+// from the popup page (there is no content-script runtime in the page before Start).
+const injectionMode = process.env.WB_E2E_INJECTION_MODE === "on-start" ? "on-start" : "always";
 const fullVisualCapture = normalizeFullVisualCaptureMode(
   process.env.WB_E2E_FULL_VISUAL_CAPTURE ??
     ((process.env.WB_E2E_RECORD_SCREEN ?? "0") === "1" ? "recording" : "screenshots")
@@ -90,6 +93,12 @@ const configureRecorderOptions = (process.env.WB_E2E_CONFIGURE_OPTIONS ?? "1") !
 // Full capture sampling and checks that the archive holds every body the policy asked for, or says
 // why one is missing; the demo page scenarios are skipped.
 const completenessMode = captureMode === "full" && (process.env.WB_E2E_COMPLETENESS ?? "0") === "1";
+// Full mode records script → source map references unless a profile turns them off. The
+// completeness run records the realistic fixture site, which has no minified demo bundle.
+const verifySourceMaps =
+  captureMode === "full" &&
+  !completenessMode &&
+  (process.env.WB_E2E_VERIFY_SOURCE_MAPS ?? "1") !== "0";
 const completenessDurationMs = readPositiveInteger(
   process.env.WB_E2E_COMPLETENESS_MS,
   REALISTIC_DEFAULT_DURATION_MS
@@ -270,7 +279,8 @@ async function main() {
   await demoClient.send("DOM.enable");
   state.demoClient = demoClient;
 
-  const usePopupControl = recordScreenInFullMode || usePopupUiActions;
+  const usePopupControl =
+    recordScreenInFullMode || usePopupUiActions || injectionMode === "on-start";
   let usePopupUiActionsEffective = recordScreenInFullMode ? false : usePopupUiActions;
   let control = null;
 
@@ -380,6 +390,12 @@ async function main() {
     });
   });
 
+  const injectionSetup =
+    injectionMode === "on-start"
+      ? await switchToOnDemandInjection(control, demoClient, demoContexts, extensionId)
+      : { ok: true, mode: injectionMode };
+  assert(injectionSetup.ok === true, "On-demand injection setup failed", injectionSetup);
+
   const recorderConfigured = configureRecorderOptions
     ? await configureE2eRecorderOptions(control, captureMode)
     : { ok: true, skipped: "default-recorder-options" };
@@ -423,6 +439,14 @@ async function main() {
         captureMode
       }
     );
+  }
+
+  if (injectionMode === "on-start") {
+    const recordedFrames = await listContentScriptContexts(demoClient, demoContexts, extensionId);
+    assert(recordedFrames.length > 0, "Content script missing in the recorded tab", {
+      recordedFrames,
+      reloadAfterStart
+    });
   }
 
   // The realistic page's held requests started before the capture (or, after a reload, inside it).
@@ -471,6 +495,13 @@ async function main() {
         scenarioResult.heldCompleted === scenarioResult.heldRequests),
     "Realistic page's held requests did not complete",
     scenarioResult
+  );
+
+  const minifiedErrorResult = verifySourceMaps ? await logMinifiedBundleError(demoClient) : null;
+  assert(
+    !verifySourceMaps || minifiedErrorResult?.ok === true,
+    "Minified demo bundle did not throw",
+    minifiedErrorResult
   );
 
   const fidelityScenario = checkAnyFidelity
@@ -628,6 +659,15 @@ async function main() {
     screenRecordingArchiveResult
   );
 
+  const sourceMapResult = verifySourceMaps
+    ? await verifyScriptSourceMapEvidence(exportedPath)
+    : { ok: true, skipped: "lite-mode-records-no-source-maps-by-default" };
+  assert(
+    sourceMapResult.ok,
+    "Exported archive missing script source map evidence",
+    sourceMapResult
+  );
+
   const screenshotResult =
     captureMode !== "full"
       ? { ok: true, skipped: "lite-screenshot-not-required" }
@@ -735,6 +775,7 @@ async function main() {
     control.kind === "popup" ? (control.useUiActions ? "ui" : "runtime") : control.kind
   );
   console.log("Reload after start:", reloadAfterStart);
+  console.log("Injection:", JSON.stringify(injectionSetup));
   console.log("Session:", sid);
   console.log("Export:", exportStatus.text);
   console.log("Archive:", exportedPath);
@@ -744,6 +785,7 @@ async function main() {
   console.log("Archive basics:", JSON.stringify(archiveBasics));
   console.log("Real-world archive evidence:", JSON.stringify(archiveEvidenceResult));
   console.log("Screen recording archive evidence:", JSON.stringify(screenRecordingArchiveResult));
+  console.log("Source maps:", JSON.stringify(sourceMapResult));
   console.log("Screenshots:", JSON.stringify(screenshotResult));
   console.log("Response body:", JSON.stringify(responseBodyResult));
   console.log("Realistic traffic:", JSON.stringify(trafficResult));
@@ -756,6 +798,68 @@ async function main() {
   console.log("Fullchain E2E passed.");
 
   await cleanup();
+}
+
+/** Logs an error thrown inside the minified demo bundle (captured as a console stack). */
+async function logMinifiedBundleError(demoClient) {
+  return demoClient.evaluate(`
+    (() => {
+      if (!window.wbStackDemo) {
+        return { ok: false, reason: 'bundle-not-loaded' };
+      }
+
+      try {
+        window.wbStackDemo.failCheckout();
+        return { ok: false, reason: 'did-not-throw' };
+      } catch (error) {
+        console.error(error);
+        return { ok: true, firstFrame: String(error.stack).split('\\n')[1]?.trim() ?? null };
+      }
+    })()
+  `);
+}
+
+/**
+ * The archive records the minified demo bundle's source map reference (Full mode records
+ * references by default), and the logged stack maps back to the bundle's original source.
+ */
+async function verifyScriptSourceMapEvidence(archivePath) {
+  const sdk = await import(pathToFileURL(playerSdkEntry).href);
+  const player = await sdk.WebBlackboxPlayer.open(new Uint8Array(await readFile(archivePath)), {
+    passphrase: exportPassphrase || undefined
+  });
+  const scripts = [
+    ...sdk.collectScriptSourceMaps(player.query({ types: ["sys.script"] })).values()
+  ];
+  const bundle = scripts.find((entry) => entry.script.endsWith("/demo/vendor/checkout.min.js"));
+  const errorEvent = player.events.find(
+    (event) =>
+      event.type === "console.entry" &&
+      sdk.extractEventStack(event).some((frame) => frame.url.includes("checkout.min.js"))
+  );
+  const mapPath = resolve(demoDir, "vendor", "checkout.min.js.map");
+  const symbolicator = sdk.createArchiveSymbolicator(player, [
+    sdk.createSourceMapFileProvider([
+      { path: "vendor/checkout.min.js.map", load: () => readFile(mapPath) }
+    ])
+  ]);
+  const frames = errorEvent
+    ? await symbolicator.symbolicateFrames(sdk.extractEventStack(errorEvent))
+    : [];
+  const top = frames[0];
+
+  return {
+    ok:
+      bundle?.sourceMap?.endsWith("/demo/vendor/checkout.min.js.map") === true &&
+      top?.status === "mapped" &&
+      top.original?.source.endsWith("vendor-src/checkout.js") === true &&
+      top.original?.line === 9,
+    scripts: scripts.map((entry) => ({ script: entry.script, sourceMap: entry.sourceMap })),
+    errorEventId: errorEvent?.id ?? null,
+    topFrame: top
+      ? { raw: top.frame.raw, status: top.status, original: top.original, error: top.error }
+      : null
+  };
 }
 
 async function ensureBuildInputs() {
@@ -1120,7 +1224,7 @@ function mimeTypeFor(path) {
     return "text/css; charset=utf-8";
   }
 
-  if (extension === ".json") {
+  if (extension === ".json" || extension === ".map") {
     return "application/json; charset=utf-8";
   }
 
@@ -1651,6 +1755,78 @@ async function evaluateControl(control, expression) {
 
     return control.client.evaluate(expression, { contextId: control.contextId });
   }
+}
+
+/**
+ * Switches the extension to injection on Start, waits until the all-sites registration is gone,
+ * reloads the demo page and checks that no content script runs in it before Start.
+ */
+async function switchToOnDemandInjection(control, demoClient, demoContexts, extensionId) {
+  const remaining = await evaluateControl(
+    control,
+    `
+      (async () => {
+        await chrome.storage.local.set({ 'webblackbox.injection': 'on-start' });
+        const deadline = Date.now() + 10000;
+
+        while (Date.now() < deadline) {
+          const scripts = await chrome.scripting.getRegisteredContentScripts();
+
+          if (!scripts.some((script) => script.id === 'webblackbox-content')) {
+            return [];
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        return (await chrome.scripting.getRegisteredContentScripts()).map((script) => script.id);
+      })()
+    `
+  );
+
+  if (!Array.isArray(remaining) || remaining.length > 0) {
+    return { ok: false, reason: "registration-kept", remaining };
+  }
+
+  await demoClient.send("Page.reload", { ignoreCache: true });
+  await waitFor(
+    () => demoClient.evaluate("document.readyState === 'complete' || null"),
+    15_000,
+    200,
+    "Demo page did not finish reloading"
+  );
+  await sleep(1_000);
+
+  const frames = await listContentScriptContexts(demoClient, demoContexts, extensionId);
+
+  return frames.length === 0
+    ? { ok: true, mode: "on-start", framesBeforeStart: 0 }
+    : { ok: false, reason: "content-script-before-start", frames };
+}
+
+/** Isolated-world contexts of this extension in which content.js has started. */
+async function listContentScriptContexts(pageClient, tracker, extensionId) {
+  const found = [];
+
+  for (const context of tracker.list()) {
+    if (context?.auxData?.type !== "isolated") {
+      continue;
+    }
+
+    const running = await pageClient
+      .evaluate(
+        `(() => chrome?.runtime?.id === ${JSON.stringify(extensionId)} &&
+          typeof globalThis.__webblackboxContentScript__?.isAlive === 'function')()`,
+        { contextId: context.id }
+      )
+      .catch(() => false);
+
+    if (running === true) {
+      found.push({ contextId: context.id, frameId: context.auxData?.frameId ?? null });
+    }
+  }
+
+  return found;
 }
 
 /**

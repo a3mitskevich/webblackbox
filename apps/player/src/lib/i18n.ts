@@ -3,6 +3,8 @@ import type { NetworkCacheSource, PrivacyViolationSubject } from "@webblackbox/p
 import EN_MESSAGES from "./locales/en.json" with { type: "json" };
 import RU_MESSAGES from "./locales/ru.json" with { type: "json" };
 import ZH_CN_MESSAGES from "./locales/zh-CN.json" with { type: "json" };
+import type { PointerLaneKind } from "./pointer-overlay.js";
+import type { StackViewMessages } from "./stack-view.js";
 import { readStoredText, writeStoredText } from "./storage.js";
 
 export type PlayerLocale = "en" | "ru" | "zh-CN";
@@ -31,7 +33,8 @@ type NetworkType =
   | "other";
 
 type CompareSignal = "regressed" | "stable" | "new" | "missing";
-type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action";
+type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action" | "pointer" | "tabs";
+type PointerRippleKind = "double" | "right" | "middle" | "hold" | "drag" | "dnd";
 type SortDirection = "asc" | "desc";
 type SelectionKind = "action" | "event" | "request";
 type SensitiveReason = "redacted-marker" | "hashed-value" | "sensitive-pattern";
@@ -334,6 +337,9 @@ type PlayerMessages = {
   screenshotPointerMarker: string;
   pointerReasonActionClick: string;
   pointerReasonMove: string;
+  pointerLaneLabel: string;
+  pointerKinds: Record<PointerLaneKind, string>;
+  pointerRippleLabels: Record<PointerRippleKind, string>;
   networkInitiatorDirect: string;
   networkInitiatorActionNumber: string;
   networkStatusPending: string;
@@ -353,6 +359,8 @@ type PlayerMessages = {
   summaryProfile: string;
   summaryProfileRule: string;
   summaryProfileDowngraded: string;
+  summaryParallelTabs: string;
+  summaryParallelTabsDetail: string;
   profileBannerCancelRuleChanged: string;
   profileBannerCancelMissing: string;
   profileBannerCancelEdited: string;
@@ -364,6 +372,7 @@ type PlayerMessages = {
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;
+  stackView: StackViewMessages;
 };
 
 export const PLAYER_LOCALE_STORAGE_KEY = "webblackbox.player.locale";
@@ -511,6 +520,11 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
   const formatScopeTag = (scope: "main" | "iframe"): string =>
     scope === "iframe" ? messages.scopeTagIframe : messages.scopeTagMain;
   const formatMarkerKind = (kind: MarkerKind): string => messages.markerKinds[kind];
+  const formatPointerKind = (kind: PointerLaneKind): string => messages.pointerKinds[kind];
+  const formatPointerRipple = (kind: string): string | null =>
+    kind in messages.pointerRippleLabels
+      ? messages.pointerRippleLabels[kind as PointerRippleKind]
+      : null;
   const formatNetworkType = (type: NetworkType): string => messages.networkTypes[type];
   const formatHiddenByProfile = (subject: PrivacyViolationSubject): string =>
     t("privacyHiddenByProfile", { what: messages.privacySubjects[subject] });
@@ -628,6 +642,8 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     formatPanelLabel,
     formatScopeTag,
     formatMarkerKind,
+    formatPointerKind,
+    formatPointerRipple,
     formatNetworkType,
     formatHiddenByProfile,
     formatCompareSignal,
