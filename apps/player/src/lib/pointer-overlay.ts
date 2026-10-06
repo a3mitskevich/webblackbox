@@ -4,15 +4,13 @@ import type {
   PointerTimelineEntry
 } from "@webblackbox/player-sdk";
 
-import { escapeHtml } from "./dom.js";
-
 /** How long a click ripple stays on the stage after the click. */
 export const RIPPLE_WINDOW_MS = 1_200;
 /** Most marks drawn on the pointer lane; denser sessions keep the most telling mark per slot. */
 export const POINTER_LANE_MAX_MARKS = 160;
 
-const RIPPLE_MIN_RADIUS = 6;
-const RIPPLE_MAX_RADIUS = 26;
+export const RIPPLE_MIN_RADIUS = 6;
+export const RIPPLE_MAX_RADIUS = 26;
 const RIPPLE_KINDS = new Set<PointerActionKind>([
   "click",
   "double",
@@ -46,18 +44,13 @@ export type PointerLaneMark = {
   /** Visual group: plain clicks, other buttons/holds, gestures, problems. */
   tone: "click" | "alt" | "gesture" | "problem";
   label: string;
+  /** What was clicked (a selector or text), so the UI can relabel the mark in another locale. */
+  target?: string;
   eventId?: string;
 };
 
-/** Rendered stage box and the viewport size the coordinates were recorded in. */
-export type OverlayFrame = {
-  width: number;
-  height: number;
-  sourceWidth: number;
-  sourceHeight: number;
-};
-
-const LANE_PRIORITY: Record<PointerLaneKind, number> = {
+/** Which mark a crowded slot of the pointer lane keeps (problems first, plain clicks last). */
+export const POINTER_LANE_PRIORITY: Record<PointerLaneKind, number> = {
   rage: 6,
   dead: 5,
   right: 4,
@@ -178,7 +171,7 @@ export function buildPointerLaneMarks(
     const slot = Math.min(maxMarks - 1, Math.floor(((mark.mono - first) / span) * maxMarks));
     const kept = slots.get(slot);
 
-    if (!kept || LANE_PRIORITY[mark.kind] > LANE_PRIORITY[kept.kind]) {
+    if (!kept || POINTER_LANE_PRIORITY[mark.kind] > POINTER_LANE_PRIORITY[kept.kind]) {
       slots.set(slot, mark);
     }
   }
@@ -186,56 +179,9 @@ export function buildPointerLaneMarks(
   return [...slots.values()].sort((left, right) => left.mono - right.mono);
 }
 
-/** Maps recorded viewport coordinates onto the stage (media letterboxed with `contain`). */
-export function projectOverlayPoint(
-  frame: OverlayFrame,
-  x: number,
-  y: number
-): { x: number; y: number } {
-  const scale = Math.min(frame.width / frame.sourceWidth, frame.height / frame.sourceHeight);
-  const renderedWidth = frame.sourceWidth * scale;
-  const renderedHeight = frame.sourceHeight * scale;
-  const offsetX = (frame.width - renderedWidth) / 2;
-  const offsetY = (frame.height - renderedHeight) / 2;
-
-  return {
-    x: offsetX + (x / frame.sourceWidth) * renderedWidth,
-    y: offsetY + (y / frame.sourceHeight) * renderedHeight
-  };
-}
-
-/** SVG markup for ripples, drag paths and short labels ("right", "hold", ...). */
-export function renderRippleSvg(
-  marks: readonly RippleMark[],
-  frame: OverlayFrame,
-  labelFor: (kind: PointerActionKind) => string | null
-): string {
-  return marks
-    .map((mark) => {
-      const point = projectOverlayPoint(frame, mark.x, mark.y);
-      const radius = RIPPLE_MIN_RADIUS + (RIPPLE_MAX_RADIUS - RIPPLE_MIN_RADIUS) * mark.progress;
-      const opacity = (1 - mark.progress).toFixed(3);
-      const kindClass = `preview-ripple-${mark.kind}`;
-      const path =
-        mark.startX !== undefined && mark.startY !== undefined
-          ? (() => {
-              const start = projectOverlayPoint(frame, mark.startX, mark.startY);
-              return `<line class="preview-drag-path" x1="${fixed(start.x)}" y1="${fixed(start.y)}" x2="${fixed(point.x)}" y2="${fixed(point.y)}" opacity="${opacity}"></line>`;
-            })()
-          : "";
-      const ring = `<circle class="preview-ripple ${kindClass}" cx="${fixed(point.x)}" cy="${fixed(point.y)}" r="${fixed(radius)}" opacity="${opacity}"></circle>`;
-      const second =
-        mark.kind === "double"
-          ? `<circle class="preview-ripple ${kindClass}" cx="${fixed(point.x)}" cy="${fixed(point.y)}" r="${fixed(radius * 0.6)}" opacity="${opacity}"></circle>`
-          : "";
-      const label = labelFor(mark.kind);
-      const text = label
-        ? `<text class="preview-ripple-label" x="${fixed(point.x + RIPPLE_MAX_RADIUS * 0.6)}" y="${fixed(point.y - RIPPLE_MAX_RADIUS * 0.6)}" opacity="${opacity}">${escapeHtml(label)}</text>`
-        : "";
-
-      return `${path}${ring}${second}${text}`;
-    })
-    .join("");
+/** `Click: #buy`, or the kind alone when the target is unknown. */
+export function formatPointerLaneLabel(kindLabel: string, target: string | undefined): string {
+  return target ? `${kindLabel}: ${target}` : kindLabel;
 }
 
 function toLaneMark(
@@ -249,7 +195,8 @@ function toLaneMark(
     mono,
     kind,
     tone: LANE_TONE[kind],
-    label: target ? `${labelFor(kind)}: ${target}` : labelFor(kind),
+    label: formatPointerLaneLabel(labelFor(kind), target),
+    ...(target ? { target } : {}),
     ...(eventId ? { eventId } : {})
   };
 }
@@ -269,8 +216,4 @@ function upperBound(actions: readonly OverlayPointerAction[], mono: number): num
   }
 
   return low;
-}
-
-function fixed(value: number): string {
-  return value.toFixed(2);
 }

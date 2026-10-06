@@ -69,7 +69,6 @@ export {
   type ArchiveLoadLimits
 } from "./archive-limits.js";
 
-import { formatTabsContextReport, readTabsContext } from "./tabs-context.js";
 import { buildPlaywrightActionLines, selectPlaywrightActions } from "./playwright-actions.js";
 import {
   buildPointerTimeline,
@@ -77,15 +76,37 @@ import {
   type PointerSignals,
   type PointerTimelineEntry
 } from "./pointer-insights.js";
+import {
+  assembleScreenRecording,
+  listScreenRecordings,
+  type ScreenRecordingBlob,
+  type ScreenRecordingBlobOptions,
+  type ScreenRecordingSegment
+} from "./screen-recordings.js";
+import { formatTabsContextReport, readTabsContext } from "./tabs-context.js";
 
 /** Player lifecycle status. */
+export * from "./activity-feed.js";
+export * from "./compare-endpoints.js";
+export * from "./console-entries.js";
+export * from "./event-inspection.js";
+export * from "./perf-series.js";
 export * from "./playwright-actions.js";
+export * from "./problems.js";
 export * from "./pointer-insights.js";
+export * from "./realtime-messages.js";
+export * from "./realtime-streams.js";
 export * from "./recording-profile.js";
-export * from "./tabs-context.js";
+export * from "./request-details.js";
+export * from "./route-chapters.js";
+export * from "./screen-recordings.js";
 export * from "./source-map.js";
 export * from "./stack-trace.js";
+export * from "./storage-state.js";
 export * from "./symbolicate.js";
+export * from "./tabs-context.js";
+export * from "./third-party.js";
+export * from "./webm-seekable.js";
 
 export type PlayerStatus = "idle" | "loaded";
 
@@ -620,6 +641,8 @@ export class WebBlackboxPlayer {
 
   private allPerformanceArtifactsCache: PerformanceArtifactEntry[] | null = null;
 
+  private screenRecordingsCache: ScreenRecordingSegment[] | null = null;
+
   private readonly requestToEventIds = new Map<string, string[]>();
 
   private readonly inverted = new Map<string, string[]>();
@@ -1010,6 +1033,33 @@ export class WebBlackboxPlayer {
       mime: blob.mime,
       bytes
     };
+  }
+
+  /**
+   * The tab video segments (one per `recordingId`, in start order) with their duration, size,
+   * chunk count and the chunks the archive lacks.
+   */
+  public getScreenRecordings(): ScreenRecordingSegment[] {
+    this.screenRecordingsCache ??= listScreenRecordings(this.query());
+    return this.screenRecordingsCache.map((segment) => ({ ...segment }));
+  }
+
+  /**
+   * The video of one segment: its chunks joined in recording order; a WebM also gets a Duration
+   * and Cues so that players show its length and seek (`raw: true` skips that). Throws
+   * {@link ScreenRecordingIncompleteError} naming the missing chunks.
+   */
+  public async getScreenRecordingBlob(
+    recordingId: string,
+    options: ScreenRecordingBlobOptions = {}
+  ): Promise<ScreenRecordingBlob> {
+    const segment = this.getScreenRecordings().find((entry) => entry.recordingId === recordingId);
+
+    if (!segment) {
+      throw new Error(`Unknown screen recording: ${recordingId}`);
+    }
+
+    return assembleScreenRecording(segment, (chunkId) => this.getBlob(chunkId), options);
   }
 
   /** Builds action-span aggregates and total counters for the selected range. */
@@ -1764,9 +1814,9 @@ export class WebBlackboxPlayer {
 
     const heading = options.title ?? "WebBlackbox Bug Report";
     const derived = this.buildDerived(options.range);
+    const pointerSignals = detectPointerSignals(scoped);
     // The whole session: what was open in parallel does not depend on the selected range.
     const tabsContext = readTabsContext(this.query());
-    const pointerSignals = detectPointerSignals(scoped);
     const notCaptured = this.getNetworkWaterfall(options.range)
       .filter((entry) => entry.responseBodySkip || entry.requestBodySkipReason)
       .slice(0, maxItems);
