@@ -32,6 +32,7 @@ import {
   shouldMaterializeLiteContentEvent
 } from "./lite-materialize.js";
 import { createLiteNetworkBaselineController } from "./lite-network.js";
+import { createNavigationRouter } from "./navigation-router.js";
 import { createOffscreenClient, createSessionPipelineClient } from "./offscreen-client.js";
 import { createOffscreenPortConnector } from "./offscreen-port.js";
 import { createPipelineBuffer } from "./pipeline-buffer.js";
@@ -127,13 +128,13 @@ function resolveUiActionTarget(
 
 const recordedTabWatch = createRecordedTabWatch(chromeApi, {
   onTabUpdated: (tabId, changeInfo) => {
-    inboundRouter.handleRecordedTabUpdated(tabId, changeInfo);
+    navigationRouter.handleRecordedTabUpdated(tabId, changeInfo);
   },
   onTabRemoved: (tabId) => {
     void sessionCommands.stopSession(tabId);
   },
   onFrameCommitted: (details) => {
-    inboundRouter.handleRecordedFrameCommitted(details);
+    navigationRouter.handleRecordedFrameCommitted(details);
   }
 });
 const screenshotArtifacts = createScreenshotArtifactsController({
@@ -319,7 +320,7 @@ const sessionCommands = createSessionCommands({
   ingestRawEvent,
   enqueueWithResult,
   updateSessionMetadataFromEvent: (runtime, event) => {
-    inboundRouter.updateSessionMetadataFromEvent(runtime, event);
+    navigationRouter.updateSessionMetadataFromEvent(runtime, event);
   },
   handleFreezeNotice: (runtime, reason) => {
     artifacts.handleFreezeNotice(runtime, reason);
@@ -329,6 +330,17 @@ const sessionCommands = createSessionCommands({
   createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
   loadPerformanceBudgetConfig,
   monotonicTime
+});
+const navigationRouter = createNavigationRouter({
+  sessionRegistry,
+  sessionCommands,
+  profile: profileReevaluation,
+  contentInjection,
+  storageArtifacts,
+  tabsContextTracker,
+  runtime: chromeApi?.runtime,
+  scripting: chromeApi?.scripting,
+  pushSessionList
 });
 const inboundRouter = createInboundRouter({
   sessionRegistry,
@@ -341,9 +353,6 @@ const inboundRouter = createInboundRouter({
   sessionExport,
   annotations,
   profile: profileReevaluation,
-  contentInjection,
-  storageArtifacts,
-  tabsContextTracker,
   runtime: chromeApi?.runtime,
   tabs: chromeApi?.tabs,
   scripting: chromeApi?.scripting,

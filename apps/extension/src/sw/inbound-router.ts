@@ -1,35 +1,17 @@
-import { sanitizeUrlForPrivacy, type WebBlackboxEvent } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
-import type {
-  ChromeTabChangeInfo,
-  FrameCommittedDetails,
-  PortLike,
-  RuntimeMessageSender
-} from "../shared/chrome-api.js";
+import type { PortLike, RuntimeMessageSender } from "../shared/chrome-api.js";
 import {
   PORT_NAMES,
   type ExtensionInboundMessage,
   type FullModeVisualCapture
 } from "../shared/messages.js";
 import type { SwPipelineStatusMessage } from "../shared/offscreen-messages.js";
-import { isEnterpriseOriginAllowed } from "../shared/options-storage.js";
 import type { ScreenRecordingController } from "./artifacts-screen-recording.js";
-import type { StorageArtifactsController } from "./artifacts-storage.js";
 import { isOffscreenDocumentPort } from "./at-rest-key.js";
-import {
-  shouldStopForCaptureScopeOriginChange,
-  shouldStopForEnterpriseOriginPolicy as shouldStopForEnterpriseOriginPolicyInput
-} from "./capture-scope.js";
 import type { ChromeApi } from "../shared/chrome-api.js";
-import {
-  injectContentScriptIntoFrame,
-  isInjectableFrameUrl,
-  type ContentInjectionController
-} from "./content-injection.js";
 import type { SessionExportController } from "./export-session.js";
 import { toScriptScanStatus } from "./full-cdp.js";
-import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
 import {
   OFFSCREEN_DISCONNECTED_ERROR,
   type OffscreenClient,
@@ -45,7 +27,6 @@ import {
 } from "./port-sender.js";
 import type { ProfileReevaluationController } from "./profile-reevaluation.js";
 import {
-  ensureContentScriptInjected,
   ensureInjectedHooks,
   toStatusPointer,
   toStatusSampling,
@@ -54,18 +35,14 @@ import {
 import type { SessionAnnotationsController } from "./session-annotations.js";
 import type { SessionCommandsController } from "./session-commands.js";
 import type { SessionListView } from "./session-list.js";
-import { resolveUrlOrigin, type SessionRegistry, type SessionRuntime } from "./session-registry.js";
+import type { SessionRegistry } from "./session-registry.js";
 import { startWithOptionalReload } from "./start-with-reload.js";
 import type { StopDrainTracker } from "./stop-drain.js";
-import type { TabsContextTracker } from "./tabs-context/tracker.js";
 
 /** Time slice a `content.events` batch gets before the loop yields to other tasks. */
 const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
 
-export type InboundRouterRuntimeApi = Pick<
-  NonNullable<ChromeApi["runtime"]>,
-  "id" | "getURL" | "getManifest"
->;
+export type InboundRouterRuntimeApi = Pick<NonNullable<ChromeApi["runtime"]>, "id" | "getURL">;
 export type InboundRouterTabsApi = Pick<NonNullable<ChromeApi["tabs"]>, "query" | "sendMessage">;
 
 export type InboundRouterDeps = {
@@ -84,9 +61,6 @@ export type InboundRouterDeps = {
   sessionExport: SessionExportController;
   annotations: SessionAnnotationsController;
   profile: ProfileReevaluationController;
-  contentInjection: Pick<ContentInjectionController, "currentMode">;
-  storageArtifacts: Pick<StorageArtifactsController, "rememberVisitedPageUrl">;
-  tabsContextTracker: TabsContextTracker | null;
   runtime: InboundRouterRuntimeApi | undefined;
   tabs: InboundRouterTabsApi | undefined;
   scripting: ScriptingApiLike | undefined;
@@ -124,16 +98,13 @@ export type InboundRouter = {
   /** The `mark-bug` keyboard command, relayed to the active tab's content script. */
   relayMarkerCommand: () => Promise<void>;
   notifyOffscreenPipelineStatus: () => void;
-  handleRecordedTabUpdated: (tabId: number, changeInfo: ChromeTabChangeInfo) => void;
-  handleRecordedFrameCommitted: (details: FrameCommittedDetails) => void;
-  updateSessionMetadataFromEvent: (runtime: SessionRuntime, event: WebBlackboxEvent) => void;
 };
 
 /**
  * Routes everything that reaches the service worker: extension ports and one-shot runtime
  * messages are trust-checked, parsed and dispatched to the session commands, the export flow,
  * the annotations store and the raw-event ingest; the offscreen document's port carries pipeline
- * events to the offscreen client; tab navigations of recorded tabs re-apply the capture scope.
+ * events to the offscreen client.
  */
 export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
   const { sessionRegistry, portRegistry, stopDrain } = deps;
@@ -641,189 +612,11 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
     });
   }
 
-  function handleRecordedTabUpdated(tabId: number, changeInfo: ChromeTabChangeInfo): void {
-    if (typeof changeInfo.url === "string" && changeInfo.url.length > 0) {
-      void handleTabUrlChanged(tabId, changeInfo.url);
-    }
-
-    if (changeInfo.status === "complete") {
-      void restoreTabInstrumentationAfterNavigation(tabId);
-    }
-  }
-
-  /**
-   * With injection on Start only, nothing registered covers a recorded tab's new documents, so
-   * each committed frame (reload, navigation, iframe added later) gets the content script right
-   * away.
-   */
-  function handleRecordedFrameCommitted(details: FrameCommittedDetails): void {
-    const runtime = sessionRegistry.getByTab(details.tabId);
-
-    if (
-      !runtime ||
-      runtime.stopping ||
-      runtime.stoppedAt ||
-      deps.contentInjection.currentMode() !== "on-start" ||
-      !isInjectableFrameUrl(details.url)
-    ) {
-      return;
-    }
-
-    void injectContentScriptIntoFrame(
-      { scripting: deps.scripting },
-      details.tabId,
-      details.frameId
-    );
-  }
-
-  async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<void> {
-    const runtime = sessionRegistry.getByTab(tabId);
-
-    if (!runtime || runtime.stopping || runtime.stoppedAt) {
-      return;
-    }
-
-    await ensureContentScriptInjected(deps.scripting, tabId);
-    await ensureInjectedHooks(deps.scripting, tabId, runtime.injectedBridgeNonce);
-    await deps.sessionCommands.notifyTabStatus(
-      tabId,
-      true,
-      runtime.sid,
-      runtime.mode,
-      toStatusSampling(runtime),
-      runtime.config.capturePolicy,
-      runtime.injectedBridgeNonce,
-      toStatusPointer(runtime)
-    );
-    // Title, meta tags and selectors are only reliable once the page has loaded.
-    deps.profile.scheduleProfileReevaluation(runtime, "page-loaded");
-  }
-
-  async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void> {
-    const runtime = sessionRegistry.getByTab(tabId);
-
-    if (!runtime || runtime.stoppedAt) {
-      return;
-    }
-
-    const nextUrl = sanitizeUrlForPrivacy(rawUrl);
-    const nextOrigin = resolveUrlOrigin(nextUrl);
-
-    if (shouldStopOnOriginChange(runtime, nextOrigin)) {
-      await deps.sessionCommands.stopSession(tabId);
-      return;
-    }
-
-    if (await shouldStopForEnterpriseOriginPolicy(nextOrigin)) {
-      await deps.sessionCommands.stopSession(tabId);
-      return;
-    }
-
-    if (nextUrl !== runtime.url) {
-      runtime.url = nextUrl;
-      deps.pushSessionList();
-    }
-
-    // Relations to other tabs are computed against the recorded tab's origin.
-    void deps.tabsContextTracker?.updateSession(tabId, { url: rawUrl });
-    deps.storageArtifacts.rememberVisitedPageUrl(runtime, rawUrl);
-
-    deps.profile.scheduleProfileReevaluation(runtime, "navigation");
-  }
-
-  function shouldStopOnOriginChange(runtime: SessionRuntime, nextOrigin: string | null): boolean {
-    return shouldStopForCaptureScopeOriginChange({
-      scopeOrigin: runtime.scopeOrigin,
-      nextOrigin,
-      stopOnOriginChange: runtime.config.capturePolicy?.scope.stopOnOriginChange === true,
-      activeTabScopedBuild: isActiveTabScopedBuild()
-    });
-  }
-
-  async function shouldStopForEnterpriseOriginPolicy(nextOrigin: string | null): Promise<boolean> {
-    const enterprisePolicy = await deps.profile.loadEnterprisePolicy();
-
-    return shouldStopForEnterpriseOriginPolicyInput({
-      nextOrigin,
-      isEnterpriseOriginAllowed: (origin) => isEnterpriseOriginAllowed(origin, enterprisePolicy)
-    });
-  }
-
-  function isActiveTabScopedBuild(): boolean {
-    const manifest = deps.runtime?.getManifest?.();
-    const permissions = new Set(manifest?.permissions ?? []);
-    const hostPermissions = manifest?.host_permissions ?? [];
-
-    return permissions.has("activeTab") && hostPermissions.length === 0;
-  }
-
-  function updateSessionMetadataFromEvent(runtime: SessionRuntime, event: WebBlackboxEvent): void {
-    void updateSessionMetadataFromEventAsync(runtime, event).catch((error) => {
-      console.warn("[WebBlackbox] failed to update session navigation metadata", error);
-    });
-  }
-
-  async function updateSessionMetadataFromEventAsync(
-    runtime: SessionRuntime,
-    event: WebBlackboxEvent
-  ): Promise<void> {
-    if (
-      event.type !== "nav.commit" &&
-      event.type !== "nav.history.push" &&
-      event.type !== "nav.history.replace" &&
-      event.type !== "nav.hash"
-    ) {
-      return;
-    }
-
-    const payload = asRecord(event.data);
-
-    if (!shouldUpdateSessionMetadataFromNavigation(event, payload)) {
-      return;
-    }
-
-    const frame = asRecord(payload?.frame);
-    const nextUrl = asString(payload?.url) ?? asString(frame?.url);
-    const nextTitle = asString(payload?.title) ?? asString(payload?.documentTitle);
-    let changed = false;
-
-    const sanitizedNextUrl = nextUrl ? sanitizeUrlForPrivacy(nextUrl) : undefined;
-
-    if (sanitizedNextUrl && sanitizedNextUrl !== runtime.url) {
-      const nextOrigin = resolveUrlOrigin(sanitizedNextUrl);
-
-      if (shouldStopOnOriginChange(runtime, nextOrigin)) {
-        await deps.sessionCommands.stopSession(runtime.tabId);
-        return;
-      }
-
-      if (await shouldStopForEnterpriseOriginPolicy(nextOrigin)) {
-        await deps.sessionCommands.stopSession(runtime.tabId);
-        return;
-      }
-
-      runtime.url = sanitizedNextUrl;
-      changed = true;
-    }
-
-    if (nextTitle && nextTitle.trim().length > 0 && nextTitle !== runtime.title) {
-      runtime.title = nextTitle.trim();
-      changed = true;
-    }
-
-    if (changed) {
-      deps.pushSessionList();
-    }
-  }
-
   return {
     handlePortConnect,
     handleRuntimeMessage,
     relayMarkerCommand,
-    notifyOffscreenPipelineStatus,
-    handleRecordedTabUpdated,
-    handleRecordedFrameCommitted,
-    updateSessionMetadataFromEvent
+    notifyOffscreenPipelineStatus
   };
 }
 
@@ -888,16 +681,6 @@ function logInboundMessageFailure(
   });
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
 }

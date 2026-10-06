@@ -215,13 +215,9 @@ function createHarness(overrides: Partial<InboundRouterDeps> = {}): Harness {
       resolveProfilePreview: vi.fn(async () => ({ kind: "sw.profile-preview" }) as never),
       scheduleProfileReevaluation: vi.fn()
     },
-    contentInjection: { currentMode: () => "on-start" },
-    storageArtifacts: { rememberVisitedPageUrl: vi.fn() },
-    tabsContextTracker: null,
     runtime: {
       id: EXTENSION_ID,
-      getURL: (path: string) => `${EXTENSION_ORIGIN}/${path}`,
-      getManifest: () => ({ permissions: [] })
+      getURL: (path: string) => `${EXTENSION_ORIGIN}/${path}`
     },
     tabs: {
       query: vi.fn(async () => [{ id: 7 }]),
@@ -833,96 +829,5 @@ describe("relayMarkerCommand", () => {
     await router.relayMarkerCommand();
 
     expect(deps.tabs?.sendMessage).not.toHaveBeenCalled();
-  });
-});
-
-describe("recorded tab navigation", () => {
-  it("updates the session url on a same-origin change and pushes the list", async () => {
-    const { router, deps, sessionRegistry } = createHarness();
-    const runtime = createRuntime();
-    sessionRegistry.register(runtime);
-
-    router.handleRecordedTabUpdated(7, { url: "https://page.test/other" });
-    await flushMicrotasks();
-
-    expect(runtime.url).toBe("https://page.test/other");
-    expect(deps.pushSessionList).toHaveBeenCalled();
-    expect(deps.sessionCommands.stopSession).not.toHaveBeenCalled();
-    expect(deps.storageArtifacts.rememberVisitedPageUrl).toHaveBeenCalledWith(
-      runtime,
-      "https://page.test/other"
-    );
-    expect(deps.profile.scheduleProfileReevaluation).toHaveBeenCalledWith(runtime, "navigation");
-  });
-
-  it("stops the session when the origin changes and the policy asks for it", async () => {
-    const { router, deps, sessionRegistry } = createHarness();
-    const runtime = createRuntime();
-    runtime.config = {
-      ...runtime.config,
-      capturePolicy: {
-        ...runtime.config.capturePolicy!,
-        scope: { ...runtime.config.capturePolicy!.scope, stopOnOriginChange: true }
-      }
-    };
-    sessionRegistry.register(runtime);
-
-    router.handleRecordedTabUpdated(7, { url: "https://other.test/app" });
-    await vi.waitFor(() => {
-      expect(deps.sessionCommands.stopSession).toHaveBeenCalledWith(7);
-    });
-  });
-
-  it("ignores updates for tabs without a recording", async () => {
-    const { router, deps } = createHarness();
-
-    router.handleRecordedTabUpdated(7, { url: "https://page.test/other", status: "complete" });
-    await flushMicrotasks();
-
-    expect(deps.pushSessionList).not.toHaveBeenCalled();
-    expect(deps.sessionCommands.notifyTabStatus).not.toHaveBeenCalled();
-  });
-
-  it("restores instrumentation once a recorded tab completes a navigation", async () => {
-    const { router, deps, sessionRegistry } = createHarness();
-    const runtime = createRuntime();
-    sessionRegistry.register(runtime);
-
-    router.handleRecordedTabUpdated(7, { status: "complete" });
-    await vi.waitFor(() => {
-      expect(deps.sessionCommands.notifyTabStatus).toHaveBeenCalledWith(
-        7,
-        true,
-        "S-1",
-        "lite",
-        expect.anything(),
-        expect.anything(),
-        runtime.injectedBridgeNonce,
-        expect.anything()
-      );
-    });
-    expect(deps.profile.scheduleProfileReevaluation).toHaveBeenCalledWith(runtime, "page-loaded");
-  });
-
-  it("injects the content script into committed frames of a recorded tab", () => {
-    const { router, deps, sessionRegistry } = createHarness();
-    sessionRegistry.register(createRuntime());
-
-    router.handleRecordedFrameCommitted({ tabId: 7, frameId: 2, url: "https://page.test/frame" });
-
-    expect(deps.scripting?.executeScript).toHaveBeenCalledWith(
-      expect.objectContaining({
-        target: { tabId: 7, frameIds: [2] },
-        world: "ISOLATED"
-      })
-    );
-  });
-
-  it("skips frames that are not injectable or not recorded", () => {
-    const { router, deps } = createHarness();
-
-    router.handleRecordedFrameCommitted({ tabId: 7, frameId: 0, url: "chrome://settings" });
-
-    expect(deps.scripting?.executeScript).not.toHaveBeenCalled();
   });
 });
