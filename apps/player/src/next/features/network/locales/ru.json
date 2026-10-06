@@ -188,5 +188,11 @@
   "protocol_sse": "SSE",
   "conversationLabel": "Переписка",
   "openInNetwork": "Открыть в «Сети»",
-  "socketNoUrl": "Открыт до начала записи ({id})"
+  "socketNoUrl": "Открыт до начала записи ({id})",
+  "cutShort": "обрезано",
+  "socketSwitching": "{status} Смена протокола",
+  "initiatorUrl": "URL",
+  "anonymousFunction": "(анонимная)",
+  "codeLabel": "Код",
+  "replayRefusedBody": "Не отправлен: в записи нет полного тела запроса"
 }

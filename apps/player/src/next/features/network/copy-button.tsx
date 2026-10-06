@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "../../components/icon.js";
+import { toastManager } from "../../components/toasts.js";
 import { useFeatureI18n } from "../messages.js";
 import { networkMessages } from "./messages.js";
 
-/** How long "Copied" stays next to the button. */
+/** How long the copy status stays in the button's (test) hook. */
 const COPIED_MS = 1_600;
 
 export type CopyStatus = "idle" | "copied" | "failed";
@@ -20,32 +21,44 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 }
 
 /** A copy action with its own short-lived status ("Copied" / "Could not copy"). */
-export function useCopyStatus(): [CopyStatus, (text: string | null) => Promise<void>] {
+export function useCopyStatus(): [CopyStatus, (text: string | null) => Promise<CopyStatus>] {
   const [status, setStatus] = useState<CopyStatus>("idle");
   const timer = useRef<number | null>(null);
+  const isMounted = useRef(false);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    isMounted.current = true;
+
+    return () => {
+      isMounted.current = false;
+
       if (timer.current !== null) {
         window.clearTimeout(timer.current);
       }
-    },
-    []
-  );
+    };
+  }, []);
 
-  const copy = async (text: string | null): Promise<void> => {
+  const copy = async (text: string | null): Promise<CopyStatus> => {
     if (text === null) {
-      return;
+      return "idle";
     }
 
     const ok = await copyToClipboard(text);
-    setStatus(ok ? "copied" : "failed");
+    const result: CopyStatus = ok ? "copied" : "failed";
+
+    // The clipboard answers asynchronously: the button may be gone by then (another request).
+    if (!isMounted.current) {
+      return result;
+    }
+
+    setStatus(result);
 
     if (timer.current !== null) {
       window.clearTimeout(timer.current);
     }
 
     timer.current = window.setTimeout(() => setStatus("idle"), COPIED_MS);
+    return result;
   };
 
   return [status, copy];
@@ -71,6 +84,18 @@ export function CopyButton({
   const t = useFeatureI18n(networkMessages);
   const [status, copy] = useCopyStatus();
 
+  const handleClick = async (): Promise<void> => {
+    const result = await copy(getText());
+
+    // The player's toasts carry the feedback (a polite live region, shared with other features).
+    if (result !== "idle") {
+      toastManager.add({
+        title: result === "copied" ? t("copied") : t("copyFailed"),
+        description: label
+      });
+    }
+  };
+
   return (
     <span className="ncopy">
       <button
@@ -78,17 +103,14 @@ export function CopyButton({
         className={compact ? "btn small icon-only" : "btn small"}
         disabled={disabled}
         aria-label={compact ? label : undefined}
-        onClick={() => void copy(getText())}
+        onClick={() => void handleClick()}
         data-testid={testId}
       >
         <Icon name="copy" />
         {compact ? null : <span>{label}</span>}
       </button>
-      <span
-        className="ncopy-status"
-        role="status"
-        data-testid={testId ? `${testId}-status` : undefined}
-      >
+      {/* The result for tests and scripts; people get the toast. */}
+      <span className="visually-hidden" data-testid={testId ? `${testId}-status` : undefined}>
         {status === "copied" ? t("copied") : status === "failed" ? t("copyFailed") : ""}
       </span>
     </span>

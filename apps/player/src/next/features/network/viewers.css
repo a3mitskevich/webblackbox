@@ -21,6 +21,19 @@
 .ncode-view .vlist.ncode {
   min-height: 120px;
 }
+/* Scrolling code, hex dumps and message lists take focus (arrows scroll or select). */
+.vlist.ncode,
+.hex,
+.frames,
+.convo {
+  outline: none;
+}
+.vlist.ncode:focus-visible,
+.hex:focus-visible,
+.frames:focus-visible,
+.convo:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
 .ncode-line {
   display: flex;
   height: 19px;

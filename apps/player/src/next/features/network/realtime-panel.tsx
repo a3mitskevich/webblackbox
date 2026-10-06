@@ -4,7 +4,7 @@ import {
   type Rect,
   type Virtualizer
 } from "@tanstack/react-virtual";
-import { useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, type KeyboardEvent } from "react";
 
 import {
   isRealtimePayloadCut,
@@ -18,6 +18,7 @@ import { ListDetailsSplit } from "../../components/split-layout.js";
 import { useController, useI18n, usePlayerState } from "../../context.js";
 import { useFeatureI18n } from "../messages.js";
 import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
+import { nextListIndex, pageRowsOf, rowDomId } from "./list-keys.js";
 import { networkMessages } from "./messages.js";
 import {
   directionOf,
@@ -90,6 +91,97 @@ function useShownStream(model: NetworkModel | null): RealtimeStream | null {
   }, [model, selection, chosen]);
 }
 
+/** Index of the last message at or before `mono` (labels are in time order), or -1. */
+function lastIndexAtOrBefore(labels: readonly MessageLabel[], mono: number): number {
+  let low = 0;
+  let high = labels.length;
+
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+
+    if ((labels[middle]?.entry.mono ?? Infinity) <= mono) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  return low - 1;
+}
+
+type BubbleProps = {
+  label: MessageLabel;
+  index: number;
+  domId: string;
+  isSelected: boolean;
+  isFuture: boolean;
+  minMono: number;
+  measureRef: (element: HTMLElement | null) => void;
+  onSelect: (eventId: string) => void;
+};
+
+/**
+ * One message of the conversation. Memoized: the list re-renders on every playhead step while
+ * playing, a bubble only when it is selected or crosses the playhead.
+ */
+const Bubble = memo(function Bubble({
+  label,
+  index,
+  domId,
+  isSelected,
+  isFuture,
+  minMono,
+  measureRef,
+  onSelect
+}: BubbleProps) {
+  const t = useFeatureI18n(networkMessages);
+  const i18n = useI18n();
+  const locale = usePlayerState((state) => state.locale);
+  const { entry } = label;
+  const direction = directionOf(entry);
+  const className = [
+    "bubble",
+    direction,
+    label.service ? "nservice" : "",
+    isSelected ? "nsel" : "",
+    isFuture ? "nfuture" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div ref={measureRef} data-index={index} className={`bubble-row ${direction}`}>
+      <div
+        id={domId}
+        role="option"
+        aria-selected={isSelected}
+        className={className}
+        onClick={() => onSelect(entry.eventId)}
+        data-testid="conversation-message"
+        data-event-id={entry.eventId}
+        data-direction={direction}
+      >
+        <div className="bubble-head">
+          <span className="ndir" role="img" aria-label={t(`direction_${direction}`)}>
+            <Icon name={direction} />
+          </span>
+          <b>{label.title ?? kindText(t, label.parsed.records[0])}</b>
+          <span className="muted mono">
+            {formatOffset(entry.mono - minMono, locale)} ·{" "}
+            {i18n.formatByteSize(realtimeMessageBytes(entry))}
+          </span>
+          {isRealtimePayloadCut(entry) ? <span className="ncut">{t("cutShort")}</span> : null}
+        </div>
+        {label.service ? null : <div className="bubble-text mono">{label.preview}</div>}
+      </div>
+    </div>
+  );
+});
+
+/**
+ * The conversation as a listbox: ↑ / ↓, PageUp / PageDown, Home / End move the selection while
+ * it has focus; bubbles have variable heights (measured), keyed by event id.
+ */
 function Conversation({
   labels,
   selectedId,
@@ -101,27 +193,33 @@ function Conversation({
 }) {
   const controller = useController();
   const t = useFeatureI18n(networkMessages);
-  const i18n = useI18n();
-  const locale = usePlayerState((state) => state.locale);
   const follow = usePlayerState((state) => state.follow);
   const isPlaying = usePlayerState((state) => state.isPlaying);
   const nowMono = useNowMono();
+  const idPrefix = useId();
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: labels.length,
     getScrollElement: () => parentRef.current,
     estimateSize: (index) => (labels[index]?.service ? SERVICE_ESTIMATE : BUBBLE_ESTIMATE),
+    // Measured heights follow the message, not its position in the (filtered) list.
+    getItemKey: (index) => labels[index]?.entry.eventId ?? index,
     overscan: OVERSCAN,
     observeElementRect: observeRectWithFallback,
     // React 19 warns about flushSync inside lifecycle methods (LIBRARIES.md).
     useFlushSync: false
   });
-  const lastPast = labels.reduce(
-    (found, label, index) => (label.entry.mono <= nowMono ? index : found),
-    -1
-  );
+  const lastPast = lastIndexAtOrBefore(labels, nowMono);
   const selectedIndex = labels.findIndex((label) => label.entry.eventId === selectedId);
   const target = isPlaying && follow ? lastPast : selectedIndex;
+
+  const select = useCallback(
+    (eventId: string) => {
+      controller.select({ kind: "event", id: eventId });
+      controller.openDetails();
+    },
+    [controller]
+  );
 
   useEffect(() => {
     if (target >= 0) {
@@ -134,13 +232,33 @@ function Conversation({
   }
 
   const items = virtualizer.getVirtualItems();
+  const isSelectedMounted = items.some((item) => item.index === selectedIndex);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    const pageRows = pageRowsOf(event.currentTarget, BUBBLE_ESTIMATE);
+    const index = nextListIndex(event.key, selectedIndex, labels.length, pageRows);
+    const next = index === null ? undefined : labels[index];
+
+    if (!next) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (index !== selectedIndex) {
+      select(next.entry.eventId);
+    }
+  };
 
   return (
     <div
       ref={parentRef}
       className="convo"
       role="listbox"
+      tabIndex={0}
       aria-label={t("conversationLabel")}
+      aria-activedescendant={isSelectedMounted ? rowDomId(idPrefix, selectedIndex) : undefined}
+      onKeyDown={handleKeyDown}
       data-testid="conversation"
     >
       <div className="vlist-canvas" style={{ height: virtualizer.getTotalSize() }}>
@@ -151,57 +269,19 @@ function Conversation({
           {items.map((item) => {
             const label = labels[item.index];
 
-            if (!label) {
-              return null;
-            }
-
-            const { entry } = label;
-            const direction = directionOf(entry);
-            const isSelected = entry.eventId === selectedId;
-            const className = [
-              "bubble",
-              direction,
-              label.service ? "nservice" : "",
-              isSelected ? "nsel" : "",
-              entry.mono > nowMono ? "nfuture" : ""
-            ]
-              .filter(Boolean)
-              .join(" ");
-
-            return (
-              <div
-                key={entry.eventId}
-                ref={virtualizer.measureElement}
-                data-index={item.index}
-                className={`bubble-row ${direction}`}
-              >
-                <div
-                  role="option"
-                  aria-selected={isSelected}
-                  className={className}
-                  onClick={() => {
-                    controller.select({ kind: "event", id: entry.eventId });
-                    controller.openDetails();
-                  }}
-                  data-testid="conversation-message"
-                  data-event-id={entry.eventId}
-                  data-direction={direction}
-                >
-                  <div className="bubble-head">
-                    <span className="ndir" role="img" aria-label={t(`direction_${direction}`)}>
-                      <Icon name={direction} />
-                    </span>
-                    <b>{label.title ?? kindText(t, label.parsed.records[0])}</b>
-                    <span className="muted mono">
-                      {formatOffset(entry.mono - minMono, locale)} ·{" "}
-                      {i18n.formatByteSize(realtimeMessageBytes(entry))}
-                    </span>
-                    {isRealtimePayloadCut(entry) ? <span className="ncut">cut</span> : null}
-                  </div>
-                  {label.service ? null : <div className="bubble-text mono">{label.preview}</div>}
-                </div>
-              </div>
-            );
+            return label ? (
+              <Bubble
+                key={item.key}
+                label={label}
+                index={item.index}
+                domId={rowDomId(idPrefix, item.index)}
+                isSelected={label.entry.eventId === selectedId}
+                isFuture={label.entry.mono > nowMono}
+                minMono={minMono}
+                measureRef={virtualizer.measureElement}
+                onSelect={select}
+              />
+            ) : null;
           })}
         </div>
       </div>

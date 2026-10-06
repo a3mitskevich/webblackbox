@@ -31,29 +31,74 @@ function playerKey(player: WebBlackboxPlayer | null): string {
   return String(id);
 }
 
+/** Decrypted bodies kept per archive; the least recently opened go first beyond this. */
+export const BLOB_CACHE_BYTES = 64 * 1024 * 1024;
+
+type BlobCacheEntry = { pending: Promise<BlobValue>; bytes: number };
+export type BlobCache = { entries: Map<string, BlobCacheEntry>; bytes: number };
+
 /** Blobs read once per archive (bodies are immutable; reading decrypts and checks integrity). */
-const blobCache = new WeakMap<WebBlackboxPlayer, Map<string, Promise<BlobValue>>>();
+const blobCaches = new WeakMap<WebBlackboxPlayer, BlobCache>();
 
 function readBlob(player: WebBlackboxPlayer, hash: string): Promise<BlobValue> {
-  let byHash = blobCache.get(player);
+  let cache = blobCaches.get(player);
 
-  if (!byHash) {
-    byHash = new Map();
-    blobCache.set(player, byHash);
+  if (!cache) {
+    cache = { entries: new Map(), bytes: 0 };
+    blobCaches.set(player, cache);
   }
 
-  const cached = byHash.get(hash);
+  return readCachedBlob(cache, hash, () => player.getBlob(hash));
+}
+
+/** LRU over blob reads: a hit moves to the back, a resolved read may evict from the front. */
+export function readCachedBlob(
+  cache: BlobCache,
+  hash: string,
+  read: () => Promise<BlobValue>,
+  budget = BLOB_CACHE_BYTES
+): Promise<BlobValue> {
+  const cached = cache.entries.get(hash);
 
   if (cached) {
-    return cached;
+    cache.entries.delete(hash);
+    cache.entries.set(hash, cached);
+    return cached.pending;
   }
 
-  const pending = player.getBlob(hash);
-  const cache = byHash;
-  // A failed read is not cached: opening the request again retries it.
-  pending.catch(() => cache.delete(hash));
-  cache.set(hash, pending);
-  return pending;
+  const entry: BlobCacheEntry = { pending: read(), bytes: 0 };
+  cache.entries.set(hash, entry);
+  entry.pending.then(
+    (value) => {
+      if (cache.entries.get(hash) !== entry) {
+        return;
+      }
+
+      entry.bytes = value?.bytes.byteLength ?? 0;
+      cache.bytes += entry.bytes;
+      evictBlobs(cache, hash, budget);
+    },
+    // A failed read is not cached: opening the request again retries it.
+    () => {
+      if (cache.entries.get(hash) === entry) {
+        cache.entries.delete(hash);
+      }
+    }
+  );
+  return entry.pending;
+}
+
+function evictBlobs(cache: BlobCache, keep: string, budget: number): void {
+  for (const [hash, entry] of cache.entries) {
+    if (cache.bytes <= budget) {
+      return;
+    }
+
+    if (hash !== keep) {
+      cache.entries.delete(hash);
+      cache.bytes -= entry.bytes;
+    }
+  }
 }
 
 /**

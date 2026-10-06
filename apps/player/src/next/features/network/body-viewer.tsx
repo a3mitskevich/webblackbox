@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 
 import { useI18n } from "../../context.js";
 import { useFeatureI18n } from "../messages.js";
@@ -25,15 +25,16 @@ function viewsOf(content: BodyContent): BodyView[] {
 }
 
 function ImagePreview({ bytes, mime }: { bytes: Uint8Array; mime: string }) {
-  const [url, setUrl] = useState<string | null>(null);
+  // Created while rendering, so a new image never shows the previous (already revoked) URL;
+  // revoked when the image changes or unmounts. (Not StrictMode-safe: the player has none.)
+  const url = useMemo(
+    () => URL.createObjectURL(new Blob([bytes.slice()], { type: mime })),
+    [bytes, mime]
+  );
 
-  useEffect(() => {
-    const objectUrl = URL.createObjectURL(new Blob([bytes.slice()], { type: mime }));
-    setUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [bytes, mime]);
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
 
-  return url ? <img className="nbody-image" src={url} alt="" data-testid="body-image" /> : null;
+  return <img className="nbody-image" src={url} alt="" data-testid="body-image" />;
 }
 
 /**
@@ -51,7 +52,12 @@ export function BodyViewer({ content, testId }: BodyViewerProps) {
   const views = viewsOf(shown);
   const view = views.includes(bodyView) ? bodyView : (views[0] as BodyView);
   const canMask = content.kind === "json" || content.kind === "text";
-  const copyText = bodyCopyText(shown);
+  const canCopy = shown.kind === "json" || shown.kind === "text";
+  // The pretty-printed JSON only when the raw view shows it (the copy text is built on click).
+  const rawJson = useMemo(
+    () => (shown.kind === "json" && view === "raw" ? JSON.stringify(shown.value, null, 2) : null),
+    [shown, view]
+  );
 
   if (shown.kind === "empty") {
     return (
@@ -102,21 +108,21 @@ export function BodyViewer({ content, testId }: BodyViewerProps) {
             {t("maskSecrets")}
           </label>
         ) : null}
-        {copyText !== null ? (
-          <CopyButton label={t("copyBody")} getText={() => copyText} testId={`${testId}-copy`} />
+        {canCopy ? (
+          <CopyButton
+            label={t("copyBody")}
+            getText={() => bodyCopyText(shown)}
+            testId={`${testId}-copy`}
+          />
         ) : null}
       </div>
       {shown.kind === "image" ? <ImagePreview bytes={shown.bytes} mime={shown.mime} /> : null}
       {shown.kind === "binary" ? <HexView bytes={shown.bytes} testId={`${testId}-hex`} /> : null}
       {shown.kind === "json" && view === "tree" ? (
-        <JsonTree key={shown.text} value={shown.value} testId={`${testId}-tree`} />
+        <JsonTree value={shown.value} testId={`${testId}-tree`} />
       ) : null}
-      {shown.kind === "json" && view === "raw" ? (
-        <CodeView
-          text={JSON.stringify(shown.value, null, 2)}
-          language="json"
-          testId={`${testId}-raw`}
-        />
+      {rawJson !== null ? (
+        <CodeView text={rawJson} language="json" testId={`${testId}-raw`} />
       ) : null}
       {shown.kind === "text" ? (
         <CodeView text={shown.text} language={shown.language} testId={`${testId}-raw`} />

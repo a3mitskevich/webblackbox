@@ -283,28 +283,31 @@ export function rowTypeChip(row: NetworkRow): Exclude<NetworkTypeChip, "all"> | 
     : "other";
 }
 
+/** Third-party flags per row (the model's rows are immutable; the origin is fixed per model). */
+const thirdPartyByRow = new WeakMap<NetworkRow, boolean>();
+
 export function isRowThirdParty(model: NetworkModel, row: NetworkRow): boolean {
-  return isThirdPartyUrl(rowUrl(row), model.origin);
+  const cached = thirdPartyByRow.get(row);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const thirdParty = isThirdPartyUrl(rowUrl(row), model.origin);
+  thirdPartyByRow.set(row, thirdParty);
+  return thirdParty;
 }
 
-/** Rows that pass the text filter and "Hide third-party": the base of the chip counts. */
-export function filterBaseRows(
-  model: NetworkModel,
-  filters: Pick<NetworkFilters, "query" | "hideThirdParty">,
-  locale: PlayerLocale
-): NetworkRow[] {
-  const query = filters.query.trim().toLowerCase();
+/** Rows that pass the text filter (before "Hide third-party"). */
+function filterRowsByQuery(model: NetworkModel, text: string, locale: PlayerLocale): NetworkRow[] {
+  const query = text.trim().toLowerCase();
   const view = { query, method: "all", status: "all", type: "all" } as const;
 
+  if (!query) {
+    return model.rows;
+  }
+
   return model.rows.filter((row) => {
-    if (filters.hideThirdParty && isRowThirdParty(model, row)) {
-      return false;
-    }
-
-    if (!query) {
-      return true;
-    }
-
     if (row.kind === "http") {
       return applyNetworkViewFilters([row.entry], view, locale).length === 1;
     }
@@ -332,7 +335,11 @@ export function buildNetworkView(
   sort: NetworkSort,
   locale: PlayerLocale
 ): NetworkView {
-  const base = filterBaseRows(model, filters, locale);
+  const matching = filterRowsByQuery(model, filters.query, locale);
+  // The base of the chip counts: the text filter and "Hide third-party".
+  const base = filters.hideThirdParty
+    ? matching.filter((row) => !isRowThirdParty(model, row))
+    : matching;
   const counts: NetworkCounts = {
     all: base.length,
     fetch: 0,
@@ -361,11 +368,11 @@ export function buildNetworkView(
       (!filters.failedOnly || isRowFailed(row)) &&
       (!filters.notCapturedOnly || isRowNotCaptured(row) || isRowCut(row))
   );
-  const hiddenThirdParty = filters.hideThirdParty
-    ? filterBaseRows(model, { ...filters, hideThirdParty: false }, locale).length - base.length
-    : 0;
-
-  return { rows: sortRows(rows, sort, locale), counts, hiddenThirdParty };
+  return {
+    rows: sortRows(rows, sort, locale),
+    counts,
+    hiddenThirdParty: matching.length - base.length
+  };
 }
 
 /** Stable sort by one column (ties keep the start-time order). */
@@ -395,7 +402,8 @@ function sortValue(row: NetworkRow, key: NetworkSortKey, locale: PlayerLocale): 
     case "time":
       return row.durationMs;
     case "name":
-      return describeRequestName(rowUrl(row)).name;
+      // The name the table shows (secrets masked, escapes decoded), so the column reads sorted.
+      return displayName(rowUrl(row)).name;
     case "method":
       return row.kind === "http" ? row.entry.method.toUpperCase() : "GET";
     case "status":

@@ -33,13 +33,21 @@ function rowDomId(path: string): string {
 /**
  * A JSON value as a virtualized tree (LIBRARIES.md: built here, no library virtualizes): only the
  * open containers' children are rows. Arrows move and open/close, Copy path / Copy value per row.
- * Remount it (React `key`) for a new value.
+ * A new value starts over (default expansion, first row).
  */
 export function JsonTree({ value, testId }: JsonTreeProps) {
   const t = useFeatureI18n(networkMessages);
   const i18n = useI18n();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => defaultExpandedPaths(value));
   const [focused, setFocused] = useState(0);
+  const [shownValue, setShownValue] = useState(value);
+
+  // Reset during render when the value changes (cheaper than a React key made of the body text).
+  if (shownValue !== value) {
+    setShownValue(value);
+    setExpanded(defaultExpandedPaths(value));
+    setFocused(0);
+  }
   const rows = useMemo(() => flattenJson(value, expanded), [value, expanded]);
   const focusIndex = Math.min(focused, rows.length - 1);
   const current = rows[focusIndex];
@@ -197,6 +205,8 @@ export function HexView({ bytes, testId }: HexViewProps) {
   return (
     <VirtualList
       className="hex"
+      role="region"
+      tabIndex={0}
       aria-label={t("hexLabel")}
       itemCount={hexRowCount(bytes.byteLength)}
       rowHeight={HEX_ROW_HEIGHT}

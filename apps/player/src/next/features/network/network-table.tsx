@@ -1,4 +1,4 @@
-import { useCallback, type KeyboardEvent } from "react";
+import { memo, useCallback, useId, useState, type KeyboardEvent } from "react";
 
 import type { PlayerLocale } from "../../../lib/i18n.js";
 import { formatNetworkSize } from "../../../lib/network-size.js";
@@ -14,6 +14,7 @@ import { useController, useI18n, usePlayerState } from "../../context.js";
 import { useFeatureI18n } from "../messages.js";
 import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
 import { notCapturedSummary } from "./availability.js";
+import { nextListIndex, pageRowsOf, rowDomId } from "./list-keys.js";
 import { networkMessages, type NetworkTranslator } from "./messages.js";
 import {
   displayName,
@@ -64,10 +65,6 @@ export function statusTone(row: NetworkRow): Tone {
   }
 
   return status >= 300 ? "warn" : "ok";
-}
-
-function rowDomId(row: NetworkRow): string {
-  return `net-${row.id.replace(/[^\w-]/g, "_")}`;
 }
 
 type RowCellsProps = {
@@ -125,7 +122,7 @@ function RowCells({ row, model, locale, t, formatBytes, formatDuration }: RowCel
         {cutLabel ? (
           <Hint label={cutLabel}>
             <span className="ncut" role="img" aria-label={cutLabel} data-testid="row-cut">
-              cut
+              {t("cutShort")}
             </span>
           </Hint>
         ) : null}
@@ -164,6 +161,49 @@ function RowCells({ row, model, locale, t, formatBytes, formatDuration }: RowCel
   );
 }
 
+type RowViewProps = RowCellsProps & {
+  index: number;
+  domId: string;
+  isSelected: boolean;
+  isFuture: boolean;
+  onOpen: (row: NetworkRow) => void;
+};
+
+/**
+ * One table row. Memoized: while playing the table re-renders on every playhead step, but a row
+ * re-renders only when it is selected or crosses the playhead (`isFuture` flips).
+ */
+const NetworkRowView = memo(function NetworkRowView({
+  index,
+  domId,
+  isSelected,
+  isFuture,
+  onOpen,
+  ...cells
+}: RowViewProps) {
+  const { row } = cells;
+  const className = ["net-grid net-row", isSelected ? "nsel" : "", isFuture ? "nfuture" : ""]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div
+      id={domId}
+      role="row"
+      aria-rowindex={index + 2}
+      aria-selected={isSelected}
+      className={className}
+      onClick={() => onOpen(row)}
+      data-testid="request-row"
+      data-row-id={row.id}
+      data-kind={row.kind}
+      data-future={isFuture}
+    >
+      <RowCells {...cells} />
+    </div>
+  );
+});
+
 /** The playhead across the waterfall column (one element, not one per row). */
 function WaterfallPlayhead({ model }: { model: NetworkModel }) {
   const nowMono = useNowMono();
@@ -190,7 +230,7 @@ type NetworkTableProps = {
 /**
  * The Network table: one dense row per request or socket, sortable columns, the future dimmed,
  * the waterfall drawn on the session span with the playhead across it. Rows are virtualized;
- * ↑ / ↓ move the selection while the table has focus.
+ * ↑ / ↓, PageUp / PageDown, Home / End move the selection while the table has focus.
  */
 export function NetworkTable({ model, rows, selected }: NetworkTableProps) {
   const controller = useController();
@@ -204,6 +244,14 @@ export function NetworkTable({ model, rows, selected }: NetworkTableProps) {
   const nowMono = useNowMono();
   const selectedIndex = selected ? rows.indexOf(selected) : -1;
   const scrollTarget = isPlaying && follow ? followIndex(rows, nowMono) : selectedIndex;
+  const idPrefix = useId();
+  const [mounted, setMounted] = useState({ first: -1, last: -1 });
+  const onRangeChange = useCallback(
+    (first: number, last: number) => setMounted({ first, last }),
+    []
+  );
+  // Only a mounted row can be the active descendant (a virtualized-out id would dangle).
+  const isSelectedMounted = selectedIndex >= mounted.first && selectedIndex <= mounted.last;
 
   const formatDuration = useCallback(
     (ms: number) =>
@@ -235,15 +283,22 @@ export function NetworkTable({ model, rows, selected }: NetworkTableProps) {
     }));
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+    // The sort buttons in the header handle their own keys.
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
+    const pageRows = pageRowsOf(event.currentTarget, NETWORK_ROW_HEIGHT);
+    const index = nextListIndex(event.key, selectedIndex, rows.length, pageRows);
+
+    if (index === null) {
       return;
     }
 
     event.preventDefault();
-    const step = event.key === "ArrowDown" ? 1 : -1;
-    const next = rows[selectedIndex < 0 ? 0 : selectedIndex + step];
+    const next = rows[index];
 
-    if (next) {
+    if (next && next !== selected) {
       open(next);
     }
   };
@@ -252,8 +307,11 @@ export function NetworkTable({ model, rows, selected }: NetworkTableProps) {
     <div
       className="net-table"
       role="grid"
+      tabIndex={0}
       aria-label={t("tableLabel")}
       aria-rowcount={rows.length + 1}
+      aria-activedescendant={isSelectedMounted ? rowDomId(idPrefix, selectedIndex) : undefined}
+      onKeyDown={handleKeyDown}
       data-testid="network-table"
     >
       <div className="net-grid net-head" role="row" aria-rowindex={1}>
@@ -283,13 +341,11 @@ export function NetworkTable({ model, rows, selected }: NetworkTableProps) {
       </div>
       <VirtualList
         role="rowgroup"
-        tabIndex={0}
-        aria-activedescendant={selected && selectedIndex >= 0 ? rowDomId(selected) : undefined}
         className="net-body"
         itemCount={rows.length}
         rowHeight={NETWORK_ROW_HEIGHT}
         scrollToIndex={scrollTarget}
-        onKeyDown={handleKeyDown}
+        onRangeChange={onRangeChange}
         overlay={<WaterfallPlayhead model={model} />}
         testId="network-rows"
         renderRow={(index) => {
@@ -299,39 +355,21 @@ export function NetworkTable({ model, rows, selected }: NetworkTableProps) {
             return null;
           }
 
-          const isSelected = row === selected;
-          const isFuture = row.startMono > nowMono;
-          const className = [
-            "net-grid net-row",
-            isSelected ? "nsel" : "",
-            isFuture ? "nfuture" : ""
-          ]
-            .filter(Boolean)
-            .join(" ");
-
           return (
-            <div
+            <NetworkRowView
               key={row.id}
-              id={rowDomId(row)}
-              role="row"
-              aria-rowindex={index + 2}
-              aria-selected={isSelected}
-              className={className}
-              onClick={() => open(row)}
-              data-testid="request-row"
-              data-row-id={row.id}
-              data-kind={row.kind}
-              data-future={isFuture}
-            >
-              <RowCells
-                row={row}
-                model={model}
-                locale={locale}
-                t={t}
-                formatBytes={i18n.formatByteSize}
-                formatDuration={formatDuration}
-              />
-            </div>
+              index={index}
+              domId={rowDomId(idPrefix, index)}
+              isSelected={row === selected}
+              isFuture={row.startMono > nowMono}
+              onOpen={open}
+              row={row}
+              model={model}
+              locale={locale}
+              t={t}
+              formatBytes={i18n.formatByteSize}
+              formatDuration={formatDuration}
+            />
           );
         }}
       />

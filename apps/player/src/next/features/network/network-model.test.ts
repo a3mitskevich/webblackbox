@@ -24,7 +24,7 @@ import {
   scalarText
 } from "./json-tree-model.js";
 import { networkMessages, type NetworkMessageKey } from "./messages.js";
-import { replayRequest } from "./replay.js";
+import { REPLAY_TIMEOUT_MS, replayRequest } from "./replay.js";
 import {
   buildNetworkModel,
   buildNetworkView,
@@ -293,6 +293,30 @@ describe("bodies", () => {
       kind: "json",
       value: { token: "***", n: 1 }
     });
+    const masked = maskBody(
+      decodeText(
+        `{"token": 12345, "password": "my pass phrase", "user": {"apiKey": null, "cookie": {"a": "b"}},` +
+          ` "note": "Bearer abc.def", "list": [{"secret": true}], "id": 7}`
+      )
+    );
+    expect(masked).toEqual({
+      kind: "json",
+      text: expect.any(String),
+      value: {
+        token: "***",
+        password: "***",
+        user: { apiKey: "***", cookie: "***" },
+        note: "Bearer ***",
+        list: [{ secret: "***" }],
+        id: 7
+      }
+    });
+    expect(masked.kind === "json" && JSON.parse(masked.text)).toEqual(
+      masked.kind === "json" && masked.value
+    );
+    expect(maskBody(decodeText(`{\n  "token": "x"\n}`))).toMatchObject({
+      text: `{\n  "token": "***"\n}`
+    });
     expect(maskBody(decodeText("Bearer abc.def"))).toMatchObject({
       kind: "text",
       text: "Bearer ***"
@@ -395,7 +419,11 @@ describe("replayRequest", () => {
       return response;
     }),
     now: vi.fn().mockReturnValueOnce(10).mockReturnValueOnce(52),
-    hash: vi.fn(async () => hash)
+    hash: vi.fn(async (bytes: Uint8Array<ArrayBuffer>) => {
+      void bytes;
+      return hash;
+    }),
+    timeout: vi.fn(() => undefined)
   });
 
   it("sends the recorded request and compares status and body", async () => {
@@ -423,6 +451,48 @@ describe("replayRequest", () => {
     expect(init?.body).toBe("a=1");
     expect((init?.headers as Headers).has("cookie")).toBe(false);
     expect((init?.headers as Headers).get("x-id")).toBe("7");
+    expect(init?.credentials).toBe("omit");
+    expect(init?.referrerPolicy).toBe("no-referrer");
+    expect(replay.timeout).toHaveBeenCalledWith(REPLAY_TIMEOUT_MS);
+  });
+
+  it("hashes the answer's bytes, not its decoded text", async () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff]);
+    const replay = deps(new Response(bytes));
+    await replayRequest(entry({ responseBodyHash: "h1" }), replay);
+
+    expect([...(replay.hash.mock.calls[0]?.[0] ?? [])]).toEqual([...bytes]);
+  });
+
+  it("does not compare against a cut recording", async () => {
+    const replay = deps(new Response("ok"));
+    const outcome = await replayRequest(
+      entry({ responseBodyHash: "h1", responseBodyTruncated: true }),
+      replay
+    );
+
+    expect(outcome).toMatchObject({ ok: true, bodyMatches: null });
+    expect(replay.hash).not.toHaveBeenCalled();
+  });
+
+  it("refuses to send a request body that was cut or not kept", async () => {
+    const cases = [
+      { method: "POST", requestBodyText: "a=", requestBodyTruncated: true as const },
+      { method: "PUT", requestBodySkipReason: "too-large" as const },
+      { method: "POST", requestHasBody: true as const }
+    ];
+
+    for (const fields of cases) {
+      const replay = deps(new Response("x"));
+      expect(await replayRequest(entry(fields), replay)).toEqual({
+        ok: false,
+        refused: "request-body-incomplete"
+      });
+      expect(replay.fetch).not.toHaveBeenCalled();
+    }
+
+    const get = deps(new Response("x"));
+    expect(await replayRequest(entry({ requestHasBody: true }), get)).toMatchObject({ ok: true });
   });
 
   it("reports no comparison without a recorded body, and failures", async () => {

@@ -137,7 +137,13 @@ function ReplayResult({
   const i18n = useI18n();
 
   if (!outcome.ok) {
-    return <span className="bad">{t("replayFailed", { error: outcome.error })}</span>;
+    return (
+      <span className="bad">
+        {"refused" in outcome
+          ? t("replayRefusedBody")
+          : t("replayFailed", { error: outcome.error })}
+      </span>
+    );
   }
 
   const comparison =
@@ -335,7 +341,7 @@ function SocketDetails({ row, archive }: { row: SocketRow; archive: LoadedArchiv
         <div className="nsub">
           <HiddenParamsChip params={masked.hiddenParams} />
           {stream.openMono !== undefined ? (
-            <span className="nst ws">101 Switching Protocols</span>
+            <span className="nst ws">{t("socketSwitching", { status: 101 })}</span>
           ) : null}
           <span>
             {t("socketOpened", {
@@ -397,9 +403,10 @@ export function NetworkDetails({ row }: { row: NetworkRow }) {
     return null;
   }
 
+  // Keyed by row: view state (a forced highlight, a copy status, the replay) never carries over.
   return row.kind === "http" ? (
-    <RequestDetails row={row} archive={archive} />
+    <RequestDetails key={row.id} row={row} archive={archive} />
   ) : (
-    <SocketDetails row={row} archive={archive} />
+    <SocketDetails key={row.id} row={row} archive={archive} />
   );
 }

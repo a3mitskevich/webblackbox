@@ -83,16 +83,38 @@ export function decodeText(text: string, language: CodeLanguage = "plain"): Body
 /** "Mask secrets": token, password, email and bearer values hidden (classic preview rule). */
 export function maskBody(content: BodyContent): BodyContent {
   if (content.kind === "json") {
-    const text = redactPreviewText(content.text);
-
-    try {
-      return { kind: "json", text, value: JSON.parse(text) as unknown };
-    } catch {
-      return { kind: "text", text, language: "plain" };
-    }
+    // Masked in the parsed value, so numbers, objects and values with spaces stay valid JSON.
+    const value = maskJsonValue(content.value);
+    const text = content.text.includes("\n")
+      ? JSON.stringify(value, null, 2)
+      : JSON.stringify(value);
+    return { kind: "json", text, value };
   }
 
   return content.kind === "text" ? { ...content, text: redactPreviewText(content.text) } : content;
+}
+
+/** JSON keys whose whole value is a secret, whatever its type. */
+const SECRET_JSON_KEY =
+  /password|passwd|token|secret|api[-_]?key|private[-_]?key|access[-_]?key|authorization|cookie|jwt|csrf|session|otp/i;
+const MASKED_VALUE = "***";
+
+function maskJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(maskJsonValue);
+  }
+
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        SECRET_JSON_KEY.test(key) ? MASKED_VALUE : maskJsonValue(item)
+      ])
+    );
+  }
+
+  // Bearer tokens, e-mails and `token=…` inside string values.
+  return typeof value === "string" ? redactPreviewText(value) : value;
 }
 
 /** Text for "Copy": JSON pretty-printed, text as is; images and binary have none. */

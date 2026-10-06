@@ -20,6 +20,11 @@ type VirtualListProps = Omit<HTMLAttributes<HTMLDivElement>, "children"> & {
   scrollToIndex?: number | null;
   /** Extra layer positioned in list coordinates (e.g. the "now" line). */
   overlay?: ReactNode;
+  /**
+   * Called with the first and last mounted row whenever they change, so a parent can point
+   * `aria-activedescendant` only at a row that exists.
+   */
+  onRangeChange?: (first: number, last: number) => void;
   testId?: string;
 };
 
@@ -43,6 +48,7 @@ export function VirtualList({
   renderRow,
   scrollToIndex = null,
   overlay,
+  onRangeChange,
   testId,
   className,
   ...rest
@@ -77,6 +83,12 @@ export function VirtualList({
 
   const rows = virtualizer.getVirtualItems();
   const offset = rows[0]?.start ?? 0;
+  const first = rows[0]?.index ?? -1;
+  const last = rows[rows.length - 1]?.index ?? -1;
+
+  useEffect(() => {
+    onRangeChange?.(first, last);
+  }, [first, last, onRangeChange]);
 
   return (
     <div

@@ -188,5 +188,11 @@
   "protocol_sse": "SSE",
   "conversationLabel": "会话",
   "openInNetwork": "在网络中打开",
-  "socketNoUrl": "录制开始前已打开（{id}）"
+  "socketNoUrl": "录制开始前已打开（{id}）",
+  "cutShort": "截断",
+  "socketSwitching": "{status} 切换协议",
+  "initiatorUrl": "URL",
+  "anonymousFunction": "(匿名)",
+  "codeLabel": "代码",
+  "replayRefusedBody": "未发送：录制中没有完整的请求正文"
 }

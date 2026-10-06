@@ -188,5 +188,11 @@
   "protocol_sse": "SSE",
   "conversationLabel": "Conversation",
   "openInNetwork": "Open in Network",
-  "socketNoUrl": "Opened before the recording ({id})"
+  "socketNoUrl": "Opened before the recording ({id})",
+  "cutShort": "cut",
+  "socketSwitching": "{status} Switching Protocols",
+  "initiatorUrl": "URL",
+  "anonymousFunction": "(anonymous)",
+  "codeLabel": "Code",
+  "replayRefusedBody": "Not sent: the recording does not hold the full request body"
 }

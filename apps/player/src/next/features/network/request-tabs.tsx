@@ -395,7 +395,7 @@ export function InitiatorTab({
             pairs={[
               [t("initiatorType"), initiator.type],
               ...when(initiator.url, [
-                "URL",
+                t("initiatorUrl"),
                 <span className="mono">
                   {frameLocation(initiator.url ?? "", initiator.lineNumber)}
                 </span>
@@ -411,7 +411,7 @@ export function InitiatorTab({
             <ol className="nstack mono" aria-label={t("initiatorStack")}>
               {initiator.frames.map((frame, index) => (
                 <li key={index}>
-                  <b>{frame.functionName || "(anonymous)"}</b>{" "}
+                  <b>{frame.functionName || t("anonymousFunction")}</b>{" "}
                   {frameLocation(frame.url, frame.lineNumber, frame.columnNumber)}
                 </li>
               ))}

@@ -81,7 +81,9 @@ function LineContent({ tokens, text }: { tokens: CodeToken[] | undefined; text: 
 export function CodeView({ text, language, testId, inline = false }: CodeViewProps) {
   const t = useFeatureI18n(networkMessages);
   const i18n = useI18n();
-  const [forced, setForced] = useState(false);
+  // "Highlight anyway" belongs to the text it was asked for: a new body starts plain again.
+  const [forcedText, setForcedText] = useState<string | null>(null);
+  const forced = forcedText === text;
   const lines = useMemo(() => text.split("\n"), [text]);
   const isLarge = text.length > MAX_AUTO_HIGHLIGHT_CHARS;
   const canHighlight = language !== "plain" && text.length <= MAX_HIGHLIGHT_CHARS;
@@ -108,7 +110,7 @@ export function CodeView({ text, language, testId, inline = false }: CodeViewPro
       {isLarge && canHighlight && !forced ? (
         <p className="ncode-note">
           {t("largePlain", { size: i18n.formatByteSize(text.length) })}{" "}
-          <button type="button" className="btn small" onClick={() => setForced(true)}>
+          <button type="button" className="btn small" onClick={() => setForcedText(text)}>
             {t("highlightAnyway")}
           </button>
         </p>
@@ -118,6 +120,9 @@ export function CodeView({ text, language, testId, inline = false }: CodeViewPro
       ) : (
         <VirtualList
           className="ncode"
+          role="region"
+          tabIndex={0}
+          aria-label={t("codeLabel")}
           itemCount={lines.length}
           rowHeight={LINE_HEIGHT}
           renderRow={renderLine}
