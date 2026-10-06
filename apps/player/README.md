@@ -53,6 +53,10 @@ pnpm serve      # serve build/ on http://localhost:4177
 
 `pnpm bundle:size` (repo root) checks the entry chunk and the total of all JS and CSS files against `bundle-size/budgets.json`.
 
+## Bench (long recordings)
+
+`pnpm bench` (here) builds a ten-minute synthetic recording of about 60k events (`scripts/lib/synthetic-long-session.mjs`: clicks with action spans, requests with bodies, failures, a SignalR socket, console, storage, routes, screenshots) and times opening it, the archive model, the rail derivations, the work every 120 ms playhead tick redoes while playing with "Follow playhead", and a jsdom render pass of the whole React player per tick on every rail tab (`scripts/bench/render-ticks.bench.tsx`). `pnpm bench:ci` (repo root) runs it with the recorder and pipeline benches and fails on the `player` limits in `benchmarks/ci-thresholds.json`. `BENCH_PLAYER_EVENTS`, `BENCH_PLAYER_DURATION_MS` and `BENCH_PLAYER_RENDER_TICKS` resize it; `BENCH_PLAYER_RENDER=0` skips the render pass.
+
 ## GitHub Pages
 
 Build a Pages-ready artifact:

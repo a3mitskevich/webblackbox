@@ -16,6 +16,8 @@
     "src/**/*.tsx",
     "vite.config.ts",
     "vitest.config.ts",
-    "scripts/**/*.mjs"
+    "scripts/**/*.mjs",
+    "scripts/**/*.ts",
+    "scripts/**/*.tsx"
   ]
 }
