@@ -2,7 +2,11 @@ import { readFile } from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";
 
-import { FlightRecorderPipeline, MemoryPipelineStorage } from "@webblackbox/pipeline";
+import {
+  FlightRecorderPipeline,
+  INVERTED_INDEX_LIMITS,
+  MemoryPipelineStorage
+} from "@webblackbox/pipeline";
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 
 import { WebBlackboxPlayer } from "./index.js";
@@ -146,5 +150,53 @@ describe("archive compatibility", () => {
     expect(player.archive.manifest.chunkCodec).toBe("gzip");
     expect(player.archive.timeIndex.every((entry) => entry.codec === "gzip")).toBe(true);
     await expectFixtureSession(player);
+  });
+
+  it("finds events by terms the bounded inverted index leaves out", async () => {
+    const count = INVERTED_INDEX_LIMITS.minEventsForDocumentCutoff + 100;
+    const pipeline = new FlightRecorderPipeline({
+      session: {
+        sid: SID,
+        tabId: 1,
+        startedAt: T0,
+        mode: "lite",
+        url: "https://x.test/",
+        tags: []
+      },
+      storage: new MemoryPipelineStorage(),
+      chunkCodec: "gzip"
+    });
+
+    await pipeline.start();
+
+    for (let index = 0; index < count; index += 1) {
+      await pipeline.ingest({
+        v: 1,
+        sid: SID,
+        tab: 1,
+        id: `E-${index}`,
+        t: T0 + index,
+        mono: index,
+        type: "user.click",
+        privacy: { category: "actions", sensitivity: "low", redacted: true },
+        data: { selector: "#save", label: `rare-${index}` }
+      });
+    }
+
+    const exported = await pipeline.exportBundle({
+      passphrase: LEGACY_PASSPHRASE,
+      maxArchiveBytes: null,
+      recentWindowMs: null
+    });
+    const player = await WebBlackboxPlayer.open(exported.bytes, {
+      passphrase: LEGACY_PASSPHRASE
+    });
+    const terms = new Set(player.archive.invertedIndex.map((entry) => entry.term));
+
+    expect(terms.has("save")).toBe(false);
+    expect(terms.has("rare-7")).toBe(true);
+    expect(player.query({ text: "save" })).toHaveLength(count);
+    expect(player.query({ text: "rare-7" }).map((event) => event.id)).toEqual(["E-7"]);
+    expect(player.search("save", count)).toHaveLength(count);
   });
 });
