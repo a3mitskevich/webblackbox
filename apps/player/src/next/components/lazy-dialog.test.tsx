@@ -97,6 +97,45 @@ describe("LazyDialog", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it("loads afresh when the dialog is opened again without Retry (toast dismissed)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const load = vi
+      .fn<() => Promise<{ default: () => React.JSX.Element }>>()
+      .mockRejectedValueOnce(new Error("chunk-abc123.js 404"))
+      .mockResolvedValue({ default: () => <p>dialog body</p> });
+    const dialog = retryableLazy(load);
+    const { controller } = createController();
+
+    function Host() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          {open ? null : <p>closed</p>}
+          <button type="button" onClick={() => setOpen(true)}>
+            open again
+          </button>
+          <LazyDialog
+            open={open}
+            dialog={dialog}
+            onClose={() => setOpen(false)}
+            onReopen={() => setOpen(true)}
+          />
+        </>
+      );
+    }
+
+    render(
+      <PlayerProvider controller={controller}>
+        <Host />
+      </PlayerProvider>
+    );
+    expect(await screen.findByText("closed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("open again"));
+    expect(await screen.findByText("dialog body")).toBeInTheDocument();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the player and the archive when a lazy dialog's chunk is gone", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { store, controller } = await renderPlayer();

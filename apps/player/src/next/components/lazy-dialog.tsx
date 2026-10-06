@@ -54,15 +54,15 @@ export function LazyDialog({ open, dialog, onClose, onReopen }: LazyDialogProps)
   const Dialog = dialog(attempt);
 
   const handleError = (error: unknown): void => {
+    // Any later open (Retry, Ctrl+K, the menu) loads the chunk afresh: React keeps a rejected
+    // lazy() import for good.
+    setAttempt((current) => current + 1);
     onClose();
     toastManager.add({
       title: i18n.tn("panelFailed", { error: errorText(error) }),
       actionProps: {
         children: i18n.tn("panelRetry"),
-        onClick: () => {
-          setAttempt((current) => current + 1);
-          onReopen();
-        }
+        onClick: onReopen
       }
     });
   };
