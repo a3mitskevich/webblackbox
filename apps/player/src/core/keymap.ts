@@ -15,7 +15,8 @@ export type KeyCommand =
   | { type: "close" }
   | { type: "show-shortcuts" }
   | { type: "toggle-rail-wide" }
-  | { type: "mark-range"; edge: "start" | "end" };
+  | { type: "mark-range"; edge: "start" | "end" }
+  | { type: "open-palette" };
 
 /**
  * How a binding is matched (react-hotkeys-hook syntax):
@@ -60,8 +61,8 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { hotkey: "shift+e", command: { type: "step-error", direction: -1 }, match: "keys" },
   { hotkey: "a", command: { type: "next-action" }, match: "keys" },
   { hotkey: "slash", command: { type: "focus-search" }, match: "keys" },
-  { hotkey: "ctrl+k", command: { type: "focus-search" }, match: "keys-in-fields" },
-  { hotkey: "meta+k", command: { type: "focus-search" }, match: "keys-in-fields" },
+  { hotkey: "ctrl+k", command: { type: "open-palette" }, match: "keys-in-fields" },
+  { hotkey: "meta+k", command: { type: "open-palette" }, match: "keys-in-fields" },
   { hotkey: "escape", command: { type: "close" }, match: "keys-in-fields" },
   { hotkey: "?", command: { type: "show-shortcuts" }, match: "character" },
   { hotkey: "enter", command: { type: "open-details" }, match: "keys", yieldsToControls: true },
@@ -80,7 +81,8 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
 /** Commands that make sense before an archive is open. */
 export const COMMANDS_WITHOUT_ARCHIVE: ReadonlySet<KeyCommand["type"]> = new Set([
   "show-shortcuts",
-  "close"
+  "close",
+  "open-palette"
 ]);
 
 /** Comma-separated hotkeys of one match kind (one `useHotkeys` call each). */
@@ -107,7 +109,8 @@ export const SHORTCUT_SHEET = [
   { keys: ["J", "L"], action: "stepList" },
   { keys: ["E", "Shift E"], action: "stepError" },
   { keys: ["A"], action: "nextAction" },
-  { keys: ["/", "Ctrl K"], action: "search" },
+  { keys: ["/"], action: "search" },
+  { keys: ["Ctrl K"], action: "palette" },
   { keys: ["1…8"], action: "tabs" },
   { keys: ["Enter", "Esc"], action: "details" },
   { keys: ["F"], action: "railWide" },

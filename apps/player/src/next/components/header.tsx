@@ -316,6 +316,15 @@ function PlayerMenu() {
             </Menu.Item>
             <Menu.Item
               className="menu-item"
+              onClick={() => controller.setPaletteOpen(true)}
+              data-testid="menu-palette"
+            >
+              <Icon name="search" />
+              {i18n.tn("paletteLabel")}
+              <kbd className="menu-kbd">Ctrl K</kbd>
+            </Menu.Item>
+            <Menu.Item
+              className="menu-item"
               onClick={() => controller.setShortcutsOpen(true)}
               data-testid="menu-shortcuts"
             >

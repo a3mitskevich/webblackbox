@@ -2,6 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -22,12 +23,12 @@ afterEach(() => {
 /** The synthetic session, recorded with "Full capture" downgraded to "Balanced". */
 async function downgradedArchive(): Promise<Uint8Array> {
   const session = buildSyntheticSession();
-  const events = session.events.map((event: { type: string; data: Record<string, unknown> }) =>
+  const events = session.events.map((event: WebBlackboxEvent) =>
     event.type === "meta.config"
       ? {
           ...event,
           data: {
-            ...event.data,
+            ...(event.data as Record<string, unknown>),
             profile: {
               id: "balanced",
               name: "Balanced",

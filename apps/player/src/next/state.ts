@@ -66,6 +66,8 @@ export type PlayerState = {
   shortcutsOpen: boolean;
   /** "About this recording": session facts and what the archive contains. */
   archiveInfoOpen: boolean;
+  /** `Ctrl+K`: search everything and run commands. */
+  paletteOpen: boolean;
   dragActive: boolean;
   /** Polite live-region message (jumps, loading results). */
   announcement: string;
@@ -95,6 +97,7 @@ export function createInitialState(locale: PlayerLocale, theme: ThemePreference)
     railWide: false,
     shortcutsOpen: false,
     archiveInfoOpen: false,
+    paletteOpen: false,
     dragActive: false,
     announcement: "",
     layoutRevision: 0,

@@ -63,6 +63,9 @@ function runCommand(
     case "mark-range":
       controller.markRange(command.edge);
       return;
+    case "open-palette":
+      controller.setPaletteOpen(true);
+      return;
   }
 }
 

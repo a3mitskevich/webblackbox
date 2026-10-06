@@ -2,6 +2,7 @@ import { CSPProvider } from "@base-ui/react/csp-provider";
 import { useRef } from "react";
 
 import { ArchiveInfoDialog, ProfileBanners } from "./components/archive-info.js";
+import { CommandPalette } from "./components/command-palette.js";
 import { HintProvider } from "./components/hint.js";
 import {
   ArchiveStatusLine,
@@ -107,6 +108,7 @@ function Layout() {
       <PassphraseDialog />
       <ShortcutsDialog />
       <ArchiveInfoDialog />
+      <CommandPalette />
       <GenerateDialogs />
       <ToastHost />
       <LiveRegion />

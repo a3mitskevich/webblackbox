@@ -13,6 +13,7 @@ const ACTION_KEYS: Record<ShortcutAction, NextMessageKey> = {
   stepError: "keyStepError",
   nextAction: "keyNextAction",
   search: "keySearch",
+  palette: "keyPalette",
   tabs: "keyTabs",
   details: "keyDetails",
   railWide: "keyRailWide",

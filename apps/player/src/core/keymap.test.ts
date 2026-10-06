@@ -43,8 +43,8 @@ describe("keymap", () => {
     expect(findKeyBinding("shift+e")?.command).toEqual({ type: "step-error", direction: -1 });
     expect(findKeyBinding("a")?.command).toEqual({ type: "next-action" });
     expect(findKeyBinding("slash")?.command).toEqual({ type: "focus-search" });
-    expect(findKeyBinding("ctrl+k")?.command).toEqual({ type: "focus-search" });
-    expect(findKeyBinding("meta+k")?.command).toEqual({ type: "focus-search" });
+    expect(findKeyBinding("ctrl+k")?.command).toEqual({ type: "open-palette" });
+    expect(findKeyBinding("meta+k")?.command).toEqual({ type: "open-palette" });
     expect(findKeyBinding("?")?.command).toEqual({ type: "show-shortcuts" });
     expect(findKeyBinding("enter")?.command).toEqual({ type: "open-details" });
     expect(findKeyBinding(" escape ")?.command).toEqual({ type: "close" });
@@ -75,7 +75,11 @@ describe("keymap", () => {
 
     expect(new Set(hotkeys).size).toBe(hotkeys.length);
     expect(hotkeys.every((hotkey) => hotkey === hotkey.toLowerCase())).toBe(true);
-    expect([...COMMANDS_WITHOUT_ARCHIVE].sort()).toEqual(["close", "show-shortcuts"]);
+    expect([...COMMANDS_WITHOUT_ARCHIVE].sort()).toEqual([
+      "close",
+      "open-palette",
+      "show-shortcuts"
+    ]);
   });
 
   it("documents every shortcut once", () => {

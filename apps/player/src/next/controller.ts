@@ -601,6 +601,10 @@ export function createPlayerController(
       update({ shortcutsOpen });
     },
 
+    setPaletteOpen(paletteOpen: boolean): void {
+      update({ paletteOpen });
+    },
+
     setArchiveInfoOpen(archiveInfoOpen: boolean): void {
       update({ archiveInfoOpen: archiveInfoOpen && store.getState().archive !== null });
     },
