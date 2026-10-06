@@ -14,7 +14,6 @@ import {
   type CapturePolicy,
   type CaptureMode,
   type ExportPolicy,
-  type FreezeReason,
   type PointerCaptureOptions,
   type PrivacyScannerResult,
   type SessionMetadata,
@@ -48,10 +47,6 @@ import {
 import {
   OFFSCREEN_CONNECT_REQUEST_KIND,
   type PipelineExportDownloadResult,
-  type ScreenRecordingChunkMessage,
-  type ScreenRecordingEndedMessage,
-  type ScreenRecordingErrorMessage,
-  type ScreenRecordingStopResult,
   type SwPipelineStatusMessage
 } from "../shared/offscreen-messages.js";
 import {
@@ -59,7 +54,6 @@ import {
   PERFORMANCE_BUDGET_STORAGE_KEY,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
-import { capStorageValue, capturesPageStorageInFullMode } from "webblackbox/capture-scope";
 import {
   AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
@@ -105,14 +99,17 @@ import {
   toStorageKeyMessage,
   type AtRestKeyRecord
 } from "./at-rest-key.js";
-import { withCdpCommandTimeout, type CdpCommandOutcome } from "./cdp-command.js";
+import { createArtifactsController } from "./artifacts.js";
+import { createScreenshotArtifactsController } from "./artifacts-screenshot.js";
+import { createScreenRecordingController } from "./artifacts-screen-recording.js";
+import { createStorageArtifactsController } from "./artifacts-storage.js";
+import { createProfileArtifactsController } from "./artifacts-profiles.js";
 import {
   createContentInjectionController,
   injectContentScriptIntoFrame,
   isInjectableFrameUrl
 } from "./content-injection.js";
 import {
-  CDP_ARTIFACT_TIMEOUT_MS,
   createFullCdpController,
   readContentScriptRecord,
   toScriptScanStatus
@@ -175,9 +172,7 @@ import {
 import {
   createSessionRegistry,
   createSessionRuntime,
-  rememberablePageUrl,
   resolveUrlOrigin,
-  type ScreenRecordingRuntime,
   type SessionAnnotation,
   type SessionRuntime
 } from "./session-registry.js";
@@ -194,12 +189,6 @@ import {
 } from "./stopped-sessions.js";
 import { startWithOptionalReload } from "./start-with-reload.js";
 import { createThrottledPush } from "./throttled-push.js";
-import {
-  FULL_MODE_STORAGE_SNAPSHOT_MAX_ITEMS,
-  buildLocalStorageSnapshotExpression,
-  parseStorageSnapshotMeta,
-  type LocalStorageSnapshotMode
-} from "./storage-snapshot.js";
 import {
   resolveTabsContextLevel,
   TabsContextTracker,
@@ -255,8 +244,6 @@ let stoppedSessionRecordsQueue: Promise<unknown> = Promise.resolve();
 
 const OFFSCREEN_PATH = "offscreen.html";
 const SERVICE_WORKER_BOOTED_AT = Date.now();
-const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
-const POINTER_STALE_MS = 2_500;
 /**
  * How long stop waits for response bodies still being read before recording them as skipped:
  * a base plus a share per pending body, capped.
@@ -264,8 +251,6 @@ const POINTER_STALE_MS = 2_500;
 const FULL_MODE_BODY_STOP_DRAIN_MS = 3_000;
 const FULL_MODE_BODY_STOP_DRAIN_PER_BODY_MS = 25;
 const FULL_MODE_BODY_STOP_DRAIN_MAX_MS = 15_000;
-const FULL_MODE_INCIDENT_CAPTURE_COOLDOWN_MS = 15_000;
-const FREEZE_NOTICE_COOLDOWN_MS = 20_000;
 const FREEZE_BADGE_HIGHLIGHT_MS = 15_000;
 const PERFORMANCE_BUDGET_BREACH_COOLDOWN_MS = 15_000;
 const PERFORMANCE_BUDGET_ERROR_RATE_MIN_SAMPLES = 10;
@@ -280,12 +265,10 @@ const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
 // applies `shouldPageCapture` (webblackbox/capture-scope); events that arrive here are trusted.
 /** Full mode reads bodies through CDP whatever loaded them, so SVG images (text) are kept too. */
 const FULL_DEFAULT_BODY_MIME_ALLOWLIST = [...DEFAULT_BODY_MIME_ALLOWLIST, "image/svg+xml"];
-const CPU_PROFILE_SAMPLE_MS = 350;
 const ACTIVE_SESSION_STORAGE_KEY = "webblackbox.runtime.sessions";
 const SESSION_ANNOTATIONS_STORAGE_KEY = "webblackbox.runtime.sessionAnnotations";
 const EXPORT_AUDIT_STORAGE_KEY = "webblackbox.audit.exports";
 const EXPORT_AUDIT_MAX_EVENTS = 200;
-const ACTION_SCREENSHOT_RAW_TYPES = new Set(["click", "dblclick", "submit", "marker"]);
 const STOP_DRAIN_CONTENT_RAW_TYPES = new Set([
   "snapshot",
   "localStorageSnapshot",
@@ -300,8 +283,6 @@ const OFFSCREEN_PORT_READY_WAIT_MS = 25;
 const STOP_DRAIN_ACK_TIMEOUT_MS = 3_000;
 // Chrome can hold `storage.managed` reads back while the browser starts; see the reader.
 const ENTERPRISE_POLICY_READ_TIMEOUT_MS = 3_000;
-const CDP_HEAP_SNAPSHOT_TIMEOUT_MS = 8_000;
-const SCREEN_RECORDING_OFFSCREEN_SOURCE = "tab";
 
 const tabsContextTracker = createTabsContextTracker();
 
@@ -319,15 +300,37 @@ const recordedTabWatch = createRecordedTabWatch(chromeApi, {
   },
   onFrameCommitted: handleRecordedFrameCommitted
 });
+const screenshotArtifacts = createScreenshotArtifactsController({
+  ingestRawEvent,
+  bestEffortQueueMaxPending: BEST_EFFORT_QUEUE_MAX_PENDING
+});
+const screenRecording = createScreenRecordingController({
+  tabCapture: chromeApi?.tabCapture,
+  // The offscreen client is created below; recordings only start after a session does.
+  getOffscreenClient: () => offscreenClient,
+  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
+  ingestRawEvent
+});
+const storageArtifacts = createStorageArtifactsController({ ingestRawEvent });
+const profileArtifacts = createProfileArtifactsController({ ingestRawEvent, wait });
+const artifacts = createArtifactsController({
+  captureScreenshot: screenshotArtifacts.captureScreenshot,
+  captureTraceMetrics: profileArtifacts.captureTraceMetrics,
+  captureAdvancedProfiles: profileArtifacts.captureAdvancedProfiles,
+  captureStorageSnapshots: storageArtifacts.captureStorageSnapshots,
+  captureCookieValues: storageArtifacts.captureCookieValues,
+  broadcast,
+  setFreezeBadge
+});
 const fullCdp = createFullCdpController({
   createRouter: () => createCdpRouter(createChromeDebuggerTransport()),
   ingestRawEvent,
   enqueue,
   stopSession,
-  captureFullModeArtifacts,
-  captureScreenshot,
-  shouldCaptureIncidentArtifacts,
-  captureIncidentArtifacts,
+  captureFullModeArtifacts: artifacts.captureFullModeArtifacts,
+  captureScreenshot: screenshotArtifacts.captureScreenshot,
+  shouldCaptureIncidentArtifacts: artifacts.shouldCaptureIncidentArtifacts,
+  captureIncidentArtifacts: artifacts.captureIncidentArtifacts,
   resolveBodyRule: resolveFullBodyCaptureRule,
   bodyRedactedToken: BODY_REDACTION_TOKEN
 });
@@ -1058,7 +1061,7 @@ async function startSession(
         enqueuePipelineEvent(runtime, event);
       },
       onFreeze: (reason) => {
-        handleFreezeNotice(runtime, reason);
+        artifacts.handleFreezeNotice(runtime, reason);
       },
       shouldKeepInlineNetworkBody: (context) =>
         isInlineRequestBodyAllowed(context, (url, mimeType) =>
@@ -1107,9 +1110,9 @@ async function startSession(
     await fullCdp.attachCdp(runtime);
   }
 
-  if (shouldStartScreenRecording(runtime)) {
+  if (screenRecording.shouldStartScreenRecording(runtime)) {
     try {
-      await startScreenRecording(runtime);
+      await screenRecording.startScreenRecording(runtime);
     } catch (error) {
       await stopSession(tabId);
       throw error;
@@ -1190,12 +1193,12 @@ async function stopSession(tabId: number): Promise<void> {
   await tabsContextTracker?.settle();
   tabsContextTracker?.stopSession(tabId);
   const stopDrainAck = createStopDrainAck(runtime);
-  await stopScreenRecording(runtime, "session-stop").catch((error) => {
+  await screenRecording.stopScreenRecording(runtime, "session-stop").catch((error) => {
     console.warn("[WebBlackbox] failed to stop screen recording", error);
   });
 
   if (runtime.mode === "full" && runtime.config.capturePolicy?.categories.cookies === "allow") {
-    await captureCookieValues(runtime, "session-stop").catch((error) => {
+    await storageArtifacts.captureCookieValues(runtime, "session-stop").catch((error) => {
       console.warn("[WebBlackbox] failed to capture cookie values at stop", error);
     });
   }
@@ -1685,12 +1688,15 @@ function ingestRawEvent(
     return;
   }
 
-  if (runtime.mode === "full" && shouldCaptureActionScreenshot(nextRawEvent, runtime)) {
+  if (
+    runtime.mode === "full" &&
+    screenshotArtifacts.shouldCaptureActionScreenshot(nextRawEvent, runtime)
+  ) {
     runtime.lastActionScreenshotMono = nextRawEvent.mono;
     enqueue(
       runtime,
       async () => {
-        await captureScreenshot(runtime, `action:${nextRawEvent.rawType}`);
+        await screenshotArtifacts.captureScreenshot(runtime, `action:${nextRawEvent.rawType}`);
       },
       { bestEffort: true }
     );
@@ -1764,33 +1770,6 @@ const POINTER_TRACKING_RAW_TYPES = new Set([
   "contextmenu",
   "auxclick"
 ]);
-
-function shouldCaptureActionScreenshot(
-  rawEvent: RawRecorderEvent,
-  runtime: SessionRuntime
-): boolean {
-  if (rawEvent.source !== "content") {
-    return false;
-  }
-
-  if (!ACTION_SCREENSHOT_RAW_TYPES.has(rawEvent.rawType)) {
-    return false;
-  }
-
-  if (runtime.config.capturePolicy?.categories.screenshots === "off") {
-    return false;
-  }
-
-  if (rawEvent.mono - runtime.lastActionScreenshotMono < SCREENSHOT_ACTION_COOLDOWN_MS) {
-    return false;
-  }
-
-  if (runtime.queueDepth >= Math.floor(BEST_EFFORT_QUEUE_MAX_PENDING / 3)) {
-    return false;
-  }
-
-  return true;
-}
 
 function trackSessionCounters(runtime: SessionRuntime, event: WebBlackboxEvent): void {
   runtime.capturedEventCount += 1;
@@ -1905,7 +1884,7 @@ function registerPerformanceBudgetBreach(
   });
 
   if (runtime.performanceBudget.autoFreezeOnBreach) {
-    handleFreezeNotice(runtime, "perf");
+    artifacts.handleFreezeNotice(runtime, "perf");
   }
 
   return true;
@@ -2035,15 +2014,15 @@ function handleOffscreenEvent(message: OffscreenEventMessage): void {
     case "offscreen.keepalive":
       return;
     case "offscreen.screen-recording-chunk":
-      handleOffscreenScreenRecordingChunk(message);
+      screenRecording.handleOffscreenScreenRecordingChunk(message);
       return;
     case "offscreen.screen-recording-ended":
-      void handleOffscreenScreenRecordingEnded(message).catch((error) => {
+      void screenRecording.handleOffscreenScreenRecordingEnded(message).catch((error) => {
         console.warn("[WebBlackbox] failed to finalize screen recording", error);
       });
       return;
     case "offscreen.screen-recording-error":
-      handleOffscreenScreenRecordingError(message);
+      screenRecording.handleOffscreenScreenRecordingError(message);
       return;
   }
 }
@@ -2097,823 +2076,10 @@ async function recoverOffscreenSession(sid: string): Promise<void> {
   await task;
 }
 
-function shouldCaptureIncidentArtifacts(runtime: SessionRuntime): boolean {
-  if (runtime.stopping) {
-    return false;
-  }
-
-  if (
-    runtime.config.capturePolicy?.categories.screenshots === "off" &&
-    runtime.config.capturePolicy?.categories.cdp !== "full"
-  ) {
-    return false;
-  }
-
-  const now = Date.now();
-
-  if (now - runtime.lastIncidentCaptureAt < FULL_MODE_INCIDENT_CAPTURE_COOLDOWN_MS) {
-    return false;
-  }
-
-  runtime.lastIncidentCaptureAt = now;
-  return true;
-}
-
-async function captureIncidentArtifacts(runtime: SessionRuntime, reason: string): Promise<void> {
-  await Promise.allSettled([
-    captureScreenshot(runtime, reason),
-    captureTraceMetrics(runtime, reason)
-  ]);
-}
-
-function handleFreezeNotice(runtime: SessionRuntime, reason: FreezeReason): void {
-  if (runtime.stopping) {
-    return;
-  }
-
-  const now = Date.now();
-  const lastNotifiedAt = runtime.lastFreezeNotices.get(reason) ?? Number.NEGATIVE_INFINITY;
-
-  if (now - lastNotifiedAt < FREEZE_NOTICE_COOLDOWN_MS) {
-    return;
-  }
-
-  runtime.lastFreezeNotices.set(reason, now);
-  broadcast({ kind: "sw.freeze", sid: runtime.sid, reason });
-  void setFreezeBadge();
-}
-
-async function captureFullModeArtifacts(runtime: SessionRuntime, reason: string): Promise<void> {
-  const tasks: Array<Promise<void>> = [
-    captureScreenshot(runtime, reason),
-    captureTraceMetrics(runtime, reason)
-  ];
-
-  if (reason !== "session-start") {
-    // The DOM comes from the page agent's raw snapshot (`dom: allow`), which masks blocked
-    // selectors and field values; a CDP DOMSnapshot would carry both unmasked.
-    tasks.push(captureStorageSnapshots(runtime, reason));
-  } else if (runtime.config.capturePolicy?.categories.cookies === "allow") {
-    // Cookie values at the start (and at stop) even when no incident triggers a snapshot.
-    tasks.push(captureCookieValues(runtime, reason));
-  }
-
-  if (shouldCaptureAdvancedProfiles(reason)) {
-    tasks.push(captureAdvancedProfiles(runtime, reason));
-  }
-
-  await Promise.allSettled(tasks);
-}
-
-async function captureScreenshot(runtime: SessionRuntime, reason: string): Promise<void> {
-  if (!runtime.cdpRouter) {
-    return;
-  }
-
-  if (runtime.config.capturePolicy?.categories.screenshots === "off") {
-    return;
-  }
-
-  const screenshot = await sendCdpCommand<{ data?: string }>(
-    runtime,
-    { tabId: runtime.tabId },
-    "Page.captureScreenshot",
-    {
-      format: "webp",
-      quality: 62,
-      fromSurface: true
-    }
-  );
-
-  if (!screenshot?.data) {
-    return;
-  }
-
-  const bytes = decodeBase64(screenshot.data);
-  const hash = await runtime.pipeline.putBlob("image/webp", bytes);
-  const viewport = runtime.lastViewport;
-  const pointer =
-    runtime.lastPointer && Date.now() - runtime.lastPointer.t <= POINTER_STALE_MS
-      ? runtime.lastPointer
-      : null;
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "cdp.screen.screenshot",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      shotId: hash,
-      format: "webp",
-      quality: 62,
-      w: viewport?.width,
-      h: viewport?.height,
-      viewport: viewport
-        ? {
-            width: viewport.width,
-            height: viewport.height,
-            dpr: viewport.dpr
-          }
-        : undefined,
-      pointer: pointer
-        ? {
-            x: pointer.x,
-            y: pointer.y,
-            t: pointer.t,
-            mono: pointer.mono
-          }
-        : undefined,
-      size: bytes.byteLength,
-      reason
-    }
-  });
-}
-
-function shouldStartScreenRecording(runtime: SessionRuntime): boolean {
-  return (
-    runtime.mode === "full" && runtime.config.capturePolicy?.categories.screenRecordings === "allow"
-  );
-}
-
-async function startScreenRecording(runtime: SessionRuntime): Promise<void> {
-  if (!chromeApi?.tabCapture?.getMediaStreamId) {
-    throw new Error("Chrome tabCapture API is unavailable for screen recording.");
-  }
-
-  if (runtime.screenRecording) {
-    return;
-  }
-
-  const recordingId = createScreenRecordingId(runtime.sid);
-  const startedAt = Date.now();
-  const startedMono = monotonicTime();
-  const streamId = await chromeApi.tabCapture.getMediaStreamId({
-    targetTabId: runtime.tabId
-  });
-
-  if (!streamId) {
-    throw new Error("Chrome did not grant a tab capture stream.");
-  }
-
-  const recording: ScreenRecordingRuntime = {
-    recordingId,
-    source: SCREEN_RECORDING_OFFSCREEN_SOURCE,
-    startedAt,
-    startedMono,
-    mime: "video/webm",
-    chunks: [],
-    chunkCount: 0,
-    sizeBytes: 0,
-    stopPromise: null
-  };
-  runtime.screenRecording = recording;
-
-  try {
-    const result = await offscreenClient.request({
-      op: "startScreenRecording",
-      sid: runtime.sid,
-      recordingId,
-      streamId,
-      source: SCREEN_RECORDING_OFFSCREEN_SOURCE
-    });
-
-    recording.mime = result.mime;
-    recording.width = result.width;
-    recording.height = result.height;
-    recording.frameRate = result.frameRate;
-
-    ingestRawEvent({
-      source: "system",
-      rawType: "screen.recording.start",
-      sid: runtime.sid,
-      tabId: runtime.tabId,
-      t: startedAt,
-      mono: startedMono,
-      payload: {
-        recordingId,
-        source: result.source,
-        mime: result.mime,
-        width: result.width,
-        height: result.height,
-        frameRate: result.frameRate,
-        audio: result.audio
-      }
-    });
-  } catch (error) {
-    ingestScreenRecordingError(runtime, recording, error, "start");
-    runtime.screenRecording = null;
-    throw error;
-  }
-}
-
-async function stopScreenRecording(runtime: SessionRuntime, reason: string): Promise<void> {
-  const recording = runtime.screenRecording;
-
-  if (!recording) {
-    return;
-  }
-
-  if (recording.stopPromise) {
-    await recording.stopPromise;
-    return;
-  }
-
-  recording.stopPromise = (async () => {
-    const result = await offscreenClient.request({
-      op: "stopScreenRecording",
-      sid: runtime.sid,
-      recordingId: recording.recordingId,
-      reason
-    });
-    await finalizeScreenRecording(runtime, result);
-  })();
-
-  await recording.stopPromise;
-}
-
-/** The offscreen document has already stored the chunk; the worker records where it is. */
-function handleOffscreenScreenRecordingChunk(message: ScreenRecordingChunkMessage): void {
-  const runtime = sessionRegistry.getBySid(message.sid);
-  const recording = runtime?.screenRecording;
-
-  if (!runtime || !recording || recording.recordingId !== message.recordingId) {
-    return;
-  }
-
-  const { chunkId, index, mime, size } = message;
-  recording.chunks[index] = chunkId;
-  recording.chunkCount = Math.max(recording.chunkCount, index + 1);
-  recording.sizeBytes += size;
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "screen.recording.chunk",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      recordingId: recording.recordingId,
-      chunkId,
-      index,
-      mime,
-      size,
-      startOffsetMs: message.startOffsetMs,
-      endOffsetMs: message.endOffsetMs,
-      durationMs: message.durationMs
-    }
-  });
-}
-
-async function handleOffscreenScreenRecordingEnded(
-  message: ScreenRecordingEndedMessage
-): Promise<void> {
-  const runtime = sessionRegistry.getBySid(message.sid);
-
-  if (!runtime?.screenRecording) {
-    return;
-  }
-
-  await finalizeScreenRecording(runtime, message.result);
-}
-
-function handleOffscreenScreenRecordingError(message: ScreenRecordingErrorMessage): void {
-  const runtime = sessionRegistry.getBySid(message.sid);
-  const recording = runtime?.screenRecording;
-
-  if (!runtime) {
-    return;
-  }
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "screen.recording.error",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      recordingId: message.recordingId ?? recording?.recordingId,
-      name: message.name,
-      message: message.message,
-      stage: message.stage
-    }
-  });
-}
-
-async function finalizeScreenRecording(
-  runtime: SessionRuntime,
-  result: ScreenRecordingStopResult
-): Promise<void> {
-  const recording = runtime.screenRecording;
-
-  if (!recording || recording.recordingId !== result.recordingId) {
-    return;
-  }
-
-  const chunks = recording.chunks.filter(
-    (chunk): chunk is string => typeof chunk === "string" && chunk.length > 0
-  );
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "screen.recording.end",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      recordingId: recording.recordingId,
-      mime: result.mime || recording.mime,
-      chunks,
-      chunkCount: chunks.length,
-      size: recording.sizeBytes,
-      durationMs: Math.max(0, Math.round(result.durationMs)),
-      width: result.width ?? recording.width,
-      height: result.height ?? recording.height,
-      reason: result.reason
-    }
-  });
-
-  runtime.screenRecording = null;
-}
-
-function ingestScreenRecordingError(
-  runtime: SessionRuntime,
-  recording: ScreenRecordingRuntime | null,
-  error: unknown,
-  stage: string
-): void {
-  ingestRawEvent({
-    source: "system",
-    rawType: "screen.recording.error",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      recordingId: recording?.recordingId,
-      name: error instanceof Error ? error.name : undefined,
-      message: error instanceof Error ? error.message : String(error),
-      stage
-    }
-  });
-}
-
-function createScreenRecordingId(sid: string): string {
-  const random =
-    typeof crypto?.randomUUID === "function"
-      ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
-      : Math.random().toString(36).slice(2, 14);
-  return `VR-${sid}-${Date.now()}-${random}`;
-}
-
-const VISITED_PAGE_URLS_MAX = 20;
-
-function rememberVisitedPageUrl(runtime: SessionRuntime, rawUrl: string): void {
-  const [url] = rememberablePageUrl(rawUrl) ?? [];
-
-  if (!url || runtime.visitedPageUrls.has(url)) {
-    return;
-  }
-
-  if (runtime.visitedPageUrls.size >= VISITED_PAGE_URLS_MAX) {
-    const oldest = runtime.visitedPageUrls.values().next().value;
-
-    if (oldest !== undefined) {
-      runtime.visitedPageUrls.delete(oldest);
-    }
-  }
-
-  runtime.visitedPageUrls.add(url);
-}
-
-/**
- * `cookies: allow`: every cookie of the page with its value (HttpOnly ones too, which the page
- * cannot read), inline as `cookies` records so the recorder's cookie-name rules can mask values.
- */
-async function captureCookieValues(runtime: SessionRuntime, reason: string): Promise<void> {
-  if (!runtime.cdpRouter) {
-    return;
-  }
-
-  // Sent directly (not through `sendCdpCommand`) so the snapshot at stop still runs. The pages
-  // the tab showed only; Storage.getCookies would list every site in the browser.
-  const urls = [...runtime.visitedPageUrls];
-  const outcome = await withCdpCommandTimeout(
-    runtime.cdpRouter.send<{ cookies?: unknown[] }>(
-      { tabId: runtime.tabId },
-      "Network.getCookies",
-      urls.length > 0 ? { urls } : undefined
-    ),
-    CDP_ARTIFACT_TIMEOUT_MS
-  );
-  const result = outcome.ok ? outcome.value : undefined;
-
-  if (!result?.cookies) {
-    return;
-  }
-
-  const cookies = result.cookies.slice(0, FULL_MODE_STORAGE_SNAPSHOT_MAX_ITEMS).flatMap((entry) => {
-    const row = asRecord(entry);
-    const name = asString(row?.name);
-
-    if (!row || name === null || typeof row.value !== "string") {
-      return [];
-    }
-
-    return [
-      {
-        name,
-        ...capStorageValue(row.value),
-        domain: asString(row.domain) ?? undefined,
-        path: asString(row.path) ?? undefined,
-        httpOnly: row.httpOnly === true,
-        secure: row.secure === true,
-        sameSite: asString(row.sameSite) ?? undefined,
-        expires: typeof row.expires === "number" ? row.expires : undefined
-      }
-    ];
-  });
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "cdp.storage.cookie.snapshot",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      reason,
-      count: result.cookies.length,
-      truncated: result.cookies.length > cookies.length,
-      mode: "allow",
-      redacted: false,
-      cookies
-    }
-  });
-}
-
-async function captureStorageSnapshots(runtime: SessionRuntime, reason: string): Promise<void> {
-  if (!runtime.cdpRouter) {
-    return;
-  }
-
-  const policy = runtime.config.capturePolicy;
-
-  // The page agent records localStorage and IndexedDB itself (inline, through the redactor);
-  // the CDP snapshots below would duplicate them in blobs the redactor never sees. Cookie names
-  // stay on CDP: `document.cookie` cannot see HttpOnly cookies.
-  const pageRecordsStorage = !!policy && capturesPageStorageInFullMode(policy.categories);
-
-  if (policy?.categories.cookies === "allow") {
-    await captureCookieValues(runtime, reason);
-  }
-
-  const cookies =
-    policy?.categories.cookies === "names-only"
-      ? await sendCdpCommand<{ cookies?: unknown[] }>(
-          runtime,
-          { tabId: runtime.tabId },
-          // The page's cookies only; Storage.getCookies would list every site in the browser.
-          "Network.getCookies"
-        )
-      : null;
-
-  if (cookies?.cookies) {
-    const cookieNames = cookies.cookies
-      .map((entry) => asString(asRecord(entry)?.name))
-      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
-      .slice(0, FULL_MODE_STORAGE_SNAPSHOT_MAX_ITEMS);
-    const bytes = new TextEncoder().encode(JSON.stringify(cookieNames));
-    const hash = await runtime.pipeline.putBlob("application/json", bytes);
-
-    ingestRawEvent({
-      source: "system",
-      rawType: "cdp.storage.cookie.snapshot",
-      sid: runtime.sid,
-      tabId: runtime.tabId,
-      t: Date.now(),
-      mono: monotonicTime(),
-      payload: {
-        hash,
-        count: cookies.cookies.length,
-        sampledCount: cookieNames.length,
-        truncated: cookies.cookies.length > cookieNames.length,
-        redacted: true,
-        reason
-      }
-    });
-  }
-
-  const localStorageMode = pageRecordsStorage ? null : resolveLocalStorageSnapshotMode(policy);
-  const localStorageData = localStorageMode
-    ? await evaluateExpression(runtime, buildLocalStorageSnapshotExpression(localStorageMode))
-    : null;
-
-  if (typeof localStorageData === "string") {
-    const bytes = new TextEncoder().encode(localStorageData);
-    const hash = await runtime.pipeline.putBlob("application/json", bytes);
-    const parsed = parseStorageSnapshotMeta(localStorageData);
-
-    ingestRawEvent({
-      source: "system",
-      rawType: "cdp.storage.local.snapshot",
-      sid: runtime.sid,
-      tabId: runtime.tabId,
-      t: Date.now(),
-      mono: monotonicTime(),
-      payload: {
-        hash,
-        count: parsed?.count,
-        sampledCount: parsed?.sampledCount,
-        truncated: parsed?.truncated,
-        mode: localStorageMode,
-        redacted: localStorageMode !== "allow",
-        reason
-      }
-    });
-  }
-
-  const origin =
-    !pageRecordsStorage && policy?.categories.indexedDb === "names-only"
-      ? await evaluateExpression(runtime, "location.origin")
-      : null;
-
-  if (typeof origin === "string") {
-    const dbNames = await sendCdpCommand<{ databaseNames?: string[] }>(
-      runtime,
-      { tabId: runtime.tabId },
-      "IndexedDB.requestDatabaseNames",
-      {
-        securityOrigin: origin
-      }
-    );
-
-    if (dbNames?.databaseNames) {
-      const bytes = new TextEncoder().encode(JSON.stringify(dbNames.databaseNames));
-      const hash = await runtime.pipeline.putBlob("application/json", bytes);
-
-      ingestRawEvent({
-        source: "system",
-        rawType: "cdp.storage.idb.snapshot",
-        sid: runtime.sid,
-        tabId: runtime.tabId,
-        t: Date.now(),
-        mono: monotonicTime(),
-        payload: {
-          origin,
-          schemaHash: hash,
-          mode: "schema-only",
-          reason
-        }
-      });
-    }
-  }
-}
-
-function resolveLocalStorageSnapshotMode(
-  policy: CapturePolicy | undefined
-): LocalStorageSnapshotMode | null {
-  if (policy?.categories.storage === "allow" || policy?.categories.storage === "lengths-only") {
-    return policy.categories.storage;
-  }
-
-  return null;
-}
-
-async function captureTraceMetrics(runtime: SessionRuntime, reason: string): Promise<void> {
-  if (!runtime.cdpRouter) {
-    return;
-  }
-
-  if (runtime.config.capturePolicy?.categories.cdp !== "full") {
-    return;
-  }
-
-  const metrics = await sendCdpCommand<Record<string, unknown>>(
-    runtime,
-    { tabId: runtime.tabId },
-    "Performance.getMetrics"
-  );
-
-  if (!metrics) {
-    return;
-  }
-
-  const bytes = new TextEncoder().encode(JSON.stringify(metrics));
-  const hash = await runtime.pipeline.putBlob("application/json", bytes);
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "cdp.perf.trace",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      traceHash: hash,
-      durationMs: 0,
-      mode: "reportEvents",
-      categories: "metrics",
-      reason
-    }
-  });
-}
-
-async function captureAdvancedProfiles(runtime: SessionRuntime, reason: string): Promise<void> {
-  await Promise.allSettled([
-    captureCpuProfile(runtime, reason),
-    captureHeapSnapshot(runtime, reason)
-  ]);
-}
-
-async function captureCpuProfile(runtime: SessionRuntime, reason: string): Promise<void> {
-  if (!runtime.cdpRouter) {
-    return;
-  }
-
-  if (runtime.config.capturePolicy?.categories.cdp !== "full") {
-    return;
-  }
-
-  await sendCdpCommand(runtime, { tabId: runtime.tabId }, "Profiler.enable");
-
-  try {
-    const started = await sendCdpCommandOutcome(
-      runtime,
-      { tabId: runtime.tabId },
-      "Profiler.start"
-    );
-
-    if (!started.ok) {
-      return;
-    }
-
-    await wait(CPU_PROFILE_SAMPLE_MS);
-
-    const profileResult = await sendCdpCommand<{ profile?: unknown }>(
-      runtime,
-      { tabId: runtime.tabId },
-      "Profiler.stop"
-    );
-
-    if (!profileResult?.profile) {
-      return;
-    }
-
-    const bytes = new TextEncoder().encode(JSON.stringify(profileResult.profile));
-    const hash = await runtime.pipeline.putBlob("application/json", bytes);
-
-    ingestRawEvent({
-      source: "system",
-      rawType: "cdp.perf.cpu.profile",
-      sid: runtime.sid,
-      tabId: runtime.tabId,
-      t: Date.now(),
-      mono: monotonicTime(),
-      payload: {
-        profileHash: hash,
-        sampleMs: CPU_PROFILE_SAMPLE_MS,
-        size: bytes.byteLength,
-        reason
-      }
-    });
-  } finally {
-    await sendCdpCommand(runtime, { tabId: runtime.tabId }, "Profiler.disable");
-  }
-}
-
-async function captureHeapSnapshot(runtime: SessionRuntime, reason: string): Promise<void> {
-  if (!runtime.cdpRouter) {
-    return;
-  }
-
-  if (
-    runtime.config.capturePolicy?.mode !== "lab" ||
-    runtime.config.capturePolicy.categories.heapProfiles !== "lab-only"
-  ) {
-    return;
-  }
-
-  runtime.heapSnapshotCapture = {
-    chunks: [],
-    bytes: 0,
-    truncated: false
-  };
-
-  await sendCdpCommand(runtime, { tabId: runtime.tabId }, "HeapProfiler.enable");
-
-  const completed = await sendCdpCommandOutcome(
-    runtime,
-    { tabId: runtime.tabId },
-    "HeapProfiler.takeHeapSnapshot",
-    {
-      reportProgress: false,
-      captureNumericValue: true
-    },
-    CDP_HEAP_SNAPSHOT_TIMEOUT_MS
-  );
-
-  const snapshot = runtime.heapSnapshotCapture;
-  runtime.heapSnapshotCapture = null;
-
-  if (!completed.ok || !snapshot || snapshot.chunks.length === 0) {
-    await sendCdpCommand(runtime, { tabId: runtime.tabId }, "HeapProfiler.disable");
-    return;
-  }
-
-  const joined = snapshot.chunks.join("");
-  const bytes = new TextEncoder().encode(joined);
-  const hash = await runtime.pipeline.putBlob("application/json", bytes);
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "cdp.perf.heap.snapshot",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      snapshotHash: hash,
-      size: bytes.byteLength,
-      chunkCount: snapshot.chunks.length,
-      truncated: snapshot.truncated,
-      reason
-    }
-  });
-
-  await sendCdpCommand(runtime, { tabId: runtime.tabId }, "HeapProfiler.disable");
-}
-
-function shouldCaptureAdvancedProfiles(reason: string): boolean {
-  return reason === "manual";
-}
-
 function wait(durationMs: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, durationMs);
   });
-}
-
-async function sendCdpCommand<TResult = unknown>(
-  runtime: SessionRuntime,
-  target: { tabId: number; sessionId?: string },
-  method: string,
-  params?: Record<string, unknown>,
-  timeoutMs = CDP_ARTIFACT_TIMEOUT_MS
-): Promise<TResult | undefined> {
-  const outcome = await sendCdpCommandOutcome<TResult>(runtime, target, method, params, timeoutMs);
-  return outcome.ok ? outcome.value : undefined;
-}
-
-async function sendCdpCommandOutcome<TResult = unknown>(
-  runtime: SessionRuntime,
-  target: { tabId: number; sessionId?: string },
-  method: string,
-  params?: Record<string, unknown>,
-  timeoutMs = CDP_ARTIFACT_TIMEOUT_MS
-): Promise<CdpCommandOutcome<TResult>> {
-  if (!runtime.cdpRouter || runtime.stopping) {
-    return { ok: false, error: "debugger detached" };
-  }
-
-  return withCdpCommandTimeout(runtime.cdpRouter.send<TResult>(target, method, params), timeoutMs);
-}
-
-async function evaluateExpression(runtime: SessionRuntime, expression: string): Promise<unknown> {
-  if (!runtime.cdpRouter) {
-    return undefined;
-  }
-
-  const result = await sendCdpCommand<{
-    result?: {
-      value?: unknown;
-    };
-  }>(runtime, { tabId: runtime.tabId }, "Runtime.evaluate", {
-    expression,
-    returnByValue: true,
-    awaitPromise: true
-  });
-
-  return result?.result?.value;
-}
-
-function decodeBase64(value: string): Uint8Array {
-  if (typeof atob !== "function") {
-    return new TextEncoder().encode(value);
-  }
-
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-
-  return bytes;
 }
 
 function resolveFullBodyCaptureRule(
@@ -3901,7 +3067,7 @@ async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void>
 
   // Relations to other tabs are computed against the recorded tab's origin.
   void tabsContextTracker?.updateSession(tabId, { url: rawUrl });
-  rememberVisitedPageUrl(runtime, rawUrl);
+  storageArtifacts.rememberVisitedPageUrl(runtime, rawUrl);
 
   scheduleProfileReevaluation(runtime, "navigation");
 }
