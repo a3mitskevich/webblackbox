@@ -1,10 +1,8 @@
 import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_POINTER_CAPTURE_OPTIONS,
-  recordUrl,
   type CapturePolicy,
-  type PointerCaptureOptions,
-  type RedactionRules
+  type PointerCaptureOptions
 } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
@@ -25,7 +23,6 @@ import {
   STORAGE_SNAPSHOT_MAX_VALUE_CHARS
 } from "./capture-scope.js";
 import { readIndexedDbSnapshot } from "./indexeddb-snapshot.js";
-import { serializeRawDom } from "./raw-dom-snapshot.js";
 import {
   INJECTED_MESSAGE_SOURCE,
   INJECTED_RAW_EVENT_TYPES,
@@ -42,6 +39,17 @@ import {
 } from "./input-value-policy.js";
 import { PointerCaptureController, readGeometry } from "./pointer-capture.js";
 import { round } from "./pointer-target.js";
+import {
+  accumulateMutationRecord,
+  buildPressureRecoverySnapshotPayload,
+  buildRawDomSnapshotPayload,
+  buildRrwebMutationPayload,
+  buildSummaryDomSnapshotPayload,
+  createEmptyMutationSummary,
+  OBSERVED_MUTATION_ATTRIBUTES,
+  type DomSnapshotSummaryMode,
+  type MutationBatchSummary
+} from "./lite-dom-snapshot.js";
 import {
   captureSnapdomDataUrl,
   computeScreenshotScale,
@@ -85,7 +93,6 @@ const DOM_CHANGE_SNAPSHOT_INTERVAL_MS = 2_500;
 const QUIET_MODE_SCROLL_COOLDOWN_MS = 2_000;
 const QUIET_MODE_EDITOR_COOLDOWN_MS = 4_200;
 const SCREENSHOT_CAPTURE_TIMEOUT_MS = 4_000;
-const DOM_SNAPSHOT_MAX_HTML_CHARS = 300_000;
 const DOM_SNAPSHOT_SUMMARY_NODE_THRESHOLD = 3_500;
 const START_CAPTURE_DEFER_MS = 2_000;
 const LONG_TASK_PRESSURE_THRESHOLD_MS = 40;
@@ -100,25 +107,7 @@ const EVENT_BUFFER_SOFT_LIMIT = 420;
 const EVENT_BUFFER_HARD_LIMIT = 1_200;
 const MUTATION_DETAIL_RECORD_LIMIT = 160;
 const MUTATION_DETAIL_BUFFER_LIMIT = 240;
-const MUTATION_SAMPLE_TARGETS_MAX = 24;
-const MUTATION_SAMPLE_ATTRIBUTES_MAX = 16;
 const PERF_LOG_FLAG = "__WEBBLACKBOX_PERF__";
-const OBSERVED_MUTATION_ATTRIBUTES = [
-  "hidden",
-  "open",
-  "disabled",
-  "checked",
-  "selected",
-  "aria-expanded",
-  "aria-hidden",
-  "aria-pressed",
-  "aria-selected",
-  "aria-current",
-  "aria-busy",
-  "href",
-  "src"
-];
-
 const INJECTED_RAW_EVENT_TYPE_SET: ReadonlySet<string> = new Set(INJECTED_RAW_EVENT_TYPES);
 
 const LOW_PRIORITY_RAW_TYPES = new Set([
@@ -151,19 +140,6 @@ const INPUT_OPTIONS_TRUE: AddEventListenerOptions = {
 const PASSIVE_INPUT_OPTIONS_TRUE: AddEventListenerOptions = {
   capture: true,
   passive: true
-};
-
-type MutationBatchSummary = {
-  count: number;
-  sampledCount: number;
-  truncated: boolean;
-  childListCount: number;
-  attributeCount: number;
-  characterDataCount: number;
-  addedNodes: number;
-  removedNodes: number;
-  sampleTargets: string[];
-  attributeNames: string[];
 };
 
 type CapturePressureStage = "none" | "soft" | "hard" | "critical";
@@ -802,45 +778,6 @@ export class LiteCaptureAgent {
     }
   }
 
-  private accumulateMutationRecord(record: MutationRecord, includeDetails: boolean): void {
-    this.mutationSummary.count += 1;
-    this.mutationSummary.sampledCount += 1;
-    this.mutationSummary.addedNodes += record.addedNodes.length;
-    this.mutationSummary.removedNodes += record.removedNodes.length;
-
-    if (record.type === "childList") {
-      this.mutationSummary.childListCount += 1;
-    } else if (record.type === "attributes") {
-      this.mutationSummary.attributeCount += 1;
-    } else if (record.type === "characterData") {
-      this.mutationSummary.characterDataCount += 1;
-    }
-
-    if (!includeDetails) {
-      return;
-    }
-
-    if (record.type === "attributes" && record.attributeName) {
-      const names = this.mutationSummary.attributeNames;
-
-      if (names.length < MUTATION_SAMPLE_ATTRIBUTES_MAX && !names.includes(record.attributeName)) {
-        names.push(record.attributeName);
-      }
-    }
-
-    const sampleTargets = this.mutationSummary.sampleTargets;
-
-    if (sampleTargets.length >= MUTATION_SAMPLE_TARGETS_MAX) {
-      return;
-    }
-
-    const selector = this.targets.readCachedSelector(record.target);
-
-    if (!sampleTargets.includes(selector)) {
-      sampleTargets.push(selector);
-    }
-  }
-
   private accumulateMutationRecords(records: MutationRecord[]): void {
     if (records.length === 0) {
       return;
@@ -868,8 +805,10 @@ export class LiteCaptureAgent {
         : records.length;
     const sampledCount = Math.min(records.length, sampleLimit);
 
+    const readSelector = (target: EventTarget | null) => this.targets.readCachedSelector(target);
+
     for (let index = 0; index < sampledCount; index += 1) {
-      this.accumulateMutationRecord(records[index]!, includeDetails);
+      accumulateMutationRecord(this.mutationSummary, records[index]!, includeDetails, readSelector);
     }
 
     if (sampledCount < records.length) {
@@ -1140,28 +1079,7 @@ export class LiteCaptureAgent {
   }
 
   private emitRrwebMutationSummary(summary: MutationBatchSummary): void {
-    this.queueEvent("rrweb", {
-      schema: "rrweb-lite/v1",
-      event: {
-        type: "incremental-snapshot",
-        source: "mutation-summary",
-        timestamp: Date.now(),
-        data: {
-          count: summary.count,
-          sampledCount: summary.sampledCount,
-          truncated: summary.truncated,
-          childListCount: summary.childListCount,
-          attributeCount: summary.attributeCount,
-          characterDataCount: summary.characterDataCount,
-          addedNodes: summary.addedNodes,
-          removedNodes: summary.removedNodes,
-          sampleTargets: [...summary.sampleTargets],
-          attributeNames: [...summary.attributeNames]
-        }
-      },
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title
-    });
+    this.queueEvent("rrweb", buildRrwebMutationPayload(summary, this.capturePolicy.redaction));
   }
 
   private emitDomSnapshot(reason: string): void {
@@ -1173,62 +1091,27 @@ export class LiteCaptureAgent {
       return;
     }
 
-    const html = buildDomSnapshotSummaryHtml({
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title,
+    const payload = buildSummaryDomSnapshotPayload({
       reason,
       nodeCount,
       summaryMode,
-      capturedAtIso: new Date().toISOString()
+      redaction: this.capturePolicy.redaction
     });
-    const truncated = true;
-    const sampledHtml = html.slice(0, DOM_SNAPSHOT_MAX_HTML_CHARS);
 
     this.hasDomSnapshot = true;
-
-    this.queueEvent("snapshot", {
-      reason,
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title,
-      nodeCount,
-      htmlLength: html.length,
-      truncated,
-      html: sampledHtml,
-      summaryOnly: true,
-      summaryMode
-    });
+    this.queueEvent("snapshot", payload);
   }
 
   /** `dom: allow`: the page itself, masked by blocked selectors. False when not recorded. */
   private emitRawDomSnapshot(reason: string, nodeCount: number): boolean {
-    const { categories, redaction } = this.capturePolicy;
+    const payload = buildRawDomSnapshotPayload(reason, nodeCount, this.capturePolicy);
 
-    if (!capturesRawDom(categories)) {
-      return false;
-    }
-
-    const snapshot = serializeRawDom(document, {
-      blockedSelectors: redaction.blockedSelectors,
-      keepInputValues: categories.inputs === "allow",
-      sensitiveNamePatterns: redaction.redactBodyPatterns,
-      redaction
-    });
-
-    if (!snapshot) {
+    if (!payload) {
       return false;
     }
 
     this.hasDomSnapshot = true;
-    this.queueEvent("snapshot", {
-      reason,
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title,
-      nodeCount,
-      htmlLength: snapshot.htmlLength,
-      truncated: snapshot.truncated,
-      html: snapshot.html,
-      summaryOnly: false
-    });
+    this.queueEvent("snapshot", payload);
     return true;
   }
 
@@ -1849,9 +1732,7 @@ export class LiteCaptureAgent {
     );
   }
 
-  private resolveDomSnapshotSummaryMode(
-    nodeCount: number
-  ): "pressure" | "large-dom" | "runtime-lite" {
+  private resolveDomSnapshotSummaryMode(nodeCount: number): DomSnapshotSummaryMode {
     const stage = this.resolveCapturePressureStage();
 
     if (stage === "hard" || stage === "critical") {
@@ -2024,28 +1905,10 @@ export class LiteCaptureAgent {
   }
 
   private emitPressureRecoverySnapshot(): void {
-    const nodeCount = document.getElementsByTagName("*").length;
-    const html = buildDomSnapshotSummaryHtml({
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title,
-      reason: "pressure-recovery",
-      nodeCount,
-      summaryMode: "pressure",
-      capturedAtIso: new Date().toISOString()
-    });
+    const payload = buildPressureRecoverySnapshotPayload(this.capturePolicy.redaction);
 
     this.hasDomSnapshot = true;
-    this.queueEvent("snapshot", {
-      reason: "pressure-recovery",
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title,
-      nodeCount,
-      htmlLength: html.length,
-      truncated: true,
-      html,
-      summaryOnly: true,
-      summaryMode: "pressure"
-    });
+    this.queueEvent("snapshot", payload);
   }
 
   private readPointerSnapshot(): Record<string, unknown> | undefined {
@@ -2314,67 +2177,6 @@ export class LiteCaptureAgent {
       target.removeEventListener(type, wrapped, options);
     });
   }
-}
-
-function buildDomSnapshotSummaryHtml(options: {
-  href: string;
-  title: string;
-  reason: string;
-  nodeCount: number;
-  summaryMode: "pressure" | "large-dom" | "runtime-lite";
-  capturedAtIso: string;
-}): string {
-  const body = [
-    "<!doctype html>",
-    `<html data-webblackbox-summary="true" data-summary-mode="${escapeHtml(options.summaryMode)}">`,
-    "<head>",
-    '<meta charset="utf-8">',
-    `<title>${escapeHtml(options.title || "WebBlackbox DOM Summary")}</title>`,
-    "</head>",
-    "<body>",
-    "<main>",
-    "<h1>WebBlackbox Lite DOM Summary</h1>",
-    `<p>mode=${escapeHtml(options.summaryMode)}</p>`,
-    `<p>reason=${escapeHtml(options.reason)}</p>`,
-    `<p>href=${escapeHtml(options.href)}</p>`,
-    `<p>title=${escapeHtml(options.title)}</p>`,
-    `<p>nodeCount=${String(options.nodeCount)}</p>`,
-    `<p>capturedAt=${escapeHtml(options.capturedAtIso)}</p>`,
-    "</main>",
-    "</body>",
-    "</html>"
-  ];
-
-  return body.join("");
-}
-
-function readPageUrl(rules: RedactionRules): string {
-  return typeof location !== "undefined" && typeof location.href === "string"
-    ? recordUrl(location.href, rules)
-    : "";
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function createEmptyMutationSummary(): MutationBatchSummary {
-  return {
-    count: 0,
-    sampledCount: 0,
-    truncated: false,
-    childListCount: 0,
-    attributeCount: 0,
-    characterDataCount: 0,
-    addedNodes: 0,
-    removedNodes: 0,
-    sampleTargets: [],
-    attributeNames: []
-  };
 }
 
 function isPerfLoggingEnabled(): boolean {
