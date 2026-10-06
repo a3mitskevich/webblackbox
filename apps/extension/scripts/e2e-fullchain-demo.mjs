@@ -130,6 +130,7 @@ const e2eExportPolicy = {
   recentWindowMs: 20 * 60 * 1000
 };
 const realWorldScenario = process.env.WB_E2E_REALWORLD_SCENARIO ?? "";
+const REAL_WORLD_MARK_PATH = "/api/realworld-mark/";
 const realWorldLongRecordingMs = Number(process.env.WB_E2E_REALWORLD_LONG_MS ?? "2500");
 const realWorldLargeResponseBytes = Number(
   process.env.WB_E2E_REALWORLD_LARGE_RESPONSE_BYTES ?? "1048576"
@@ -1058,6 +1059,13 @@ async function handleApiRequest(request, response, requestUrl, tasks) {
         errorRate: 0.013
       }
     });
+    return;
+  }
+
+  // `/api/realworld-mark/<slug>`: a real-world step announced as a request, which Lite records under
+  // the Default profile (it keeps console metadata, not the text).
+  if (pathname.startsWith(REAL_WORLD_MARK_PATH) && request.method === "GET") {
+    writeJson(response, 200, { ok: true });
     return;
   }
 
@@ -2728,10 +2736,16 @@ async function runRealWorldScenarioAddons({
         longRecordingMs: 0,
         permissionDenied: false
       };
+      const markRequests = [];
       const mark = (message) => {
         const marker = '[wb-realworld] ' + message;
         result.markers.push(marker);
         console.info(marker);
+        markRequests.push(
+          fetch(${JSON.stringify(REAL_WORLD_MARK_PATH)} + marker.replace(/[^A-Za-z]+/g, '-'), {
+            cache: 'no-store'
+          }).catch(() => undefined)
+        );
         return marker;
       };
 
@@ -2844,6 +2858,7 @@ async function runRealWorldScenarioAddons({
 
         document.body.dataset.realWorldTick = String(performance.now());
         mark('long recording page ready');
+        await Promise.all(markRequests);
 
         return result;
       } catch (error) {
@@ -3001,9 +3016,10 @@ async function runRealWorldScenarioAddons({
     pointer: pointerResult,
     permission: permissionResult,
     multiTab: multiTabResult,
+    // Full records the console text too; Lite (Default profile) only the marker requests.
     archiveEvidence: {
-      markers: expectedMarkers,
-      urls: expectedUrls,
+      markers: captureMode === "full" ? expectedMarkers : [],
+      urls: [...expectedUrls, ...expectedMarkers.map(realWorldMarkUrl)],
       eventTypes: ["console.entry", "network.request"]
     },
     browserConnected: Boolean(browserClient)
@@ -3033,13 +3049,24 @@ async function performRealWorldPointerActivity(demoClient, durationMs) {
 }
 
 async function emitPageRealWorldMarker(demoClient, message) {
+  const marker = `[wb-realworld] ${message}`;
   return demoClient.evaluate(`
-    (() => {
-      const marker = ${JSON.stringify("[wb-realworld] ")} + ${JSON.stringify(message)};
-      console.info(marker);
-      return marker;
+    (async () => {
+      console.info(${JSON.stringify(marker)});
+      await fetch(${JSON.stringify(realWorldMarkUrl(marker))}, { cache: 'no-store' }).catch(
+        () => undefined
+      );
+      return ${JSON.stringify(marker)};
     })()
   `);
+}
+
+/**
+ * Path of the request a real-world marker sends: letters only, since recorded URLs keep the path
+ * but mask number-like parts of it.
+ */
+function realWorldMarkUrl(marker) {
+  return REAL_WORLD_MARK_PATH + marker.replace(/[^A-Za-z]+/g, "-");
 }
 
 async function requestFinalE2eMarkerCapture(demoClient, mode) {
