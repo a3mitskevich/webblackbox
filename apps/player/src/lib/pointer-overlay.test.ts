@@ -1,12 +1,7 @@
 import type { PointerTimelineEntry } from "@webblackbox/player-sdk";
 import { describe, expect, it } from "vitest";
 
-import {
-  buildPointerLaneMarks,
-  buildRippleMarks,
-  projectOverlayPoint,
-  toOverlayActions
-} from "./pointer-overlay.js";
+import { buildPointerLaneMarks, buildRippleMarks, toOverlayActions } from "./pointer-overlay.js";
 
 function entry(
   mono: number,
@@ -56,13 +51,6 @@ describe("pointer overlay model", () => {
     ]);
     expect(buildRippleMarks(actions, 1_000, 1_200).map((mark) => mark.mono)).toEqual([0, 1_000]);
     expect(buildRippleMarks(actions, -5)).toEqual([]);
-  });
-
-  it("projects recorded CSS pixels onto a letterboxed stage", () => {
-    const frame = { width: 800, height: 600, sourceWidth: 1600, sourceHeight: 900 };
-
-    expect(projectOverlayPoint(frame, 800, 450)).toEqual({ x: 400, y: 300 });
-    expect(projectOverlayPoint(frame, 0, 0)).toEqual({ x: 0, y: 75 });
   });
 
   it("adds rage and dead clicks to the lane and keeps the most telling mark per slot", () => {

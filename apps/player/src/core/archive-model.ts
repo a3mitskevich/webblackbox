@@ -38,6 +38,7 @@ import {
 } from "../lib/screenshot-data.js";
 import { buildActionSearchText, buildEventSearchText } from "../lib/search-text.js";
 import { buildConsoleSignalSearchText } from "../lib/signal-text.js";
+import { buildViewportTimeline, type ViewportSample } from "./viewport-fit.js";
 import { isTabLifecycleEvent } from "../lib/tabs-context-view.js";
 
 /**
@@ -140,6 +141,8 @@ export type ArchiveModel = {
   screenRecordings: ScreenRecordingRecord[];
   screenRecordingById: Map<string, ScreenRecordingRecord>;
   pointers: PointerSample[];
+  /** The page viewport over time (top frame): maps pointer coordinates onto the stage media. */
+  viewports: ViewportSample[];
   pointerActions: OverlayPointerAction[];
   pointerLane: PointerLaneMark[];
   waterfall: NetworkWaterfallEntry[];
@@ -393,6 +396,7 @@ export function buildArchiveModel(
     screenRecordings,
     screenRecordingById,
     pointers,
+    viewports: buildViewportTimeline(events),
     waterfall,
     waterfallByReqId,
     requestScopeByReqId,

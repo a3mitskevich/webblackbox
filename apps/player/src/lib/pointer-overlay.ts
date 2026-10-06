@@ -49,14 +49,6 @@ export type PointerLaneMark = {
   eventId?: string;
 };
 
-/** Rendered stage box and the viewport size the coordinates were recorded in. */
-export type OverlayFrame = {
-  width: number;
-  height: number;
-  sourceWidth: number;
-  sourceHeight: number;
-};
-
 /** Which mark a crowded slot of the pointer lane keeps (problems first, plain clicks last). */
 export const POINTER_LANE_PRIORITY: Record<PointerLaneKind, number> = {
   rage: 6,
@@ -185,24 +177,6 @@ export function buildPointerLaneMarks(
   }
 
   return [...slots.values()].sort((left, right) => left.mono - right.mono);
-}
-
-/** Maps recorded viewport coordinates onto the stage (media letterboxed with `contain`). */
-export function projectOverlayPoint(
-  frame: OverlayFrame,
-  x: number,
-  y: number
-): { x: number; y: number } {
-  const scale = Math.min(frame.width / frame.sourceWidth, frame.height / frame.sourceHeight);
-  const renderedWidth = frame.sourceWidth * scale;
-  const renderedHeight = frame.sourceHeight * scale;
-  const offsetX = (frame.width - renderedWidth) / 2;
-  const offsetY = (frame.height - renderedHeight) / 2;
-
-  return {
-    x: offsetX + (x / frame.sourceWidth) * renderedWidth,
-    y: offsetY + (y / frame.sourceHeight) * renderedHeight
-  };
 }
 
 /** `Click: #buy`, or the kind alone when the target is unknown. */

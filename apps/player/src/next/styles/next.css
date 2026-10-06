@@ -764,6 +764,11 @@ button.sess:hover .sess-title {
   height: 100%;
   object-fit: contain;
 }
+/* The page's rectangle inside the media frame (left/top/width/height set from the viewport). */
+.pointer-box {
+  position: absolute;
+  pointer-events: none;
+}
 .pointer-layer {
   position: absolute;
   inset: 0;

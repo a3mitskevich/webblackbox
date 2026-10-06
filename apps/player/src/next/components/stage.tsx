@@ -17,6 +17,12 @@ import {
   RIPPLE_MAX_RADIUS,
   RIPPLE_MIN_RADIUS
 } from "../../lib/pointer-overlay.js";
+import {
+  fitContentRect,
+  resolveViewportAt,
+  type FrameSize,
+  type ViewportSize
+} from "../../core/viewport-fit.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import { useInspectedTarget, type InspectedTargetFrame } from "../features/inspector/index.js";
 import type { LoadedArchive } from "../state.js";
@@ -148,31 +154,68 @@ type PointerLayerProps = {
   model: ArchiveModel;
   playheadMono: number;
   shot: ScreenshotRecord | null;
+  /** The media's natural size (the tab video's frame or the screenshot), 0×0 until loaded. */
   size: MediaSize;
   /** The event inspector's target, outlined on the frame. */
   target: InspectedTargetFrame | null;
 };
 
+function sizeOf(width: number | null | undefined, height: number | null | undefined) {
+  return width && height && width > 0 && height > 0 ? { width, height } : null;
+}
+
+/**
+ * The page viewport (CSS px) at the playhead: the recorded viewport timeline (`user.resize`,
+ * click viewports), else whatever the frame's own records say.
+ */
+function viewportAt(
+  model: ArchiveModel,
+  playheadMono: number,
+  shot: ScreenshotRecord | null,
+  target: InspectedTargetFrame | null
+): ViewportSize | null {
+  const marker = shot?.marker;
+  return (
+    resolveViewportAt(model.viewports, playheadMono) ??
+    sizeOf(marker?.viewportWidth, marker?.viewportHeight) ??
+    sizeOf(shot?.context?.viewportWidth, shot?.context?.viewportHeight) ??
+    sizeOf(target?.viewportWidth, target?.viewportHeight)
+  );
+}
+
+function percent(fraction: number): string {
+  return `${Number((fraction * 100).toFixed(4))}%`;
+}
+
+/** The page's rectangle inside the media frame, in % of the frame (`.frame` keeps its aspect). */
+function contentBoxStyle(size: FrameSize, viewport: ViewportSize | null): CSSProperties {
+  const box = fitContentRect(size, viewport);
+  return {
+    left: percent(box.x / size.width),
+    top: percent(box.y / size.height),
+    width: percent(box.width / size.width),
+    height: percent(box.height / size.height)
+  };
+}
+
 /**
  * Cursor, trail, click ripples (with their kind: double, right, hold…) and the inspected target,
- * in recorded viewport coordinates (SVG viewBox = viewport).
+ * in recorded viewport coordinates (SVG viewBox = viewport). The layer covers only the page's
+ * rectangle in the media: a tab video fits the page into its own frame size with bars (DevTools
+ * docked, another window size), and that rectangle follows viewport changes over time.
  */
 function PointerLayer({ model, playheadMono, shot, size, target }: PointerLayerProps) {
   const i18n = useI18n();
   const trail = buildScreenshotTrail(model.pointers, playheadMono);
   const marker = resolveScreenshotMarker(model.pointers, playheadMono, shot?.marker ?? null);
   const ripples = buildRippleMarks(model.pointerActions, playheadMono);
-  const sourceWidth =
-    marker?.viewportWidth ?? shot?.context?.viewportWidth ?? target?.viewportWidth ?? size.width;
-  const sourceHeight =
-    marker?.viewportHeight ??
-    shot?.context?.viewportHeight ??
-    target?.viewportHeight ??
-    size.height;
+  const viewport = viewportAt(model, playheadMono, shot, target);
+  const sourceWidth = viewport?.width ?? size.width;
+  const sourceHeight = viewport?.height ?? size.height;
 
   if (
-    sourceWidth <= 0 ||
-    sourceHeight <= 0 ||
+    size.width <= 0 ||
+    size.height <= 0 ||
     (!marker && trail.length === 0 && ripples.length === 0 && !target)
   ) {
     return null;
@@ -184,12 +227,16 @@ function PointerLayer({ model, playheadMono, shot, size, target }: PointerLayerP
   });
 
   return (
-    <>
+    <div
+      className="pointer-box"
+      style={contentBoxStyle(size, viewport)}
+      aria-hidden="true"
+      data-testid="pointer-box"
+    >
       <svg
         className="pointer-layer"
         viewBox={`0 0 ${sourceWidth} ${sourceHeight}`}
         preserveAspectRatio="none"
-        aria-hidden="true"
         data-testid="pointer-layer"
       >
         {trail.length > 1 ? (
@@ -249,7 +296,7 @@ function PointerLayer({ model, playheadMono, shot, size, target }: PointerLayerP
           {label}
         </span>
       ))}
-    </>
+    </div>
   );
 }
 
