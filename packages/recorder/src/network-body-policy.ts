@@ -1,4 +1,5 @@
 import {
+  normalizeMimeType,
   redactBodyText,
   type BodySkipReason,
   type CapturePolicy,
@@ -186,7 +187,7 @@ export function readInlineNetworkBodyContext(
   return {
     eventType,
     url: asString(asRecord(raw?.request)?.url) ?? asString(raw?.url),
-    mimeType: contentType?.split(";")[0]?.trim().toLowerCase() || undefined
+    mimeType: normalizeMimeType(contentType)
   };
 }
 

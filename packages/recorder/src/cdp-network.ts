@@ -1,4 +1,4 @@
-import { isBodySkipReason, isTextualMimeType } from "@webblackbox/protocol";
+import { isBodySkipReason, isTextualMimeType, normalizeMimeType } from "@webblackbox/protocol";
 
 import {
   asArray,
@@ -289,7 +289,7 @@ function readRequestBody(
   request: Record<string, unknown>,
   contentType: string | undefined
 ): RequestBody {
-  const mimeType = contentType?.split(";")[0]?.trim().toLowerCase() || undefined;
+  const mimeType = normalizeMimeType(contentType);
   const entryBytes = decodePostDataEntries(request.postDataEntries);
 
   if (entryBytes) {

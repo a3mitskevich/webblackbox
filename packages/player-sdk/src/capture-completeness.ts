@@ -1,5 +1,6 @@
 import {
   isTextualMimeType,
+  normalizeMimeType,
   type BodySkipReason,
   type WebBlackboxEvent,
   type WebBlackboxEventType
@@ -256,7 +257,7 @@ function summarizeResponseBodies(
       continue;
     }
 
-    const mime = normalizeMime(entry.mimeType) ?? "(none)";
+    const mime = normalizeMimeType(entry.mimeType) ?? "(none)";
     const row = byMime[mime] ?? { expected: 0, captured: 0, skipped: 0, missing: 0 };
     const outcome = tally(summary, entry, {
       captured: Boolean(entry.responseBodyHash),
@@ -324,7 +325,7 @@ function tally(
 /** A finished textual response that has body bytes to keep. */
 function expectsResponseBody(entry: CompletenessNetworkEntry): boolean {
   const status = entry.status;
-  const mime = normalizeMime(entry.mimeType);
+  const mime = normalizeMimeType(entry.mimeType);
 
   return (
     !entry.failed &&
@@ -344,7 +345,7 @@ function expectsRequestBody(entry: CompletenessNetworkEntry): boolean {
     return false;
   }
 
-  const contentType = normalizeMime(entry.requestHeaders["content-type"]);
+  const contentType = normalizeMimeType(entry.requestHeaders["content-type"]);
   return !BROWSER_INTERNAL_URL.test(entry.url) && (!contentType || isTextualMimeType(contentType));
 }
 
@@ -464,11 +465,6 @@ function countType(events: readonly WebBlackboxEvent[], type: WebBlackboxEventTy
 
 function sum(values: number[]): number {
   return values.reduce((total, value) => total + value, 0);
-}
-
-function normalizeMime(value: string | undefined): string | undefined {
-  const mime = value?.split(";")[0]?.trim().toLowerCase();
-  return mime ? mime : undefined;
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {

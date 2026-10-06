@@ -236,6 +236,34 @@ describe("capture completeness", () => {
     expect(formatCaptureCompletenessReport(report)[1]).toContain("; 1 in data: URLs");
   });
 
+  it("reads one media type from a Content-Type header sent twice", async () => {
+    const at = createClock();
+    const player = await openArchive([
+      META_CONFIG,
+      ...exchange(at, "twice", {
+        method: "POST",
+        mimeType: "application/json, application/json",
+        request: {
+          hasPostData: true,
+          postData: '{"a":1}',
+          headers: { "content-type": "application/json, application/json" }
+        }
+      }),
+      ...exchange(at, "binary", {
+        method: "POST",
+        request: {
+          hasPostData: true,
+          headers: { "content-type": "application/octet-stream, application/json" }
+        }
+      })
+    ]);
+
+    const report = player.getCaptureCompleteness();
+
+    expect(Object.keys(report.network.responseBodies.byMime)).toEqual(["application/json"]);
+    expect(report.network.requestBodies).toMatchObject({ expected: 1, captured: 1, missing: 0 });
+  });
+
   it("measures how much of the session the DOM events cover", async () => {
     const player = await openArchive([
       META_CONFIG,

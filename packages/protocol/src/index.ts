@@ -6,6 +6,7 @@ export * from "./defaults.js";
 export * from "./ids.js";
 export * from "./keyboard-privacy.js";
 export * from "./messages.js";
+export * from "./mime.js";
 export * from "./network.js";
 export * from "./privacy.js";
 export * from "./schemas.js";

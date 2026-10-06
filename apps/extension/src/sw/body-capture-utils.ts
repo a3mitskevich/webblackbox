@@ -2,12 +2,13 @@ import {
   BODY_REDACTION_TOKEN,
   type BodySkipReason,
   isTextualMimeType,
+  normalizeMimeType,
   redactBodyBytes,
   type CaptureMode,
   type RecorderConfig
 } from "@webblackbox/protocol";
 
-export { isTextualMimeType };
+export { isTextualMimeType, normalizeMimeType };
 
 export type BodyCaptureRule = {
   enabled: boolean;
@@ -219,11 +220,11 @@ export function wildcardMatch(value: string, pattern: string): boolean {
 }
 
 export function isMimeAllowed(allowlist: string[], mimeType: string | undefined): boolean {
-  if (!mimeType) {
+  const normalizedMime = normalizeMimeType(mimeType);
+
+  if (!normalizedMime) {
     return true;
   }
-
-  const normalizedMime = mimeType.toLowerCase();
 
   return allowlist.some((rule) => {
     if (rule.endsWith("/*")) {
@@ -237,16 +238,6 @@ export function isMimeAllowed(allowlist: string[], mimeType: string | undefined)
 
     return normalizedMime === rule;
   });
-}
-
-export function normalizeMimeType(value: string | null | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const [mime] = value.split(";");
-  const normalized = mime?.trim().toLowerCase();
-  return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
 export function isLikelyTextualResourceType(resourceType?: string): boolean {
