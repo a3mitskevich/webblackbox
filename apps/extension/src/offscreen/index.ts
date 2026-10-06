@@ -1,4 +1,4 @@
-import { FlightRecorderPipeline, IndexedDbPipelineStorage } from "@webblackbox/pipeline";
+import { FlightRecorderPipeline } from "@webblackbox/pipeline";
 import type {
   CapturePolicy,
   PrivacyScannerResult,
@@ -7,9 +7,11 @@ import type {
   WebBlackboxEvent
 } from "@webblackbox/protocol";
 
+import { parseStorageKeyMessage, STORAGE_KEY_MESSAGE_KIND } from "../shared/at-rest.js";
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { createExtensionI18n } from "../shared/i18n.js";
 import { PORT_NAMES } from "../shared/messages.js";
+import { createAtRestStorageProvider } from "./at-rest-storage.js";
 
 type OffscreenPipelineRequest = {
   kind: "sw.pipeline-request";
@@ -103,6 +105,20 @@ createExtensionI18n({
   pageTitleKey: "pageTitleOffscreen"
 });
 const pipelines = new Map<string, FlightRecorderPipeline>();
+// Every pipeline writes through this AES-GCM storage once the service worker sends the key.
+const atRestStorage = createAtRestStorageProvider({
+  onPurged: (result) => {
+    if (result.deleted.length > 0 || result.failed.length > 0) {
+      console.info("[WebBlackbox] purged unreadable recordings from local storage", {
+        deleted: result.deleted.length,
+        failed: result.failed.length
+      });
+    }
+  },
+  onPurgeError: (error) => {
+    console.warn("[WebBlackbox] failed to purge unreadable recordings", error);
+  }
+});
 const screenRecordings = new Map<string, OffscreenScreenRecordingState>();
 const EXPORT_OBJECT_URL_TTL_MS = 90_000;
 const SERVICE_WORKER_KEEPALIVE_INTERVAL_MS = 20_000;
@@ -238,6 +254,17 @@ function handleServiceWorkerMessage(message: unknown): void {
       return;
     }
 
+    if (kind === STORAGE_KEY_MESSAGE_KIND) {
+      const keyMessage = parseStorageKeyMessage(message);
+
+      if (keyMessage) {
+        void atRestStorage.acceptKey(keyMessage).catch((error) => {
+          console.warn("[WebBlackbox] failed to install the at-rest encryption key", error);
+        });
+      }
+      return;
+    }
+
     if (kind === "sw.pipeline-request") {
       void handlePipelineRequest(message as OffscreenPipelineRequest);
     }
@@ -273,7 +300,7 @@ async function processPipelineRequest(message: OffscreenPipelineRequest): Promis
       return null;
     }
 
-    const storage = new IndexedDbPipelineStorage("webblackbox-flight-recorder");
+    const storage = await atRestStorage.getStorage();
     const pipeline = new FlightRecorderPipeline({
       session: message.session,
       storage,

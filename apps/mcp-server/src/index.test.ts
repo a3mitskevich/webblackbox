@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -70,6 +70,31 @@ describe("mcp-server", () => {
     });
     expect(outside.isError).toBe(true);
     expect(readTextBlocks(outside).join("\n")).toContain("outside the allowed directories");
+
+    await client.close();
+  });
+
+  it("guards both symbolicate_stack paths with --allow-dir", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "wb-mcp-server-")));
+    const allowed = join(root, "allowed");
+    const archive = join(allowed, "session.webblackbox");
+    await mkdir(allowed);
+    await writeFile(archive, "");
+    const client = await connectClient({ allowedDirs: [allowed] });
+
+    const outsideArchive = await client.callTool({
+      name: "symbolicate_stack",
+      arguments: { path: join(root, "other.webblackbox") }
+    });
+    expect(outsideArchive.isError).toBe(true);
+    expect(readTextBlocks(outsideArchive).join("\n")).toContain("outside the allowed directories");
+
+    const outsideMaps = await client.callTool({
+      name: "symbolicate_stack",
+      arguments: { path: archive, mapsDir: root }
+    });
+    expect(outsideMaps.isError).toBe(true);
+    expect(readTextBlocks(outsideMaps).join("\n")).toContain("outside the allowed directories");
 
     await client.close();
   });

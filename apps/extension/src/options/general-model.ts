@@ -6,6 +6,11 @@ import {
   RECENT_WINDOW_MINUTES_LIMITS,
   type ExportPolicyPrefs
 } from "../shared/export-policy-prefs.js";
+import {
+  DEFAULT_CONTENT_INJECTION_MODE,
+  isContentInjectionMode,
+  type ContentInjectionMode
+} from "../shared/content-injection.js";
 import type { ExtensionMessageKey, ExtensionUnit } from "../shared/i18n.js";
 import { OPTIONS_STORAGE_VERSION } from "../shared/options-storage.js";
 import { parsePlayerUrl } from "../shared/player-url.js";
@@ -25,6 +30,8 @@ export type GeneralDraft = {
   recorderConfig: RecorderConfig;
   performanceBudget: PerformanceBudgetConfig;
   archive: ExportPolicyPrefs;
+  /** Stored under its own key (`webblackbox.injection`), not in `webblackbox.options`. */
+  injection: ContentInjectionMode;
   /** Stored under its own key (`webblackbox.startReloadOffer`), not in `webblackbox.options`. */
   startReloadOffer: boolean;
   /**
@@ -76,6 +83,21 @@ export type ListFieldSpec = SpecText & {
   set: (draft: GeneralDraft, value: string[]) => GeneralDraft;
 };
 
+export type ChoiceOptionSpec = {
+  value: string;
+  label: ExtensionMessageKey;
+  description: ExtensionMessageKey;
+};
+
+/** One of a few described options, shown as radio cards. */
+export type ChoiceFieldSpec = SpecText & {
+  kind: "choice";
+  options: readonly ChoiceOptionSpec[];
+  get: (draft: GeneralDraft) => string;
+  /** Unknown values leave the draft unchanged. */
+  set: (draft: GeneralDraft, value: string) => GeneralDraft;
+};
+
 export type TextValidation = { ok: true; value: string } | { ok: false; key: ExtensionMessageKey };
 
 export type TextFieldSpec = SpecText & {
@@ -88,7 +110,12 @@ export type TextFieldSpec = SpecText & {
   set: (draft: GeneralDraft, value: string) => GeneralDraft;
 };
 
-export type GeneralFieldSpec = NumberFieldSpec | ToggleFieldSpec | ListFieldSpec | TextFieldSpec;
+export type GeneralFieldSpec =
+  | NumberFieldSpec
+  | ToggleFieldSpec
+  | ListFieldSpec
+  | ChoiceFieldSpec
+  | TextFieldSpec;
 
 type SamplingKey = keyof RecorderConfig["sampling"];
 type BudgetNumberKey = "lcpWarnMs" | "requestWarnMs" | "errorRateWarnPct";
@@ -165,6 +192,27 @@ function redactionList(
 }
 
 export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
+  {
+    kind: "choice",
+    id: "contentInjection",
+    section: "sampling",
+    label: "optionsContentInjection",
+    hint: "optionsContentInjectionHint",
+    options: [
+      {
+        value: "always",
+        label: "optionsContentInjectionAlways",
+        description: "optionsContentInjectionAlwaysDescription"
+      },
+      {
+        value: "on-start",
+        label: "optionsContentInjectionOnStart",
+        description: "optionsContentInjectionOnStartDescription"
+      }
+    ],
+    get: (draft) => draft.injection,
+    set: (draft, value) => (isContentInjectionMode(value) ? { ...draft, injection: value } : draft)
+  },
   {
     kind: "toggle",
     id: "startReloadOffer",
@@ -431,6 +479,7 @@ export function createDefaultGeneralDraft(): GeneralDraft {
     recorderConfig: normalizeOptionsConfig(structuredClone(DEFAULT_RECORDER_CONFIG)),
     performanceBudget: { ...DEFAULT_PERFORMANCE_BUDGET },
     archive: { ...DEFAULT_EXPORT_POLICY_PREFS },
+    injection: DEFAULT_CONTENT_INJECTION_MODE,
     startReloadOffer: DEFAULT_START_RELOAD_OFFER,
     playerUrl: ""
   };
@@ -446,6 +495,7 @@ export function resetGeneralSection(draft: GeneralDraft, section: GeneralSection
         return spec.set(next, spec.get(defaults));
       case "toggle":
         return spec.set(next, spec.get(defaults));
+      case "choice":
       case "text":
         return spec.set(next, spec.get(defaults));
       case "list":
@@ -473,6 +523,10 @@ export function isStoredOptionsChanged(draft: GeneralDraft, baseline: GeneralDra
 
 export function isArchiveChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
   return JSON.stringify(draft.archive) !== JSON.stringify(baseline.archive);
+}
+
+export function isInjectionChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
+  return draft.injection !== baseline.injection;
 }
 
 export function isStartReloadOfferChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {

@@ -7,6 +7,7 @@ import type { LiteCaptureAgentOptions } from "webblackbox/types";
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { PORT_NAMES, type ExtensionOutboundMessage } from "../shared/messages.js";
 import { CONTENT_EVENT_FLUSH_CHUNK, resolveContentEventFlushDelay } from "./flush-policy.js";
+import { claimContentScriptSlot } from "./script-guard.js";
 
 type ContentAgentModule = typeof import("./content-agent.js");
 
@@ -30,27 +31,39 @@ const DEFAULT_TAB_ID = -1;
 const PORT_DEBUG_LOG_FLAG = "__WEBBLACKBOX_DEBUG_PORT__";
 const INJECTED_CAPTURE_CONFIG_EVENT = "webblackbox:injected-config";
 
-// The capture agent loads only on Start; a password the page reveals before then must still be
-// known as one when a profile records input values (the registry is shared with the agent).
-watchPasswordFieldReveals(document);
+if (
+  claimContentScriptSlot(
+    globalThis as unknown as Record<string, unknown>,
+    () => typeof chromeApi?.runtime?.id === "string"
+  )
+) {
+  startContentScript();
+}
 
-void requestRecordingStatusOnce();
+function startContentScript(): void {
+  // The capture agent loads only on Start; a password the page reveals before then must still be
+  // known as one when a profile records input values (the registry is shared with the agent).
+  // With injection on Start only, this watcher starts with the recording.
+  watchPasswordFieldReveals(document);
 
-chromeApi?.runtime?.onMessage.addListener((message) => {
-  if (isMarkerCommand(message)) {
-    if (recordingActive) {
-      void emitKeyboardMarker();
+  void requestRecordingStatusOnce();
+
+  chromeApi?.runtime?.onMessage.addListener((message) => {
+    if (isMarkerCommand(message)) {
+      if (recordingActive) {
+        void emitKeyboardMarker();
+      }
+
+      return false;
     }
 
+    void handleSwMessage(message as ExtensionOutboundMessage);
     return false;
-  }
+  });
 
-  void handleSwMessage(message as ExtensionOutboundMessage);
-  return false;
-});
-
-window.addEventListener("beforeunload", cleanup);
-window.addEventListener("pagehide", cleanup, { once: true });
+  window.addEventListener("beforeunload", cleanup);
+  window.addEventListener("pagehide", cleanup, { once: true });
+}
 
 function cleanup(): void {
   recordingActive = false;
@@ -267,7 +280,9 @@ async function handleSwMessage(message: ExtensionOutboundMessage): Promise<void>
       mode: message.mode,
       sampling: message.sampling,
       capturePolicy: message.capturePolicy,
-      injectedBridgeNonce: message.injectedBridgeNonce
+      injectedBridgeNonce: message.injectedBridgeNonce,
+      scriptSourceMaps: message.scriptSourceMaps === true,
+      pointer: message.pointer
     };
 
     if (message.active) {

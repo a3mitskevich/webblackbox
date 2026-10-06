@@ -312,6 +312,75 @@ export function toggleField(options: ToggleFieldOptions): HTMLElement {
   return row;
 }
 
+export type ChoiceFieldOptions = FieldText & {
+  id: string;
+  name?: string;
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string; description: string }>;
+};
+
+/** Radio cards: each option carries its own description, so trade-offs stay visible. */
+export function choiceField(options: ChoiceFieldOptions): HTMLElement {
+  const name = options.name ?? options.id;
+  const legendId = `${options.id}-label`;
+  const cards = options.options.map((option) => {
+    const inputId = `${options.id}-${option.value}`;
+    const descriptionId = `${inputId}-description`;
+    const input = el("input", {
+      className: "wb-choice__input",
+      attrs: {
+        type: "radio",
+        id: inputId,
+        name,
+        value: option.value,
+        "aria-describedby": descriptionId
+      }
+    });
+    input.checked = option.value === options.value;
+
+    return el("label", { className: "wb-choice__option", attrs: { for: inputId } }, [
+      input,
+      el("span", { className: "wb-choice__text" }, [
+        el("span", { className: "wb-choice__title", text: option.label }),
+        el("span", {
+          className: "wb-choice__description",
+          text: option.description,
+          attrs: { id: descriptionId }
+        })
+      ])
+    ]);
+  });
+  const head = el("div", { className: "wb-field__head" }, [
+    el("span", { className: "wb-field__label", text: options.label, attrs: { id: legendId } }),
+    ...(options.help ? [helpTip(options.helpLabel ?? options.label, options.help)] : [])
+  ]);
+
+  return el(
+    "div",
+    {
+      className: "wb-field wb-field--wide",
+      attrs: {
+        role: "radiogroup",
+        "aria-labelledby": legendId,
+        ...(options.hint ? { "aria-describedby": `${options.id}-hint` } : {})
+      }
+    },
+    [
+      head,
+      el("div", { className: "wb-choice" }, cards),
+      ...(options.hint
+        ? [
+            el("p", {
+              className: "wb-field__hint",
+              text: options.hint,
+              attrs: { id: `${options.id}-hint` }
+            })
+          ]
+        : [])
+    ]
+  );
+}
+
 export type ChipListOptions = FieldText & {
   id: string;
   name: string;

@@ -18,7 +18,8 @@ export const MANAGED_CATEGORY_LEVELS = {
   indexedDb: ["off", "counts-only", "names-only", "allow"],
   cookies: ["off", "count-only", "names-only", "allow"],
   cdp: ["off", "safe-subset", "full"],
-  heapProfiles: ["off", "lab-only"]
+  heapProfiles: ["off", "lab-only"],
+  tabsContext: ["off", "metadata", "allow"]
 };
 
 const stringList = (description) => ({
@@ -122,6 +123,13 @@ const profileSchema = {
       properties: {
         encryption: { type: "string", enum: ["required", "optional"] },
         privacyScanner: { type: "string", enum: ["block", "warn"] }
+      }
+    },
+    localData: {
+      type: "object",
+      properties: {
+        deleteAfterExport: { type: "boolean" },
+        unexportedRetentionMinutes: { type: "integer", minimum: 1, maximum: 1440 }
       }
     }
   }

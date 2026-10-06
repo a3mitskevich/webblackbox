@@ -17,7 +17,7 @@ In addition, runtime capture now prefers lower page-thread overhead:
 - extension `lite` disables page-side response-body sampling by default; opt in only when network body payloads are required
 - extension `lite` defers heavy start-of-recording DOM/storage/screenshot capture to avoid foreground-tab activation jank
 - extension `lite` keeps idle screenshots disabled by default; set a positive `screenshotIdleMs` only when screenshots are explicitly allowed
-- extension `content.js` is present at `document_start`, but its hot listeners and observers stay dormant until recording becomes active
+- extension `content.js` is present at `document_start` by default, but its hot listeners and observers stay dormant until recording becomes active; with the "Only when recording starts" injection setting it does not run in unrecorded pages at all (see `apps/extension/README.md#page-injection`, measured by `e2e:injection:idle`)
 - extension `full` mode keeps heavy screenshot/DOM/storage capture on the SW/CDP side
 - content-script side in `full` mode skips page-thread SnapDOM/outerHTML/storage snapshot loops
 - extension `full` mode does not inject fetch/xhr/console hooks into the page

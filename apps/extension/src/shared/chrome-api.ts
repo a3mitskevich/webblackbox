@@ -26,6 +26,60 @@ export type PortLike = {
   disconnect?: () => void;
 };
 
+export type ChromeEvent<TListener> = {
+  addListener(listener: TListener): void;
+  removeListener(listener: TListener): void;
+};
+
+/** The `chrome.tabs.Tab` fields the extension reads. */
+export type ChromeTab = {
+  id?: number;
+  windowId?: number;
+  active?: boolean;
+  url?: string;
+  pendingUrl?: string;
+  title?: string;
+  incognito?: boolean;
+  discarded?: boolean;
+  frozen?: boolean;
+  openerTabId?: number;
+  lastAccessed?: number;
+  status?: "unloaded" | "loading" | "complete";
+};
+
+export type ChromeTabChangeInfo = {
+  status?: "loading" | "complete" | "unloaded";
+  url?: string;
+  title?: string;
+  discarded?: boolean;
+  frozen?: boolean;
+  [field: string]: unknown;
+};
+
+export type RegisteredContentScript = {
+  id: string;
+  matches?: string[];
+  js?: string[];
+  allFrames?: boolean;
+  runAt?: "document_start" | "document_end" | "document_idle";
+  persistAcrossSessions?: boolean;
+};
+
+export type StorageChangeListener = (
+  changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+  areaName: string
+) => void;
+
+export type TabUpdatedListener = (tabId: number, changeInfo: ChromeTabChangeInfo) => void;
+
+export type FrameCommittedDetails = {
+  tabId: number;
+  frameId: number;
+  url: string;
+};
+
+export type FrameCommittedListener = (details: FrameCommittedDetails) => void;
+
 export type ChromeApi = {
   action?: {
     setBadgeText(details: { text: string }): Promise<void>;
@@ -71,6 +125,14 @@ export type ChromeApi = {
   i18n?: {
     getUILanguage(): string;
   };
+  /** Persisted timers: they fire after the service worker was stopped and restarted. */
+  alarms?: {
+    create(name: string, alarmInfo: { when: number }): Promise<void> | void;
+    clear(name: string): Promise<boolean> | void;
+    onAlarm: {
+      addListener(callback: (alarm: { name: string }) => void): void;
+    };
+  };
   offscreen?: {
     createDocument(options: {
       url: string;
@@ -83,6 +145,7 @@ export type ChromeApi = {
     getMediaStreamId(options?: { targetTabId?: number; consumerTabId?: number }): Promise<string>;
   };
   runtime?: {
+    /** Undefined once the extension context is gone (an orphaned content script). */
     id?: string;
     connect(connectInfo: { name: string }): PortLike;
     getManifest?: () => {
@@ -102,6 +165,9 @@ export type ChromeApi = {
     onInstalled: {
       addListener(callback: () => void): void;
     };
+    onStartup?: {
+      addListener(callback: () => void): void;
+    };
     onMessage: {
       addListener(
         callback: (
@@ -112,6 +178,12 @@ export type ChromeApi = {
       ): void;
     };
     sendMessage(message: unknown): Promise<unknown>;
+  };
+  webNavigation?: {
+    onCommitted: {
+      addListener(callback: FrameCommittedListener): void;
+      removeListener(callback: FrameCommittedListener): void;
+    };
   };
   webRequest?: {
     onBeforeRequest: {
@@ -192,12 +264,16 @@ export type ChromeApi = {
   };
   scripting?: {
     executeScript(options: {
-      target: { tabId: number; allFrames?: boolean };
+      target: { tabId: number; allFrames?: boolean; frameIds?: number[] };
       world?: "MAIN" | "ISOLATED";
       files?: string[];
       func?: (...args: never[]) => unknown;
       args?: unknown[];
+      injectImmediately?: boolean;
     }): Promise<Array<{ result?: unknown }> | void>;
+    registerContentScripts?(scripts: RegisteredContentScript[]): Promise<void>;
+    unregisterContentScripts?(filter?: { ids?: string[] }): Promise<void>;
+    getRegisteredContentScripts?(filter?: { ids?: string[] }): Promise<RegisteredContentScript[]>;
   };
   storage?: {
     local: {
@@ -205,6 +281,13 @@ export type ChromeApi = {
         keys?: string[] | string | Record<string, unknown> | null
       ): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
+      remove?(keys: string | string[]): Promise<void>;
+    };
+    /** In-memory area: cleared when the browser exits or the extension reloads. */
+    session?: {
+      get(keys: string): Promise<Record<string, unknown>>;
+      set(items: Record<string, unknown>): Promise<void>;
+      setAccessLevel?(options: { accessLevel: "TRUSTED_CONTEXTS" }): Promise<void>;
     };
     managed?: {
       get(
@@ -212,7 +295,7 @@ export type ChromeApi = {
       ): Promise<Record<string, unknown>>;
     };
     onChanged?: {
-      addListener(callback: (changes: Record<string, unknown>, areaName: string) => void): void;
+      addListener(callback: StorageChangeListener): void;
     };
   };
   tabs?: {
@@ -223,44 +306,23 @@ export type ChromeApi = {
       title?: string;
       lastAccessed?: number;
     }>;
-    get(tabId: number): Promise<{
-      id?: number;
-      active?: boolean;
-      url?: string;
-      title?: string;
-      incognito?: boolean;
-      lastAccessed?: number;
-      status?: "unloaded" | "loading" | "complete";
-    }>;
+    get(tabId: number): Promise<ChromeTab>;
     query(queryInfo: {
       active?: boolean;
       currentWindow?: boolean;
       lastFocusedWindow?: boolean;
-    }): Promise<
-      Array<{
-        id?: number;
-        active?: boolean;
-        url?: string;
-        title?: string;
-        lastAccessed?: number;
-      }>
-    >;
-    onUpdated?: {
-      addListener(
-        callback: (
-          tabId: number,
-          changeInfo: {
-            status?: "loading" | "complete";
-            url?: string;
-          }
-        ) => void
-      ): void;
-    };
-    onRemoved?: {
-      addListener(callback: (tabId: number) => void): void;
-    };
+    }): Promise<ChromeTab[]>;
+    onCreated?: ChromeEvent<(tab: ChromeTab) => void>;
+    onUpdated?: ChromeEvent<TabUpdatedListener>;
+    onRemoved?: ChromeEvent<(tabId: number) => void>;
+    onActivated?: ChromeEvent<(activeInfo: { tabId: number; windowId: number }) => void>;
     reload?(tabId: number, reloadProperties?: { bypassCache?: boolean }): Promise<void>;
     sendMessage(tabId: number, message: unknown): Promise<unknown>;
+  };
+  windows?: {
+    WINDOW_ID_NONE?: number;
+    getLastFocused(): Promise<{ id?: number; focused?: boolean }>;
+    onFocusChanged: ChromeEvent<(windowId: number) => void>;
   };
 };
 

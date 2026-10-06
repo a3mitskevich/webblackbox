@@ -2,8 +2,15 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 
+import { runInNewContext } from "node:vm";
+
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
+
+import {
+  contentScriptScopePlugin,
+  wrapInScriptScope
+} from "../../scripts/lib/content-script-scope.mjs";
 
 import {
   createChromeArchive,
@@ -48,6 +55,44 @@ describe("managed storage schema", () => {
   });
 });
 
+describe("content script scope", () => {
+  // A content script with a guard, as bundled: top-level `var` state, then the guard check.
+  const guardedScript = `
+    var state = { started: false };
+    if (!globalThis.claimed) {
+      globalThis.claimed = true;
+      state.started = true;
+      globalThis.readStarted = () => state.started;
+    }
+  `;
+
+  it("keeps a second run in the same world from resetting the first run's state", () => {
+    const bare = {};
+    runInNewContext(guardedScript, bare);
+    runInNewContext(guardedScript, bare);
+    // Without a scope of its own the second run re-initialized the shared `var`.
+    expect(bare.readStarted()).toBe(false);
+
+    const scoped = {};
+    runInNewContext(wrapInScriptScope(guardedScript), scoped);
+    runInNewContext(wrapInScriptScope(guardedScript), scoped);
+    expect(scoped.readStarted()).toBe(true);
+  });
+
+  it("wraps only content.js and keeps its line numbers", () => {
+    const plugin = contentScriptScopePlugin();
+    const code = "// module\nvar a = 1;\n//# sourceMappingURL=content.js.map";
+
+    expect(plugin.renderChunk(code, { path: "/x/build/content-agent.js" })).toBeUndefined();
+    expect(plugin.renderChunk(code, { path: "/x/build/sw.js" })).toBeUndefined();
+
+    const wrapped = plugin.renderChunk(code, { path: "/x/build/content.js" })?.code ?? "";
+
+    expect(wrapped.split("\n")[1]).toBe("var a = 1;");
+    expect(wrapped.trimEnd().endsWith("})();")).toBe(true);
+  });
+});
+
 describe("extension build manifest", () => {
   it("creates a development manifest with explicit CSP", () => {
     const manifest = createExtensionManifest({ version: "1.2.3" });
@@ -64,6 +109,32 @@ describe("extension build manifest", () => {
     expect(validateExtensionManifest(manifest, { version: "1.2.3" })).toEqual([]);
   });
 
+  it("leaves the content script to runtime registration in the development manifest", () => {
+    const manifest = createExtensionManifest({ version: "1.2.3" });
+
+    expect(manifest).not.toHaveProperty("content_scripts");
+    expect(manifest.permissions).toEqual(expect.arrayContaining(["scripting", "webNavigation"]));
+    expect(manifest.host_permissions).toEqual(["<all_urls>"]);
+
+    const withStaticScript = {
+      ...manifest,
+      content_scripts: [{ matches: ["<all_urls>"], js: ["content.js"], all_frames: true }]
+    };
+
+    expect(validateExtensionManifest(withStaticScript, { version: "1.2.3" })).toContain(
+      "Dev manifest must not declare static content_scripts; the service worker registers the content script at runtime."
+    );
+
+    const withoutNavigation = {
+      ...manifest,
+      permissions: manifest.permissions.filter((permission) => permission !== "webNavigation")
+    };
+
+    expect(validateExtensionManifest(withoutNavigation, { version: "1.2.3" })).toContain(
+      "Dev manifest must include 'webNavigation' permission."
+    );
+  });
+
   it("creates a store-safe manifest without broad capture permissions", () => {
     const manifest = createExtensionManifest({
       version: "1.2.3",
@@ -77,6 +148,7 @@ describe("extension build manifest", () => {
     expect(manifest.permissions).not.toContain("debugger");
     expect(manifest.permissions).not.toContain("tabs");
     expect(manifest.permissions).not.toContain("webRequest");
+    expect(manifest.permissions).not.toContain("webNavigation");
     expect(manifest).not.toHaveProperty("host_permissions");
     expect(manifest).not.toHaveProperty("content_scripts");
     expect(

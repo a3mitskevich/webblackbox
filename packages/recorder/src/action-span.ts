@@ -1,4 +1,5 @@
 import {
+  POINTER_FOLLOW_UP_CLICK_MS,
   createActionId,
   extractRequestId,
   type EventReference,
@@ -8,18 +9,24 @@ import {
 const ACTION_START_EVENTS = new Set([
   "user.click",
   "user.dblclick",
+  "user.contextmenu",
+  "user.auxclick",
+  "user.drag.end",
   "user.submit",
   "user.marker",
   "nav.commit"
 ]);
 
 const KEYBOARD_ACTION_KEYS = new Set(["Enter", "NumpadEnter", "Space"]);
+
 const NETWORK_TERMINAL_EVENTS = new Set(["network.finished", "network.failed"]);
 
 type ActionState = {
   id: string;
   startedAtMono: number;
   expiresAtMono: number;
+  /** Open while the drag that started this action still expects the browser's click. */
+  awaitsFollowUpClick: boolean;
 };
 
 export class ActionSpanTracker {
@@ -32,6 +39,12 @@ export class ActionSpanTracker {
   public constructor(private readonly actionWindowMs: number) {}
 
   public assign(event: WebBlackboxEvent): WebBlackboxEvent {
+    if (this.currentAction && this.isDragFollowUpClick(event, this.currentAction)) {
+      // The browser adds one click per drag: it joins the drag's action, and only once.
+      this.currentAction = { ...this.currentAction, awaitsFollowUpClick: false };
+      return this.withRef(event, { act: this.currentAction.id });
+    }
+
     const isActionStart = this.isActionStartEvent(event);
 
     if (isActionStart) {
@@ -39,7 +52,8 @@ export class ActionSpanTracker {
       this.currentAction = {
         id: createActionId(this.sequence),
         startedAtMono: event.mono,
-        expiresAtMono: event.mono + this.actionWindowMs
+        expiresAtMono: event.mono + this.actionWindowMs,
+        awaitsFollowUpClick: event.type === "user.drag.end"
       };
       return this.withRef(event, { act: this.currentAction.id });
     }
@@ -82,6 +96,11 @@ export class ActionSpanTracker {
   }
 
   private isActionStartEvent(event: WebBlackboxEvent): boolean {
+    if (event.type === "user.drag.end") {
+      // A cancelled drag (Esc, or a touch pan the browser turned into a scroll) did nothing.
+      return this.asRecord(event.data)?.cancelled !== true;
+    }
+
     if (ACTION_START_EVENTS.has(event.type)) {
       return true;
     }
@@ -93,6 +112,14 @@ export class ActionSpanTracker {
     const payload = this.asRecord(event.data);
     const key = payload?.key;
     return typeof key === "string" && KEYBOARD_ACTION_KEYS.has(key);
+  }
+
+  private isDragFollowUpClick(event: WebBlackboxEvent, action: ActionState): boolean {
+    return (
+      event.type === "user.click" &&
+      action.awaitsFollowUpClick &&
+      event.mono - action.startedAtMono <= POINTER_FOLLOW_UP_CLICK_MS
+    );
   }
 
   private withRef(event: WebBlackboxEvent, refPatch: EventReference): WebBlackboxEvent {

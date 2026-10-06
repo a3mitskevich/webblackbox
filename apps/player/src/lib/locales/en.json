@@ -314,7 +314,48 @@
     "network": "network",
     "screenshot": "screenshot",
     "recording": "recording",
-    "action": "action"
+    "action": "action",
+    "pointer": "pointer",
+    "tabs": "other tab"
+  },
+  "pointerLaneLabel": "Pointer actions",
+  "pointerKinds": {
+    "click": "Click",
+    "double": "Double click",
+    "right": "Right click",
+    "middle": "Middle click",
+    "hold": "Long press",
+    "drag": "Drag",
+    "dnd": "Drag and drop",
+    "wheel": "Wheel",
+    "zoom": "Ctrl+wheel zoom",
+    "hover": "Hover",
+    "selection": "Text selection",
+    "rage": "Rage click",
+    "dead": "Dead click"
+  },
+  "pointerRippleLabels": {
+    "double": "double",
+    "right": "right",
+    "middle": "middle",
+    "hold": "hold",
+    "drag": "drag",
+    "dnd": "drop"
+  },
+  "stackView": {
+    "heading": "Stack trace",
+    "showOriginal": "Show original",
+    "showRaw": "Show raw",
+    "loadMapFiles": "Load .map files",
+    "loadMapFolder": "Load maps folder",
+    "symbolServerPlaceholder": "Symbol server URL (maps by file name)",
+    "symbolServerApply": "Use",
+    "mapsLoaded": "{count} source map file(s) loaded.",
+    "resolving": "Resolving original sources…",
+    "noMap": "no source map",
+    "noMapping": "no mapping at this position",
+    "mapError": "source map error",
+    "invalidSymbolServer": "Symbol server URL must be http(s)."
   },
   "privacyHiddenByProfile": "Hidden by profile: {what}",
   "privacySubjects": {
@@ -329,6 +370,8 @@
     "tab-recording": "tab recording",
     "storage": "storage",
     "storage-details": "storage details",
+    "tabs": "other tabs of the site",
+    "tab-details": "paths and titles of other tabs",
     "profile": "profiling data",
     "unknown": "data"
   },
@@ -348,6 +391,8 @@
   "profileBannerDowngraded": "Recorded with {name} instead of {requested}: {requested} was not allowed on this site, so data only {requested} records is missing.",
   "profileBannerCapped": "The organization's policy limited {name}: {categories}.",
   "profileBannerUnknownProfile": "an unknown profile",
+  "summaryParallelTabs": "{count} other tabs of this site were open",
+  "summaryParallelTabsDetail": "Up to {max} at once, {start} when recording started; {sameOrigin} same-origin, {sameSite} same-site. Click for details.",
   "networkTypes": {
     "document": "Document",
     "fetch": "Fetch/XHR",

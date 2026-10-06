@@ -2,11 +2,13 @@ import {
   DEFAULT_CAPTURE_POLICY,
   EventIdFactory,
   isContentRedactionEnabled,
+  stripUnreadablePointerDetail,
   type BodySkipReason,
   type CapturePolicy,
   type FreezeReason,
   type PrivacyClassification,
   type RecorderConfig,
+  type TabsContextLevel,
   type WebBlackboxEvent,
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
@@ -97,7 +99,16 @@ export class WebBlackboxRecorder {
       this.config.capturePolicy
     );
     // Inline bodies skip key/value redaction: they get value masking under the body policy instead.
-    const detached = detachInlineNetworkBody(normalized.eventType, policyPayload);
+    const detached = detachInlineNetworkBody(
+      normalized.eventType,
+      // The capture agent already follows the policy; this keeps a stale page script from
+      // bypassing it.
+      stripUnreadablePointerDetail(
+        normalized.eventType,
+        policyPayload,
+        this.config.capturePolicy ?? DEFAULT_CAPTURE_POLICY
+      )
+    );
     const shouldKeepBody = this.hooks.shouldKeepInlineNetworkBody;
     // The single masking switch of the recorder: with `contentRedaction: false` the payload is
     // kept as captured (categories still decide below what may be recorded at all).
@@ -416,6 +427,18 @@ function findPolicyViolationReason(
     }
   }
 
+  if (eventType.startsWith("meta.tabs.")) {
+    const level = tabsContextLevel(policy);
+
+    if (level === "off") {
+      return "tabs-context-disabled";
+    }
+
+    if (level === "metadata" && hasRelatedTabDetail(payload)) {
+      return "tabs-context-detail-disabled";
+    }
+  }
+
   if (
     eventType === "perf.heap.snapshot" &&
     (policy.categories.heapProfiles !== "lab-only" || policy.mode !== "lab")
@@ -538,9 +561,26 @@ function isRedactedByPolicy(
 
       return policy.categories.storage !== "allow";
     case "performance":
-    case "system":
       return false;
+    case "system":
+      return eventType.startsWith("meta.tabs.") && tabsContextLevel(policy) !== "allow";
   }
+}
+
+/** Policies written before the category existed record the metadata level. */
+function tabsContextLevel(policy: CapturePolicy): TabsContextLevel {
+  return policy.categories.tabsContext ?? "metadata";
+}
+
+/** Paths or titles of other tabs (the `allow` level) in a tabs snapshot or change. */
+function hasRelatedTabDetail(payload: unknown): boolean {
+  const record = asRecord(payload);
+  const tabs = Array.isArray(record?.tabs) ? record.tabs : [record?.tab];
+
+  return tabs.some((tab) => {
+    const row = asRecord(tab);
+    return row !== null && (row.path !== undefined || row.title !== undefined);
+  });
 }
 
 function isStorageDisabledByPolicy(

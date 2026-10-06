@@ -67,7 +67,8 @@ export const DEFAULT_CAPTURE_POLICY: CapturePolicy = {
     indexedDb: "counts-only",
     cookies: "count-only",
     cdp: "off",
-    heapProfiles: "off"
+    heapProfiles: "off",
+    tabsContext: "metadata"
   },
   redaction: DEFAULT_REDACTION_PROFILE,
   encryption: {

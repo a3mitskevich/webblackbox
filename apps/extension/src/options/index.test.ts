@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const STORAGE_KEY = "webblackbox.options";
 const PROFILES_KEY = "webblackbox.profiles";
 const ARCHIVE_KEY = "webblackbox.popup.export-policy";
+const INJECTION_KEY = "webblackbox.injection";
 const START_RELOAD_OFFER_KEY = "webblackbox.startReloadOffer";
 const PLAYER_URL_KEY = "webblackbox.playerUrl";
 
@@ -190,6 +191,47 @@ describe("options page", () => {
     expect(storage.data[PROFILES_KEY]).toBeUndefined();
     expect(saveState()).toMatch(/^Saved at /);
     expect(saveButton().disabled).toBe(true);
+  });
+
+  it("offers page injection modes with their trade-offs and saves the choice on its own", async () => {
+    const storage = installChromeStub();
+    await importOptionsModule();
+
+    const group = query("[data-general-section='sampling'] [role='radiogroup']");
+    const always = query<HTMLInputElement>("#contentInjection-always");
+    const onStart = query<HTMLInputElement>("#contentInjection-on-start");
+
+    expect(group.textContent).toContain("Inject into pages");
+    expect(always.checked).toBe(true);
+    expect(onStart.checked).toBe(false);
+    expect(onStart.closest("label")?.textContent).toContain(
+      "Password fields the page revealed before Start are not known as passwords"
+    );
+
+    onStart.checked = true;
+    onStart.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(saveState()).toBe("Unsaved changes");
+
+    saveButton().click();
+    await flush();
+
+    expect(storage.data[INJECTION_KEY]).toBe("on-start");
+    // The general options record is not touched by this setting.
+    expect(storage.data[STORAGE_KEY]).toBeUndefined();
+    expect(saveState()).toMatch(/^Saved at /);
+  });
+
+  it("shows the stored injection mode and resets it with the section", async () => {
+    installChromeStub({ [INJECTION_KEY]: "on-start" });
+    await importOptionsModule();
+
+    expect(query<HTMLInputElement>("#contentInjection-on-start").checked).toBe(true);
+
+    query<HTMLButtonElement>("[data-action='section-reset'][data-section='sampling']").click();
+
+    expect(query<HTMLInputElement>("#contentInjection-always").checked).toBe(true);
+    expect(saveState()).toBe("Unsaved changes");
   });
 
   it("offers the page reload on Start by default and stores the switch under its own key", async () => {

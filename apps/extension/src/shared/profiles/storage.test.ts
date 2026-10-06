@@ -156,6 +156,27 @@ describe("parseProfilesStore", () => {
     ]);
   });
 
+  it("reads profiles stored before tabsContext existed at the metadata level", () => {
+    const legacyCategories = Object.fromEntries(
+      Object.entries(createDefaultProfile().categories).filter(([key]) => key !== "tabsContext")
+    );
+    const legacy = {
+      ...duplicateProfile(createDefaultProfile(), { id: "legacy", name: "Legacy" }),
+      categories: legacyCategories
+    };
+    const parsed = parseProfilesStore(
+      storeWith({
+        profiles: [createDefaultProfile(), legacy] as unknown as RecordingProfilesStore["profiles"]
+      })
+    );
+
+    expect(parsed?.issues).toEqual([]);
+    expect(parsed?.store.profiles.find((profile) => profile.id === "legacy")?.categories).toEqual({
+      ...legacyCategories,
+      tabsContext: "metadata"
+    });
+  });
+
   it("re-adds a missing Default profile", () => {
     const parsed = parseProfilesStore(storeWith({ profiles: [] }));
 

@@ -146,6 +146,7 @@ function createPage(): Page {
       createTopBar(count),
       el("div", { className: "wb-sessions__body" }, [
         el("p", { className: "wb-sessions__subtitle", text: t("sessionsSubtitle") }),
+        el("p", { className: "wb-sessions__subtitle", text: t("localDataRestartNotice") }),
         notice,
         el("div", { className: "wb-sessions__controls" }, [toolbar, bulk]),
         list
