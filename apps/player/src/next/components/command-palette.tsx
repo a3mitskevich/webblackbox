@@ -202,7 +202,7 @@ function requestItems(
  * requests by URL — and run any command of the menus. Base UI `Dialog` + `Autocomplete` (an
  * always-open inline list), ranked by uFuzzy (LIBRARIES.md: no cmdk).
  */
-export function CommandPalette() {
+export default function CommandPalette() {
   const controller = useController();
   const i18n = useI18n();
   const open = usePlayerState((state) => state.paletteOpen);

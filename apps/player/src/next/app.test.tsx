@@ -135,7 +135,7 @@ describe("React player", () => {
     );
 
     key("Enter");
-    expect(screen.getByTestId("inspector-raw-json")).toHaveTextContent(selected ?? "-");
+    expect(await screen.findByTestId("inspector-raw-json")).toHaveTextContent(selected ?? "-");
     expect(screen.queryByTestId("event-list")).not.toBeInTheDocument();
     key("Escape");
     expect(screen.queryByTestId("inspector")).not.toBeInTheDocument();

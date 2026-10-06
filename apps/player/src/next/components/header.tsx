@@ -7,7 +7,7 @@ import { PLAYER_LOCALES, type PlayerLocale } from "../../lib/i18n.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import { GenerateMenu } from "../features/generate/index.js";
 import { ShareButton } from "../features/share/share-button.js";
-import { archiveContentsOf, profileBannerLines } from "./archive-info.js";
+import { profileBannerLines, recordingProfileOf } from "./recording-profile.js";
 import { Hint } from "./hint.js";
 import { Icon, type IconName } from "./icon.js";
 
@@ -234,7 +234,7 @@ function ProfileChip() {
       return null;
     }
 
-    const names = archiveContentsOf(archive).profiles.map((entry) => entry.name);
+    const names = recordingProfileOf(archive).profiles.map((entry) => entry.name);
     return names.length > 0
       ? { label: names.join(" → "), warn: profileBannerLines(archive, i18n).length > 0 }
       : null;

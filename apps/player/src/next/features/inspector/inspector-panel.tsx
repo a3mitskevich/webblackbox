@@ -388,7 +388,7 @@ function InspectorBody({ inspection }: { inspection: Inspection }) {
  * the action caused, its Playwright step, a one-line summary and the raw event. It replaces the
  * Activity list while open (Enter); "Activity" or Esc goes back, J / L step through the list.
  */
-export function InspectorPanel() {
+export default function InspectorPanel() {
   const controller = useController();
   const t = useFeatureI18n(inspectorMessages);
   const archive = usePlayerState((state) => state.archive);

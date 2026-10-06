@@ -1,7 +1,7 @@
 import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
 import { Toolbar } from "@base-ui/react/toolbar";
-import { useEffect, useMemo, useRef } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef } from "react";
 
 import "./feed.css";
 
@@ -11,7 +11,6 @@ import { Icon } from "../../components/icon.js";
 import { toastManager } from "../../components/toasts.js";
 import { useController, usePlayerState } from "../../context.js";
 import { resolveSelectedEventId } from "../../controller.js";
-import { InspectorPanel } from "../inspector/index.js";
 import { useFeatureI18n } from "../messages.js";
 import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
 import { ActivityFeed } from "./activity-feed.js";
@@ -20,6 +19,9 @@ import { feedMessages } from "./messages.js";
 import { feedSlice, type FeedSlice } from "./slice.js";
 
 const SCOPES: readonly ScopeFilter[] = ["all", "main", "iframe"];
+
+/** The event inspector (R5) loads its own chunk the first time it opens. */
+const InspectorPanel = lazy(() => import("../inspector/inspector-panel.js"));
 
 function isScope(value: unknown): value is ScopeFilter {
   return typeof value === "string" && (SCOPES as readonly string[]).includes(value);
@@ -166,7 +168,11 @@ export function ActivityPanel() {
   }, [showInspector]);
 
   if (showInspector) {
-    return <InspectorPanel />;
+    return (
+      <Suspense fallback={null}>
+        <InspectorPanel />
+      </Suspense>
+    );
   }
 
   return (

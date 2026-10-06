@@ -10,5 +10,4 @@ export const inspectorFeature: PlayerFeature = {
   messages: inspectorMessages
 };
 
-export { InspectorPanel } from "./inspector-panel.js";
 export { useInspectedTarget, type InspectedTargetFrame } from "./target-frame.js";

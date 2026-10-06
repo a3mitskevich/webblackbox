@@ -7,12 +7,12 @@ import {
   type ContentStatus
 } from "../../core/archive-contents.js";
 import { formatRecordedAt } from "../../core/format.js";
-import type { NextMessageKey, PlayerI18n } from "../../lib/i18n.js";
-import { formatRecordingProfileBanner } from "../../lib/recording-profile-view.js";
+import type { NextMessageKey } from "../../lib/i18n.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import type { LoadedArchive } from "../state.js";
 import { Icon } from "./icon.js";
 import { DialogTitle, ModalDialog } from "./modal-dialog.js";
+import { profileBannerLines } from "./recording-profile.js";
 
 const contentsCache = new WeakMap<LoadedArchive, ArchiveContents>();
 
@@ -49,12 +49,6 @@ const REASON_KEYS: Record<BodySkipReason, NextMessageKey> = {
   "fetch-failed": "reasonFetchFailed",
   empty: "reasonEmpty"
 };
-
-/** Banner lines for a downgraded, capped or cancelled recording profile (empty when fine). */
-export function profileBannerLines(archive: LoadedArchive, i18n: PlayerI18n): string[] {
-  const contents = archiveContentsOf(archive);
-  return formatRecordingProfileBanner(contents.profiles, contents.cancellation, i18n);
-}
 
 /** Joins the non-empty sentences of a fact. */
 function sentences(...parts: string[]): string {
@@ -232,7 +226,7 @@ function SessionFacts({ archive, contents }: SessionFactsProps) {
  * "About this recording" (PROPOSAL §10, Bench's Summary panel): the session facts, the profile
  * warnings and what each kind of data holds, including what older archives could not keep.
  */
-export function ArchiveInfoDialog() {
+export default function ArchiveInfoDialog() {
   const controller = useController();
   const i18n = useI18n();
   const open = usePlayerState((state) => state.archiveInfoOpen);
@@ -282,44 +276,5 @@ export function ArchiveInfoDialog() {
         </div>
       ) : null}
     </ModalDialog>
-  );
-}
-
-/**
- * The recording profile warnings (downgraded, capped by policy, recording cut short) above the
- * stage, with a way to the full "About this recording". Nothing for a recording that kept
- * everything its profile asks for.
- */
-export function ProfileBanners() {
-  const controller = useController();
-  const i18n = useI18n();
-  const archive = usePlayerState((state) => state.archive);
-  const lines = useMemo(() => (archive ? profileBannerLines(archive, i18n) : []), [archive, i18n]);
-
-  if (lines.length === 0) {
-    return null;
-  }
-
-  return (
-    <section
-      className="profile-banners"
-      aria-label={i18n.tn("profileBannersLabel")}
-      data-testid="profile-banners"
-    >
-      {lines.map((line) => (
-        <p key={line} className="profile-banner" data-testid="profile-banner">
-          <Icon name="flag" />
-          <span>{line}</span>
-        </p>
-      ))}
-      <button
-        type="button"
-        className="btn small"
-        onClick={() => controller.setArchiveInfoOpen(true)}
-        data-testid="profile-banner-details"
-      >
-        {i18n.tn("profileDetails")}
-      </button>
-    </section>
   );
 }

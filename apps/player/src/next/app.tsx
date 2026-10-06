@@ -1,8 +1,7 @@
 import { CSPProvider } from "@base-ui/react/csp-provider";
-import { useRef } from "react";
+import { lazy, Suspense, useRef } from "react";
 
-import { ArchiveInfoDialog, ProfileBanners } from "./components/archive-info.js";
-import { CommandPalette } from "./components/command-palette.js";
+import { ProfileBanners } from "./components/profile-banners.js";
 import { HintProvider } from "./components/hint.js";
 import {
   ArchiveStatusLine,
@@ -31,6 +30,23 @@ import {
   useThemeAttribute
 } from "./hooks.js";
 import { WIDE_LAYOUT_QUERY } from "./layout.js";
+
+// Dialogs that load their code (and Base UI Autocomplete) the first time they open.
+const ArchiveInfoDialog = lazy(() => import("./components/archive-info.js"));
+const CommandPalette = lazy(() => import("./components/command-palette.js"));
+
+/** Opens a lazy dialog only while its flag is set, so its chunk loads on first use. */
+function LazyDialogs() {
+  const archiveInfoOpen = usePlayerState((state) => state.archiveInfoOpen);
+  const paletteOpen = usePlayerState((state) => state.paletteOpen);
+
+  return (
+    <Suspense fallback={null}>
+      {archiveInfoOpen ? <ArchiveInfoDialog /> : null}
+      {paletteOpen ? <CommandPalette /> : null}
+    </Suspense>
+  );
+}
 
 /** Tooltips open after this hover delay; moving along a toolbar shows the next one at once. */
 const HINT_DELAY_MS = 500;
@@ -107,8 +123,7 @@ function Layout() {
       <DropOverlay />
       <PassphraseDialog />
       <ShortcutsDialog />
-      <ArchiveInfoDialog />
-      <CommandPalette />
+      <LazyDialogs />
       <GenerateDialogs />
       <ToastHost />
       <LiveRegion />
