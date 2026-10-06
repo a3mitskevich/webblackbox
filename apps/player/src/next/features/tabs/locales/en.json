@@ -19,5 +19,16 @@
   "flagFocused": "focused",
   "flagIncognito": "incognito",
   "flagDiscarded": "discarded",
-  "flagFrozen": "frozen"
+  "flagFrozen": "frozen",
+  "change_opened": "opened",
+  "change_entered": "entered the site",
+  "change_navigated": "navigated",
+  "change_left": "left the site",
+  "change_closed": "closed",
+  "change_activated": "activated",
+  "change_deactivated": "deactivated",
+  "change_updated": "updated",
+  "reason_start": "recording start",
+  "reason_profileChange": "profile changed",
+  "reason_originChange": "origin changed"
 }

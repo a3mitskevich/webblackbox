@@ -42,5 +42,6 @@
   "newKey": "新键。",
   "valueUnchanged": "再次写入了相同的值。",
   "rootValue": "（值）",
-  "recordedLater": "稍后才被记录，首次在"
+  "recordedLater": "稍后才被记录，首次在",
+  "diffLimited": "变更部分过长：仅比较前 {count} 个字符。"
 }

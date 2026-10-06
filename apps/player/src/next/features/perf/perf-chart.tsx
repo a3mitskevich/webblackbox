@@ -1,7 +1,7 @@
 import "uplot/dist/uPlot.min.css";
 
 import type uPlot from "uplot";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 export type PerfChartSeries = {
   label: string;
@@ -25,6 +25,10 @@ type PerfChartProps = {
   label: string;
   /** The legend label of the time axis. */
   timeLabel: string;
+  /** A text alternative for the canvas (what the series show), read by screen readers. */
+  summary: string;
+  /** Shown when uPlot fails to load or to draw. */
+  unavailableText: string;
   /** Bumped when colours change (theme), so the chart re-reads its tokens. */
   themeKey: string;
   testId: string;
@@ -65,9 +69,13 @@ export function PerfChart({
   onSeek,
   label,
   timeLabel,
+  summary,
+  unavailableText,
   themeKey,
   testId
 }: PerfChartProps) {
+  const summaryId = useId();
+  const [isUnavailable, setUnavailable] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
   const playheadRef = useRef(playhead);
@@ -86,11 +94,20 @@ export function PerfChart({
     let cleanup = (): void => undefined;
 
     // uPlot reads matchMedia at import, so it loads with the first chart (and never in jsdom).
-    void import("uplot").then(({ default: UPlot }) => {
-      if (isCurrent) {
-        cleanup = mountPlot(UPlot, container);
-      }
-    });
+    import("uplot")
+      .then(({ default: UPlot }) => {
+        if (isCurrent) {
+          cleanup = mountPlot(UPlot, container);
+        }
+      })
+      .catch((error: unknown) => {
+        // A failed chunk load or a uPlot error leaves an explained box, not a silent blank.
+        console.error("Perf chart unavailable", error);
+
+        if (isCurrent) {
+          setUnavailable(true);
+        }
+      });
 
     return () => {
       isCurrent = false;
@@ -187,8 +204,23 @@ export function PerfChart({
   }, [playhead]);
 
   return (
-    <figure className="pf-chart" aria-label={label} data-testid={testId}>
-      <div ref={containerRef} className="pf-plot" style={{ minHeight: height }} />
+    <figure
+      className="pf-chart"
+      aria-label={label}
+      aria-describedby={summaryId}
+      data-testid={testId}
+      data-unavailable={isUnavailable || undefined}
+    >
+      <figcaption id={summaryId} className="visually-hidden">
+        {summary}
+      </figcaption>
+      {isUnavailable ? (
+        <p className="pf-none" role="status" data-testid={`${testId}-unavailable`}>
+          {unavailableText}
+        </p>
+      ) : (
+        <div ref={containerRef} className="pf-plot" style={{ minHeight: height }} />
+      )}
     </figure>
   );
 }

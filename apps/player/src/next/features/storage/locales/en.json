@@ -42,5 +42,6 @@
   "newKey": "New key.",
   "valueUnchanged": "The same value was written again.",
   "rootValue": "(value)",
-  "recordedLater": "Recorded later, first at"
+  "recordedLater": "Recorded later, first at",
+  "diffLimited": "The changed part is long: only its first {count} characters are compared."
 }

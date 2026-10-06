@@ -24,5 +24,10 @@
   "kind_longtask": "Long task",
   "kind_vitals": "Vitals",
   "kind_other": "Artifact",
-  "time": "Time"
+  "time": "Time",
+  "chartUnavailable": "The chart could not be drawn.",
+  "networkSummary": "Peak {peak} requests in flight, {failed} failed requests, {transfer} received.",
+  "artifactPrepareLabel": "Download {kind} at {time}",
+  "artifactSaveLabel": "Save {kind} at {time}",
+  "artifactMissingLabel": "{kind} at {time} is not in the archive"
 }

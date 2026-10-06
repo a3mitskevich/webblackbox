@@ -19,5 +19,16 @@
   "flagFocused": "聚焦",
   "flagIncognito": "无痕",
   "flagDiscarded": "已丢弃",
-  "flagFrozen": "已冻结"
+  "flagFrozen": "已冻结",
+  "change_opened": "已打开",
+  "change_entered": "进入站点",
+  "change_navigated": "已跳转",
+  "change_left": "离开站点",
+  "change_closed": "已关闭",
+  "change_activated": "已激活",
+  "change_deactivated": "已失去激活",
+  "change_updated": "已更新",
+  "reason_start": "录制开始",
+  "reason_profileChange": "配置变更",
+  "reason_originChange": "源变更"
 }

@@ -1,22 +1,43 @@
 import "./tabs.css";
 
 import { getRelatedTabsAt } from "@webblackbox/player-sdk";
-import type { RelatedTabInfo } from "@webblackbox/protocol";
-import { useMemo } from "react";
+import type {
+  RelatedTabChangeKind,
+  RelatedTabInfo,
+  TabsSnapshotReason
+} from "@webblackbox/protocol";
+import { useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 
 import { formatOffset } from "../../../core/format.js";
 import { useController, useI18n, usePlayerState } from "../../context.js";
 import type { LoadedArchive } from "../../state.js";
 import { useFeatureI18n } from "../messages.js";
-import { tabsMessages, type TabsTranslate } from "./messages.js";
+import { tabsMessages, type TabsMessageKey, type TabsTranslate } from "./messages.js";
 
 const NOW_BUCKET_MS = 250;
+
+const CHANGE_KEYS: Readonly<Record<RelatedTabChangeKind, TabsMessageKey>> = {
+  opened: "change_opened",
+  entered: "change_entered",
+  navigated: "change_navigated",
+  left: "change_left",
+  closed: "change_closed",
+  activated: "change_activated",
+  deactivated: "change_deactivated",
+  updated: "change_updated"
+};
+const REASON_KEYS: Readonly<Record<TabsSnapshotReason, TabsMessageKey>> = {
+  start: "reason_start",
+  "profile-change": "reason_profileChange",
+  "origin-change": "reason_originChange"
+};
 
 /** One row of the tabs log: a snapshot of all other tabs, or one tab's change. */
 type TabsLogRow = {
   eventId: string;
   mono: number;
   kind: "snapshot" | "change";
+  /** The protocol value (change kind or snapshot reason): `data-kind` and the CSS class. */
   label: string;
   tab?: RelatedTabInfo;
   openCount: number;
@@ -48,6 +69,43 @@ function buildLog(archive: LoadedArchive): TabsLogRow[] {
 
   return rows.sort((left, right) => left.mono - right.mono);
 }
+
+/** The localized text of a change kind or snapshot reason (a value from a newer recorder as is). */
+function labelText(row: TabsLogRow, t: TabsTranslate): string {
+  const keys: Readonly<Record<string, TabsMessageKey>> =
+    row.kind === "snapshot" ? REASON_KEYS : CHANGE_KEYS;
+  const key = Object.hasOwn(keys, row.label) ? keys[row.label] : undefined;
+  const text = key ? t(key) : row.label;
+
+  return row.kind === "snapshot" ? t("snapshot", { reason: text }) : text;
+}
+
+/**
+ * The row a listbox key moves to: arrows step (from nothing: the first / last row), Home / End
+ * jump, Enter re-activates the current row; `null` for other keys.
+ */
+function listKeyIndex(key: string, current: number, count: number): number | null {
+  if (count === 0) {
+    return null;
+  }
+
+  switch (key) {
+    case "ArrowDown":
+      return current < 0 ? 0 : Math.min(count - 1, current + 1);
+    case "ArrowUp":
+      return current < 0 ? count - 1 : Math.max(0, current - 1);
+    case "Home":
+      return 0;
+    case "End":
+      return count - 1;
+    case "Enter":
+      return current >= 0 ? current : null;
+    default:
+      return null;
+  }
+}
+
+const optionId = (row: TabsLogRow): string => `tabs-change-${row.eventId}`;
 
 function TabWhere({ tab }: { tab: RelatedTabInfo }) {
   return (
@@ -99,10 +157,22 @@ export function TabsPanel() {
       : state.playheadMono
   );
   const log = useMemo(() => (archive ? buildLog(archive) : []), [archive]);
+  const logRef = useRef<HTMLDivElement>(null);
+  const selectedIndex = selectedId ? log.findIndex((row) => row.eventId === selectedId) : -1;
+  const selectedRow = selectedIndex >= 0 ? log[selectedIndex] : undefined;
   const openTabs = useMemo(
     () => (archive ? getRelatedTabsAt(archive.model.tabsContext, nowMono) : []),
     [archive, nowMono]
   );
+
+  // Keep the selected change in view (keyboard stepping, or a selection made elsewhere).
+  useEffect(() => {
+    const option = selectedRow ? document.getElementById(optionId(selectedRow)) : null;
+
+    if (option && logRef.current?.contains(option) && typeof option.scrollIntoView === "function") {
+      option.scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedRow]);
 
   if (!archive) {
     return null;
@@ -110,6 +180,27 @@ export function TabsPanel() {
 
   const { summary } = archive.model.tabsContext;
   const offset = (mono: number) => formatOffset(mono - archive.model.minMono, locale);
+  const select = (row: TabsLogRow): void => {
+    const event = archive.model.eventById.get(row.eventId);
+
+    if (event) {
+      controller.selectEvent(event);
+    }
+  };
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    // Keys typed in a control inside the list belong to that control.
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
+    const index = listKeyIndex(event.key, selectedIndex, log.length);
+    const row = index === null ? undefined : log[index];
+
+    if (row) {
+      event.preventDefault();
+      select(row);
+    }
+  };
 
   if (log.length === 0) {
     return (
@@ -159,10 +250,20 @@ export function TabsPanel() {
         <h3 id="tb-log" className="tb-head">
           {t("changes")}
         </h3>
-        <div role="listbox" aria-labelledby="tb-log" className="tb-log" data-testid="tabs-log">
+        <div
+          ref={logRef}
+          role="listbox"
+          tabIndex={0}
+          aria-labelledby="tb-log"
+          aria-activedescendant={selectedRow ? optionId(selectedRow) : undefined}
+          onKeyDown={handleKeyDown}
+          className="tb-log"
+          data-testid="tabs-log"
+        >
           {log.map((row) => (
             <div
               key={row.eventId}
+              id={optionId(row)}
               role="option"
               aria-selected={row.eventId === selectedId}
               className={[
@@ -172,20 +273,12 @@ export function TabsPanel() {
               ]
                 .filter(Boolean)
                 .join(" ")}
-              onClick={() => {
-                const event = archive.model.eventById.get(row.eventId);
-
-                if (event) {
-                  controller.selectEvent(event);
-                }
-              }}
+              onClick={() => select(row)}
               data-testid="tabs-change"
               data-kind={row.label}
             >
               <time>{offset(row.mono)}</time>
-              <span className={`chg chg-${row.label}`}>
-                {row.kind === "snapshot" ? t("snapshot", { reason: row.label }) : row.label}
-              </span>
+              <span className={`chg chg-${row.label}`}>{labelText(row, t)}</span>
               {row.tab ? (
                 <span className="tb-text">
                   <span className="tb-title">{row.tab.title || t("untitled")}</span>
@@ -194,7 +287,9 @@ export function TabsPanel() {
               ) : (
                 <span className="tb-text muted">{t("allTabs")}</span>
               )}
-              <span className="mono count">{t("openCount", { count: row.openCount })}</span>
+              <span className="mono count">
+                {t("openCount", { count: i18n.formatNumber(row.openCount) })}
+              </span>
             </div>
           ))}
         </div>

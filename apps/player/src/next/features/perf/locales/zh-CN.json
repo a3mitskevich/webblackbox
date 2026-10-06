@@ -24,5 +24,10 @@
   "kind_longtask": "长任务",
   "kind_vitals": "指标",
   "kind_other": "产物",
-  "time": "时间"
+  "time": "时间",
+  "chartUnavailable": "无法绘制图表。",
+  "networkSummary": "同时进行的请求峰值 {peak} 个，失败请求 {failed} 个，共接收 {transfer}。",
+  "artifactPrepareLabel": "下载 {time} 的{kind}",
+  "artifactSaveLabel": "保存 {time} 的{kind}",
+  "artifactMissingLabel": "{time} 的{kind}不在归档中"
 }

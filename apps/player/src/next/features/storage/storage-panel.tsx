@@ -8,7 +8,7 @@ import type {
   StorageChange,
   StorageItem
 } from "@webblackbox/player-sdk";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, type KeyboardEvent, type ReactNode } from "react";
 
 import { formatOffset } from "../../../core/format.js";
 import { upperBoundByMono } from "../../../lib/range.js";
@@ -22,6 +22,7 @@ import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
 import { storageMessages, type StorageTranslate } from "./messages.js";
 import { storageSlice, type StorageView } from "./slice.js";
 import {
+  capTitle,
   filterStorageChanges,
   matchesQuery,
   selectStorageData,
@@ -53,6 +54,33 @@ function preview(value: string | undefined): string {
 
   return value.length > VALUE_PREVIEW_CHARS ? `${value.slice(0, VALUE_PREVIEW_CHARS)}…` : value;
 }
+
+/**
+ * The row a listbox key moves to: arrows step (from nothing: the first / last row), Home / End
+ * jump, Enter re-activates the current row; `null` for other keys.
+ */
+function listKeyIndex(key: string, current: number, count: number): number | null {
+  if (count === 0) {
+    return null;
+  }
+
+  switch (key) {
+    case "ArrowDown":
+      return current < 0 ? 0 : Math.min(count - 1, current + 1);
+    case "ArrowUp":
+      return current < 0 ? count - 1 : Math.max(0, current - 1);
+    case "Home":
+      return 0;
+    case "End":
+      return count - 1;
+    case "Enter":
+      return current >= 0 ? current : null;
+    default:
+      return null;
+  }
+}
+
+const optionId = (change: StorageChange): string => `storage-change-${change.eventId}`;
 
 function Segmented<T extends string>({
   value,
@@ -196,10 +224,10 @@ function KeyValueTable({
               className={isRecent ? "recent" : undefined}
               data-testid="storage-item"
             >
-              <td className="mono key" title={item.key}>
+              <td className="mono key" title={capTitle(item.key)}>
                 {item.key}
               </td>
-              <td className="mono val" title={item.value}>
+              <td className="mono val" title={capTitle(item.value)}>
                 {item.value !== undefined
                   ? preview(item.value)
                   : item.valueLength !== undefined
@@ -256,7 +284,7 @@ function CookieTable({ items, query }: { items: readonly CookieItem[]; query: st
             <td className="mono key" title={[cookie.domain, cookie.path].filter(Boolean).join(" ")}>
               {cookie.name}
             </td>
-            <td className="mono val" title={cookie.value}>
+            <td className="mono val" title={capTitle(cookie.value)}>
               {cookie.value !== undefined ? preview(cookie.value) : "—"}
               {cookie.valueTruncated ? <span className="tag">{t("cut")}</span> : null}
             </td>
@@ -313,7 +341,7 @@ function IdbTree({ items, query }: { items: readonly IdbDatabaseItem[]; query: s
                     .map((record) => (
                       <tr key={record.key} data-testid="storage-idb-record">
                         <td className="mono key">{record.key}</td>
-                        <td className="mono val" title={record.value}>
+                        <td className="mono val" title={capTitle(record.value)}>
                           {preview(record.value)}
                           {record.valueTruncated ? <span className="tag">{t("cut")}</span> : null}
                         </td>
@@ -427,6 +455,27 @@ function LogView({ archive }: { archive: LoadedArchive }) {
     ? changes.findIndex((change) => change.eventId === selectedId)
     : -1;
   const selected = selectedIndex >= 0 ? changes[selectedIndex] : undefined;
+  const select = (change: StorageChange): void => {
+    const event = archive.model.eventById.get(change.eventId);
+
+    if (event) {
+      controller.selectEvent(event);
+    }
+  };
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    // Keys typed in a control inside the list belong to that control.
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
+    const index = listKeyIndex(event.key, selectedIndex, changes.length);
+    const change = index === null ? undefined : changes[index];
+
+    if (change) {
+      event.preventDefault();
+      select(change);
+    }
+  };
 
   if (changes.length === 0) {
     return (
@@ -441,6 +490,8 @@ function LogView({ archive }: { archive: LoadedArchive }) {
       role="listbox"
       tabIndex={0}
       aria-label={t("logLabel")}
+      aria-activedescendant={selected ? optionId(selected) : undefined}
+      onKeyDown={handleKeyDown}
       className="st-log"
       itemCount={changes.length}
       rowHeight={LOG_ROW_HEIGHT}
@@ -461,6 +512,7 @@ function LogView({ archive }: { archive: LoadedArchive }) {
         return (
           <div
             key={change.eventId}
+            id={optionId(change)}
             role="option"
             aria-selected={change.eventId === selectedId}
             className={[
@@ -470,13 +522,7 @@ function LogView({ archive }: { archive: LoadedArchive }) {
             ]
               .filter(Boolean)
               .join(" ")}
-            onClick={() => {
-              const event = archive.model.eventById.get(change.eventId);
-
-              if (event) {
-                controller.selectEvent(event);
-              }
-            }}
+            onClick={() => select(change)}
             data-testid="storage-change"
             data-area={change.area}
             data-op={change.op}

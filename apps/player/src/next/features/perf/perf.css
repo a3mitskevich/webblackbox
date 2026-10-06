@@ -128,3 +128,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+.pf-artifact .btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}

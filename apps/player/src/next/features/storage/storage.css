@@ -178,6 +178,9 @@
   background: var(--bad-soft);
   text-decoration: line-through;
 }
+.st-value .elided {
+  color: var(--ink-3);
+}
 .st-fields {
   margin: 0;
   padding: 0;

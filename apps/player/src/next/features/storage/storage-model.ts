@@ -32,23 +32,53 @@ export function selectStorageStateAt(archive: LoadedArchive, mono: number): Stor
   return buildStorageStateAt(selectStorageData(archive).events, mono);
 }
 
-/** Log rows that match the shared text filter (key, value, area, operation). */
-export function filterStorageChanges(
-  changes: readonly StorageChange[],
-  query: string
-): StorageChange[] {
+/** Only this much of a value is searched: the filter runs on every keystroke. */
+export const MAX_SEARCH_VALUE_CHARS = 8 * 1024;
+
+const haystackByChange = new WeakMap<StorageChange, string>();
+
+/** The lowercased text the filter searches, built once per change. */
+function haystackOf(change: StorageChange): string {
+  const cached = haystackByChange.get(change);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const haystack = [
+    change.area,
+    change.op,
+    change.key ?? "",
+    (change.value ?? "").slice(0, MAX_SEARCH_VALUE_CHARS)
+  ]
+    .join(" ")
+    .toLowerCase();
+  haystackByChange.set(change, haystack);
+  return haystack;
+}
+
+/**
+ * Log rows that match the shared text filter (key, value, area, operation). Without a query the
+ * input array itself comes back (not a copy): callers must not mutate it.
+ */
+export function filterStorageChanges(changes: StorageChange[], query: string): StorageChange[] {
   const needle = query.trim().toLowerCase();
 
   if (!needle) {
-    return [...changes];
+    return changes;
   }
 
-  return changes.filter((change) =>
-    [change.area, change.op, change.key ?? "", change.value ?? ""]
-      .join(" ")
-      .toLowerCase()
-      .includes(needle)
-  );
+  return changes.filter((change) => haystackOf(change).includes(needle));
+}
+
+/** Hover titles show this much of a key or value (values can be megabytes). */
+export const MAX_TITLE_CHARS = 1_000;
+
+/** A `title` attribute for a possibly huge key or value. */
+export function capTitle(value: string | undefined): string | undefined {
+  return value !== undefined && value.length > MAX_TITLE_CHARS
+    ? `${value.slice(0, MAX_TITLE_CHARS)}…`
+    : value;
 }
 
 /** Whether a key/value row matches the shared text filter. */
