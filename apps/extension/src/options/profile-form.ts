@@ -9,10 +9,10 @@ import {
   MAX_BODY_CAPTURE_BYTES,
   MAX_LIST_ENTRIES,
   MAX_MOUSEMOVE_HZ,
+  MAX_PATTERN_LENGTH,
   MAX_SOURCE_MAP_BYTES,
   MAX_UNEXPORTED_RETENTION_MINUTES,
   MIN_UNEXPORTED_RETENTION_MINUTES,
-  MAX_PATTERN_LENGTH,
   type RecordingProfile
 } from "../shared/profiles/model.js";
 import { button, el } from "./dom.js";
@@ -254,7 +254,7 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
           min: 1,
           max: MAX_SOURCE_MAP_BYTES,
           step: 1024,
-          unit: "B"
+          unit: t(EXTENSION_UNIT_LABEL_KEYS.B)
         })
       ]),
       createCategoryMatrix(profile, t),

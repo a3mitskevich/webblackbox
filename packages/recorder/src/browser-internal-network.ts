@@ -15,9 +15,7 @@ const BROWSER_INTERNAL_URL_SCHEMES = new Set([
   "chrome-untrusted",
   "chrome-search",
   "devtools",
-  "edge",
-  "about",
-  "view-source"
+  "edge"
 ]);
 
 /**

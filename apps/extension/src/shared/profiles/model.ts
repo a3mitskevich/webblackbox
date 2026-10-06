@@ -31,11 +31,11 @@ export const MIN_RULE_PRIORITY = -1000;
 export const MAX_RULE_PRIORITY = 1000;
 export const MAX_MOUSEMOVE_HZ = 240;
 export const MAX_BODY_CAPTURE_BYTES = 8 * 1024 * 1024;
-export const MIN_UNEXPORTED_RETENTION_MINUTES = 1;
-export const MAX_UNEXPORTED_RETENTION_MINUTES = 24 * 60;
 /** Default and hard cap for one source map embedded at record time. */
 export const DEFAULT_SOURCE_MAP_MAX_BYTES = 8 * 1024 * 1024;
 export const MAX_SOURCE_MAP_BYTES = 32 * 1024 * 1024;
+export const MIN_UNEXPORTED_RETENTION_MINUTES = 1;
+export const MAX_UNEXPORTED_RETENTION_MINUTES = 24 * 60;
 
 /** Visual capture a profile pins; absent = the popup's choice (today's behaviour). */
 export type ProfileVisualCapture = "none" | "screenshots" | "recording" | "both";

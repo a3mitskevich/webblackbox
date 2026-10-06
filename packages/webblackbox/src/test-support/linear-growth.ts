@@ -1,8 +1,14 @@
-/** Test helper: linear-time checks that parallel load cannot fail (no wall-clock budget). */
+/** Test helper: linear-time checks that parallel load cannot fail (CPU time, no fixed budget). */
 
 const LINEAR_INPUT_FACTOR = 8;
 /** Well above linear growth (8-11x) plus shared-runner noise, well below quadratic (>= 56x). */
 export const LINEAR_GROWTH_LIMIT = 32;
+
+/**
+ * Hang-only bound for a growth-ratio test. Several timed runs, repeated over the limit, take
+ * seconds on a loaded runner, past vitest's 5 s default; no assertion depends on this value.
+ */
+export const GROWTH_TEST_TIMEOUT_MS = 60_000;
 /** Inputs are doubled so each run takes long enough for timer noise not to matter. */
 const BASE_SCALE = 2;
 /**
@@ -11,14 +17,18 @@ const BASE_SCALE = 2;
  */
 const MAX_ATTEMPTS = 3;
 
-/** The fastest of several runs: CPU contention only ever adds time, so the minimum is stable. */
+/**
+ * The fastest of several runs, in process CPU time rather than wall-clock: time spent
+ * descheduled by other load is not counted, and the minimum drops GC pauses.
+ */
 function fastestRunMs(run: () => unknown, runs: number): number {
   let fastest = Number.POSITIVE_INFINITY;
 
   for (let index = 0; index < runs; index += 1) {
-    const startedAt = performance.now();
+    const startedAt = process.cpuUsage();
     run();
-    fastest = Math.min(fastest, performance.now() - startedAt);
+    const used = process.cpuUsage(startedAt);
+    fastest = Math.min(fastest, (used.user + used.system) / 1_000);
   }
 
   return fastest;

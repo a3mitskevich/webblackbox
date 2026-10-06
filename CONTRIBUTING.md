@@ -57,6 +57,7 @@ webblackbox/
 | `pnpm changeset`        | Create a release changeset                           |
 | `pnpm version-packages` | Apply changesets and sync extension manifest version |
 | `pnpm release`          | Publish npm packages via Changesets                  |
+| `pnpm bundle:size`      | Check built bundles (see `bundle-size/README.md`)    |
 
 Use `pnpm --filter <package-name> <script>` for package-specific work.
 

@@ -1,15 +1,15 @@
-import { isBrowserInternalUrl } from "@webblackbox/recorder";
 import {
   BODY_REDACTION_TOKEN,
   type BodySkipReason,
   isTextualMimeType,
   maskBodyBytes,
+  normalizeMimeType,
   type CaptureMode,
   type RedactionRules,
   type RecorderConfig
 } from "@webblackbox/protocol";
 
-export { isTextualMimeType };
+export { isTextualMimeType, normalizeMimeType };
 
 export type BodyCaptureRule = {
   enabled: boolean;
@@ -149,8 +149,28 @@ export type BodyUrlFilters = {
   excludeUrls: readonly string[];
 };
 
-// One list of extension and browser-internal schemes for network capture and body capture.
-export { isBrowserInternalUrl };
+/**
+ * Schemes of extension and browser-internal resources. Their bodies are never app data: the
+ * page loads this extension's own injected script (about 0.9 MiB) as `chrome-extension:`, and
+ * recording it bloats archives and trips the privacy scanner on every export.
+ */
+const BROWSER_INTERNAL_URL_SCHEMES = new Set([
+  "chrome-extension",
+  "moz-extension",
+  "safari-web-extension",
+  "chrome",
+  "chrome-untrusted",
+  "chrome-search",
+  "devtools",
+  "edge",
+  "about",
+  "view-source"
+]);
+
+export function isBrowserInternalUrl(url: string): boolean {
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url.trim())?.[1]?.toLowerCase();
+  return scheme !== undefined && BROWSER_INTERNAL_URL_SCHEMES.has(scheme);
+}
 
 /**
  * Narrows a body capture rule with profile URL globs (`*` = any characters, matched against the
@@ -262,11 +282,11 @@ export function wildcardMatch(value: string, pattern: string): boolean {
 }
 
 export function isMimeAllowed(allowlist: string[], mimeType: string | undefined): boolean {
-  if (!mimeType) {
+  const normalizedMime = normalizeMimeType(mimeType);
+
+  if (!normalizedMime) {
     return true;
   }
-
-  const normalizedMime = mimeType.toLowerCase();
 
   return allowlist.some((rule) => {
     if (rule.endsWith("/*")) {
@@ -280,16 +300,6 @@ export function isMimeAllowed(allowlist: string[], mimeType: string | undefined)
 
     return normalizedMime === rule;
   });
-}
-
-export function normalizeMimeType(value: string | null | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const [mime] = value.split(";");
-  const normalized = mime?.trim().toLowerCase();
-  return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
 export function isLikelyTextualResourceType(resourceType?: string): boolean {

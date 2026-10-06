@@ -1,18 +1,20 @@
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-
 import { defineConfig } from "vitest/config";
 
-const root = dirname(fileURLToPath(import.meta.url));
+import { workspaceSourceAliases } from "../../config/workspace-sources.mjs";
+
+// Exports are always encrypted (#10), so most tests derive PBKDF2 keys at the archive's fixed
+// iteration count, some several times. With every package's tests running at once on a CI runner
+// that alone can pass vitest's 5 s default. The bound below only catches a hang; no assertion
+// depends on it.
+const ENCRYPTED_EXPORT_TEST_TIMEOUT_MS = 30_000;
 
 export default defineConfig({
   resolve: {
-    alias: {
-      "@webblackbox/protocol": resolve(root, "../protocol/src/index.ts")
-    }
+    alias: workspaceSourceAliases()
   },
   test: {
     environment: "node",
+    testTimeout: ENCRYPTED_EXPORT_TEST_TIMEOUT_MS,
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],

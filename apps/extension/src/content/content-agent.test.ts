@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { EXTENSION_LOCALE_STORAGE_KEY } from "../shared/i18n.js";
-import { loadKeyboardMarkerLabel } from "./content-agent.js";
+import {
+  EXTENSION_LOCALE_STORAGE_KEY,
+  EXTENSION_LOCALES,
+  translateExtensionMessage
+} from "../shared/i18n.js";
+import { KEYBOARD_MARKER_LABELS, loadKeyboardMarkerLabel } from "./content-agent.js";
 
 function installChrome(options: { uiLanguage: string; stored?: string }): void {
   const data =
@@ -32,5 +36,13 @@ describe("loadKeyboardMarkerLabel", () => {
     installChrome({ uiLanguage: "en-US", stored: "auto" });
 
     await expect(loadKeyboardMarkerLabel()).resolves.toBe("Keyboard marker");
+  });
+
+  it("keeps every locale's label equal to the UI dictionary", () => {
+    for (const locale of EXTENSION_LOCALES) {
+      expect(KEYBOARD_MARKER_LABELS[locale], locale).toBe(
+        translateExtensionMessage(locale, "contentKeyboardMarker")
+      );
+    }
   });
 });

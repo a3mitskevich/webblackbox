@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 /** Where a script's source map reference was found. */
 export const SCRIPT_SOURCE_MAP_ORIGINS = ["cdp", "header", "comment"] as const;
 
@@ -34,27 +32,6 @@ export type ScriptSourceMapData = {
   /** Why embedding the map failed (follow-up event). */
   mapError?: string;
 };
-
-export const scriptSourceMapDataSchema = z
-  .object({
-    script: z.string().min(1).max(SCRIPT_URL_MAX_LENGTH),
-    sourceMap: z.string().min(1).max(SCRIPT_URL_MAX_LENGTH).optional(),
-    inlineMap: z.boolean().optional(),
-    origin: z.enum(SCRIPT_SOURCE_MAP_ORIGINS),
-    scriptId: z.string().min(1).max(128).optional(),
-    hash: z.string().min(1).max(128).optional(),
-    length: z.number().int().nonnegative().optional(),
-    isModule: z.boolean().optional(),
-    map: z
-      .object({
-        contentHash: z.string().min(1),
-        size: z.number().int().nonnegative()
-      })
-      .strict()
-      .optional(),
-    mapError: z.string().min(1).max(200).optional()
-  })
-  .strict();
 
 const SOURCE_MAP_HEADER_NAMES = ["sourcemap", "x-sourcemap"] as const;
 const SOURCE_MAPPING_URL_PATTERN =

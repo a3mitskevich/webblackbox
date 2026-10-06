@@ -7,14 +7,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { sanitizeCss, serializeRawDom } from "./raw-dom-snapshot.js";
-import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
-
-/**
- * Nine hostile inputs, each measured several times at two scales: about 2.5-4.5 s on a CI runner,
- * more while turbo runs other suites in parallel. The assertion is the growth ratio; the timeout
- * only has to stay out of its way.
- */
-const HOSTILE_PAGES_TIMEOUT_MS = 30_000;
+import {
+  growthRatio,
+  LINEAR_GROWTH_LIMIT,
+  GROWTH_TEST_TIMEOUT_MS
+} from "./test-support/linear-growth.js";
 
 const OPTIONS = { blockedSelectors: [".secret"], keepInputValues: true };
 const BACKSLASH = "\\";
@@ -379,35 +376,31 @@ describe("raw DOM corpus: text", () => {
     expect(html).not.toContain("DSD1SECRET");
   });
 
-  it(
-    "stays linear on large hostile pages",
-    () => {
-      // Each input goes into style text, a text node and an attribute value.
-      const hostile: Array<[string, (scale: number) => string]> = [
-        ["?a", (scale) => "?a".repeat(5_000 * scale)],
-        ["#a", (scale) => "#a".repeat(5_000 * scale)],
-        ["\\#", (scale) => `${BACKSLASH}#`.repeat(5_000 * scale)],
-        ["--", (scale) => "--".repeat(5_000 * scale)],
-        ["a://", (scale) => "a://".repeat(2_500 * scale)],
-        ["url(", (scale) => "url(".repeat(2_500 * scale)],
-        ["{AAA", (scale) => `{${"A".repeat(10_000 * scale)}`],
-        ["/-", (scale) => "/-".repeat(5_000 * scale)],
-        ['"#a', (scale) => `"${"#a".repeat(5_000 * scale)} "`]
-      ];
+  it("stays linear on large hostile pages", { timeout: GROWTH_TEST_TIMEOUT_MS }, () => {
+    // Each input goes into style text, a text node and an attribute value.
+    const hostile: Array<[string, (scale: number) => string]> = [
+      ["?a", (scale) => "?a".repeat(5_000 * scale)],
+      ["#a", (scale) => "#a".repeat(5_000 * scale)],
+      ["\\#", (scale) => `${BACKSLASH}#`.repeat(5_000 * scale)],
+      ["--", (scale) => "--".repeat(5_000 * scale)],
+      ["a://", (scale) => "a://".repeat(2_500 * scale)],
+      ["url(", (scale) => "url(".repeat(2_500 * scale)],
+      ["{AAA", (scale) => `{${"A".repeat(10_000 * scale)}`],
+      ["/-", (scale) => "/-".repeat(5_000 * scale)],
+      ['"#a', (scale) => `"${"#a".repeat(5_000 * scale)} "`]
+    ];
 
-      for (const [label, build] of hostile) {
-        const ratio = growthRatio((scale) => {
-          const text = build(scale);
-          document.body.innerHTML = "<style></style><p></p>";
-          document.querySelector("style")!.textContent = text;
-          document.querySelector("p")!.textContent = text;
-          document.querySelector("p")!.setAttribute("data-x", text);
-          return () => serializeRawDom(document, OPTIONS);
-        });
+    for (const [label, build] of hostile) {
+      const ratio = growthRatio((scale) => {
+        const text = build(scale);
+        document.body.innerHTML = "<style></style><p></p>";
+        document.querySelector("style")!.textContent = text;
+        document.querySelector("p")!.textContent = text;
+        document.querySelector("p")!.setAttribute("data-x", text);
+        return () => serializeRawDom(document, OPTIONS);
+      });
 
-        expect(ratio, label).toBeLessThan(LINEAR_GROWTH_LIMIT);
-      }
-    },
-    HOSTILE_PAGES_TIMEOUT_MS
-  );
+      expect(ratio, label).toBeLessThan(LINEAR_GROWTH_LIMIT);
+    }
+  });
 });

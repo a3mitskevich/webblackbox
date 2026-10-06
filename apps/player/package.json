@@ -12,7 +12,7 @@
     "pages:build": "pnpm build && node scripts/prepare-pages-build.mjs",
     "pages:deploy": "node scripts/deploy-gh-pages.mjs",
     "serve": "vite preview --strictPort",
-    "lint": "eslint src --ext .ts,.tsx",
+    "lint": "eslint src scripts --ext .ts,.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },

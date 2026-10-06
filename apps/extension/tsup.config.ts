@@ -26,6 +26,8 @@ export default defineConfig({
   bundle: true,
   skipNodeModulesBundle: false,
   noExternal: [/.*/],
+  // `injected.js` and `content-agent.js` are parsed on every navigation of every recorded frame.
+  minify: true,
   sourcemap: true,
   outDir: "build",
   clean: true,

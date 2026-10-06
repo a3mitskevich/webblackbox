@@ -33,9 +33,6 @@ const baseUrl = `http://127.0.0.1:${remotePort}`;
 const passphrase = "webblackbox-pointer-e2e-passphrase";
 const VIEWPORT = { width: 1280, height: 1400 };
 const POINTER_PROFILE_ID = "e2e-pointer-profile";
-// The engine lock (#12) starts a profile that needs the Full engine only in Full, so the Lite run
-// records with the same pointer streams minus what only Full captures.
-const POINTER_LITE_PROFILE_ID = "e2e-pointer-lite-profile";
 const POINTER_RULE = {
   id: "e2e-pointer",
   name: "Pointer E2E",
@@ -187,7 +184,7 @@ async function main() {
       "webblackbox.profiles": {
         schemaVersion: 2,
         defaultProfileId: "default",
-        profiles: [${JSON.stringify(pointerProfile)}, ${JSON.stringify(createLitePointerProfile(pointerProfile))}],
+        profiles: [${JSON.stringify(pointerProfile)}],
         rules: [${JSON.stringify(POINTER_RULE)}],
         extendedCaptureHosts: []
       }
@@ -220,24 +217,6 @@ async function main() {
   console.log(`Chrome log: ${chromeLogPath}`);
   console.log("Pointer capture E2E passed.");
   await cleanup();
-}
-
-/** The pointer profile without the categories only the Full engine records. */
-function createLitePointerProfile(profile) {
-  return {
-    ...profile,
-    id: POINTER_LITE_PROFILE_ID,
-    name: "Pointer E2E (Lite)",
-    base: "lite",
-    categories: {
-      ...profile.categories,
-      screenshots: "off",
-      screenRecordings: "off",
-      console: "sanitized",
-      network: "headers-allowlist",
-      cdp: "off"
-    }
-  };
 }
 
 /** The Full capture preset (1 MiB body cap) with every pointer stream on. */
@@ -298,7 +277,7 @@ async function runMode({ mode, demoUrl, popup, WebBlackboxPlayer }) {
   assert(typeof tabId === "number", "Demo tab not found", { tabId });
 
   const started = await popup.evaluate(
-    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: ${JSON.stringify(mode)}, visualCapture: "none", profileId: ${JSON.stringify(mode === "lite" ? POINTER_LITE_PROFILE_ID : POINTER_PROFILE_ID)} })`
+    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: ${JSON.stringify(mode)}, visualCapture: "none" })`
   );
   assert(started?.ok !== false, `Failed to start ${mode} mode`, started);
   await waitFor(

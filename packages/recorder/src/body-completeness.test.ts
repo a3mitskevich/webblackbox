@@ -76,6 +76,25 @@ describe("request body completeness", () => {
     expect(requestOf(event).postDataSkipped).toBe("mime-not-allowed");
   });
 
+  it("hands the host gate one media type when the Content-Type header was sent twice", () => {
+    const mimeTypes: Array<string | undefined> = [];
+    const recorder = createRecorder("body-allowlist", {
+      shouldKeepInlineNetworkBody: (context) => {
+        mimeTypes.push(context.mimeType);
+        return true;
+      }
+    });
+    const { event } = recorder.ingest(
+      requestWillBeSent("1.3", "https://app.example/api/save", {
+        postData: '{"a":1}',
+        headers: { "Content-Type": "application/json, application/json" }
+      })
+    );
+
+    expect(mimeTypes).toEqual(["application/json"]);
+    expect(requestOf(event).postData).toBe('{"a":1}');
+  });
+
   it("reports a plain `false` from the host gate as filtered", () => {
     const recorder = createRecorder("body-allowlist", {
       shouldKeepInlineNetworkBody: () => false

@@ -199,6 +199,71 @@ describe("capture completeness", () => {
     );
   });
 
+  it("expects SVG bodies, not data: URL bodies, and explains earlier requests", async () => {
+    const at = createClock();
+    const player = await openArchive([
+      META_CONFIG,
+      ...exchange(at, "icon", {
+        url: "https://app.example.com/img/icon.svg",
+        mimeType: "image/svg+xml"
+      }),
+      ...exchange(at, "inline", {
+        url: "data:image/svg+xml;base64,PHN2Zy8+",
+        mimeType: "image/svg+xml"
+      }),
+      // Sent before the capture began: only its response and the skip are in the archive.
+      ...exchange(at, "early", { mimeType: "text/javascript" }).slice(1),
+      {
+        type: "network.body.skipped",
+        mono: at(),
+        data: { reqId: "early", side: "response", reason: "started-before-capture" }
+      }
+    ]);
+
+    const report = player.getCaptureCompleteness();
+
+    expect(report.network.responseBodies).toMatchObject({
+      expected: 2,
+      captured: 0,
+      skipped: 1,
+      missing: 1,
+      dataUrls: 1,
+      skipReasons: { "started-before-capture": 1 }
+    });
+    expect(report.network.responseBodies.missingSamples.map((sample) => sample.reqId)).toEqual([
+      "icon"
+    ]);
+    expect(formatCaptureCompletenessReport(report)[1]).toContain("; 1 in data: URLs");
+  });
+
+  it("reads one media type from a Content-Type header sent twice", async () => {
+    const at = createClock();
+    const player = await openArchive([
+      META_CONFIG,
+      ...exchange(at, "twice", {
+        method: "POST",
+        mimeType: "application/json, application/json",
+        request: {
+          hasPostData: true,
+          postData: '{"a":1}',
+          headers: { "content-type": "application/json, application/json" }
+        }
+      }),
+      ...exchange(at, "binary", {
+        method: "POST",
+        request: {
+          hasPostData: true,
+          headers: { "content-type": "application/octet-stream, application/json" }
+        }
+      })
+    ]);
+
+    const report = player.getCaptureCompleteness();
+
+    expect(Object.keys(report.network.responseBodies.byMime)).toEqual(["application/json"]);
+    expect(report.network.requestBodies).toMatchObject({ expected: 1, captured: 1, missing: 0 });
+  });
+
   it("measures how much of the session the DOM events cover", async () => {
     const player = await openArchive([
       META_CONFIG,

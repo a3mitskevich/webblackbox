@@ -77,14 +77,18 @@ function randomTitle(random: () => number): string {
   );
 }
 
-/** The fastest of several runs: CPU contention only ever adds time, so the minimum is stable. */
+/**
+ * The fastest of several runs in process CPU time: other load on the machine (since #27 every
+ * package's tests run at once) and a GC pause in one run do not count.
+ */
 function fastestRunMs(run: () => unknown): number {
   let fastest = Number.POSITIVE_INFINITY;
 
   for (let index = 0; index < TIMED_RUNS; index += 1) {
-    const started = performance.now();
+    const startedAt = process.cpuUsage();
     run();
-    fastest = Math.min(fastest, performance.now() - started);
+    const used = process.cpuUsage(startedAt);
+    fastest = Math.min(fastest, (used.user + used.system) / 1_000);
   }
 
   return fastest;

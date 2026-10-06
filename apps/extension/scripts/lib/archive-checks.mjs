@@ -177,6 +177,18 @@ const COMPLETENESS_BOUNDS = [
   ["maxCutConsoleEntries", "max", "cut console entries", (r) => r.console.truncated],
   ["minWithStack", "min", "console/errors with a stack", (r) => r.console.withStack],
   ["minVitals", "min", "perf vitals", (r) => r.perf.vitals],
+  [
+    "minSvgBodies",
+    "min",
+    "captured SVG bodies",
+    (r) => r.network.responseBodies.byMime["image/svg+xml"]?.captured ?? 0
+  ],
+  [
+    "minDataUrls",
+    "min",
+    "data: URL responses (body in the URL)",
+    (r) => r.network.responseBodies.dataUrls ?? 0
+  ],
   ["minLongTasks", "min", "perf long tasks", (r) => r.perf.longTasks],
   ["minCookieValues", "min", "cookie values", (r) => r.storage.cookieValues],
   ["minLocalValues", "min", "localStorage values", (r) => r.storage.localValues],

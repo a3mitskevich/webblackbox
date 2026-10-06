@@ -17,6 +17,7 @@ import {
   WEBBLACKBOX_PROTOCOL_VERSION
 } from "./constants.js";
 import { compileValuePattern } from "./redaction-rules.js";
+import { scriptSourceMapDataSchema } from "./script-schemas.js";
 import {
   pointerCaptureOptionsSchema,
   userClickReactionDataSchema,
@@ -25,8 +26,7 @@ import {
   userPointerPressDataSchema,
   userSelectionDataSchema,
   userWheelDataSchema
-} from "./pointer.js";
-import { scriptSourceMapDataSchema } from "./script.js";
+} from "./pointer-schemas.js";
 
 const recordStringUnknown = z.record(z.string(), z.unknown());
 
@@ -710,6 +710,7 @@ const specializedDataSchemas = {
   "storage.local.snapshot": storageSnapshotDataSchema,
   "storage.idb.snapshot": storageSnapshotDataSchema,
   "perf.vitals": perfVitalsDataSchema,
+  "sys.script": scriptSourceMapDataSchema,
   "user.pointerdown": userPointerPressDataSchema,
   "user.pointerup": userPointerPressDataSchema,
   "user.click.reaction": userClickReactionDataSchema,
@@ -717,8 +718,7 @@ const specializedDataSchemas = {
   "user.drag.end": userDragDataSchema,
   "user.selection": userSelectionDataSchema,
   "user.wheel": userWheelDataSchema,
-  "user.hover": userHoverDataSchema,
-  "sys.script": scriptSourceMapDataSchema
+  "user.hover": userHoverDataSchema
 } as const;
 
 export function getEventPayloadSchema(type: z.infer<typeof webBlackboxEventTypeSchema>): z.ZodType {

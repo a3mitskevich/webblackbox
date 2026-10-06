@@ -214,6 +214,7 @@
     "reasonTooLarge": "过大",
     "reasonSessionLimit": "额度用尽",
     "reasonBacklog": "积压",
+    "reasonStartedBeforeCapture": "录制开始前已发起",
     "reasonNotRetained": "浏览器已释放",
     "reasonUnavailable": "浏览器不提供",
     "reasonFetchFailed": "读取失败",

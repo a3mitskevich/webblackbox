@@ -39,6 +39,49 @@ export async function readManagedEnterprisePolicy(
   }
 }
 
+type ManagedPolicyRead = () => Promise<Record<string, unknown> | null>;
+
+/**
+ * Bounds the wait for the managed policy. With a `managed_schema` declared, Chrome answers
+ * `storage.managed` only once it has set up the extension's policy domain, which it can postpone
+ * for as long as a page opened at browser start keeps requests in flight. Callers then go on after
+ * `timeoutMs` without a policy (as when the read fails) instead of hanging; concurrent callers share
+ * the pending read, and the first call after it settles reads again.
+ */
+export function createBoundedManagedPolicyReader(
+  read: ManagedPolicyRead,
+  options: { timeoutMs: number; onTimeout?: () => void }
+): ManagedPolicyRead {
+  let pending: Promise<Record<string, unknown> | null> | null = null;
+
+  return () => {
+    if (!pending) {
+      const current = read().finally(() => {
+        if (pending === current) {
+          pending = null;
+        }
+      });
+      pending = current;
+    }
+
+    const shared = pending;
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        options.onTimeout?.();
+        resolve(null);
+      }, options.timeoutMs);
+
+      const settle = (value: Record<string, unknown> | null) => {
+        clearTimeout(timer);
+        resolve(value);
+      };
+
+      shared.then(settle, () => settle(null));
+    });
+  };
+}
+
 export type EnterpriseRecorderPolicy = {
   siteAllowlist: string[];
   siteDenylist: string[];

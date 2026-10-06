@@ -1,9 +1,24 @@
 #!/usr/bin/env node
 
-import { gzipSync } from "node:zlib";
-import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname, extname, join, relative, resolve } from "node:path";
+// Bundle-size gate. Strict absolute budgets for the bundles loaded into recorded pages, a
+// "delta vs base branch" check for everything else. See bundle-size/README.md.
+//
+//   node scripts/check-bundle-size.mjs [--baseline <report.json>] [--notes-file <file>]
+
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { gzipSync } from "node:zlib";
+
+import {
+  evaluateAbsoluteBudget,
+  evaluateDelta,
+  formatPercent,
+  parseBaselineReport,
+  parseBudgetConfig,
+  parseSizeIncreaseNotes
+} from "./lib/bundle-size.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const budgetsPath = resolve(root, "bundle-size/budgets.json");
@@ -15,123 +30,167 @@ main().catch((error) => {
 });
 
 async function main() {
-  const content = await readFile(budgetsPath, "utf8");
-  const budgets = JSON.parse(content);
-  const entries = Array.isArray(budgets.entries) ? budgets.entries : [];
+  const { values } = parseArgs({
+    options: {
+      baseline: { type: "string" },
+      "notes-file": { type: "string" }
+    }
+  });
+  const config = parseBudgetConfig(JSON.parse(await readFile(budgetsPath, "utf8")));
+  const baseline = values.baseline
+    ? parseBaselineReport(JSON.parse(await readFile(resolve(values.baseline), "utf8")))
+    : null;
+  const notes = values["notes-file"]
+    ? parseSizeIncreaseNotes(await readFile(resolve(values["notes-file"]), "utf8"))
+    : [];
 
-  if (entries.length === 0) {
-    throw new Error(`No bundle budgets found in ${budgetsPath}`);
+  const failures = [];
+  const report = [];
+  const lines = [];
+
+  for (const budget of config.absolute) {
+    const size = await measure(budget.path);
+    const sources = budget.forbidSources.length > 0 ? await readSourcemapSources(budget.path) : [];
+    const budgetFailures = evaluateAbsoluteBudget(budget, size, sources);
+
+    failures.push(...budgetFailures);
+    report.push({
+      ...size,
+      kind: "absolute",
+      maxBytes: budget.maxBytes ?? null,
+      maxGzipBytes: budget.maxGzipBytes ?? null,
+      ok: budgetFailures.length === 0
+    });
+    lines.push(
+      `${budgetFailures.length === 0 ? "ok  " : "FAIL"} ${size.path}: raw=${size.bytes}/${budget.maxBytes ?? "-"} gzip=${size.gzipBytes}/${budget.maxGzipBytes ?? "-"}`
+    );
   }
 
-  const report = [];
-  const failures = [];
+  for (const path of config.delta.entries) {
+    const size = await measure(path);
+    const base = baseline?.get(path);
+    const result = baseline ? evaluateDelta(config.delta, size, base, notes) : null;
 
-  for (const entry of entries) {
-    const { label, bytes, gzipBytes, files } = await measureEntry(entry);
-    const maxBytes = Number(entry.maxBytes);
-    const maxGzipBytes = Number(entry.maxGzipBytes);
-
-    const rawOk = Number.isFinite(maxBytes) ? bytes <= maxBytes : true;
-    const gzipOk = Number.isFinite(maxGzipBytes) ? gzipBytes <= maxGzipBytes : true;
+    if (result?.status === "failed" && result.message) {
+      failures.push(result.message);
+    }
 
     report.push({
-      path: label,
-      ...(files === null ? {} : { files }),
-      bytes,
-      gzipBytes,
-      maxBytes: Number.isFinite(maxBytes) ? maxBytes : null,
-      maxGzipBytes: Number.isFinite(maxGzipBytes) ? maxGzipBytes : null,
-      ok: rawOk && gzipOk
+      ...size,
+      kind: "delta",
+      baseBytes: base?.bytes ?? null,
+      baseGzipBytes: base?.gzipBytes ?? null,
+      status: result?.status ?? "unchecked",
+      ok: result?.status !== "failed"
     });
-
-    if (!rawOk) {
-      failures.push(
-        `${label}: raw size ${bytes} exceeds budget ${maxBytes} (+${bytes - maxBytes})`
-      );
-    }
-
-    if (!gzipOk) {
-      failures.push(
-        `${label}: gzip size ${gzipBytes} exceeds budget ${maxGzipBytes} (+${gzipBytes - maxGzipBytes})`
-      );
-    }
+    lines.push(formatDeltaLine(size, base, result));
   }
 
   await mkdir(dirname(reportPath), { recursive: true });
   await writeFile(
     reportPath,
-    JSON.stringify(
-      {
-        generatedAt: new Date().toISOString(),
-        report
-      },
-      null,
-      2
-    ),
+    JSON.stringify({ generatedAt: new Date().toISOString(), report }, null, 2),
     "utf8"
   );
 
-  for (const row of report) {
-    console.log(`${row.path}: raw=${row.bytes} gzip=${row.gzipBytes}`);
+  for (const line of lines) {
+    console.log(line);
   }
+
+  if (!baseline) {
+    console.log("Delta check skipped: no --baseline report given (absolute budgets still apply).");
+  }
+
   console.log("Bundle size report:", reportPath);
+  await writeStepSummary(report, Boolean(baseline));
 
   if (failures.length > 0) {
-    throw new Error(`Bundle size budgets failed:\n- ${failures.join("\n- ")}`);
+    throw new Error(`Bundle size gate failed:\n- ${failures.join("\n- ")}`);
+  }
+}
+
+/** @param {string} path */
+async function measure(path) {
+  const source = await readFile(resolve(root, path)).catch(() => {
+    throw new Error(`${path}: bundle not found — run \`pnpm build\` first`);
+  });
+
+  return { path, bytes: source.byteLength, gzipBytes: gzipSync(source).byteLength };
+}
+
+/**
+ * @param {string} path
+ * @returns {Promise<string[] | null>}
+ */
+async function readSourcemapSources(path) {
+  try {
+    const map = JSON.parse(await readFile(resolve(root, `${path}.map`), "utf8"));
+
+    return Array.isArray(map.sources) ? map.sources.map(String) : null;
+  } catch {
+    return null;
   }
 }
 
 /**
- * A budget covers one file (`path`) or every file under a directory with the given extensions
- * (`dir` + `extensions`, e.g. all JS and CSS chunks of a code-split app; source maps excluded).
- * Aggregate gzip is the sum of the per-file gzip sizes, as each file is served on its own.
+ * @param {{ path: string, bytes: number, gzipBytes: number }} size
+ * @param {{ bytes: number, gzipBytes: number } | undefined} base
+ * @param {{ status: string, reason: string | null } | null} result
  */
-async function measureEntry(entry) {
-  if (typeof entry.path === "string") {
-    const source = await readFile(resolve(root, entry.path));
-    return {
-      label: entry.path,
-      bytes: source.byteLength,
-      gzipBytes: gzipSync(source).byteLength,
-      files: null
-    };
+function formatDeltaLine(size, base, result) {
+  const current = `${size.path}: raw=${size.bytes} gzip=${size.gzipBytes}`;
+
+  if (!result) {
+    return `    ${current}`;
   }
 
-  if (typeof entry.dir !== "string" || !Array.isArray(entry.extensions)) {
-    throw new Error(`Budget entry needs "path" or "dir" + "extensions": ${JSON.stringify(entry)}`);
+  if (!base) {
+    return `new  ${current} (not in baseline)`;
   }
 
-  const extensions = new Set(entry.extensions.map((extension) => String(extension)));
-  const dir = resolve(root, entry.dir);
-  const paths = (await listFiles(dir)).filter((path) => extensions.has(extname(path)));
+  const delta = `${formatSigned(size.bytes - base.bytes)} B ${formatPercent(size.bytes - base.bytes, base.bytes)}`;
+  const label = { ok: "ok  ", explained: "note", failed: "FAIL" }[result.status] ?? "    ";
 
-  if (paths.length === 0) {
-    throw new Error(`No ${[...extensions].join("/")} files under ${entry.dir}`);
-  }
-
-  let bytes = 0;
-  let gzipBytes = 0;
-
-  for (const path of paths) {
-    const source = await readFile(path);
-    bytes += source.byteLength;
-    gzipBytes += gzipSync(source).byteLength;
-  }
-
-  return {
-    label: `${entry.dir}/**/*{${[...extensions].join(",")}}`,
-    bytes,
-    gzipBytes,
-    files: paths.map((path) => relative(dir, path)).sort()
-  };
+  return `${label} ${current} (${delta} vs base)${result.status === "explained" ? ` explained: ${result.reason}` : ""}`;
 }
 
-async function listFiles(dir) {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const nested = await Promise.all(
-    entries.map((entry) =>
-      entry.isDirectory() ? listFiles(join(dir, entry.name)) : [join(dir, entry.name)]
-    )
-  );
-  return nested.flat();
+/** @param {number} value */
+function formatSigned(value) {
+  return value >= 0 ? `+${value}` : String(value);
+}
+
+/**
+ * Appends a Markdown table to the GitHub Actions job summary when running in CI.
+ * @param {Array<Record<string, unknown>>} report
+ * @param {boolean} hasBaseline
+ */
+async function writeStepSummary(report, hasBaseline) {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+
+  if (!summaryPath) {
+    return;
+  }
+
+  const rows = report.map((row) => {
+    const limit =
+      row.kind === "absolute"
+        ? `≤ ${row.maxBytes ?? "-"} / ${row.maxGzipBytes ?? "-"}`
+        : row.baseBytes === null || row.baseBytes === undefined
+          ? hasBaseline
+            ? "new"
+            : "no baseline"
+          : `base ${row.baseBytes} (${formatPercent(Number(row.bytes) - Number(row.baseBytes), Number(row.baseBytes))})`;
+
+    return `| ${row.ok ? "✅" : "❌"} | \`${row.path}\` | ${row.kind} | ${row.bytes} | ${row.gzipBytes} | ${limit} |`;
+  });
+  const table = [
+    "### Bundle size",
+    "",
+    "| | Bundle | Check | Raw B | Gzip B | Budget / base |",
+    "|---|---|---|---|---|---|",
+    ...rows,
+    ""
+  ].join("\n");
+
+  await appendFile(summaryPath, `${table}\n`, "utf8");
 }

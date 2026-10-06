@@ -22,11 +22,12 @@ export const FULL_BODY_MAX_BYTES_PER_SESSION = 512 * 1024 * 1024;
 /** A body is not read when its encoded size exceeds this many times the per-body limit. */
 export const FULL_BODY_OVERSIZE_FACTOR = 2;
 
-/** Responses waiting for `loadingFinished`; the oldest are forgotten past this. */
+/**
+ * Responses waiting for `loadingFinished`, and requests waiting for their response; the oldest
+ * are forgotten past this.
+ */
 export const FULL_BODY_MAX_AWAITING_FINISH = 5_000;
 
-/** Resource types whose bodies are never text the policy asks for. */
-const NON_TEXT_RESOURCE_TYPES = new Set(["Image", "Media", "Font"]);
 /** Statuses that never carry a body. 304 is kept: CDP serves the cached body for it. */
 const BODYLESS_STATUSES = new Set([101, 204, 205]);
 /**
@@ -36,6 +37,8 @@ const BODYLESS_STATUSES = new Set([101, 204, 205]);
 const NOT_RETAINED_ERROR_PATTERN = /evicted|no (resource|data)\b.*\bfound/i;
 /** CDP error for a request body the browser cannot expose (e.g. a streamed body). */
 const UNAVAILABLE_POST_DATA_PATTERN = /no post data available/i;
+/** A `data:` URL: its body is the URL itself. */
+const DATA_URL_PATTERN = /^data:/i;
 
 export type CdpReadOutcome<TResult> = { ok: true; value: TResult } | { ok: false; error: string };
 
@@ -46,6 +49,11 @@ export type FinishedResponse = {
   sessionId?: string;
   encodedDataLength?: number;
   meta: RequestMetaEntry | undefined;
+  /**
+   * The response arrived without a `requestWillBeSent`: the request was in flight when the
+   * capture began, so the browser kept no body for it.
+   */
+  startedBeforeCapture?: boolean;
 };
 
 export type ReadBody = { body: string; base64Encoded: boolean };
@@ -92,6 +100,9 @@ export class FullBodyCapture {
   /** Responses seen but not finished yet, by request key (session + request id). */
   private readonly awaitingFinish = new Map<string, FinishedResponse>();
 
+  /** Requests sent while capturing that have no response yet, by request key. */
+  private readonly awaitingResponse = new Set<string>();
+
   private storedCount = 0;
 
   private storedBytes = 0;
@@ -100,6 +111,18 @@ export class FullBodyCapture {
 
   public constructor(private readonly deps: FullBodyCaptureDeps) {}
 
+  /** A request was sent (or redirected) while capturing: the browser keeps its body. */
+  public onRequestWillBeSent(requestId: string, sessionId: string | undefined): void {
+    if (this.closed || !this.deps.isEnabled()) {
+      return;
+    }
+
+    const key = requestKey({ requestId, sessionId });
+    this.awaitingResponse.delete(key);
+    forgetOldestPast(this.awaitingResponse, FULL_BODY_MAX_AWAITING_FINISH);
+    this.awaitingResponse.add(key);
+  }
+
   /** A response arrived; its body is decided when it finishes (or when the recording stops). */
   public onResponseReceived(response: FinishedResponse): void {
     if (this.closed || !this.deps.isEnabled()) {
@@ -107,32 +130,30 @@ export class FullBodyCapture {
     }
 
     const key = requestKey(response);
+    const startedBeforeCapture = !this.awaitingResponse.delete(key);
     this.awaitingFinish.delete(key);
-
-    if (this.awaitingFinish.size >= FULL_BODY_MAX_AWAITING_FINISH) {
-      const oldest = this.awaitingFinish.keys().next().value;
-
-      if (oldest !== undefined) {
-        this.awaitingFinish.delete(oldest);
-      }
-    }
-
-    this.awaitingFinish.set(key, response);
+    forgetOldestPast(this.awaitingFinish, FULL_BODY_MAX_AWAITING_FINISH);
+    this.awaitingFinish.set(key, { ...response, startedBeforeCapture });
   }
 
   /** The request failed or was cancelled: there is no body to keep. */
   public onLoadingFailed(requestId: string, sessionId: string | undefined): void {
-    this.awaitingFinish.delete(requestKey({ requestId, sessionId }));
+    const key = requestKey({ requestId, sessionId });
+    this.awaitingFinish.delete(key);
+    this.awaitingResponse.delete(key);
   }
 
   public onLoadingFinished(finishedResponse: FinishedResponse): void {
     const key = requestKey(finishedResponse);
+    const received = this.awaitingFinish.get(key);
     // Metadata kept at response time covers entries the shared metadata map already expired.
     const response = {
       ...finishedResponse,
-      meta: finishedResponse.meta ?? this.awaitingFinish.get(key)?.meta
+      meta: finishedResponse.meta ?? received?.meta,
+      startedBeforeCapture: finishedResponse.startedBeforeCapture ?? received?.startedBeforeCapture
     };
     this.awaitingFinish.delete(key);
+    this.awaitingResponse.delete(key);
 
     if (this.closed || !this.deps.isEnabled()) {
       return;
@@ -148,8 +169,7 @@ export class FullBodyCapture {
 
     const mimeType = normalizeMimeType(meta.mimeType);
 
-    // Extension and browser-internal resources are not the app's traffic (the recorder drops them).
-    if (!isTextualResponse(meta, mimeType) || isBrowserInternalUrl(meta.url ?? "")) {
+    if (!isTextualResponse(meta, mimeType) || isOutsideBodyCapture(meta.url ?? "")) {
       return;
     }
 
@@ -228,6 +248,7 @@ export class FullBodyCapture {
 
     const unfinished = [...this.awaitingFinish.values()];
     this.awaitingFinish.clear();
+    this.awaitingResponse.clear();
 
     if (!this.deps.isEnabled()) {
       return;
@@ -239,7 +260,7 @@ export class FullBodyCapture {
       if (
         response.meta &&
         isTextualResponse(response.meta, mimeType) &&
-        !isBrowserInternalUrl(response.meta.url ?? "")
+        !isOutsideBodyCapture(response.meta.url ?? "")
       ) {
         this.skip(response, "unavailable", {
           mimeType,
@@ -283,7 +304,14 @@ export class FullBodyCapture {
     }
 
     if (!outcome.ok) {
-      this.skip(response, readFailureReason(outcome.error), { mimeType, detail: outcome.error });
+      const reason = readFailureReason(outcome.error);
+      this.skip(
+        response,
+        reason === "not-retained" && response.startedBeforeCapture
+          ? "started-before-capture"
+          : reason,
+        { mimeType, detail: outcome.error }
+      );
       return;
     }
 
@@ -342,12 +370,30 @@ function requestKey(response: Pick<FinishedResponse, "requestId" | "sessionId">)
   return `${response.sessionId ?? "root"}:${response.requestId}`;
 }
 
-/** Whether the policy's "textual bodies" covers this response at all (binary and bodyless do not). */
-function isTextualResponse(meta: RequestMetaEntry, mimeType: string | undefined): boolean {
-  if (meta.resourceType && NON_TEXT_RESOURCE_TYPES.has(meta.resourceType)) {
-    return false;
-  }
+/** Drops the oldest entries (insertion order) so one more fits under `limit`. */
+function forgetOldestPast(entries: Map<string, unknown> | Set<string>, limit: number): void {
+  for (const key of entries.keys()) {
+    if (entries.size < limit) {
+      return;
+    }
 
+    entries.delete(key);
+  }
+}
+
+/**
+ * Responses with no body to read: extension and browser-internal resources are not the app's
+ * traffic (the recorder drops them), and a `data:` URL carries its body in the URL itself.
+ */
+function isOutsideBodyCapture(url: string): boolean {
+  return isBrowserInternalUrl(url) || DATA_URL_PATTERN.test(url);
+}
+
+/**
+ * Whether the policy's "textual bodies" covers this response at all (binary and bodyless do not).
+ * The MIME type decides when there is one, whatever loaded it: an SVG image is text.
+ */
+function isTextualResponse(meta: RequestMetaEntry, mimeType: string | undefined): boolean {
   const status = meta.status;
 
   if (

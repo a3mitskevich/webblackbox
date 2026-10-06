@@ -1,5 +1,6 @@
 import {
   maskBodyText as maskCapturedBodyText,
+  normalizeMimeType,
   type BodySkipReason,
   type CapturePolicy,
   type RedactionRules,
@@ -188,7 +189,7 @@ export function readInlineNetworkBodyContext(
   return {
     eventType,
     url: asString(asRecord(raw?.request)?.url) ?? asString(raw?.url),
-    mimeType: contentType?.split(";")[0]?.trim().toLowerCase() || undefined
+    mimeType: normalizeMimeType(contentType)
   };
 }
 

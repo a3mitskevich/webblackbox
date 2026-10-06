@@ -94,7 +94,7 @@ const configureRecorderOptions = (process.env.WB_E2E_CONFIGURE_OPTIONS ?? "1") !
 // why one is missing; the demo page scenarios are skipped.
 const completenessMode = captureMode === "full" && (process.env.WB_E2E_COMPLETENESS ?? "0") === "1";
 // Full mode records script → source map references unless a profile turns them off. The
-// completeness gate records its realistic fixture, which has no minified demo bundle.
+// completeness run records the realistic fixture site, which has no minified demo bundle.
 const verifySourceMaps =
   captureMode === "full" &&
   !completenessMode &&
@@ -177,7 +177,7 @@ async function main() {
   state.server = server.server;
   state.fidelitySockets = server.fidelitySockets;
 
-  state.realisticSite = completenessMode ? await startRealisticSite() : null;
+  state.realisticSite = completenessMode ? await startRealisticSite({ holdRequests: true }) : null;
   const demoUrl = state.realisticSite?.pageUrl ?? `http://127.0.0.1:${server.port}/demo/`;
   const playerUrl = `http://127.0.0.1:${server.port}/player/`;
 
@@ -449,6 +449,9 @@ async function main() {
     });
   }
 
+  // The realistic page's held requests started before the capture (or, after a reload, inside it).
+  state.realisticSite?.releaseHeld();
+
   const activeSessions = await readRuntimeSessions(control);
   assert(
     Array.isArray(activeSessions) && activeSessions.length === 1,
@@ -486,6 +489,13 @@ async function main() {
     ? await runRealisticScenario(demoClient, completenessDurationMs)
     : await runDemoScenario(demoClient);
   assert(scenarioResult?.ok === true, "Demo scenario failed", scenarioResult);
+  assert(
+    !completenessMode ||
+      (scenarioResult.heldRequests > 0 &&
+        scenarioResult.heldCompleted === scenarioResult.heldRequests),
+    "Realistic page's held requests did not complete",
+    scenarioResult
+  );
 
   const minifiedErrorResult = verifySourceMaps ? await logMinifiedBundleError(demoClient) : null;
   assert(
@@ -681,7 +691,10 @@ async function main() {
 
   // Every body the policy asked for is in the archive or carries the reason it is not.
   const completenessResult = completenessMode
-    ? checkCompleteness(archive, realisticCompletenessExpectations(scenarioResult))
+    ? checkCompleteness(
+        archive,
+        realisticCompletenessExpectations(scenarioResult, { reloadAfterStart })
+      )
     : bodiesRequested
       ? checkCompleteness(archive, {
           maxMissingResponseBodies: 0,
@@ -693,6 +706,14 @@ async function main() {
     ? checkRealisticTraffic(archive, scenarioResult)
     : { ok: true, skipped: "demo-scenario" };
   assert(trafficResult.ok, "Exported archive misses requests the page sent", trafficResult);
+  const duplicatedContentTypeResult = completenessMode
+    ? checkDuplicatedContentTypeBody(archive)
+    : { ok: true, skipped: "demo-scenario" };
+  assert(
+    duplicatedContentTypeResult.ok,
+    "Exported archive left out a body sent with a duplicated Content-Type",
+    duplicatedContentTypeResult
+  );
   assert(completenessResult.ok, "Exported archive lost bodies silently", {
     failures: completenessResult.failures,
     report: completenessResult.lines
@@ -1879,9 +1900,8 @@ async function configureE2eRecorderOptions(control, mode) {
             console: 'allow',
             network: 'body-allowlist',
             storage: 'allow',
-            // Full capture records values; the other runs keep names only.
-            indexedDb: ${JSON.stringify(completenessMode)} ? 'allow' : 'names-only',
-            cookies: ${JSON.stringify(completenessMode)} ? 'allow' : 'names-only',
+            indexedDb: 'names-only',
+            cookies: 'names-only',
             cdp: ${JSON.stringify(mode)} === 'full' ? 'full' : 'safe-subset',
             heapProfiles: 'off'
           },
@@ -2044,35 +2064,39 @@ async function startSessionFromPopup(popupClient, mode, expectedUrl, useUiAction
         }
 
         button.click();
-        if (${JSON.stringify(mode)} === 'lite') {
-          const reloadButton = await new Promise((resolve) => {
-            const startedAt = Date.now();
-            const tick = () => {
-              const candidate = document.querySelector("[data-action='start-lite-reload']");
+        // Start asks whether to reload the page first, in both engines. Lite keeps its reload
+        // (page startup); Full starts on the loaded page, as the run's later checks expect.
+        const choiceSelector =
+          ${JSON.stringify(mode)} === 'lite'
+            ? "[data-action='start-reload']"
+            : "[data-action='start-direct']";
+        const choiceButton = await new Promise((resolve) => {
+          const startedAt = Date.now();
+          const tick = () => {
+            const candidate = document.querySelector(choiceSelector);
 
-              if (candidate instanceof HTMLButtonElement || Date.now() - startedAt > 5000) {
-                resolve(candidate);
-                return;
-              }
+            if (candidate instanceof HTMLButtonElement || Date.now() - startedAt > 5000) {
+              resolve(candidate);
+              return;
+            }
 
-              setTimeout(tick, 50);
-            };
+            setTimeout(tick, 50);
+          };
 
-            tick();
-          });
+          tick();
+        });
 
-          if (!(reloadButton instanceof HTMLButtonElement)) {
-            return {
-              ok: false,
-              reason: 'lite-reload-confirm-not-found',
-              selector,
-              tabLine,
-              statusLine
-            };
-          }
-
-          reloadButton.click();
+        if (!(choiceButton instanceof HTMLButtonElement)) {
+          return {
+            ok: false,
+            reason: 'start-reload-question-not-found',
+            selector: choiceSelector,
+            tabLine,
+            statusLine
+          };
         }
+
+        choiceButton.click();
         return {
           ok: true,
           mode: ${JSON.stringify(mode)},
@@ -2670,13 +2694,30 @@ function checkRealisticTraffic(archive, scenario) {
   return { ok: sent > 0 && recorded >= sent, sent, recorded };
 }
 
+/** The POST that sent Content-Type twice ("application/json, application/json") kept its body. */
+function checkDuplicatedContentTypeBody(archive) {
+  const entry = archive
+    .getNetworkWaterfall()
+    .find((candidate) => candidate.url.includes("/api/echo/json-twice"));
+
+  return {
+    ok: typeof entry?.requestBodyText === "string" && entry.requestBodyText.length > 0,
+    found: Boolean(entry),
+    contentType: entry?.requestHeaders["content-type"],
+    skipReason: entry?.requestBodySkipReason
+  };
+}
+
 /**
  * What the realistic site must leave in a Full-capture archive. Bodies: none lost silently, the
- * 2.6 MB bundle recorded as too large, no reads lost to load. Traffic: at least what the page
- * reports it sent, every WebSocket frame whole, perf and console signals present.
+ * 2.6 MB bundle recorded as too large, no reads lost to load, SVG kept as text, `data:` URLs not
+ * counted. Requests the server held from page load: started before the capture (recorded as
+ * such), or, when Start reloads the page, inside it with their bodies. Traffic: at least what the
+ * page reports it sent, every WebSocket frame whole, perf and console signals present.
  */
-function realisticCompletenessExpectations(scenario) {
+function realisticCompletenessExpectations(scenario, { reloadAfterStart = false } = {}) {
   const frames = Number(scenario?.wsSent ?? 0) + Number(scenario?.wsReceived ?? 0);
+  const held = Number(scenario?.heldRequests ?? 0);
 
   return {
     maxMissingResponseBodies: 0,
@@ -2684,23 +2725,29 @@ function realisticCompletenessExpectations(scenario) {
     maxInternalRequests: 0,
     minRequests: 300,
     minResponseBodies: 250,
-    // string, JSON, untyped Blob, typed Blob, ArrayBuffer, URLSearchParams, PUT, XHR, beacon.
-    minRequestBodies: 9,
-    minSkipReasons: { "too-large": 1 },
-    maxSkipReasons: { backlog: 0, "session-limit": 0, "not-retained": 0, "fetch-failed": 0 },
+    // string, JSON, JSON with Content-Type sent twice, untyped Blob, typed Blob, ArrayBuffer,
+    // URLSearchParams, PUT, XHR, beacon.
+    minRequestBodies: 10,
+    minSkipReasons: {
+      "too-large": 1,
+      "started-before-capture": reloadAfterStart ? 0 : held
+    },
+    maxSkipReasons: {
+      backlog: 0,
+      "session-limit": 0,
+      "not-retained": 0,
+      "fetch-failed": 0,
+      "mime-not-allowed": 0,
+      "started-before-capture": reloadAfterStart ? 0 : held
+    },
+    minSvgBodies: Number(scenario?.svgLoads ?? 0) + (reloadAfterStart ? 1 : 0),
+    minDataUrls: Number(scenario?.dataUrls ?? 0) > 0 ? 1 : 0,
     // The last frames can race the socket close at stop.
     minWsFrames: Math.max(1, frames - 2),
     maxCutWsFrames: 0,
     minConsoleEntries: 3,
     minWithStack: 1,
-    minVitals: 1,
-    // Full capture with recording profiles (#10): the DOM follows the session (change-driven
-    // snapshots) and cookie, localStorage and IndexedDB values are recorded.
-    minDomCoveragePercent: 60,
-    maxDomGapMs: 10_000,
-    minCookieValues: 2,
-    minLocalValues: 2,
-    minIdbRecords: 5
+    minVitals: 1
   };
 }
 

@@ -101,6 +101,7 @@ import {
 } from "../shared/profiles/local-data.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
+  createBoundedManagedPolicyReader,
   ENTERPRISE_POLICY_STORAGE_KEY,
   getSessionStartBlockReason,
   isEnterpriseOriginAllowed,
@@ -137,6 +138,13 @@ import {
   isInjectableFrameUrl
 } from "./content-injection.js";
 import {
+  completeRequestPostData,
+  FullBodyCapture,
+  needsRequestPostData,
+  type FinishedResponse,
+  type ReadBody
+} from "./full-body-capture.js";
+import {
   clearRetentionAlarm,
   createStoppedSessionStore,
   MAX_STOPPED_SESSION_PURGE_ATTEMPTS,
@@ -145,13 +153,6 @@ import {
   sidFromRetentionAlarm,
   type StoppedSessionSnapshot
 } from "./stopped-session-store.js";
-import {
-  completeRequestPostData,
-  FullBodyCapture,
-  needsRequestPostData,
-  type FinishedResponse,
-  type ReadBody
-} from "./full-body-capture.js";
 import {
   buildLiteNetworkFailureRawEvent,
   buildLiteNetworkRequestRawEvent,
@@ -164,6 +165,7 @@ import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
   classifyMessageSender,
   classifyPortSender,
+  isBroadcastDeliveredToPort,
   isInboundKindAllowed,
   type InboundSenderContext,
   type SenderTrustContext
@@ -196,6 +198,7 @@ import {
   upsertRequestMeta,
   type RequestMetaEntry
 } from "./request-meta.js";
+import { resolveRawEventSession } from "./session-routing.js";
 import {
   parseStoppedSessionRecords,
   pruneStoppedSessionRecords,
@@ -206,6 +209,7 @@ import {
   upsertStoppedSessionRecord,
   type StoppedSessionRecord
 } from "./stopped-sessions.js";
+import { startWithOptionalReload } from "./start-with-reload.js";
 import {
   FULL_MODE_STORAGE_SNAPSHOT_MAX_ITEMS,
   buildLocalStorageSnapshotExpression,
@@ -591,6 +595,8 @@ const LITE_DEFAULT_BODY_MIME_ALLOWLIST = [
   "application/javascript",
   "application/x-www-form-urlencoded"
 ];
+/** Full mode reads bodies through CDP whatever loaded them, so SVG images (text) are kept too. */
+const FULL_DEFAULT_BODY_MIME_ALLOWLIST = [...LITE_DEFAULT_BODY_MIME_ALLOWLIST, "image/svg+xml"];
 const LITE_BODY_REDACTED_TOKEN = "[REDACTED]";
 const LITE_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const LITE_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
@@ -622,6 +628,8 @@ const STOP_DRAIN_ACK_TIMEOUT_MS = 3_000;
 const CDP_ARTIFACT_TIMEOUT_MS = 5_000;
 // Priming a live child session takes milliseconds; see primeChildSession.
 const CHILD_SESSION_PRIME_TIMEOUT_MS = 5_000;
+// Chrome can hold `storage.managed` reads back while the browser starts; see the reader.
+const ENTERPRISE_POLICY_READ_TIMEOUT_MS = 3_000;
 const CDP_HEAP_SNAPSHOT_TIMEOUT_MS = 8_000;
 const SCREEN_RECORDING_OFFSCREEN_SOURCE = "tab";
 
@@ -653,6 +661,15 @@ const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
   {
     portWaitMs: OFFSCREEN_PORT_READY_TIMEOUT_MS,
     pollMs: OFFSCREEN_PORT_READY_WAIT_MS
+  }
+);
+const readEnterprisePolicy = createBoundedManagedPolicyReader(
+  () => readManagedEnterprisePolicy(chromeApi?.storage?.managed),
+  {
+    timeoutMs: ENTERPRISE_POLICY_READ_TIMEOUT_MS,
+    onTimeout: () => {
+      console.warn("[WebBlackbox] enterprise policy not available yet; continuing without it");
+    }
   }
 );
 const orphanedOffscreenCleanup = closeOrphanedOffscreenDocument().catch((error) => {
@@ -983,18 +1000,16 @@ async function handleInboundMessage(
       return;
     }
 
-    const mode = await startSession(tabId, message.mode, {
-      visualCapture: resolveFullModeVisualCapture(message),
-      profileId: typeof message.profileId === "string" ? message.profileId : undefined
+    // Both engines: the reload follows the start, so the capture (Full: CDP) sees the page load.
+    await startWithOptionalReload(tabId, message.reloadPage === true, {
+      start: () =>
+        startSession(tabId, message.mode, {
+          visualCapture: resolveFullModeVisualCapture(message),
+          profileId: typeof message.profileId === "string" ? message.profileId : undefined
+        }),
+      reload: reloadRecordingTab,
+      stop: stopSession
     });
-    if (mode === "lite" && message.reloadPage) {
-      try {
-        await reloadRecordingTab(tabId);
-      } catch (error) {
-        await stopSession(tabId);
-        throw error;
-      }
-    }
     return;
   }
 
@@ -1690,10 +1705,14 @@ async function buildSessionRecorderConfig(
 }
 
 function loadSessionProfilesState(): Promise<ProfilesState> {
-  return loadProfilesState(chromeApi, {
-    legacyOptionsKey: OPTIONS_STORAGE_KEY,
-    enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
-  });
+  return loadProfilesState(
+    chromeApi,
+    {
+      legacyOptionsKey: OPTIONS_STORAGE_KEY,
+      enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
+    },
+    readEnterprisePolicy
+  );
 }
 
 async function resolveProfilePreview(
@@ -1946,9 +1965,7 @@ function ingestRawEvent(
   rawEvent: RawRecorderEvent,
   options: { arrivedBeforeStop?: boolean } = {}
 ): void {
-  const runtime =
-    sessionsByTab.get(rawEvent.tabId) ??
-    (typeof rawEvent.sid === "string" ? sessionsBySid.get(rawEvent.sid) : undefined);
+  const runtime = resolveRawEventSession(rawEvent, sessionsByTab, sessionsBySid);
 
   if (!runtime) {
     return;
@@ -3300,6 +3317,11 @@ function trackFullModeNetworkEvent(
 
   const metaKey = buildRequestMetaKey(requestId, sessionId);
 
+  if (method === "Network.requestWillBeSent") {
+    runtime.fullBodyCapture.onRequestWillBeSent(requestId, sessionId);
+    return;
+  }
+
   if (method === "Network.responseReceived") {
     recordScriptSourceMap(runtime, scriptRecordFromResponse(payload));
     const response = asRecord(payload?.response);
@@ -4282,7 +4304,10 @@ function resolveLiteBodyCaptureRule(
 ): LiteBodyCaptureRule {
   return applyBodyUrlFilters(
     resolveLiteBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(runtime),
+      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(
+        runtime,
+        LITE_DEFAULT_BODY_MIME_ALLOWLIST
+      ),
       fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
     }),
     url,
@@ -4297,7 +4322,10 @@ function resolveFullBodyCaptureRule(
 ): LiteBodyCaptureRule {
   return applyBodyUrlFilters(
     resolveFullBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(runtime),
+      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(
+        runtime,
+        FULL_DEFAULT_BODY_MIME_ALLOWLIST
+      ),
       fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
     }),
     url,
@@ -4305,9 +4333,13 @@ function resolveFullBodyCaptureRule(
   );
 }
 
-function resolveProfileBodyMimeAllowlist(runtime: SessionRuntime): string[] {
+/** The profile's body MIME allowlist, or the engine's default when the profile sets none. */
+function resolveProfileBodyMimeAllowlist(
+  runtime: SessionRuntime,
+  engineDefault: readonly string[]
+): string[] {
   const profileAllowlist = runtime.profile.selection.profile.network.bodyMimeAllowlist;
-  return profileAllowlist.length > 0 ? profileAllowlist : LITE_DEFAULT_BODY_MIME_ALLOWLIST;
+  return profileAllowlist.length > 0 ? profileAllowlist : [...engineDefault];
 }
 
 function isMimeAllowed(allowlist: string[], mimeType: string | undefined): boolean {
@@ -5928,7 +5960,9 @@ function resolveUrlOrigin(value: string): string | null {
 
 function broadcast(message: ExtensionOutboundMessage): void {
   for (const port of connectedPorts) {
-    sendPortMessage(port, message);
+    if (isBroadcastDeliveredToPort(message.kind, port.name)) {
+      sendPortMessage(port, message);
+    }
   }
 }
 
@@ -5977,9 +6011,7 @@ function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture
 }
 
 async function loadEnterprisePolicy(): Promise<EnterpriseRecorderPolicy> {
-  return normalizeEnterprisePolicy(
-    (await readManagedEnterprisePolicy(chromeApi?.storage?.managed)) ?? {}
-  );
+  return normalizeEnterprisePolicy((await readEnterprisePolicy()) ?? {});
 }
 
 function withSessionCapturePolicy(

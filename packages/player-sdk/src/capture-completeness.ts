@@ -1,5 +1,6 @@
 import {
   isTextualMimeType,
+  normalizeMimeType,
   type BodySkipReason,
   type WebBlackboxEvent,
   type WebBlackboxEventType
@@ -61,6 +62,12 @@ export type BodyCompleteness = {
   }>;
 };
 
+export type ResponseBodyCompleteness = BodyCompleteness & {
+  byMime: Record<string, MimeCompleteness>;
+  /** Textual `data:` URL responses: the body is the URL itself, so none is expected. */
+  dataUrls: number;
+};
+
 export type MimeCompleteness = {
   expected: number;
   captured: number;
@@ -76,7 +83,7 @@ export type CaptureCompletenessReport = {
     requests: number;
     /** Requests to extension or browser-internal URLs still in the archive. */
     internalRequests: number;
-    responseBodies: BodyCompleteness & { byMime: Record<string, MimeCompleteness> };
+    responseBodies: ResponseBodyCompleteness;
     requestBodies: BodyCompleteness;
   };
   dom: {
@@ -124,6 +131,7 @@ export const MAX_MISSING_SAMPLES = 20;
 const BODYLESS_STATUSES = new Set([101, 204, 205]);
 const BROWSER_INTERNAL_URL =
   /^(chrome-extension|moz-extension|safari-web-extension|chrome|chrome-untrusted|devtools):/i;
+const DATA_URL = /^data:/i;
 const DOM_CHANGE_EVENT_TYPES = new Set<WebBlackboxEventType>([
   "dom.snapshot",
   "dom.mutation.batch",
@@ -183,7 +191,8 @@ export function formatCaptureCompletenessReport(report: CaptureCompletenessRepor
 
   return [
     `Duration ${seconds(report.durationMs)} s; bodies requested: ${report.bodiesRequested ? "yes" : "no"}`,
-    `Response bodies: ${formatBodies(responseBodies)}`,
+    `Response bodies: ${formatBodies(responseBodies)}` +
+      (responseBodies.dataUrls > 0 ? `; ${responseBodies.dataUrls} in data: URLs` : ""),
     ...mimeLines,
     `Request bodies: ${formatBodies(requestBodies)}`,
     `Requests: ${report.network.requests} (${report.network.internalRequests} extension/internal)`,
@@ -233,16 +242,22 @@ function emptyBodies(): BodyCompleteness {
 
 function summarizeResponseBodies(
   waterfall: readonly CompletenessNetworkEntry[]
-): BodyCompleteness & { byMime: Record<string, MimeCompleteness> } {
+): ResponseBodyCompleteness {
   const summary = emptyBodies();
   const byMime: Record<string, MimeCompleteness> = {};
+  let dataUrls = 0;
 
   for (const entry of waterfall) {
     if (!expectsResponseBody(entry)) {
       continue;
     }
 
-    const mime = normalizeMime(entry.mimeType) ?? "(none)";
+    if (DATA_URL.test(entry.url)) {
+      dataUrls += 1;
+      continue;
+    }
+
+    const mime = normalizeMimeType(entry.mimeType) ?? "(none)";
     const row = byMime[mime] ?? { expected: 0, captured: 0, skipped: 0, missing: 0 };
     const outcome = tally(summary, entry, {
       captured: Boolean(entry.responseBodyHash),
@@ -253,7 +268,7 @@ function summarizeResponseBodies(
     byMime[mime] = { ...row, expected: row.expected + 1, [outcome]: row[outcome] + 1 };
   }
 
-  return { ...summary, byMime };
+  return { ...summary, byMime, dataUrls };
 }
 
 function summarizeRequestBodies(waterfall: readonly CompletenessNetworkEntry[]): BodyCompleteness {
@@ -310,7 +325,7 @@ function tally(
 /** A finished textual response that has body bytes to keep. */
 function expectsResponseBody(entry: CompletenessNetworkEntry): boolean {
   const status = entry.status;
-  const mime = normalizeMime(entry.mimeType);
+  const mime = normalizeMimeType(entry.mimeType);
 
   return (
     !entry.failed &&
@@ -330,7 +345,7 @@ function expectsRequestBody(entry: CompletenessNetworkEntry): boolean {
     return false;
   }
 
-  const contentType = normalizeMime(entry.requestHeaders["content-type"]);
+  const contentType = normalizeMimeType(entry.requestHeaders["content-type"]);
   return !BROWSER_INTERNAL_URL.test(entry.url) && (!contentType || isTextualMimeType(contentType));
 }
 
@@ -450,11 +465,6 @@ function countType(events: readonly WebBlackboxEvent[], type: WebBlackboxEventTy
 
 function sum(values: number[]): number {
   return values.reduce((total, value) => total + value, 0);
-}
-
-function normalizeMime(value: string | undefined): string | undefined {
-  const mime = value?.split(";")[0]?.trim().toLowerCase();
-  return mime ? mime : undefined;
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {

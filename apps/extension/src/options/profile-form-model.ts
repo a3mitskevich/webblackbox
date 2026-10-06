@@ -55,11 +55,11 @@ export type ProfileFormValues = {
   excludeUrls: string;
   mousemoveHz: string;
   visual: string;
-  deleteAfterExport: boolean;
-  unexportedRetentionMinutes: string;
   /** `""` = automatic (metadata in Full mode, off in Lite). */
   sourceMaps: string;
   sourceMapMaxBytes: string;
+  deleteAfterExport: boolean;
+  unexportedRetentionMinutes: string;
 };
 
 /** Raw string values of one rule row. */
@@ -175,9 +175,9 @@ export function applyProfileFormValues(
   const bodyMaxBytes = parseOptionalInt(values.bodyMaxBytes, 0, MAX_BODY_CAPTURE_BYTES);
   const mousemoveHz = parseOptionalInt(values.mousemoveHz, 1, MAX_MOUSEMOVE_HZ);
   const visual = VISUAL_VALUES.find((entry) => entry === values.visual);
-  const localData = localDataFromFormValues(profile, values);
   const sourceMapMode = SOURCE_MAP_MODES.find((entry) => entry === values.sourceMaps);
   const sourceMapMaxBytes = parseOptionalInt(values.sourceMapMaxBytes, 1, MAX_SOURCE_MAP_BYTES);
+  const localData = localDataFromFormValues(profile, values);
   const withoutVisual = Object.fromEntries(
     Object.entries(profile).filter(
       ([key]) => key !== "visual" && key !== "localData" && key !== "sourceMaps"

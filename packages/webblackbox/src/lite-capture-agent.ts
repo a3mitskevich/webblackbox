@@ -323,10 +323,10 @@ export class LiteCaptureAgent {
     this.mode = state.mode ?? this.mode;
     this.sampling = sanitizeSamplingConfig(state.sampling);
     this.capturePolicy = state.capturePolicy ?? this.capturePolicy;
-    this.pointerOptions = sanitizePointerOptions(state.pointer);
     this.syncScriptSourceMapScanner(
       state.active && state.scriptSourceMaps === true && this.mode === "lite"
     );
+    this.pointerOptions = sanitizePointerOptions(state.pointer);
 
     if (typeof state.sid === "string") {
       this.sid = state.sid;
