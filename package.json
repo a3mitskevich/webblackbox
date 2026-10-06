@@ -24,6 +24,7 @@
     "bench:recorder": "pnpm --filter @webblackbox/recorder bench",
     "bench:pipeline": "pnpm --filter @webblackbox/pipeline bench",
     "bundle:size": "node scripts/check-bundle-size.mjs",
+    "test:scripts": "node --test \"scripts/lib/*.test.mjs\"",
     "docs:api": "pnpm --filter @webblackbox/player-sdk docs:api",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
