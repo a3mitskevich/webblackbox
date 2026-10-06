@@ -92,6 +92,25 @@ describe("loadProfilesState", () => {
   });
 });
 
+describe("loadProfilesState with a managed policy reader", () => {
+  it("reads managed rules through the given reader instead of the storage area", async () => {
+    const { api } = fakeChrome({ managed: { rules: [] } });
+    const readManagedPolicy = vi.fn(async () => ({ rules: [STAGE_RULE] }));
+    const state = await loadProfilesState(api, KEYS, readManagedPolicy);
+
+    expect(readManagedPolicy).toHaveBeenCalledTimes(1);
+    expect(api.storage?.managed?.get).not.toHaveBeenCalled();
+    expect(state.rules.map((rule) => rule.id)).toEqual(["managed:stage"]);
+  });
+
+  it("treats a reader without a policy as no managed profiles", async () => {
+    const { api } = fakeChrome({});
+    const state = await loadProfilesState(api, KEYS, async () => null);
+
+    expect(state.rules).toEqual([]);
+  });
+});
+
 describe("loadProfilesState with a flat managed policy", () => {
   it("reads managed rules set as top-level policy keys", async () => {
     const { api } = fakeChrome({ managed: { rules: [STAGE_RULE] } });
