@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "bench": "tsx scripts/benchmark.ts",
     "build": "vite build",
     "e2e:playback": "pnpm run build && node scripts/e2e-playback-regression.mjs",
     "e2e:player-next": "pnpm run build && node scripts/e2e-player-next.mjs",
