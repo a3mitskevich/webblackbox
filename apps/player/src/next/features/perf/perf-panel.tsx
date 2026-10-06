@@ -252,6 +252,7 @@ export function PerfPanel() {
           playhead={playhead}
           onSeek={seek}
           label={t("networkHeading")}
+          timeLabel={t("time")}
           themeKey={theme}
           testId="perf-chart-network"
         />
@@ -275,6 +276,7 @@ export function PerfPanel() {
           playhead={playhead}
           onSeek={seek}
           label={t("mainHeading")}
+          timeLabel={t("time")}
           themeKey={theme}
           testId="perf-chart-main"
         />

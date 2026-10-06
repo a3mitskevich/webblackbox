@@ -23,5 +23,6 @@
   "kind_heap": "Снимок кучи",
   "kind_longtask": "Долгая задача",
   "kind_vitals": "Vitals",
-  "kind_other": "Артефакт"
+  "kind_other": "Артефакт",
+  "time": "Время"
 }

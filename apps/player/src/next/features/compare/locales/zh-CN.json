@@ -7,7 +7,7 @@
   "passphraseLabel": "密码",
   "cancel": "取消",
   "open": "打开",
-  "endpointSide": "{count}× · 失败 {failed} · p95 {p95}",
+  "endpointSide": "{count}× · {p95}",
   "events": "事件",
   "errors": "错误",
   "requests": "请求",
@@ -49,5 +49,8 @@
   "bodyMissingB": "录制 B 没有保存该接口的响应体。",
   "bodySame": "响应体相同。",
   "unchangedLines": "… {count} 行未变化",
-  "bodyCut": "每个响应体只比较前 {limit}。"
+  "bodyCut": "每个响应体只比较前 {limit}。",
+  "endpointFailed": "失败 {count}",
+  "sideA": "A · p95",
+  "sideB": "B · p95"
 }

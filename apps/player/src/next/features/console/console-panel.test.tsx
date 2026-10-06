@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createPlainArchive } from "../../../../scripts/lib/synthetic-session.mjs";
@@ -82,8 +82,11 @@ describe("Console panel", () => {
 
     expect(store.getState().selection).toEqual({ kind: "event", id: row.dataset.eventId });
     const details = await screen.findByTestId("console-details");
-    expect(await within(details).findByTestId("stack-status")).toHaveTextContent(
-      "Symbolicated · embedded in archive"
+    // The status shows "Resolving…" first; symbolication finishes asynchronously.
+    await waitFor(() =>
+      expect(within(details).getByTestId("stack-status")).toHaveTextContent(
+        "Symbolicated · embedded in archive"
+      )
     );
     const frames = within(details).getAllByTestId("stack-frame");
     expect(frames[0]).toHaveTextContent("ensureCasinoUser");

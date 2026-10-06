@@ -41,5 +41,6 @@
   "previousUnknown": "The value before this write is not in the recording.",
   "newKey": "New key.",
   "valueUnchanged": "The same value was written again.",
-  "rootValue": "(value)"
+  "rootValue": "(value)",
+  "recordedLater": "Recorded later, first at"
 }

@@ -1,5 +1,6 @@
 import {
   buildConsoleEntries,
+  extractEventStack,
   countConsoleLevels,
   groupConsoleEntries,
   type ConsoleEntry,
@@ -100,6 +101,25 @@ export function countConsoleErrors(archive: LoadedArchive): number {
 /** The request a console row is about, when the archive holds it. */
 export function findRelatedRequestId(archive: LoadedArchive, entry: ConsoleEntry): string | null {
   return entry.reqId && archive.model.waterfallByReqId.has(entry.reqId) ? entry.reqId : null;
+}
+
+/** The member of a row with the most stack frames (the row's own event when none has more). */
+export function pickStackEvent(
+  archive: LoadedArchive,
+  row: ConsoleRow
+): WebBlackboxEvent | undefined {
+  let best: { event: WebBlackboxEvent; frames: number } | undefined;
+
+  for (const id of row.memberIds) {
+    const event = archive.model.eventById.get(id);
+    const frames = event ? extractEventStack(event).length : 0;
+
+    if (event && (!best || frames > best.frames)) {
+      best = { event, frames };
+    }
+  }
+
+  return best?.event;
 }
 
 /** `path/file.ts:57` of a location URL (origin and query dropped), for the row's right column. */

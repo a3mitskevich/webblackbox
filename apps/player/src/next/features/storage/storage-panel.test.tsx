@@ -78,7 +78,10 @@ describe("Storage panel", () => {
     expect(screen.getAllByTestId("storage-idb-record")[0]).toHaveTextContent("Live table 64");
 
     fireEvent.click(screen.getByTestId("storage-area-session"));
+    expect(screen.getByTestId("storage-coverage")).toHaveTextContent("Recorded later, first at");
+    fireEvent.click(screen.getByTestId("storage-first-record"));
     expect(screen.getByTestId("storage-coverage")).toHaveTextContent("No snapshot");
+    expect(screen.getAllByTestId("storage-item")[0]).toHaveTextContent("#/error");
   });
 
   it("opens a write from the log with its old → new field changes", async () => {

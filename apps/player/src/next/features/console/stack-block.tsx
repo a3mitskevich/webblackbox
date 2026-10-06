@@ -5,6 +5,7 @@ import { ArrowRightLeft, Code, Copy, FolderOpen, Link2, Unlink } from "lucide-re
 import {
   useEffect,
   useId,
+  useMemo,
   useState,
   useSyncExternalStore,
   type ChangeEvent,
@@ -20,6 +21,7 @@ import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
 import {
   describeLocation,
   findRelatedRequestId,
+  pickStackEvent,
   shortPath,
   type ConsoleRow
 } from "./console-model.js";
@@ -174,7 +176,7 @@ function FrameRow({
     ? describeLocation(original.source, original.line, original.column)
     : minified;
   const isLibrary = LIBRARY_PATH.test(original?.source ?? frame.frame.url);
-  const classes = ["frame", isTop ? "cur" : "", isLibrary ? "lib" : ""].filter(Boolean).join(" ");
+  const classes = ["sframe", isTop ? "cur" : "", isLibrary ? "lib" : ""].filter(Boolean).join(" ");
 
   return (
     <li className={classes} data-testid="stack-frame" data-status={frame.status}>
@@ -293,7 +295,7 @@ function StackFrames({
 
   return (
     <>
-      <ul className="frames" data-testid="stack-frames">
+      <ul className="sframes" data-testid="stack-frames">
         {resolution.frames.map((frame, index) => (
           <FrameRow
             key={`${frame.frame.raw}-${index}`}
@@ -327,7 +329,9 @@ export function StackBlock({ archive, row, event, message }: StackBlockProps) {
   const updateSlice = useFeatureSliceUpdate(consoleSlice);
   const [showRaw, setShowRaw] = useState(false);
   const service = getSymbolicationService(archive.player);
-  const resolution = useStackResolution(service, event);
+  // Similar rows may differ in detail (an exception's one frame, the logged error's full stack).
+  const stackEvent = useMemo(() => pickStackEvent(archive, row) ?? event, [archive, row, event]);
+  const resolution = useStackResolution(service, stackEvent);
   const { entry } = row;
   const frames = resolution?.status === "done" ? resolution.frames : [];
   const mapSource = describeMapSource(frames, t);

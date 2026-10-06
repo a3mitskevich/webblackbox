@@ -43,7 +43,7 @@
 }
 .cr {
   display: grid;
-  grid-template-columns: 52px 18px minmax(0, 1fr) auto auto minmax(0, max-content);
+  grid-template-columns: 52px 18px minmax(0, 1fr) auto auto fit-content(42%);
   align-items: center;
   gap: 8px;
   height: 33px;
@@ -84,7 +84,7 @@
   font-size: 11.5px;
 }
 .cr .where {
-  max-width: 44ch;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -170,45 +170,45 @@
   max-height: 240px;
   overflow: auto;
 }
-.exc .frames {
+.exc .sframes {
   margin: 0;
   padding: 4px 0;
   list-style: none;
   font: 12.5px var(--mono);
 }
-.exc .frame {
+.exc .sframe {
   display: flex;
   gap: 10px;
   padding: 3px 12px;
   min-width: 0;
 }
-.exc .frame .fn {
+.exc .sframe .fn {
   color: var(--ink);
   font-weight: 600;
   white-space: nowrap;
 }
-.exc .frame .loc {
+.exc .sframe .loc {
   color: var(--accent);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.exc .frame .min {
+.exc .sframe .min {
   margin-left: auto;
   color: var(--ink-3);
   white-space: nowrap;
 }
-.exc .frame.cur {
+.exc .sframe.cur {
   background: var(--accent-soft);
 }
-.exc .frame.lib,
-.exc .frame.lib .fn,
-.exc .frame.lib .loc {
+.exc .sframe.lib,
+.exc .sframe.lib .fn,
+.exc .sframe.lib .loc {
   color: var(--ink-3);
   font-weight: 400;
 }
-.exc .frame[data-status="no-map"] .loc,
-.exc .frame[data-status="no-mapping"] .loc {
+.exc .sframe[data-status="no-map"] .loc,
+.exc .sframe[data-status="no-mapping"] .loc {
   color: var(--ink-2);
 }
 .snippet {

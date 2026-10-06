@@ -41,5 +41,6 @@
   "previousUnknown": "录制中没有此次写入之前的值。",
   "newKey": "新键。",
   "valueUnchanged": "再次写入了相同的值。",
-  "rootValue": "（值）"
+  "rootValue": "（值）",
+  "recordedLater": "稍后才被记录，首次在"
 }

@@ -143,18 +143,50 @@ function DeltaCard({
   );
 }
 
-function describeSide(
-  summary: EndpointSummary | null,
-  t: CompareTranslate,
-  format: (ms: number) => string
-): string {
-  return summary
-    ? t("endpointSide", {
-        count: summary.count,
-        failed: summary.failureCount,
-        p95: format(summary.p95Ms)
-      })
-    : "—";
+function SideCell({
+  summary,
+  t,
+  format
+}: {
+  summary: EndpointSummary | null;
+  t: CompareTranslate;
+  format: (ms: number) => string;
+}) {
+  if (!summary) {
+    return <>—</>;
+  }
+
+  return (
+    <>
+      {t("endpointSide", { count: summary.count, p95: format(summary.p95Ms) })}
+      {summary.failureCount > 0 ? (
+        <span className="failed"> · {t("endpointFailed", { count: summary.failureCount })}</span>
+      ) : null}
+    </>
+  );
+}
+
+/** `GET /path` when the endpoint is on the recorded site, else `GET host/path`. */
+function displayKey(key: string, siteHost: string): string {
+  const space = key.indexOf(" ");
+  const target = key.slice(space + 1);
+  return siteHost && target.startsWith(`${siteHost}/`)
+    ? `${key.slice(0, space)} ${target.slice(siteHost.length)}`
+    : key;
+}
+
+/** An endpoint URL without the recorded site's origin. */
+function stripOrigin(endpoint: string, origin: string): string {
+  const base = origin.replace(/\/+$/u, "");
+  return base && endpoint.startsWith(`${base}/`) ? endpoint.slice(base.length) : endpoint;
+}
+
+function hostOf(origin: string): string {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return "";
+  }
 }
 
 type ReportProps = {
@@ -195,6 +227,7 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
   const byReqId = (entries: readonly NetworkWaterfallEntry[], reqId: string | undefined) =>
     reqId ? entries.find((entry) => entry.reqId === reqId) : undefined;
   const ms = (value: number) => i18n.formatMilliseconds(value, { fractionDigits: 0 });
+  const siteHost = hostOf(archive.view.meta.origin);
   const signed = (value: number) => i18n.formatNumber(value, { signed: true });
   const regressions = comparison.endpointRegressions
     .filter(
@@ -264,8 +297,8 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
             <thead>
               <tr>
                 <th>{t("endpoint")}</th>
-                <th>A</th>
-                <th>B</th>
+                <th>{t("sideA")}</th>
+                <th>{t("sideB")}</th>
                 <th>{t("signal")}</th>
               </tr>
             </thead>
@@ -289,11 +322,15 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
                         selectRow(row);
                       }}
                     >
-                      {row.key}
+                      {displayKey(row.key, siteHost)}
                     </button>
                   </td>
-                  <td className="mono">{describeSide(row.left, t, ms)}</td>
-                  <td className="mono">{describeSide(row.right, t, ms)}</td>
+                  <td className="mono">
+                    <SideCell summary={row.left} t={t} format={ms} />
+                  </td>
+                  <td className="mono">
+                    <SideCell summary={row.right} t={t} format={ms} />
+                  </td>
                   <td>
                     <span className={`sig sig-${row.signal}`}>{t(`signal_${row.signal}`)}</span>
                   </td>
@@ -342,7 +379,7 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
               {regressions.map((entry) => (
                 <tr key={`${entry.method} ${entry.endpoint}`}>
                   <td className="mono ep" title={`${entry.method} ${entry.endpoint}`}>
-                    {entry.method} {entry.endpoint}
+                    {entry.method} {stripOrigin(entry.endpoint, archive.view.meta.origin)}
                   </td>
                   <td className="mono">{signed(entry.countDelta)}</td>
                   <td className={entry.failureRateDelta > 0 ? "mono worse" : "mono"}>

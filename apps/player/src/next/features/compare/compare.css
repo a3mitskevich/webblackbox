@@ -143,7 +143,13 @@
   text-align: left;
 }
 .cmp-table th:first-child {
-  width: 46%;
+  width: 40%;
+}
+.cmp-table th:last-child {
+  width: 96px;
+}
+.cmp-table td .failed {
+  color: var(--bad);
 }
 .cmp-table td {
   padding: 5px 12px;
@@ -265,4 +271,7 @@
   .cmp-pair {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+.cmp-pair .cmp-table td:first-child {
+  width: 58%;
 }

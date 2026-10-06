@@ -23,6 +23,8 @@ type PerfChartProps = {
   playhead: number;
   onSeek: (seconds: number) => void;
   label: string;
+  /** The legend label of the time axis. */
+  timeLabel: string;
   /** Bumped when colours change (theme), so the chart re-reads its tokens. */
   themeKey: string;
   testId: string;
@@ -62,6 +64,7 @@ export function PerfChart({
   playhead,
   onSeek,
   label,
+  timeLabel,
   themeKey,
   testId
 }: PerfChartProps) {
@@ -93,7 +96,7 @@ export function PerfChart({
       isCurrent = false;
       cleanup();
     };
-  }, [offsets, series, height, themeKey]);
+  }, [offsets, series, height, themeKey, timeLabel]);
 
   function mountPlot(UPlot: typeof uPlot, container: HTMLDivElement): () => void {
     const ink = token("--ink-3");
@@ -115,11 +118,11 @@ export function PerfChart({
         },
         { stroke: ink, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid }, size: 44 },
         ...(series.some((entry) => entry.scale === "y2")
-          ? [{ scale: "y2", side: 1 as const, stroke: ink, grid: { show: false }, size: 44 }]
+          ? [{ scale: "y2", side: 1 as const, stroke: ink, grid: { show: false }, size: 60 }]
           : [])
       ],
       series: [
-        {},
+        { label: timeLabel, value: (_u, value) => (value === null ? "—" : `${value.toFixed(2)}s`) },
         ...series.map((entry) => {
           const color = token(entry.colorToken);
 

@@ -7,7 +7,7 @@
   "passphraseLabel": "Пароль",
   "cancel": "Отмена",
   "open": "Открыть",
-  "endpointSide": "{count}× · сбоев {failed} · p95 {p95}",
+  "endpointSide": "{count}× · {p95}",
   "events": "событий",
   "errors": "ошибок",
   "requests": "запросов",
@@ -49,5 +49,8 @@
   "bodyMissingB": "Запись B не сохранила тело ответа для этого эндпоинта.",
   "bodySame": "Тела ответов совпадают.",
   "unchangedLines": "… без изменений строк: {count}",
-  "bodyCut": "Сравниваются только первые {limit} каждого тела."
+  "bodyCut": "Сравниваются только первые {limit} каждого тела.",
+  "endpointFailed": "сбоев {count}",
+  "sideA": "A · p95",
+  "sideB": "B · p95"
 }

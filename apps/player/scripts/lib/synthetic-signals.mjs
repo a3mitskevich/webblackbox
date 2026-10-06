@@ -71,6 +71,7 @@ function vlq(value) {
 /** A v3 source map of main.js line 1: three positions in three original files. */
 export function buildMainScriptSourceMap() {
   // [generated column, source, original line, original column, name] (0-based), column order.
+  // A call site's name is the function it calls: frames take their name from their caller.
   const segments = [
     [9_920, 2, 33, 2, 2],
     [20_411, 0, 56, 10, 0],
@@ -96,7 +97,7 @@ export function buildMainScriptSourceMap() {
       BOOTSTRAP_SOURCE.join("\n"),
       OPEN_GAME_SOURCE.join("\n")
     ],
-    names: ["ensureCasinoUser", "LiveGameBootstrap.start", "openLiveGame"],
+    names: ["AuthError", "ensureCasinoUser", "LiveGameBootstrap.start"],
     mappings: encoded.join(",")
   });
 }

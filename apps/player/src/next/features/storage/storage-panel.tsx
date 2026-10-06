@@ -88,15 +88,47 @@ function CoverageNote({
   state,
   area,
   archive,
+  nowMono,
   t
 }: {
   state: StorageAreaState<unknown>;
   area: StorageArea;
   archive: LoadedArchive;
+  nowMono: number;
   t: StorageTranslate;
 }) {
+  const controller = useController();
   const locale = usePlayerState((value) => value.locale);
   const notes: string[] = [];
+  // Nothing yet at the playhead, but the area is recorded later: point there instead.
+  const later =
+    state.coverage === "none"
+      ? selectStorageData(archive).changes.find(
+          (change) => change.area === area && change.mono > nowMono
+        )
+      : undefined;
+
+  if (later) {
+    return (
+      <p className="st-note" data-testid="storage-coverage" data-coverage="later">
+        {t("recordedLater")}{" "}
+        <button
+          type="button"
+          className="linklike mono"
+          onClick={() => {
+            const event = archive.model.eventById.get(later.eventId);
+
+            if (event) {
+              controller.selectEvent(event);
+            }
+          }}
+          data-testid="storage-first-record"
+        >
+          {formatOffset(later.mono - archive.model.minMono, locale)}
+        </button>
+      </p>
+    );
+  }
 
   if (state.coverage === "names") {
     notes.push(t("coverageNames"));
@@ -311,7 +343,7 @@ function StateView({ archive, area }: { archive: LoadedArchive; area: StorageAre
 
   return (
     <div className="st-state" data-testid="storage-state" data-area={area}>
-      <CoverageNote state={areaState} area={area} archive={archive} t={t} />
+      <CoverageNote state={areaState} area={area} archive={archive} nowMono={nowMono} t={t} />
       {area === "cookie" ? (
         <CookieTable items={state.cookie.items} query={query} />
       ) : area === "idb" ? (
