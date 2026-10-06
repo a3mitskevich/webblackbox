@@ -148,7 +148,7 @@ Raw events from all three sources are normalized by the `DefaultEventNormalizer`
 
 ### Ring Buffer
 
-Events are stored in a time-windowed ring buffer (default: 10 minutes). When the buffer exceeds its time window, the oldest events are automatically pruned. This keeps memory usage bounded while always preserving recent context.
+The recorder can keep the most recent events in a time-windowed ring buffer (`ringBufferMinutes`, default: 10 minutes) for hosts that want an in-memory snapshot (`snapshotRingBuffer()`). When the buffer exceeds its time window, the oldest events are pruned. The ring buffer never limits what is recorded: every event still goes to the pipeline. The extension sets `ringBufferMinutes: 0` (no buffer), because the pipeline already persists every event and nothing reads an in-memory copy.
 
 ### Action Span Tracking
 
@@ -163,7 +163,7 @@ The recorder evaluates freeze conditions on every event:
 - **Performance freeze** — Long tasks exceeding 200ms
 - **Manual freeze** — User-triggered markers (Ctrl+Shift+M)
 
-When a freeze is triggered, the ring buffer contents are preserved, providing full context around the issue.
+A freeze is a notification (`onFreeze` / `freezeReason`): the recorder keeps recording and nothing is trimmed or preserved because of it. The extension turns it into an incident alert (an ERR badge on the toolbar icon, the page indicator and an incident line in the popup) and keeps the network and performance triggers off.
 
 ## Processing Architecture
 

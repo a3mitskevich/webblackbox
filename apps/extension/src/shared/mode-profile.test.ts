@@ -65,13 +65,14 @@ describe("mode-profile", () => {
   });
 
   it.each(["lite", "full"] as const)(
-    "keeps the %s base config's freeze triggers off once the boundary applies",
+    "keeps the %s base config's ring buffer and perf freeze triggers off once the boundary applies",
     (mode) => {
       const next = applyModeProductBoundary(mode, resolveModeBaseConfig(mode));
 
       expect(next.freezeOnNetworkFailure).toBe(false);
       expect(next.freezeOnLongTaskSpike).toBe(false);
       expect(next.freezeOnError).toBe(true);
+      expect(next.ringBufferMinutes).toBe(0);
     }
   );
 });

@@ -275,6 +275,7 @@ export type SiteCapturePolicy = {
 
 export type RecorderConfig = {
   mode: CaptureMode;
+  /** Minutes of recent events the recorder keeps in memory; 0 keeps none. */
   ringBufferMinutes: number;
   freezeOnError: boolean;
   freezeOnNetworkFailure: boolean;

@@ -12,7 +12,8 @@ import type { FullModeVisualCapture } from "./messages.js";
 export const FULL_MODE_BODY_CAPTURE_MAX_BYTES = 128 * 1024;
 
 /**
- * The last step of every extension recorder config (v1 options and profiles alike): the
+ * The last step of every extension recorder config (v1 options and profiles alike): no ring
+ * buffer (the pipeline persists every event, nothing reads an in-memory copy), the
  * network/long-task freeze triggers stay off and the mode's own body and CDP limits apply.
  */
 export function applyModeProductBoundary(
@@ -22,6 +23,7 @@ export function applyModeProductBoundary(
   const next: RecorderConfig = {
     ...config,
     mode,
+    ringBufferMinutes: 0,
     freezeOnNetworkFailure: false,
     freezeOnLongTaskSpike: false,
     sampling: {

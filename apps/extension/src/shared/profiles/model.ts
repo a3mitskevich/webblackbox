@@ -96,7 +96,6 @@ export type RecordingProfile = {
   sourceMaps?: ProfileSourceMapSettings;
   sampling: Partial<SamplingProfile>;
   recorder: {
-    ringBufferMinutes?: number;
     freezeOnError?: boolean;
   };
   /** Per-site body capture rules carried over from v1 options. */
@@ -231,7 +230,8 @@ export const recordingProfileSchema = z
     sampling: samplingSchema,
     recorder: z
       .object({
-        ringBufferMinutes: positiveIntSchema.max(120).optional(),
+        // The extension keeps no ring buffer; older profiles may still carry the minutes.
+        ringBufferMinutes: legacyIgnoredSchema,
         freezeOnError: z.boolean().optional()
       })
       .strict(),

@@ -68,11 +68,12 @@ describe("migrateLegacyOptionsToProfiles", () => {
       id: DEFAULT_PROFILE_ID,
       name: "Default",
       categories: DEFAULT_CAPTURE_POLICY.categories,
-      recorder: { ringBufferMinutes: 7, freezeOnError: false },
       sampling: { mousemoveHz: 33, screenshotIdleMs: 500 },
       redaction: { blockedSelectors: [".pii"] },
       basePolicy: DEFAULT_CAPTURE_POLICY
     });
+    // The v1 ring buffer minutes are not carried over: the extension keeps no ring buffer.
+    expect(profile?.recorder).toEqual({ freezeOnError: false });
   });
 
   it("keeps raised v1 capture categories and the policy envelope", () => {
@@ -99,7 +100,7 @@ describe("migrateLegacyOptionsToProfiles", () => {
 
   it("drops invalid v1 values instead of failing", () => {
     const [profile] = migrateLegacyOptionsToProfiles({
-      ringBufferMinutes: -3,
+      freezeOnError: "yes",
       sampling: { mousemoveHz: "fast", scrollHz: 9 },
       redaction: { blockedSelectors: "nope" },
       capturePolicy: { categories: { console: "everything" } },
@@ -177,9 +178,10 @@ describe("parseProfilesStore", () => {
     });
   });
 
-  it("reads profiles saved with the retired export rules and drops them", () => {
+  it("reads profiles saved with the retired export rules and ring buffer and drops them", () => {
     const legacy = {
       ...duplicateProfile(createDefaultProfile(), { id: "legacy", name: "Legacy" }),
+      recorder: { ringBufferMinutes: 7, freezeOnError: false },
       export: { encryption: "required", privacyScanner: "block" }
     };
     const parsed = parseProfilesStore(
@@ -192,6 +194,7 @@ describe("parseProfilesStore", () => {
     expect(parsed?.issues).toEqual([]);
     expect(profile).toBeDefined();
     expect(JSON.parse(JSON.stringify(profile))).not.toHaveProperty("export");
+    expect(JSON.parse(JSON.stringify(profile?.recorder))).toEqual({ freezeOnError: false });
   });
 
   it("re-adds a missing Default profile", () => {
@@ -217,7 +220,7 @@ describe("resolveProfilesState", () => {
       BUILT_IN_PROFILE_IDS.qa,
       BUILT_IN_PROFILE_IDS.fullCapture
     ]);
-    expect(state.catalog[0]?.recorder.ringBufferMinutes).toBe(7);
+    expect(state.catalog[0]?.recorder.freezeOnError).toBe(false);
   });
 
   it("falls back to the v1 Default and reports a corrupt v2 store", () => {
@@ -228,7 +231,7 @@ describe("resolveProfilesState", () => {
 
     expect(state.legacy).toBe(true);
     expect(state.issues).toEqual([{ kind: "corrupt-store", message: expect.any(String) }]);
-    expect(state.catalog[0]?.recorder.ringBufferMinutes).toBe(7);
+    expect(state.catalog[0]?.recorder.freezeOnError).toBe(false);
   });
 
   it("uses the v2 store when present and resets an unknown default id", () => {
@@ -240,7 +243,7 @@ describe("resolveProfilesState", () => {
     expect(state.legacy).toBe(false);
     expect(state.store.defaultProfileId).toBe(DEFAULT_PROFILE_ID);
     expect(state.issues).toEqual([{ kind: "missing-default-profile", id: "ghost" }]);
-    expect(state.catalog[0]?.recorder.ringBufferMinutes).toBeUndefined();
+    expect(state.catalog[0]?.recorder.freezeOnError).toBeUndefined();
   });
 
   it("merges managed profiles and puts managed rules first", () => {
@@ -303,7 +306,7 @@ describe("general settings form and the Default profile", () => {
       redactCookieNames: ["editor_cookie"]
     },
     sampling: { scrollHz: 7 },
-    recorder: { ringBufferMinutes: 4 },
+    recorder: { freezeOnError: false },
     unmaskSelectors: [".order-id"]
   };
 
@@ -325,7 +328,7 @@ describe("general settings form and the Default profile", () => {
     const shown = { ...DEFAULT_RECORDER_CONFIG, optionsVersion: 1 };
     const saved = {
       ...shown,
-      ringBufferMinutes: 7,
+      freezeOnError: false,
       sampling: { ...shown.sampling, scrollHz: 3 }
     };
     const store = storeWith({});
@@ -336,7 +339,7 @@ describe("general settings form and the Default profile", () => {
 
     const profile = syncDefaultProfileWithLegacyOptions(store, saved, shown).profiles[0];
     expect(profile?.sampling).toEqual({ ...before?.sampling, scrollHz: 3 });
-    expect(profile?.recorder).toEqual({ ...before?.recorder, ringBufferMinutes: 7 });
+    expect(profile?.recorder).toEqual({ ...before?.recorder, freezeOnError: false });
     expect(profile?.redaction).toEqual(before?.redaction);
   });
 
@@ -352,7 +355,7 @@ describe("general settings form and the Default profile", () => {
     );
     expect(form.sampling.scrollHz).toBe(7);
     expect(form.sampling.mousemoveHz).toBe(DEFAULT_RECORDER_CONFIG.sampling.mousemoveHz);
-    expect(form.ringBufferMinutes).toBe(4);
+    expect(form.freezeOnError).toBe(false);
   });
 });
 

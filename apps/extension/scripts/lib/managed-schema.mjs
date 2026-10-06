@@ -99,7 +99,6 @@ const profileSchema = {
     recorder: {
       type: "object",
       properties: {
-        ringBufferMinutes: integer("", 1),
         freezeOnError: { type: "boolean" }
       }
     },

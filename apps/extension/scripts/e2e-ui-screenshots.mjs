@@ -100,7 +100,6 @@ const SESSION_BASE = {
   mode: "full",
   url: TAB.url,
   title: TAB.title,
-  ringBufferMinutes: 10,
   eventCount: 1843,
   errorCount: 3,
   budgetAlertCount: 1,
