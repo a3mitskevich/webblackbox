@@ -47,6 +47,31 @@ function capText(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}${ELLIPSIS}` : text;
 }
 
+function isHighSurrogate(text: string, index: number): boolean {
+  const code = text.charCodeAt(index);
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(text: string, index: number): boolean {
+  const code = text.charCodeAt(index);
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+/** The first `count` UTF-16 units of `text`, never ending inside a surrogate pair. */
+function headOf(text: string, count: number): string {
+  const end = Math.min(count, text.length);
+  return text.slice(
+    0,
+    end > 0 && end < text.length && isHighSurrogate(text, end - 1) ? end - 1 : end
+  );
+}
+
+/** The last `count` UTF-16 units of `text`, never starting inside a surrogate pair. */
+function tailOf(text: string, count: number): string {
+  const start = Math.max(0, text.length - count);
+  return text.slice(start > 0 && isLowSurrogate(text, start) ? start + 1 : start);
+}
+
 function commonPrefixLength(left: string, right: string): number {
   const max = Math.min(left.length, right.length);
   let length = 0;
@@ -55,7 +80,8 @@ function commonPrefixLength(left: string, right: string): number {
     length += 1;
   }
 
-  return length;
+  // "😀" and "😁" share their high surrogate: keep the pair whole in the differing part.
+  return length > 0 && isHighSurrogate(left, length - 1) ? length - 1 : length;
 }
 
 function commonSuffixLength(left: string, right: string, prefix: number): number {
@@ -69,7 +95,7 @@ function commonSuffixLength(left: string, right: string, prefix: number): number
     length += 1;
   }
 
-  return length;
+  return length > 0 && isLowSurrogate(left, left.length - length) ? length - 1 : length;
 }
 
 function isWordChar(text: string, index: number): boolean {
@@ -122,14 +148,14 @@ export function diffWordWindow(before: string, after: string): WordDiffWindow {
   const commonSuffix = before.slice(before.length - suffixLength);
 
   return {
-    prefix: commonPrefix.slice(-CONTEXT_CHARS),
+    prefix: tailOf(commonPrefix, CONTEXT_CHARS),
     isPrefixElided: commonPrefix.length > CONTEXT_CHARS,
     parts: diffWordsWithSpace(
-      middleBefore.slice(0, MAX_DIFF_WINDOW_CHARS),
-      middleAfter.slice(0, MAX_DIFF_WINDOW_CHARS)
+      headOf(middleBefore, MAX_DIFF_WINDOW_CHARS),
+      headOf(middleAfter, MAX_DIFF_WINDOW_CHARS)
     ),
     isLimited,
-    suffix: commonSuffix.slice(0, CONTEXT_CHARS),
+    suffix: headOf(commonSuffix, CONTEXT_CHARS),
     isSuffixElided: commonSuffix.length > CONTEXT_CHARS
   };
 }

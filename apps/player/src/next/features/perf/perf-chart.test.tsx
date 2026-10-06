@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const PROPS = {
@@ -40,6 +40,7 @@ afterEach(() => {
   cleanup();
   vi.doUnmock("uplot");
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("PerfChart", () => {
@@ -77,5 +78,38 @@ describe("PerfChart", () => {
 
     expect(await screen.findByTestId("chart-unavailable")).toBeInTheDocument();
     expect(screen.getByTestId("chart")).toHaveAttribute("data-unavailable", "true");
+  });
+
+  it("draws again on the next redraw after a failed draw", async () => {
+    let shouldFail = true;
+    const { PerfChart } = await loadChart(() => ({
+      default: class {
+        static paths = {};
+        constructor() {
+          if (shouldFail) {
+            throw new Error("no canvas");
+          }
+        }
+        over = document.createElement("div");
+        cursor = {};
+        setSize() {}
+        destroy() {}
+      }
+    }));
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      }
+    );
+    const { rerender } = render(<PerfChart {...PROPS} />);
+    expect(await screen.findByTestId("chart-unavailable")).toBeInTheDocument();
+
+    shouldFail = false;
+    rerender(<PerfChart {...PROPS} themeKey="dark-en" />);
+
+    await waitFor(() => expect(screen.queryByTestId("chart-unavailable")).not.toBeInTheDocument());
+    expect(screen.getByTestId("chart")).not.toHaveAttribute("data-unavailable");
   });
 });

@@ -114,5 +114,8 @@ describe("Tabs panel", () => {
 
     fireEvent.keyDown(first, { key: "ArrowDown" });
     expect(first).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(list, { key: "End", ctrlKey: true });
+    fireEvent.keyDown(list, { key: "ArrowDown", altKey: true });
+    expect(first).toHaveAttribute("aria-selected", "true");
   });
 });

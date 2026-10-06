@@ -61,6 +61,17 @@ describe("word diff window", () => {
     expect(diff.suffix).toBe(" again");
   });
 
+  it("never splits a surrogate pair at the cut points", () => {
+    const hasLoneSurrogate = (text: string) =>
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text);
+    const emoji = "😀".repeat(60);
+    const diff = diffWordWindow(`${emoji} 😀 ${emoji}`, `${emoji} 😁 ${emoji}`);
+    const texts = [diff.prefix, diff.suffix, ...diff.parts.map((part) => part.value)];
+
+    expect(texts.some(hasLoneSurrogate)).toBe(false);
+    expect(changedText(diff.parts)).toEqual({ removed: ["😀"], added: ["😁"] });
+  });
+
   it("caps a long differing middle and says so", () => {
     const before = `start ${"x".repeat(MAX_DIFF_WINDOW_CHARS + 5_000)} end`;
     const after = `start ${"y".repeat(MAX_DIFF_WINDOW_CHARS + 5_000)} end`;

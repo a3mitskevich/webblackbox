@@ -18,6 +18,7 @@ import { VirtualList } from "../../components/virtual-list.js";
 import { useController, useI18n, usePlayerState } from "../../context.js";
 import type { LoadedArchive } from "../../state.js";
 import { useFeatureI18n } from "../messages.js";
+import { isOwnListKey, nextListIndex, pageRowsOf } from "../network/list-keys.js";
 import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
 import { storageMessages, type StorageTranslate } from "./messages.js";
 import { storageSlice, type StorageView } from "./slice.js";
@@ -53,31 +54,6 @@ function preview(value: string | undefined): string {
   }
 
   return value.length > VALUE_PREVIEW_CHARS ? `${value.slice(0, VALUE_PREVIEW_CHARS)}…` : value;
-}
-
-/**
- * The row a listbox key moves to: arrows step (from nothing: the first / last row), Home / End
- * jump, Enter re-activates the current row; `null` for other keys.
- */
-function listKeyIndex(key: string, current: number, count: number): number | null {
-  if (count === 0) {
-    return null;
-  }
-
-  switch (key) {
-    case "ArrowDown":
-      return current < 0 ? 0 : Math.min(count - 1, current + 1);
-    case "ArrowUp":
-      return current < 0 ? count - 1 : Math.max(0, current - 1);
-    case "Home":
-      return 0;
-    case "End":
-      return count - 1;
-    case "Enter":
-      return current >= 0 ? current : null;
-    default:
-      return null;
-  }
 }
 
 const optionId = (change: StorageChange): string => `storage-change-${change.eventId}`;
@@ -463,12 +439,22 @@ function LogView({ archive }: { archive: LoadedArchive }) {
     }
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    // Keys typed in a control inside the list belong to that control.
-    if (event.target !== event.currentTarget) {
+    // Keys typed in a control inside the list, and Ctrl/Alt/Meta combinations, are not ours.
+    if (!isOwnListKey(event)) {
       return;
     }
 
-    const index = listKeyIndex(event.key, selectedIndex, changes.length);
+    const index =
+      event.key === "Enter"
+        ? selectedIndex >= 0
+          ? selectedIndex
+          : null
+        : nextListIndex(
+            event.key,
+            selectedIndex,
+            changes.length,
+            pageRowsOf(event.currentTarget, LOG_ROW_HEIGHT)
+          );
     const change = index === null ? undefined : changes[index];
 
     if (change) {

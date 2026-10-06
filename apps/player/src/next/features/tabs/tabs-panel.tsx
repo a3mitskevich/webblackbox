@@ -12,9 +12,12 @@ import { formatOffset } from "../../../core/format.js";
 import { useController, useI18n, usePlayerState } from "../../context.js";
 import type { LoadedArchive } from "../../state.js";
 import { useFeatureI18n } from "../messages.js";
+import { isOwnListKey, nextListIndex, pageRowsOf } from "../network/list-keys.js";
 import { tabsMessages, type TabsMessageKey, type TabsTranslate } from "./messages.js";
 
 const NOW_BUCKET_MS = 250;
+/** The rows' minimum height (tabs.css `.tb-row`), for PageUp / PageDown. */
+const TABS_ROW_HEIGHT = 40;
 
 const CHANGE_KEYS: Readonly<Record<RelatedTabChangeKind, TabsMessageKey>> = {
   opened: "change_opened",
@@ -78,31 +81,6 @@ function labelText(row: TabsLogRow, t: TabsTranslate): string {
   const text = key ? t(key) : row.label;
 
   return row.kind === "snapshot" ? t("snapshot", { reason: text }) : text;
-}
-
-/**
- * The row a listbox key moves to: arrows step (from nothing: the first / last row), Home / End
- * jump, Enter re-activates the current row; `null` for other keys.
- */
-function listKeyIndex(key: string, current: number, count: number): number | null {
-  if (count === 0) {
-    return null;
-  }
-
-  switch (key) {
-    case "ArrowDown":
-      return current < 0 ? 0 : Math.min(count - 1, current + 1);
-    case "ArrowUp":
-      return current < 0 ? count - 1 : Math.max(0, current - 1);
-    case "Home":
-      return 0;
-    case "End":
-      return count - 1;
-    case "Enter":
-      return current >= 0 ? current : null;
-    default:
-      return null;
-  }
 }
 
 const optionId = (row: TabsLogRow): string => `tabs-change-${row.eventId}`;
@@ -188,12 +166,22 @@ export function TabsPanel() {
     }
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    // Keys typed in a control inside the list belong to that control.
-    if (event.target !== event.currentTarget) {
+    // Keys typed in a control inside the list, and Ctrl/Alt/Meta combinations, are not ours.
+    if (!isOwnListKey(event)) {
       return;
     }
 
-    const index = listKeyIndex(event.key, selectedIndex, log.length);
+    const index =
+      event.key === "Enter"
+        ? selectedIndex >= 0
+          ? selectedIndex
+          : null
+        : nextListIndex(
+            event.key,
+            selectedIndex,
+            log.length,
+            pageRowsOf(event.currentTarget, TABS_ROW_HEIGHT)
+          );
     const row = index === null ? undefined : log[index];
 
     if (row) {

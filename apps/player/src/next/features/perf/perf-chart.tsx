@@ -98,6 +98,8 @@ export function PerfChart({
       .then(({ default: UPlot }) => {
         if (isCurrent) {
           cleanup = mountPlot(UPlot, container);
+          // A later redraw (new data, theme) recovers from an earlier failed load.
+          setUnavailable(false);
         }
       })
       .catch((error: unknown) => {
@@ -218,9 +220,14 @@ export function PerfChart({
         <p className="pf-none" role="status" data-testid={`${testId}-unavailable`}>
           {unavailableText}
         </p>
-      ) : (
-        <div ref={containerRef} className="pf-plot" style={{ minHeight: height }} />
-      )}
+      ) : null}
+      {/* Stays mounted, so a redraw can retry after a failed load. */}
+      <div
+        ref={containerRef}
+        className="pf-plot"
+        hidden={isUnavailable}
+        style={{ minHeight: height }}
+      />
     </figure>
   );
 }
