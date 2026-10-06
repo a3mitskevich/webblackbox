@@ -14,9 +14,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 199000,
-      "maxGzipBytes": 49500,
-      "note": "Combined integration of the 8 open PRs and #21 on main, measured 155,484 / 38,623 B: #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, #16's tabs context and #21's capture completeness report. Player rewrite (PR #20) R2 third-party classifier and problem grouping, R4 console entries, storage state, perf series and endpoint alignment (R4 alone +11.7 KB / +3.6 KB gzip minified): measured 193,085 / 47,968 B (+3%)."
+      "maxBytes": 207000,
+      "maxGzipBytes": 51300,
+      "note": "Combined integration of the 8 open PRs and #21 on main, measured 155,484 / 38,623 B: #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, #16's tabs context and #21's capture completeness report. Player rewrite (PR #20) R2 third-party classifier, problem grouping and activity feed items, R4 console entries, storage state, perf series and endpoint alignment (R4 alone +11.7 KB / +3.6 KB gzip minified): measured 201,197 / 49,776 B (+3%)."
     },
     {
       "path": "apps/player/build/main.js",
