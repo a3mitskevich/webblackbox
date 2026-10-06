@@ -434,6 +434,87 @@ describe("options page", () => {
     expect(query<HTMLInputElement>("#budgetLcpWarnMs").value).toBe("2500");
     expect(saveState()).toBe("All changes saved");
   });
+
+  describe("language", () => {
+    const LOCALE_KEY = "webblackbox.uiLocale";
+    const languageSelect = () => query<HTMLSelectElement>("#ui-language");
+    const chooseLanguage = async (value: string): Promise<void> => {
+      languageSelect().value = value;
+      languageSelect().dispatchEvent(new Event("change", { bubbles: true }));
+      await flush();
+    };
+    const languageNotice = () =>
+      query<HTMLElement>("[data-options-section='language'] [role='status']");
+
+    it("offers Auto and every locale, preselecting the stored choice", async () => {
+      installChromeStub({ [LOCALE_KEY]: "zh-CN" });
+      await importOptionsModule();
+
+      expect(languageSelect().disabled).toBe(false);
+      expect(languageSelect().value).toBe("zh-CN");
+      expect([...languageSelect().options].map((option) => option.value)).toEqual([
+        "auto",
+        "en",
+        "ru",
+        "zh-CN"
+      ]);
+    });
+
+    it("renders the page in the stored language", async () => {
+      installChromeStub({ [LOCALE_KEY]: "ru" });
+      await importOptionsModule();
+
+      expect(document.documentElement.lang).toBe("ru");
+      expect(document.title).toBe("Настройки WebBlackbox");
+      expect(query("[data-section-link='language']").textContent).toContain("Язык");
+      expect(saveState()).toBe("Все изменения сохранены");
+    });
+
+    it("treats an unknown stored value as Auto", async () => {
+      installChromeStub({ [LOCALE_KEY]: "fr" });
+      await importOptionsModule();
+
+      expect(languageSelect().value).toBe("auto");
+      expect(document.documentElement.lang).toBe("en");
+    });
+
+    it("stores the choice at once without touching the Save bar", async () => {
+      const storage = installChromeStub();
+      await importOptionsModule();
+
+      await chooseLanguage("en");
+
+      expect(storage.data[LOCALE_KEY]).toBe("en");
+      expect(storage.data[STORAGE_KEY]).toBeUndefined();
+      expect(saveState()).toBe("All changes saved");
+      expect(languageNotice().hidden).toBe(true);
+    });
+
+    it("keeps unsaved edits and explains when the new language appears", async () => {
+      const storage = installChromeStub();
+      await importOptionsModule();
+
+      typeNumber("ringBufferMinutes", "15");
+      await chooseLanguage("ru");
+
+      expect(storage.data[LOCALE_KEY]).toBe("ru");
+      expect(query<HTMLInputElement>("#ringBufferMinutes").value).toBe("15");
+      expect(saveState()).toBe("Unsaved changes");
+      expect(languageNotice().hidden).toBe(false);
+      expect(languageNotice().textContent).toMatch(/reopen this page/);
+    });
+
+    it("reports a failed save", async () => {
+      const storage = installChromeStub();
+      await importOptionsModule();
+      storage.set.mockRejectedValueOnce(new Error("quota"));
+
+      await chooseLanguage("ru");
+
+      expect(languageNotice().hidden).toBe(false);
+      expect(languageNotice().textContent).toBe("Could not save the language: quota");
+    });
+  });
 });
 
 describe("options page: unsaved changes", () => {

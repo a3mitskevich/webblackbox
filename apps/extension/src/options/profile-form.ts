@@ -1,4 +1,4 @@
-import type { ExtensionMessageKey } from "../shared/i18n.js";
+import { EXTENSION_UNIT_LABEL_KEYS, type ExtensionMessageKey } from "../shared/i18n.js";
 import { resolveLocalDataSettings } from "../shared/profiles/local-data.js";
 import {
   CAPTURE_CATEGORY_KEYS,
@@ -254,7 +254,7 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
           min: 1,
           max: MAX_SOURCE_MAP_BYTES,
           step: 1024,
-          unit: "B"
+          unit: t(EXTENSION_UNIT_LABEL_KEYS.B)
         })
       ]),
       createCategoryMatrix(profile, t),
@@ -344,7 +344,7 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
           min: 0,
           max: MAX_BODY_CAPTURE_BYTES,
           step: 1024,
-          unit: "B"
+          unit: t(EXTENSION_UNIT_LABEL_KEYS.B)
         }),
         numberField({
           id: "pf-mousemoveHz",
@@ -354,7 +354,7 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
           value: profile.pointer.mousemoveHz?.toString() ?? "",
           min: 1,
           max: MAX_MOUSEMOVE_HZ,
-          unit: "Hz"
+          unit: t(EXTENSION_UNIT_LABEL_KEYS.Hz)
         }),
         chips(
           "bodyMimeAllowlist",
@@ -394,7 +394,7 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
           value: String(localData.unexportedRetentionMinutes),
           min: MIN_UNEXPORTED_RETENTION_MINUTES,
           max: MAX_UNEXPORTED_RETENTION_MINUTES,
-          unit: "min"
+          unit: t(EXTENSION_UNIT_LABEL_KEYS.min)
         })
       ])
     ]

@@ -16,6 +16,7 @@ export type SessionFormatters = {
   formatRelativeTime: (timestamp: number, now: number) => string;
   formatDuration: (startedAt: number, endedAt: number) => string;
   formatByteSize: (bytes: number) => string;
+  formatNumber: (value: number) => string;
   formatAbsoluteTime: (timestamp: number) => string;
 };
 
@@ -267,10 +268,10 @@ function createRow(session: SessionListItem, options: TableOptions): HTMLElement
         [format.formatDuration(session.startedAt, session.stoppedAt ?? now)],
         "wb-table__num"
       ),
-      cell("sessionsColumnEvents", [String(session.eventCount ?? 0)], "wb-table__num"),
+      cell("sessionsColumnEvents", [format.formatNumber(session.eventCount ?? 0)], "wb-table__num"),
       cell(
         "sessionsColumnErrors",
-        [String(errors)],
+        [format.formatNumber(errors)],
         errors > 0 ? "wb-table__num wb-table__num--warn" : "wb-table__num"
       ),
       cell("sessionsColumnSize", [format.formatByteSize(session.sizeBytes ?? 0)], "wb-table__num"),

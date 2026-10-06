@@ -5,14 +5,12 @@ import { watchPasswordFieldReveals } from "webblackbox/input-value-policy";
 import type { LiteCaptureAgentOptions } from "webblackbox/types";
 
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
-import { createExtensionI18n } from "../shared/i18n.js";
 import { PORT_NAMES, type ExtensionOutboundMessage } from "../shared/messages.js";
 import { CONTENT_EVENT_FLUSH_CHUNK, resolveContentEventFlushDelay } from "./flush-policy.js";
 
 type ContentAgentModule = typeof import("./content-agent.js");
 
 const chromeApi = getChromeApi();
-const { t } = createExtensionI18n();
 let contentPort: PortLike | null = null;
 let reconnectTimer = 0;
 let reconnectAttempts = 0;
@@ -337,11 +335,8 @@ async function ensureCaptureAgent(): Promise<LiteCaptureAgent> {
     return captureAgentPromise;
   }
 
-  const moduleUrl = chromeApi?.runtime?.getURL?.("content-agent.js") ?? "./content-agent.js";
-
-  captureAgentPromise = import(moduleUrl)
-    .then((module) => {
-      const { createContentCaptureAgent } = module as ContentAgentModule;
+  captureAgentPromise = loadContentAgentModule()
+    .then(({ createContentCaptureAgent }) => {
       const options: LiteCaptureAgentOptions = {
         emitBatch,
         onMarker: emitMarker,
@@ -358,15 +353,24 @@ async function ensureCaptureAgent(): Promise<LiteCaptureAgent> {
   return captureAgentPromise;
 }
 
+/** The capture agent bundle also carries the UI dictionaries; the module map loads it once. */
+function loadContentAgentModule(): Promise<ContentAgentModule> {
+  const moduleUrl = chromeApi?.runtime?.getURL?.("content-agent.js") ?? "./content-agent.js";
+  return import(moduleUrl) as Promise<ContentAgentModule>;
+}
+
 async function emitKeyboardMarker(): Promise<void> {
   const statusVersion = recordingStatusVersion;
-  const agent = await ensureCaptureAgent();
+  const [agent, label] = await Promise.all([
+    ensureCaptureAgent(),
+    loadContentAgentModule().then((module) => module.loadKeyboardMarkerLabel())
+  ]);
 
   if (statusVersion !== recordingStatusVersion || !recordingActive) {
     return;
   }
 
-  agent.emitMarker(t("contentKeyboardMarker"));
+  agent.emitMarker(label);
 }
 
 async function requestRecordingStatusOnce(): Promise<void> {

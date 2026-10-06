@@ -39,6 +39,7 @@ const REQUIRED_BUILD_FILES = [
   "manifest.json",
   MANAGED_SCHEMA_FILE,
   "_locales/en/messages.json",
+  "_locales/ru/messages.json",
   "_locales/zh_CN/messages.json",
   "content.js",
   "content-agent.js",

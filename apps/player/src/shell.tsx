@@ -5,7 +5,7 @@ import { Card } from "./components/ui/card.js";
 import { Checkbox } from "./components/ui/checkbox.js";
 import { Input } from "./components/ui/input.js";
 import { Select } from "./components/ui/select.js";
-import { createPlayerI18n, type PlayerLocale } from "./lib/i18n.js";
+import { createPlayerI18n, PLAYER_LOCALES, type PlayerLocale } from "./lib/i18n.js";
 
 const playerVersion = typeof __PLAYER_VERSION__ !== "undefined" ? __PLAYER_VERSION__ : "0.1.0";
 
@@ -53,8 +53,11 @@ export function PlayerShell({ locale = "en" }: PlayerShellProps = {}): React.JSX
               defaultValue={i18n.locale}
               aria-label={messages.toolbarLanguage}
             >
-              <option value="en">{messages.localeNames.en}</option>
-              <option value="zh-CN">{messages.localeNames["zh-CN"]}</option>
+              {PLAYER_LOCALES.map((option) => (
+                <option key={option} value={option}>
+                  {messages.localeNames[option]}
+                </option>
+              ))}
             </Select>
           </label>
           <a
@@ -94,7 +97,7 @@ export function PlayerShell({ locale = "en" }: PlayerShellProps = {}): React.JSX
               step="1"
               defaultValue="10"
             />
-            <span>s</span>
+            <span>{messages.unitSecondsLabel}</span>
           </label>
           <label className="mask-wrap" htmlFor="mask-response-preview">
             <Checkbox id="mask-response-preview" defaultChecked />

@@ -2,7 +2,14 @@ import { DEFAULT_RECORDER_CONFIG, type RecorderConfig } from "@webblackbox/proto
 
 import { getChromeApi } from "../shared/chrome-api.js";
 import { loadExportPolicyPrefs, saveExportPolicyPrefs } from "../shared/export-policy-prefs.js";
-import { createExtensionI18n } from "../shared/i18n.js";
+import {
+  createExtensionI18n,
+  loadExtensionLocalePreference,
+  parseExtensionLocalePreference,
+  resolveExtensionLocale,
+  saveExtensionLocalePreference,
+  type ExtensionLocalePreference
+} from "../shared/i18n.js";
 import {
   ENTERPRISE_POLICY_STORAGE_KEY,
   migrateStoredRecorderConfig
@@ -56,7 +63,11 @@ const GENERAL_SECTIONS: readonly GeneralSectionId[] = [
 ];
 
 const chromeApi = getChromeApi();
-const i18n = createExtensionI18n({ pageTitleKey: "pageTitleOptions" });
+const localePreference = await loadExtensionLocalePreference();
+const i18n = createExtensionI18n({
+  pageTitleKey: "pageTitleOptions",
+  locale: resolveExtensionLocale(localePreference)
+});
 const { locale, t } = i18n;
 const extensionVersion = chromeApi?.runtime?.getManifest?.().version ?? "dev";
 const root = document.getElementById("options-root");
@@ -109,7 +120,7 @@ async function bootstrap(container: HTMLElement): Promise<void> {
 
   shell.bodies.sensitivity.append(sandboxSlot);
   shell.bodies.export.append(el("p", { className: "wb-notice", text: t("optionsEncryptionNote") }));
-  shell.bodies.language.append(createLanguagePanel());
+  shell.bodies.language.append(createLanguagePanel(page));
   renderGeneral(page);
   container.replaceChildren(shell.root);
   shell.showSection(sectionFromHash(location.hash));
@@ -440,23 +451,71 @@ async function syncSavedProfilesWithGeneralOptions(
   });
 }
 
-function createLanguagePanel(): HTMLElement {
-  return el("div", { className: "wb-section__groups" }, [
-    fieldGroup(null, [
-      selectField({
-        id: "ui-language",
-        label: t("optionsLanguageLabel"),
-        hint: t("optionsLanguageFollowsBrowser"),
-        value: locale,
-        disabled: true,
-        options: [
-          { value: "en", label: "English" },
-          { value: "zh-CN", label: "简体中文" }
-        ]
-      })
-    ]),
-    el("p", { className: "wb-notice", text: t("optionsLanguageComing") })
-  ]);
+/** Language names stay in their own language so they are recognisable from any locale. */
+const LANGUAGE_OPTIONS: ReadonlyArray<{ value: ExtensionLocalePreference; label: string }> = [
+  { value: "en", label: "English" },
+  { value: "ru", label: "Русский" },
+  { value: "zh-CN", label: "中文" }
+];
+
+/**
+ * The choice is stored at once (it is not part of the Save bar). A clean page reloads to show
+ * it; with unsaved edits the page stays put and says when the new language appears.
+ */
+function createLanguagePanel(page: PageState): HTMLElement {
+  const notice = el("p", { className: "wb-notice", attrs: { role: "status" } });
+  notice.hidden = true;
+  const field = selectField({
+    id: "ui-language",
+    label: t("optionsLanguageLabel"),
+    hint: t("optionsLanguageFollowsBrowser"),
+    value: localePreference,
+    options: [{ value: "auto", label: t("optionsLanguageAuto") }, ...LANGUAGE_OPTIONS]
+  });
+
+  field.querySelector("select")?.addEventListener("change", (event) => {
+    const preference = parseExtensionLocalePreference((event.target as HTMLSelectElement).value);
+    void applyLanguagePreference(page, preference, notice);
+  });
+
+  return el("div", { className: "wb-section__groups" }, [fieldGroup(null, [field]), notice]);
+}
+
+async function applyLanguagePreference(
+  page: PageState,
+  preference: ExtensionLocalePreference,
+  notice: HTMLElement
+): Promise<void> {
+  try {
+    await saveExtensionLocalePreference(preference);
+  } catch (error) {
+    showLanguageNotice(
+      notice,
+      t("optionsLanguageSaveFailed", {
+        error: error instanceof Error ? error.message : String(error)
+      }),
+      true
+    );
+    return;
+  }
+
+  if (resolveExtensionLocale(preference) === locale) {
+    notice.hidden = true;
+    return;
+  }
+
+  if (isDirty(page)) {
+    showLanguageNotice(notice, t("optionsLanguagePendingReload"), false);
+    return;
+  }
+
+  location.reload();
+}
+
+function showLanguageNotice(notice: HTMLElement, text: string, isError: boolean): void {
+  notice.textContent = text;
+  notice.classList.toggle("wb-notice--error", isError);
+  notice.hidden = false;
 }
 
 function renderError(container: HTMLElement, error: unknown): void {

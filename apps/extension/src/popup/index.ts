@@ -2,7 +2,7 @@ import type { CaptureMode, ExportPolicy, FreezeReason } from "@webblackbox/proto
 
 import { getChromeApi } from "../shared/chrome-api.js";
 import { loadExportPolicyPrefs, toExportPolicy } from "../shared/export-policy-prefs.js";
-import { createExtensionI18n } from "../shared/i18n.js";
+import { createExtensionI18n, loadExtensionLocale } from "../shared/i18n.js";
 import {
   PORT_NAMES,
   PROFILES_SECTION_ID,
@@ -38,16 +38,21 @@ import {
 } from "./view.js";
 
 const chromeApi = getChromeApi();
+// Resolved before the port opens, so no port message can arrive before its listener exists.
+const i18n = createExtensionI18n({
+  pageTitleKey: "pageTitlePopup",
+  locale: await loadExtensionLocale()
+});
 const port = chromeApi?.runtime?.connect({ name: PORT_NAMES.popup });
 const extensionVersion = chromeApi?.runtime?.getManifest?.().version ?? "dev";
-const i18n = createExtensionI18n({ pageTitleKey: "pageTitlePopup" });
 const { t, formatMode, formatFreezeReason } = i18n;
 const format: PopupFormatters = {
   t,
   formatMode,
   formatRelativeTime: i18n.formatRelativeTime,
   formatDuration: i18n.formatDuration,
-  formatByteSize: i18n.formatByteSize
+  formatByteSize: i18n.formatByteSize,
+  formatNumber: i18n.formatNumber
 };
 
 const root = document.getElementById("popup-root");

@@ -253,7 +253,7 @@ describe("popup states", () => {
 
     expect(getButton("export").disabled).toBe(false);
     expect(query(".wb-popup__last").textContent).toContain("QA");
-    expect(query(".wb-popup__last").textContent).toContain("1843");
+    expect(query(".wb-popup__last").textContent).toContain("1,843");
   });
 
   it("opens the sessions and options pages from the header icons", async () => {
