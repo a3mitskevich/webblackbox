@@ -67,6 +67,8 @@ const MESSAGE_MAX = 160;
 const PROBLEM_CONSOLE_LEVELS = new Set(["error", "assert"]);
 /** A cancelled request (navigation away, aborted fetch, prefetch) is not a failure. */
 const CANCELLED_ERROR = /ERR_ABORTED/i;
+/** A console error and an exception of one message this close together are one failure. */
+const ECHO_WINDOW_MS = 250;
 
 const REASON_PHRASES: Readonly<Record<number, string>> = {
   400: "Bad Request",
@@ -132,6 +134,10 @@ export function readConsoleLevel(event: WebBlackboxEvent): string | null {
  * the console level there, not in `lvl`). Failed requests are judged by `isProblemRequest`.
  */
 export function isProblemEvent(event: WebBlackboxEvent): boolean {
+  if (isCancelledLoadLine(event)) {
+    return false;
+  }
+
   if (event.type.startsWith("error.") || event.lvl === "error") {
     return true;
   }
@@ -177,11 +183,14 @@ function readMessage(event: WebBlackboxEvent): string {
   return firstLine.length > MESSAGE_MAX ? `${firstLine.slice(0, MESSAGE_MAX - 1)}…` : firstLine;
 }
 
-/** Messages differing only in numbers, ids or quoted values belong to one group. */
+/**
+ * Messages differing only in numbers, ids or quoted values belong to one group. A quote opens a
+ * value only where a word does not go on (`'x'`, not the apostrophe of `don't`).
+ */
 function normalizeMessage(message: string): string {
   return message
     .toLowerCase()
-    .replace(/(["'`]).*?\1/g, "?")
+    .replace(/(?<![\p{L}\d])(["'`]).*?\1(?![\p{L}\d])/gu, "?")
     .replace(/\b[0-9a-f]{8,}\b/g, "#")
     .replace(/\d+/g, "#");
 }
@@ -261,6 +270,8 @@ type Draft = GroupSeed & {
   /** URL paths of requests, or script locations of messages. */
   places: string[];
   thirdPartyFlags: boolean[];
+  /** Exception occurrences (by event id): a console echo of one is dropped. */
+  thrown: Set<string>;
 };
 
 type Occurrence = {
@@ -318,6 +329,21 @@ const FAILED_RESOURCE_TEXT = /^Failed to load resource:/i;
 const STATUS_IN_TEXT = /status of (\d{3})/;
 const NET_ERROR_IN_TEXT = /net::(ERR_[A-Z0-9_]+)/;
 
+function readLoggedText(event: WebBlackboxEvent): string {
+  const data = asRecord(event.data);
+  return asText(data?.text) ?? asText(data?.message) ?? "";
+}
+
+/** "Failed to load resource: net::ERR_ABORTED": the browser logs a cancel as an error. */
+function isCancelledLoadLine(event: WebBlackboxEvent): boolean {
+  if (!event.type.startsWith("console.")) {
+    return false;
+  }
+
+  const text = readLoggedText(event);
+  return FAILED_RESOURCE_TEXT.test(text) && CANCELLED_ERROR.test(text);
+}
+
 /**
  * Chromium logs "Failed to load resource: …" for every failed load, including loads from before
  * the recording started (their request is not in the archive). Such an entry is the same kind of
@@ -325,7 +351,7 @@ const NET_ERROR_IN_TEXT = /net::(ERR_[A-Z0-9_]+)/;
  */
 function readFailedResource(event: WebBlackboxEvent): FailedResource | null {
   const data = asRecord(event.data);
-  const text = asText(data?.text) ?? asText(data?.message) ?? "";
+  const text = readLoggedText(event);
   const url = asText(data?.url);
 
   if (!url || !FAILED_RESOURCE_TEXT.test(text)) {
@@ -341,6 +367,33 @@ function readFailedResource(event: WebBlackboxEvent): FailedResource | null {
     ...(Number.isFinite(status) ? { status } : {}),
     ...(errorText ? { errorText } : {})
   };
+}
+
+/**
+ * A script, stylesheet or image the page failed to load (`error.resource`: the element's tag and
+ * URL, no status): a network failure at its URL.
+ */
+function readResourceError(event: WebBlackboxEvent): FailedResource | null {
+  const url = event.type === "error.resource" ? asText(asRecord(event.data)?.url) : null;
+  return url ? { url, mono: event.mono, eventId: event.id } : null;
+}
+
+/** URLs of recorded requests that failed: their element errors repeat them. */
+export function failedRequestUrls(requests: readonly ProblemRequest[]): Set<string> {
+  return new Set(
+    requests
+      .filter((request) => request.failed || (request.status ?? 0) >= 400)
+      .map((request) => request.url)
+  );
+}
+
+/** An `error.resource` event about a recorded failed request (the request is the problem). */
+export function isRecordedResourceError(
+  event: WebBlackboxEvent,
+  failedUrls: ReadonlySet<string>
+): boolean {
+  const resource = readResourceError(event);
+  return resource !== null && failedUrls.has(resource.url);
 }
 
 function eventOccurrence(event: WebBlackboxEvent, firstPartyUrl: string): Occurrence {
@@ -362,6 +415,7 @@ function eventOccurrence(event: WebBlackboxEvent, firstPartyUrl: string): Occurr
 function collectOccurrences(input: ProblemGroupingInput): Occurrence[] {
   const byId = new Map(input.events.map((event) => [event.id, event]));
   const knownRequests = new Set(input.requests.map((request) => request.reqId));
+  const failedUrls = failedRequestUrls(input.requests);
   const occurrences: Occurrence[] = [];
 
   for (const request of input.requests) {
@@ -388,12 +442,16 @@ function collectOccurrences(input: ProblemGroupingInput): Occurrence[] {
   for (const event of input.events) {
     const linkedRequest = asText(asRecord(event.data)?.networkRequestId);
 
-    if (!isProblemEvent(event) || (linkedRequest && knownRequests.has(linkedRequest))) {
-      // A console line about a recorded request: the request is already the problem.
+    if (
+      !isProblemEvent(event) ||
+      (linkedRequest && knownRequests.has(linkedRequest)) ||
+      isRecordedResourceError(event, failedUrls)
+    ) {
+      // A console line or element error about a recorded request: the request is the problem.
       continue;
     }
 
-    const resource = readFailedResource(event);
+    const resource = readFailedResource(event) ?? readResourceError(event);
     occurrences.push(
       resource
         ? resourceOccurrence(resource, input.firstPartyUrl)
@@ -425,7 +483,8 @@ export function groupProblems(input: ProblemGroupingInput): ProblemGroup[] {
       occurrences: [],
       hosts: [],
       places: [],
-      thirdPartyFlags: []
+      thirdPartyFlags: [],
+      thrown: new Set<string>()
     };
     const host = url ? hostOf(url) : "";
 
@@ -439,6 +498,11 @@ export function groupProblems(input: ProblemGroupingInput): ProblemGroup[] {
 
     draft.occurrences.push(occurrence);
     draft.thirdPartyFlags.push(thirdParty);
+
+    if (seed.category === "exception") {
+      draft.thrown.add(occurrence.eventId);
+    }
+
     // Thrown beats logged: a group with an exception is an exception.
     drafts.set(key, seed.category === "exception" ? { ...draft, category: "exception" } : draft);
   }
@@ -462,8 +526,39 @@ function describeWhere(draft: Draft, thirdParty: boolean): string {
   }
 }
 
+/**
+ * Occurrences in time order, without the console errors that only report an exception thrown at
+ * the same moment (`console.error(error); throw error`, or the browser's "Uncaught …" line).
+ */
+function distinctOccurrences(draft: Draft): ProblemOccurrence[] {
+  const sorted = [...draft.occurrences].sort((left, right) => left.mono - right.mono);
+
+  if (draft.thrown.size === 0 || draft.thrown.size === sorted.length) {
+    return sorted;
+  }
+
+  const logged = sorted.filter((occurrence) => !draft.thrown.has(occurrence.eventId));
+  const echoes = new Set<string>();
+  let next = 0;
+
+  for (const thrown of sorted.filter((occurrence) => draft.thrown.has(occurrence.eventId))) {
+    while (next < logged.length && (logged[next]?.mono ?? 0) < thrown.mono - ECHO_WINDOW_MS) {
+      next += 1;
+    }
+
+    const echo = logged[next];
+
+    if (echo && echo.mono <= thrown.mono + ECHO_WINDOW_MS) {
+      echoes.add(echo.eventId);
+      next += 1;
+    }
+  }
+
+  return sorted.filter((occurrence) => !echoes.has(occurrence.eventId));
+}
+
 function finishGroup(draft: Draft): ProblemGroup {
-  const occurrences = [...draft.occurrences].sort((left, right) => left.mono - right.mono);
+  const occurrences = distinctOccurrences(draft);
   const thirdParty = draft.thirdPartyFlags.every(Boolean);
 
   return {

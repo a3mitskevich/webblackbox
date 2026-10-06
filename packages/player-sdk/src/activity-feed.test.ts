@@ -215,6 +215,59 @@ describe("selectActivityItems", () => {
     expect(late[0]?.parentActId).toBeNull();
   });
 
+  it("picks the latest action span that still contains an event", () => {
+    const items = selectActivityItems({
+      events: [
+        event("a", "user.click", 0),
+        event("b", "user.click", 100),
+        event("in-b", "console.entry", 150, { level: "error", text: "b" }),
+        event("c", "user.click", 300),
+        event("in-a", "console.entry", 1000, { level: "error", text: "a" }),
+        event("after", "console.entry", 6000, { level: "error", text: "none" })
+      ],
+      actions: [
+        { actId: "A", triggerEventId: "a", startMono: 0, endMono: 5000 },
+        { actId: "B", triggerEventId: "b", startMono: 100, endMono: 200 },
+        { actId: "C", triggerEventId: "c", startMono: 300, endMono: 400 }
+      ],
+      requests: [],
+      firstPartyUrl: ORIGIN
+    });
+    expect(items.map((item) => [item.eventId, item.parentActId])).toEqual([
+      ["a", null],
+      ["b", "A"],
+      ["in-b", "B"],
+      ["c", "A"],
+      ["in-a", "A"],
+      ["after", null]
+    ]);
+  });
+
+  it("leaves out element load errors of recorded failed requests", () => {
+    const failed: ActivityRequest = request("img", "https://app.example.test/a.png", 10, {
+      failed: true,
+      errorText: "net::ERR_CONNECTION_RESET",
+      eventIds: ["q-img"]
+    });
+    const items = selectActivityItems({
+      events: [
+        event("q-img", "network.request", 10, { reqId: "img" }),
+        event("res-img", "error.resource", 11, { tag: "IMG", url: failed.url }),
+        event("res-js", "error.resource", 12, {
+          tag: "SCRIPT",
+          url: "https://app.example.test/missing.js"
+        })
+      ],
+      actions: [],
+      requests: [failed],
+      firstPartyUrl: ORIGIN
+    });
+    expect(items.map((item) => [item.eventId, item.kind, item.isProblem])).toEqual([
+      ["q-img", "request", true],
+      ["res-js", "exception", true]
+    ]);
+  });
+
   it("links a request through the action id of any of its events", () => {
     const [item] = selectActivityItems({
       events: [event("q", "network.request", 50, { reqId: "v" })],

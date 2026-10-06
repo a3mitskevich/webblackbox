@@ -2,8 +2,10 @@ import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import { extractRequestId } from "@webblackbox/protocol";
 
 import {
+  failedRequestUrls,
   isProblemEvent,
   isProblemRequest,
+  isRecordedResourceError,
   readConsoleLevel,
   readEventResourceUrl,
   type ProblemRequest
@@ -166,6 +168,10 @@ type FeedContext = {
   actIds: ReadonlySet<string>;
   /** Actions with span bounds, by start time. */
   spans: readonly Required<ActivityAction>[];
+  /** The latest end among `spans[0..i]`: no span at or before `i` contains a later event. */
+  spanEndsUpTo: readonly number[];
+  /** URLs of failed requests (their `error.resource` events repeat them). */
+  failedUrls: ReadonlySet<string>;
   requestById: ReadonlyMap<string, ActivityRequest>;
   /** The event that stands for each request (its `network.request`, else its first event). */
   requestByEventId: ReadonlyMap<string, ActivityRequest>;
@@ -220,8 +226,12 @@ function eventTraits(event: WebBlackboxEvent, context: FeedContext): ItemTraits 
     asText(asRecord(event.data)?.networkRequestId) ??
     (type.startsWith("network.") ? extractRequestId(event) : null);
 
-  // A response, body or console line about a recorded request: the request row stands for it.
-  if (linkedRequest && context.requestById.has(linkedRequest)) {
+  // A response, body, console line or element error about a recorded request: the request row
+  // stands for it.
+  if (
+    (linkedRequest && context.requestById.has(linkedRequest)) ||
+    isRecordedResourceError(event, context.failedUrls)
+  ) {
     return null;
   }
 
@@ -285,17 +295,25 @@ function buildContext(input: ActivityFeedInput, scope: ActivityScope): FeedConte
     }
   }
 
+  const spans = input.actions
+    .filter(
+      (action): action is Required<ActivityAction> =>
+        typeof action.startMono === "number" && typeof action.endMono === "number"
+    )
+    .sort((left, right) => left.startMono - right.startMono);
+  const spanEndsUpTo: number[] = [];
+  spans.forEach((span, index) =>
+    spanEndsUpTo.push(Math.max(span.endMono, spanEndsUpTo[index - 1] ?? -Infinity))
+  );
+
   return {
     input,
     scope,
     triggerToAct: new Map(input.actions.map((action) => [action.triggerEventId, action.actId])),
     actIds: new Set(input.actions.map((action) => action.actId)),
-    spans: input.actions
-      .filter(
-        (action): action is Required<ActivityAction> =>
-          typeof action.startMono === "number" && typeof action.endMono === "number"
-      )
-      .sort((left, right) => left.startMono - right.startMono),
+    spans,
+    spanEndsUpTo,
+    failedUrls: failedRequestUrls(input.requests),
     requestById: new Map(input.requests.map((request) => [request.reqId, request])),
     requestByEventId
   };
@@ -317,19 +335,38 @@ function parentActionOf(
     return linked === actId ? null : linked;
   }
 
-  for (let index = context.spans.length - 1; index >= 0; index -= 1) {
+  // From the last span that starts at or before the event, back while one may still contain it.
+  for (
+    let index = lastSpanStartingBy(context.spans, event.mono);
+    index >= 0 && (context.spanEndsUpTo[index] ?? -Infinity) >= event.mono;
+    index -= 1
+  ) {
     const span = context.spans[index];
 
-    if (!span || span.startMono > event.mono) {
-      continue;
-    }
-
-    if (span.actId !== actId && event.mono <= span.endMono) {
+    if (span && span.actId !== actId && event.mono <= span.endMono) {
       return span.actId;
     }
   }
 
   return null;
+}
+
+/** Index of the last span (by start) that starts at or before `mono`, or -1. */
+function lastSpanStartingBy(spans: readonly Required<ActivityAction>[], mono: number): number {
+  let low = 0;
+  let high = spans.length;
+
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+
+    if ((spans[middle]?.startMono ?? Infinity) <= mono) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  return low - 1;
 }
 
 /**
