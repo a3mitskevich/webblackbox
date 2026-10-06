@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { VirtualList } from "../../components/virtual-list.js";
 import { useI18n } from "../../context.js";
 import { useFeatureI18n } from "../messages.js";
-import type { CodeLanguage } from "./body.js";
 import type { CodeToken, HighlightLanguage } from "./highlight.js";
 import { networkMessages } from "./messages.js";
 
@@ -15,7 +14,7 @@ const LINE_HEIGHT = 19;
 
 type CodeViewProps = {
   text: string;
-  language: CodeLanguage | "shellscript";
+  language: "plain" | HighlightLanguage;
   testId?: string;
   /** A short block (a message, a curl command) grows with its content instead of scrolling. */
   inline?: boolean;
@@ -23,7 +22,7 @@ type CodeViewProps = {
 
 function useHighlight(
   text: string,
-  language: CodeLanguage | "shellscript",
+  language: "plain" | HighlightLanguage,
   enabled: boolean
 ): CodeToken[][] | null {
   const [state, setState] = useState<{
