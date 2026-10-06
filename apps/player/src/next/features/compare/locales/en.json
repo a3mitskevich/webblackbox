@@ -52,5 +52,13 @@
   "bodyCut": "Only the first {limit} of each body are compared.",
   "endpointFailed": "{count} failed",
   "sideA": "A · p95",
-  "sideB": "B · p95"
+  "sideB": "B · p95",
+  "typeColumn": "Event type",
+  "storageKindColumn": "Storage kind",
+  "countA": "Count in A",
+  "countB": "Count in B",
+  "endpointsShown": "Showing {shown} of {total} endpoints.",
+  "bodySameCut": "No difference in the first {limit} of each body.",
+  "bodyTooDifferent": "The bodies differ too much to diff line by line.",
+  "bodyDiffLabel": "Response body diff"
 }

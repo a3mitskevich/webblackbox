@@ -227,18 +227,28 @@
 .cmp-headers .hd-removed {
   color: var(--bad);
 }
+/* The body diff is a VirtualList (fixed 19px rows, see DIFF_ROW_HEIGHT in body-diff.tsx). */
 .cmp-lines {
-  margin: 0;
+  flex: none;
   max-height: 420px;
-  overflow: auto;
   border: 1px solid var(--line-2);
   border-radius: 8px;
   background: var(--surface-2);
-  font: 12px/1.55 var(--mono);
+  font: 12px/19px var(--mono);
+}
+/* Long lines scroll sideways; the row tints span the widest line in view. */
+.cmp-lines .vlist-window {
+  right: auto;
+  width: max-content;
+  min-width: 100%;
 }
 .cmp-lines .dl {
   display: flex;
+  height: 19px;
   white-space: pre;
+}
+.cmp-lines .dl code {
+  font: inherit;
 }
 .cmp-lines .dl .n {
   flex: 0 0 4.5ch;
@@ -260,7 +270,7 @@
 }
 .cmp-lines .dl.fold {
   display: block;
-  padding: 2px 12px;
+  padding: 0 12px;
   color: var(--ink-3);
   background: var(--line-2);
 }
@@ -272,6 +282,18 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.cmp-pair .cmp-table td:first-child {
-  width: 58%;
+/* Event types and storage: the name column takes the rest and the counts keep their width
+   (table-layout: fixed sizes columns from the hidden header row). */
+.cmp-pair .cmp-table th:first-child {
+  width: auto;
+}
+.cmp-pair .cmp-table th.num {
+  /* The header cell has no padding; 84px leaves ~8 mono digits beside the cells' 24px. */
+  width: 84px;
+}
+/* Column headers kept for screen readers only (zero-height row, labels visually hidden). */
+.cmp-sr-head th {
+  height: 0;
+  padding: 0;
+  border: 0;
 }

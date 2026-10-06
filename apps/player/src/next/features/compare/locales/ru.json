@@ -52,5 +52,13 @@
   "bodyCut": "Сравниваются только первые {limit} каждого тела.",
   "endpointFailed": "сбоев {count}",
   "sideA": "A · p95",
-  "sideB": "B · p95"
+  "sideB": "B · p95",
+  "typeColumn": "Тип события",
+  "storageKindColumn": "Вид хранилища",
+  "countA": "Количество в A",
+  "countB": "Количество в B",
+  "endpointsShown": "Показано {shown} из {total} эндпоинтов.",
+  "bodySameCut": "В первых {limit} каждого тела различий нет.",
+  "bodyTooDifferent": "Тела слишком сильно различаются для построчного сравнения.",
+  "bodyDiffLabel": "Различия тела ответа"
 }

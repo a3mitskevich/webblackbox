@@ -4,13 +4,20 @@ import {
   alignEndpoints,
   type EndpointAlignment,
   type EndpointSignal,
-  type EndpointSummary,
   type NetworkWaterfallEntry,
   type PlayerComparison,
   type StorageComparison
 } from "@webblackbox/player-sdk";
 import { FileDiff, X } from "lucide-react";
-import { useId, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import {
+  useCallback,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent
+} from "react";
 
 import { DialogDescription, DialogTitle, ModalDialog } from "../../components/modal-dialog.js";
 import { useController, useI18n, usePlayerState } from "../../context.js";
@@ -25,6 +32,7 @@ import {
   openCompareArchive,
   submitComparePassphrase
 } from "./compare-session.js";
+import { EndpointTable } from "./endpoint-table.js";
 import { compareMessages, type CompareTranslate } from "./messages.js";
 import { compareSlice, type CompareArchive, type CompareSlice } from "./slice.js";
 
@@ -143,26 +151,25 @@ function DeltaCard({
   );
 }
 
-function SideCell({
-  summary,
-  t,
-  format
-}: {
-  summary: EndpointSummary | null;
-  t: CompareTranslate;
-  format: (ms: number) => string;
-}) {
-  if (!summary) {
-    return <>—</>;
-  }
-
+/** Column headers of a counts table, for screen readers only (the section heading shows). */
+function CountsHead({ name, t }: { name: string; t: CompareTranslate }) {
   return (
-    <>
-      {t("endpointSide", { count: summary.count, p95: format(summary.p95Ms) })}
-      {summary.failureCount > 0 ? (
-        <span className="failed"> · {t("endpointFailed", { count: summary.failureCount })}</span>
-      ) : null}
-    </>
+    <thead className="cmp-sr-head">
+      <tr>
+        <th scope="col">
+          <span className="visually-hidden">{name}</span>
+        </th>
+        <th scope="col" className="num">
+          <span className="visually-hidden">{t("countA")}</span>
+        </th>
+        <th scope="col" className="num">
+          <span className="visually-hidden">{t("countB")}</span>
+        </th>
+        <th scope="col" className="num">
+          <span className="visually-hidden">{t("countDelta")}</span>
+        </th>
+      </tr>
+    </thead>
   );
 }
 
@@ -205,11 +212,17 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
       ),
     [alignment]
   );
-  const rows = onlyChanged ? alignment.filter((row) => row.signal !== "stable") : alignment;
-  const selected = alignment.find((row) => row.key === selectedKey) ?? null;
+  const rows = useMemo(
+    () => (onlyChanged ? alignment.filter((row) => row.signal !== "stable") : alignment),
+    [alignment, onlyChanged]
+  );
+  const selected = useMemo(
+    () => alignment.find((row) => row.key === selectedKey) ?? null,
+    [alignment, selectedKey]
+  );
+  const diffId = useId();
   const byReqId = (entries: readonly NetworkWaterfallEntry[], reqId: string | undefined) =>
     reqId ? entries.find((entry) => entry.reqId === reqId) : undefined;
-  const ms = (value: number) => i18n.formatMilliseconds(value, { fractionDigits: 0 });
   const signed = (value: number) => i18n.formatNumber(value, { signed: true });
   const regressions = comparison.endpointRegressions
     .filter(
@@ -219,8 +232,14 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
   const typeRows = comparison.typeDeltas.filter((row) => row.delta !== 0).slice(0, MAX_TYPE_ROWS);
   const storageRows = storage.kindDeltas.filter((row) => row.delta !== 0);
 
-  const selectRow = (row: EndpointAlignment): void =>
-    update((slice) => ({ ...slice, selectedKey: slice.selectedKey === row.key ? null : row.key }));
+  const selectRow = useCallback(
+    (row: EndpointAlignment): void =>
+      update((slice) => ({
+        ...slice,
+        selectedKey: slice.selectedKey === row.key ? null : row.key
+      })),
+    [update]
+  );
 
   return (
     <div className="cmp-report" data-testid="compare-report">
@@ -275,54 +294,18 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
         {rows.length === 0 ? (
           <p className="muted">{t("noEndpointChanges")}</p>
         ) : (
-          <table className="cmp-table" data-testid="compare-endpoints">
-            <thead>
-              <tr>
-                <th>{t("endpoint")}</th>
-                <th>{t("sideA")}</th>
-                <th>{t("sideB")}</th>
-                <th>{t("signal")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr
-                  key={row.key}
-                  className={row.key === selectedKey ? "cur" : undefined}
-                  aria-selected={row.key === selectedKey}
-                  onClick={() => selectRow(row)}
-                  data-testid="compare-endpoint-row"
-                  data-signal={row.signal}
-                >
-                  <td className="mono ep" title={row.key}>
-                    <button
-                      type="button"
-                      className="linklike"
-                      aria-expanded={row.key === selectedKey}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        selectRow(row);
-                      }}
-                    >
-                      {row.key}
-                    </button>
-                  </td>
-                  <td className="mono">
-                    <SideCell summary={row.left} t={t} format={ms} />
-                  </td>
-                  <td className="mono">
-                    <SideCell summary={row.right} t={t} format={ms} />
-                  </td>
-                  <td>
-                    <span className={`sig sig-${row.signal}`}>{t(`signal_${row.signal}`)}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <EndpointTable
+            rows={rows}
+            selectedKey={selectedKey}
+            diffId={diffId}
+            onSelect={selectRow}
+            t={t}
+          />
         )}
         {selected ? (
           <BodyDiff
+            id={diffId}
+            label={selected.key}
             left={{
               player: archive.player,
               entry: byReqId(
@@ -393,10 +376,13 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
             <p className="muted">{t("noTypeChanges")}</p>
           ) : (
             <table className="cmp-table" data-testid="compare-types">
+              <CountsHead name={t("typeColumn")} t={t} />
               <tbody>
                 {typeRows.map((row) => (
                   <tr key={row.type}>
-                    <td className="mono">{row.type}</td>
+                    <td className="mono" title={row.type}>
+                      {row.type}
+                    </td>
                     <td className="mono num">{i18n.formatNumber(row.left)}</td>
                     <td className="mono num">{i18n.formatNumber(row.right)}</td>
                     <td className="mono num">{signed(row.delta)}</td>
@@ -414,10 +400,13 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
             <p className="muted">{t("noStorageChanges")}</p>
           ) : (
             <table className="cmp-table" data-testid="compare-storage">
+              <CountsHead name={t("storageKindColumn")} t={t} />
               <tbody>
                 {storageRows.map((row) => (
                   <tr key={row.kind}>
-                    <td className="mono">{row.kind}</td>
+                    <td className="mono" title={row.kind}>
+                      {row.kind}
+                    </td>
                     <td className="mono num">{i18n.formatNumber(row.left)}</td>
                     <td className="mono num">{i18n.formatNumber(row.right)}</td>
                     <td className="mono num">{signed(row.delta)}</td>

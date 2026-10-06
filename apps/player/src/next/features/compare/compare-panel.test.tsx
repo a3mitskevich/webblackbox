@@ -86,6 +86,19 @@ describe("Compare panel", () => {
     expect(diff).toHaveTextContent('"status": "closed"');
     expect(diff.querySelector('[data-kind="add"]')).not.toBeNull();
 
+    expect(regressed).toHaveAttribute("aria-current", "true");
+    const diffId = within(regressed as HTMLElement)
+      .getByRole("button")
+      .getAttribute("aria-controls");
+    expect(screen.getByTestId("compare-diff")).toHaveAttribute("id", diffId);
+
+    const types = within(report).getByTestId("compare-types");
+    expect(
+      within(types)
+        .getAllByRole("columnheader")
+        .map((header) => header.textContent)
+    ).toEqual(["Event type", "Count in A", "Count in B", "Δ count"]);
+
     fireEvent.click(screen.getByTestId("compare-only-changed"));
     expect(
       within(report)
@@ -116,7 +129,7 @@ describe("diff helpers", () => {
   it("folds long unchanged runs and numbers both sides", () => {
     const left = Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\n");
     const right = left.replace("line 10", "line ten");
-    const lines = buildDiffLines(left, right);
+    const lines = buildDiffLines(left, right) ?? [];
 
     expect(lines.filter((line) => line.kind === "fold")).toHaveLength(2);
     expect(lines.find((line) => line.kind === "del")).toMatchObject({ text: "line 10", left: 11 });

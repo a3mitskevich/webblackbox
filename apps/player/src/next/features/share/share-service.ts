@@ -82,6 +82,8 @@ export type UploadOptions = {
   onProgress: (progress: UploadProgress) => void;
   settings?: ShareSettingsStore;
   upload?: typeof uploadArchiveWithProgress;
+  /** Cancels the upload (the promise rejects with an `AbortError`, see `isAbortError`). */
+  signal?: AbortSignal;
 };
 
 /**
@@ -110,7 +112,8 @@ export async function uploadArchive(options: UploadOptions): Promise<string> {
     body,
     (loaded, total) =>
       options.onProgress({ loaded, total: total && total > 0 ? total : body.byteLength }),
-    options.locale
+    options.locale,
+    options.signal
   );
   const shareId = typeof payload.shareId === "string" && payload.shareId ? payload.shareId : null;
   const shareUrl =
@@ -131,7 +134,7 @@ export type SharedArchive = { bytes: Uint8Array; request: ShareArchiveRequest };
 
 type FetchLike = (
   input: string,
-  init: { headers: Record<string, string> }
+  init: { headers: Record<string, string>; redirect: RequestRedirect; signal?: AbortSignal }
 ) => Promise<{
   ok: boolean;
   status: number;
@@ -146,6 +149,7 @@ export async function fetchSharedArchive(options: {
   persist: boolean;
   settings?: ShareSettingsStore;
   fetch?: FetchLike;
+  signal?: AbortSignal;
 }): Promise<SharedArchive> {
   const settings = options.settings ?? browserShareSettings;
   const request = resolveShareArchiveRequest(options.reference.trim(), settings.readBaseUrl());
@@ -160,9 +164,16 @@ export async function fetchSharedArchive(options: {
     settings.remember(request.baseUrl, apiKey);
   }
 
+  // A redirect would carry the key header to wherever it points (custom headers survive
+  // cross-origin redirects), so a request with a key fails on one instead. The share server
+  // redirects only `?key=` links, which authenticate by the query and need no header.
   const response = await (options.fetch ?? (globalThis.fetch as unknown as FetchLike))(
     request.archiveUrl,
-    { headers: apiKey ? { "x-webblackbox-api-key": apiKey } : {} }
+    {
+      headers: apiKey ? { "x-webblackbox-api-key": apiKey } : {},
+      redirect: apiKey ? "error" : "follow",
+      ...(options.signal ? { signal: options.signal } : {})
+    }
   );
 
   if (!response.ok) {
@@ -229,7 +240,12 @@ export type LoadSharedOptions = {
   messages: { failed: (error: string) => string; invalid: string };
   settings?: ShareSettingsStore;
   fetch?: FetchLike;
+  /** Cancels the download (closing the dialog): nothing is opened or reported then. */
+  signal?: AbortSignal;
 };
+
+/** The latest download per player: an older one that finishes late never opens. */
+const latestLoads = new WeakMap<PlayerController["store"], object>();
 
 /**
  * Downloads a shared recording and opens it like a file (an encrypted one asks for its
@@ -240,10 +256,18 @@ export async function loadSharedArchive(
   options: LoadSharedOptions
 ): Promise<boolean> {
   const { store } = controller;
+  const token = {};
+  const isStale = () => options.signal?.aborted === true || latestLoads.get(store) !== token;
+  latestLoads.set(store, token);
   shareSlice.update(store, (slice) => ({ ...slice, open: { phase: "loading" } }));
 
   try {
     const { bytes, request } = await fetchSharedArchive(options);
+
+    if (isStale()) {
+      return false;
+    }
+
     shareSlice.update(store, (slice) => ({ ...slice, dialog: null, open: { phase: "idle" } }));
     await controller.openFile({
       name: `shared-${request.shareId}.webblackbox`,
@@ -251,6 +275,10 @@ export async function loadSharedArchive(
     });
     return true;
   } catch (error) {
+    if (isStale()) {
+      return false;
+    }
+
     const message =
       error instanceof ShareError && error.code === "invalid-reference"
         ? options.messages.invalid

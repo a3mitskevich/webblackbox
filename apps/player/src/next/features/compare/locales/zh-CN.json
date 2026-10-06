@@ -52,5 +52,13 @@
   "bodyCut": "每个响应体只比较前 {limit}。",
   "endpointFailed": "失败 {count}",
   "sideA": "A · p95",
-  "sideB": "B · p95"
+  "sideB": "B · p95",
+  "typeColumn": "事件类型",
+  "storageKindColumn": "存储类型",
+  "countA": "A 中的数量",
+  "countB": "B 中的数量",
+  "endpointsShown": "显示 {total} 个接口中的 {shown} 个。",
+  "bodySameCut": "每个响应体的前 {limit} 没有差异。",
+  "bodyTooDifferent": "响应体差异过大，无法逐行比较。",
+  "bodyDiffLabel": "响应体差异"
 }
