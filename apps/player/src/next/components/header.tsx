@@ -1,5 +1,6 @@
 import { Menu } from "@base-ui/react/menu";
 import { useId, useMemo, type ChangeEvent, type RefObject } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 
 import { formatRecordedAt } from "../../core/format.js";
 import { nextThemePreference, type ThemePreference } from "../../core/preferences.js";
@@ -10,6 +11,7 @@ import { ShareButton } from "../features/share/share-button.js";
 import { profileBannerLines, recordingProfileOf } from "./recording-profile.js";
 import { Hint } from "./hint.js";
 import { Icon, type IconName } from "./icon.js";
+import { paletteKeyLabel } from "./platform.js";
 
 const LOCALE_SHORT_LABELS: Record<PlayerLocale, string> = {
   en: "EN",
@@ -130,7 +132,10 @@ export function Header({ searchRef }: HeaderProps) {
           {meta.encrypted ? i18n.tn("encrypted") : i18n.tn("notEncrypted")}
         </span>
       ) : null}
-      <ProfileChip />
+      {/* A malformed profile only drops the chip; the header and the player stay. */}
+      <ErrorBoundary fallback={null} resetKeys={[archive]}>
+        <ProfileChip />
+      </ErrorBoundary>
       {meta && meta.otherTabs > 0 && meta.tabsEventId ? (
         <Hint label={i18n.tn("otherTabs", { count: i18n.formatNumber(meta.otherTabs) })}>
           <button
@@ -297,7 +302,7 @@ function PlayerMenu() {
             >
               <Icon name="search" />
               {i18n.tn("paletteLabel")}
-              <kbd className="menu-kbd">Ctrl K</kbd>
+              <kbd className="menu-kbd">{paletteKeyLabel()}</kbd>
             </Menu.Item>
             <Menu.Item
               className="menu-item"

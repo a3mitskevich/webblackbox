@@ -1,8 +1,9 @@
 import { CSPProvider } from "@base-ui/react/csp-provider";
-import { lazy, Suspense, useRef } from "react";
+import { useRef } from "react";
 
 import { ProfileBanners } from "./components/profile-banners.js";
 import { HintProvider } from "./components/hint.js";
+import { LazyDialog, retryableLazy } from "./components/lazy-dialog.js";
 import {
   ArchiveStatusLine,
   DropOverlay,
@@ -18,7 +19,7 @@ import { Stage } from "./components/stage.js";
 import { Timeline } from "./components/timeline.js";
 import { ToastHost } from "./components/toasts.js";
 import { Transport } from "./components/transport.js";
-import { PlayerProvider, useI18n, usePlayerState } from "./context.js";
+import { PlayerProvider, useController, useI18n, usePlayerState } from "./context.js";
 import { ProblemsStrip } from "./features/feed/index.js";
 import { GenerateDialogs } from "./features/generate/index.js";
 import type { PlayerController } from "./controller.js";
@@ -32,19 +33,33 @@ import {
 import { WIDE_LAYOUT_QUERY } from "./layout.js";
 
 // Dialogs that load their code (and Base UI Autocomplete) the first time they open.
-const ArchiveInfoDialog = lazy(() => import("./components/archive-info.js"));
-const CommandPalette = lazy(() => import("./components/command-palette.js"));
+const ArchiveInfoDialog = retryableLazy(() => import("./components/archive-info.js"));
+const CommandPalette = retryableLazy(() => import("./components/command-palette.js"));
 
-/** Opens a lazy dialog only while its flag is set, so its chunk loads on first use. */
+/**
+ * Opens a lazy dialog only while its flag is set, so its chunk loads on first use. A chunk that
+ * fails to load or a dialog that throws closes with a "failed, retry" toast; the player stays.
+ */
 function LazyDialogs() {
+  const controller = useController();
   const archiveInfoOpen = usePlayerState((state) => state.archiveInfoOpen);
   const paletteOpen = usePlayerState((state) => state.paletteOpen);
 
   return (
-    <Suspense fallback={null}>
-      {archiveInfoOpen ? <ArchiveInfoDialog /> : null}
-      {paletteOpen ? <CommandPalette /> : null}
-    </Suspense>
+    <>
+      <LazyDialog
+        open={archiveInfoOpen}
+        dialog={ArchiveInfoDialog}
+        onClose={() => controller.setArchiveInfoOpen(false)}
+        onReopen={() => controller.setArchiveInfoOpen(true)}
+      />
+      <LazyDialog
+        open={paletteOpen}
+        dialog={CommandPalette}
+        onClose={() => controller.setPaletteOpen(false)}
+        onReopen={() => controller.setPaletteOpen(true)}
+      />
+    </>
   );
 }
 
