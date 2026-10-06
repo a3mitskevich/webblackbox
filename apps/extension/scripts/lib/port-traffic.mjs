@@ -50,3 +50,17 @@ export function summarizePortTraffic(stats) {
     binaryKinds
   };
 }
+
+// base64 costs 4/3 of the raw bytes; the request envelope (ids, mime, sid) adds a few hundred
+// bytes per message. A JSON number map costs ~10x, far above this bound.
+const BASE64_WIRE_RATIO = 4 / 3;
+const ENVELOPE_BYTES_PER_MESSAGE = 512;
+
+/** Kinds whose binary payloads crossed the port in a bloated form (e.g. as JSON number maps). */
+export function findBloatedBinaryTraffic(summary) {
+  return (summary?.binaryKinds ?? []).filter(
+    (entry) =>
+      entry.bytes >
+      entry.binaryBytes * BASE64_WIRE_RATIO + entry.messages * ENVELOPE_BYTES_PER_MESSAGE
+  );
+}

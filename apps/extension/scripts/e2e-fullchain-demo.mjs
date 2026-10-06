@@ -43,6 +43,7 @@ import { waitForIndicatorGone, waitForIndicatorText } from "./lib/extension-ui.m
 import { PLAYER_READY_SELECTOR, runPlayerSmoke } from "./lib/player-smoke.mjs";
 import {
   enablePortTrafficMeter,
+  findBloatedBinaryTraffic,
   readPortTrafficStats,
   summarizePortTraffic
 } from "./lib/port-traffic.mjs";
@@ -770,6 +771,11 @@ async function main() {
   const portTraffic = state.swClient
     ? summarizePortTraffic(await readPortTrafficStats(state.swClient).catch(() => null))
     : null;
+  assert(
+    findBloatedBinaryTraffic(portTraffic).length === 0,
+    "Binary payloads crossed the offscreen port in a bloated form",
+    { portTraffic }
+  );
 
   const restartResult = realWorldScenario.includes("restart")
     ? await verifyExtensionRestart(control, baseUrl, extensionId)

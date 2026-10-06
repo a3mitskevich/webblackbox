@@ -266,6 +266,62 @@ async function startTabVideo(): Promise<FakeMediaRecorder> {
   return recorder;
 }
 
+describe("offscreen pipeline requests", () => {
+  beforeEach(async () => {
+    port = new FakePort();
+    FakeMediaRecorder.instances.length = 0;
+    pipelineMock.instances.length = 0;
+    installChromeStub();
+    installMediaStubs();
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.resetModules();
+    await import("./index.js");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(globalThis, "chrome");
+    Reflect.deleteProperty(navigator, "mediaDevices");
+  });
+
+  it("decodes a base64 blob before it reaches the pipeline", async () => {
+    await startSession();
+
+    const stored = await request("putBlob", { mime: "image/webp", base64: "AAGA/w==" });
+
+    expect(stored).toMatchObject({ ok: true, result: "hash-4" });
+    const [mime, bytes] = pipelineMock.instances[0]?.putBlob.mock.calls[0] ?? [];
+    expect(mime).toBe("image/webp");
+    expect(Array.from(bytes ?? [])).toEqual([0, 1, 128, 255]);
+  });
+
+  it("answers a request with missing fields instead of leaving the worker to time out", async () => {
+    await startSession();
+
+    const rejected = await request("putBlob", { mime: "image/webp" });
+
+    expect(rejected).toMatchObject({ ok: false, error: "Missing blob bytes." });
+    expect(pipelineMock.instances[0]?.putBlob).not.toHaveBeenCalled();
+  });
+
+  it("answers an unknown operation with an error", async () => {
+    await startSession();
+
+    const rejected = await request("rewind");
+
+    expect(rejected).toMatchObject({ ok: false, error: "Unsupported pipeline operation: rewind" });
+  });
+
+  it("reports a session it does not hold so the worker can recover it", async () => {
+    const missing = await request("flush");
+
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toContain("Pipeline session not found");
+  });
+});
+
 describe("offscreen tab video chunks", () => {
   beforeEach(async () => {
     port = new FakePort();

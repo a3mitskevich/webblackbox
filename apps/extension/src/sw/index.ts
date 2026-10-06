@@ -20,12 +20,8 @@ import {
   type CaptureMode,
   type ExportPolicy,
   type FreezeReason,
-  type HashesManifest,
   type PointerCaptureOptions,
-  type PrivacyScannerFinding,
-  type PrivacyScannerFindingKind,
   type PrivacyScannerResult,
-  type RedactionProfile,
   type SessionMetadata,
   type WebBlackboxEvent
 } from "@webblackbox/protocol";
@@ -56,6 +52,15 @@ import {
   type SessionListMessage,
   type SessionListItem
 } from "../shared/messages.js";
+import {
+  OFFSCREEN_CONNECT_REQUEST_KIND,
+  type PipelineExportDownloadResult,
+  type ScreenRecordingChunkMessage,
+  type ScreenRecordingEndedMessage,
+  type ScreenRecordingErrorMessage,
+  type ScreenRecordingStopResult,
+  type SwPipelineStatusMessage
+} from "../shared/offscreen-messages.js";
 import {
   DEFAULT_PERFORMANCE_BUDGET,
   normalizePerformanceBudget,
@@ -155,7 +160,14 @@ import {
   buildLiteNetworkResponseRawEvent
 } from "./lite-network-baseline.js";
 import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
-import { createOffscreenPortConnector, OFFSCREEN_UNAVAILABLE_ERROR } from "./offscreen-port.js";
+import {
+  createOffscreenClient,
+  createSessionPipelineClient,
+  OFFSCREEN_DISCONNECTED_ERROR,
+  type OffscreenEventMessage,
+  type SessionPipelineClient
+} from "./offscreen-client.js";
+import { createOffscreenPortConnector } from "./offscreen-port.js";
 import { createPortTrafficMeter } from "./port-traffic.js";
 import { createRecordedTabWatch } from "./recorded-tab-watch.js";
 import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
@@ -337,15 +349,6 @@ type HeapSnapshotCaptureState = {
   truncated: boolean;
 };
 
-type PipelineExportDownloadResult = {
-  fileName: string;
-  sizeBytes: number;
-  downloadUrl: string;
-  downloadId?: number;
-  integrity: HashesManifest;
-  privacyScanner?: PrivacyScannerResult;
-};
-
 type ExportAuditEvent = {
   schemaVersion: 1;
   timestamp: string;
@@ -365,118 +368,6 @@ type ExportAuditEvent = {
 type SessionAnnotation = {
   tags: string[];
   note?: string;
-};
-
-type SessionPipelineClient = {
-  start: (
-    session: SessionMetadata,
-    redactionProfile: RedactionProfile,
-    capturePolicy?: CapturePolicy
-  ) => Promise<void>;
-  ingest: (event: WebBlackboxEvent) => Promise<void>;
-  /** Resolves to the stored NDJSON bytes of the batch. */
-  ingestBatch: (events: WebBlackboxEvent[]) => Promise<number>;
-  flush: () => Promise<void>;
-  putBlob: (mime: string, bytes: Uint8Array) => Promise<string>;
-  exportAndDownload: (options?: {
-    passphrase?: string;
-    includeScreenshots?: boolean;
-    includeScreenRecordings?: boolean;
-    maxArchiveBytes?: number;
-    recentWindowMs?: number;
-  }) => Promise<PipelineExportDownloadResult>;
-  close: (options?: { purge?: boolean }) => Promise<void>;
-};
-
-type OffscreenPipelineRequest = {
-  kind: "sw.pipeline-request";
-  requestId: string;
-  op:
-    | "start"
-    | "ingest"
-    | "ingestBatch"
-    | "flush"
-    | "putBlob"
-    | "exportDownload"
-    | "close"
-    | "startScreenRecording"
-    | "stopScreenRecording";
-  sid: string;
-  session?: SessionMetadata;
-  redactionProfile?: RedactionProfile;
-  capturePolicy?: CapturePolicy;
-  event?: WebBlackboxEvent;
-  events?: WebBlackboxEvent[];
-  mime?: string;
-  bytes?: Uint8Array;
-  passphrase?: string;
-  includeScreenshots?: boolean;
-  includeScreenRecordings?: boolean;
-  maxArchiveBytes?: number;
-  recentWindowMs?: number;
-  purge?: boolean;
-  recordingId?: string;
-  streamId?: string;
-  source?: "tab";
-  reason?: string;
-};
-
-type OffscreenPipelineResponse = {
-  kind: "offscreen.pipeline-response";
-  requestId: string;
-  ok: boolean;
-  result?: unknown;
-  error?: string;
-};
-
-type OffscreenScreenRecordingStartResult = {
-  recordingId: string;
-  source: "tab";
-  mime: string;
-  width?: number;
-  height?: number;
-  frameRate?: number;
-  audio: boolean;
-};
-
-type OffscreenScreenRecordingStopResult = {
-  recordingId: string;
-  mime: string;
-  chunkCount: number;
-  size: number;
-  durationMs: number;
-  width?: number;
-  height?: number;
-  reason?: string;
-};
-
-type OffscreenScreenRecordingChunkMessage = {
-  kind: "offscreen.screen-recording-chunk";
-  sid: string;
-  recordingId: string;
-  index: number;
-  mime: string;
-  /** Content hash of the chunk the offscreen document stored in the pipeline. */
-  chunkId: string;
-  size: number;
-  startOffsetMs?: number;
-  endOffsetMs?: number;
-  durationMs?: number;
-};
-
-type OffscreenScreenRecordingEndedMessage = {
-  kind: "offscreen.screen-recording-ended";
-  sid: string;
-  result: OffscreenScreenRecordingStopResult;
-};
-
-type OffscreenScreenRecordingErrorMessage = {
-  kind: "offscreen.screen-recording-error";
-  sid: string;
-  recordingId?: string;
-  name?: string;
-  message: string;
-  stage?: string;
 };
 
 type RecordingSampling = {
@@ -512,17 +403,7 @@ const pendingStopDrainAcks = new Map<
   }
 >();
 const inFlightContentMessagesByTab = new Map<number, number>();
-const pendingOffscreenRequests = new Map<
-  string,
-  {
-    resolve: (value: unknown) => void;
-    reject: (error: Error) => void;
-    timeout: ReturnType<typeof setTimeout>;
-  }
->();
 const offscreenSessionRecovery = new Map<string, Promise<void>>();
-const offscreenPortTraffic = createPortTrafficMeter();
-let offscreenRequestSeq = 0;
 let freezeBadgeTimer: ReturnType<typeof setTimeout> | null = null;
 let stoppedSessionRecordsQueue: Promise<unknown> = Promise.resolve();
 let liteWebRequestCaptureCleanup: (() => void) | null = null;
@@ -620,12 +501,8 @@ const STOP_DRAIN_CONTENT_RAW_TYPES = new Set([
 ]);
 const PERF_LOG_FLAG = "__WEBBLACKBOX_PERF__";
 const PORT_DEBUG_LOG_FLAG = "__WEBBLACKBOX_DEBUG_PORT__";
-const PERF_WARN_MS = 40;
-const OFFSCREEN_REQUEST_TIMEOUT_DEFAULT_MS = 30_000;
-const OFFSCREEN_REQUEST_TIMEOUT_EXPORT_MS = 12 * 60_000;
 const OFFSCREEN_PORT_READY_TIMEOUT_MS = 5_000;
 const OFFSCREEN_PORT_READY_WAIT_MS = 25;
-const OFFSCREEN_CONNECT_REQUEST_KIND = "sw.offscreen-connect";
 const STOP_DRAIN_ACK_TIMEOUT_MS = 3_000;
 const CDP_ARTIFACT_TIMEOUT_MS = 5_000;
 // Priming a live child session takes milliseconds; see primeChildSession.
@@ -669,6 +546,12 @@ const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
     pollMs: OFFSCREEN_PORT_READY_WAIT_MS
   }
 );
+const offscreenClient = createOffscreenClient({
+  ensurePort: ensureOffscreenPortReady,
+  recoverSession: recoverOffscreenSession,
+  traffic: createPortTrafficMeter(),
+  shouldLogPerf
+});
 const readEnterprisePolicy = createBoundedManagedPolicyReader(
   () => readManagedEnterprisePolicy(chromeApi?.storage?.managed),
   {
@@ -800,7 +683,7 @@ chromeApi?.runtime?.onConnect.addListener((port) => {
 
     if (offscreenPort === port) {
       offscreenPort = null;
-      rejectPendingOffscreenRequests("Offscreen pipeline disconnected.");
+      offscreenClient.rejectPending(OFFSCREEN_DISCONNECTED_ERROR);
       markStoppedPipelinesDetached();
 
       if (sessionsByTab.size > 0) {
@@ -1315,7 +1198,7 @@ async function startSession(
   };
 
   const recorderPlugins = createDefaultRecorderPlugins();
-  const pipeline = createOffscreenPipelineClient(sid);
+  const pipeline = createSessionPipelineClient(offscreenClient, sid);
   await pipeline.start(metadata, recorderConfig.redaction, recorderConfig.capturePolicy);
 
   const runtime = createSessionRuntime({
@@ -2571,167 +2454,6 @@ async function drainPipelineBufferBatches(
   }
 }
 
-function createOffscreenPipelineClient(sid: string): SessionPipelineClient {
-  return {
-    start: async (session, redactionProfile, capturePolicy) => {
-      await requestOffscreenPipeline<void>({
-        op: "start",
-        sid,
-        session,
-        redactionProfile,
-        capturePolicy
-      });
-    },
-    ingest: async (event) => {
-      await requestOffscreenPipeline<void>({
-        op: "ingest",
-        sid,
-        event
-      });
-    },
-    ingestBatch: async (events) => {
-      const bytes = await requestOffscreenPipeline<unknown>({
-        op: "ingestBatch",
-        sid,
-        events
-      });
-
-      return typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
-    },
-    flush: async () => {
-      await requestOffscreenPipeline<void>({
-        op: "flush",
-        sid
-      });
-    },
-    putBlob: async (mime, bytes) => {
-      return requestOffscreenPipeline<string>({
-        op: "putBlob",
-        sid,
-        mime,
-        bytes
-      });
-    },
-    exportAndDownload: async (options = {}) => {
-      const exported = await requestOffscreenPipeline<unknown>({
-        op: "exportDownload",
-        sid,
-        passphrase: options.passphrase,
-        includeScreenshots: options.includeScreenshots,
-        includeScreenRecordings: options.includeScreenRecordings,
-        maxArchiveBytes: options.maxArchiveBytes,
-        recentWindowMs: options.recentWindowMs
-      });
-
-      return normalizePipelineExportDownloadResult(exported);
-    },
-    close: async (options = {}) => {
-      await requestOffscreenPipeline<void>({
-        op: "close",
-        sid,
-        purge: options.purge
-      });
-    }
-  };
-}
-
-async function requestOffscreenPipeline<TResult>(
-  request: Omit<OffscreenPipelineRequest, "kind" | "requestId">
-): Promise<TResult> {
-  const startedAt = perfNow();
-  const result = await requestOffscreenPipelineWithRecovery<TResult>(request);
-
-  const durationMs = perfNow() - startedAt;
-
-  if (durationMs >= PERF_WARN_MS && shouldLogPerf()) {
-    console.info("[WebBlackbox][perf] offscreen request", {
-      op: request.op,
-      durationMs: Number(durationMs.toFixed(2)),
-      queuePending: pendingOffscreenRequests.size
-    });
-  }
-
-  return result as TResult;
-}
-
-async function requestOffscreenPipelineWithRecovery<TResult>(
-  request: Omit<OffscreenPipelineRequest, "kind" | "requestId">
-): Promise<TResult> {
-  try {
-    return await requestOffscreenPipelineOnce<TResult>(request);
-  } catch (error) {
-    if (!shouldRetryOffscreenRequest(request, error)) {
-      throw error;
-    }
-
-    await recoverOffscreenSession(request.sid);
-    return await requestOffscreenPipelineOnce<TResult>(request);
-  }
-}
-
-async function requestOffscreenPipelineOnce<TResult>(
-  request: Omit<OffscreenPipelineRequest, "kind" | "requestId">
-): Promise<TResult> {
-  const port = await ensureOffscreenPortReady();
-  const requestId = `off-${Date.now()}-${offscreenRequestSeq}`;
-  const timeoutMs = resolveOffscreenRequestTimeoutMs(request.op);
-  offscreenRequestSeq += 1;
-
-  const result = await new Promise<unknown>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pendingOffscreenRequests.delete(requestId);
-      reject(new Error(`Timed out waiting for offscreen response: ${request.op}`));
-    }, timeoutMs);
-
-    pendingOffscreenRequests.set(requestId, {
-      resolve,
-      reject,
-      timeout
-    });
-
-    try {
-      const message = {
-        kind: "sw.pipeline-request",
-        requestId,
-        ...request
-      };
-      offscreenPortTraffic.recordSent(request.op, message, request.bytes?.byteLength ?? 0);
-      port.postMessage(message);
-    } catch (error) {
-      clearTimeout(timeout);
-      pendingOffscreenRequests.delete(requestId);
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
-  });
-
-  return result as TResult;
-}
-
-function shouldRetryOffscreenRequest(
-  request: Omit<OffscreenPipelineRequest, "kind" | "requestId">,
-  error: unknown
-): boolean {
-  if (request.op === "start") {
-    return false;
-  }
-
-  const message = error instanceof Error ? error.message : String(error);
-
-  return (
-    message.includes("Pipeline session not found") ||
-    message.includes("Offscreen pipeline disconnected") ||
-    message.includes(OFFSCREEN_UNAVAILABLE_ERROR)
-  );
-}
-
-function resolveOffscreenRequestTimeoutMs(requestOp: OffscreenPipelineRequest["op"]): number {
-  if (requestOp === "exportDownload") {
-    return OFFSCREEN_REQUEST_TIMEOUT_EXPORT_MS;
-  }
-
-  return OFFSCREEN_REQUEST_TIMEOUT_DEFAULT_MS;
-}
-
 async function ensureOffscreenPortReady(): Promise<PortLike> {
   await orphanedOffscreenCleanup;
   return offscreenPortConnector.ensurePort();
@@ -2742,71 +2464,35 @@ function handleOffscreenRuntimeMessage(rawMessage: unknown, port: PortLike): boo
     return false;
   }
 
-  if (rawMessage === null || typeof rawMessage !== "object" || Array.isArray(rawMessage)) {
-    return false;
+  const message = offscreenClient.receive(rawMessage);
+
+  if (message) {
+    handleOffscreenEvent(message);
   }
 
-  const kind = (rawMessage as { kind?: unknown }).kind;
-  offscreenPortTraffic.recordReceived(typeof kind === "string" ? kind : "unknown", rawMessage);
-
-  if (kind === "offscreen.ready") {
-    notifyOffscreenPipelineStatus();
-    return true;
-  }
-
-  if (kind === "offscreen.keepalive") {
-    return true;
-  }
-
-  if (kind === "offscreen.screen-recording-chunk") {
-    handleOffscreenScreenRecordingChunk(rawMessage as OffscreenScreenRecordingChunkMessage);
-    return true;
-  }
-
-  if (kind === "offscreen.screen-recording-ended") {
-    void handleOffscreenScreenRecordingEnded(
-      rawMessage as OffscreenScreenRecordingEndedMessage
-    ).catch((error) => {
-      console.warn("[WebBlackbox] failed to finalize screen recording", error);
-    });
-    return true;
-  }
-
-  if (kind === "offscreen.screen-recording-error") {
-    handleOffscreenScreenRecordingError(rawMessage as OffscreenScreenRecordingErrorMessage);
-    return true;
-  }
-
-  if (kind !== "offscreen.pipeline-response") {
-    return false;
-  }
-
-  const response = rawMessage as OffscreenPipelineResponse;
-  const pending = pendingOffscreenRequests.get(response.requestId);
-
-  if (!pending) {
-    return true;
-  }
-
-  clearTimeout(pending.timeout);
-  pendingOffscreenRequests.delete(response.requestId);
-
-  if (response.ok) {
-    pending.resolve(response.result);
-  } else {
-    pending.reject(new Error(response.error ?? "Offscreen pipeline request failed."));
-  }
-
+  // Nothing on the offscreen port is meant for the inbound router.
   return true;
 }
 
-function rejectPendingOffscreenRequests(message: string): void {
-  for (const pending of pendingOffscreenRequests.values()) {
-    clearTimeout(pending.timeout);
-    pending.reject(new Error(message));
+function handleOffscreenEvent(message: OffscreenEventMessage): void {
+  switch (message.kind) {
+    case "offscreen.ready":
+      notifyOffscreenPipelineStatus();
+      return;
+    case "offscreen.keepalive":
+      return;
+    case "offscreen.screen-recording-chunk":
+      handleOffscreenScreenRecordingChunk(message);
+      return;
+    case "offscreen.screen-recording-ended":
+      void handleOffscreenScreenRecordingEnded(message).catch((error) => {
+        console.warn("[WebBlackbox] failed to finalize screen recording", error);
+      });
+      return;
+    case "offscreen.screen-recording-error":
+      handleOffscreenScreenRecordingError(message);
+      return;
   }
-
-  pendingOffscreenRequests.clear();
 }
 
 async function recoverAllActiveOffscreenPipelines(): Promise<void> {
@@ -2834,7 +2520,7 @@ async function recoverOffscreenSession(sid: string): Promise<void> {
       return;
     }
 
-    await requestOffscreenPipelineOnce<void>({
+    await offscreenClient.requestOnce({
       op: "start",
       sid,
       session: toSessionMetadata(runtime),
@@ -3585,7 +3271,7 @@ async function startScreenRecording(runtime: SessionRuntime): Promise<void> {
   runtime.screenRecording = recording;
 
   try {
-    const result = await requestOffscreenPipeline<OffscreenScreenRecordingStartResult>({
+    const result = await offscreenClient.request({
       op: "startScreenRecording",
       sid: runtime.sid,
       recordingId,
@@ -3635,7 +3321,7 @@ async function stopScreenRecording(runtime: SessionRuntime, reason: string): Pro
   }
 
   recording.stopPromise = (async () => {
-    const result = await requestOffscreenPipeline<OffscreenScreenRecordingStopResult>({
+    const result = await offscreenClient.request({
       op: "stopScreenRecording",
       sid: runtime.sid,
       recordingId: recording.recordingId,
@@ -3648,7 +3334,7 @@ async function stopScreenRecording(runtime: SessionRuntime, reason: string): Pro
 }
 
 /** The offscreen document has already stored the chunk; the worker records where it is. */
-function handleOffscreenScreenRecordingChunk(message: OffscreenScreenRecordingChunkMessage): void {
+function handleOffscreenScreenRecordingChunk(message: ScreenRecordingChunkMessage): void {
   const runtime = sessionsBySid.get(message.sid);
   const recording = runtime?.screenRecording;
 
@@ -3656,15 +3342,7 @@ function handleOffscreenScreenRecordingChunk(message: OffscreenScreenRecordingCh
     return;
   }
 
-  const chunkId = typeof message.chunkId === "string" ? message.chunkId : "";
-  const size = asFiniteNumber(message.size) ?? 0;
-
-  if (!chunkId || size <= 0) {
-    return;
-  }
-
-  const index = resolveScreenRecordingChunkIndex(message.index, recording.chunkCount);
-  const mime = typeof message.mime === "string" && message.mime ? message.mime : recording.mime;
+  const { chunkId, index, mime, size } = message;
   recording.chunks[index] = chunkId;
   recording.chunkCount = Math.max(recording.chunkCount, index + 1);
   recording.sizeBytes += size;
@@ -3682,15 +3360,15 @@ function handleOffscreenScreenRecordingChunk(message: OffscreenScreenRecordingCh
       index,
       mime,
       size,
-      startOffsetMs: normalizeRecordingOffset(message.startOffsetMs),
-      endOffsetMs: normalizeRecordingOffset(message.endOffsetMs),
-      durationMs: normalizeRecordingOffset(message.durationMs)
+      startOffsetMs: message.startOffsetMs,
+      endOffsetMs: message.endOffsetMs,
+      durationMs: message.durationMs
     }
   });
 }
 
 async function handleOffscreenScreenRecordingEnded(
-  message: OffscreenScreenRecordingEndedMessage
+  message: ScreenRecordingEndedMessage
 ): Promise<void> {
   const runtime = sessionsBySid.get(message.sid);
 
@@ -3701,7 +3379,7 @@ async function handleOffscreenScreenRecordingEnded(
   await finalizeScreenRecording(runtime, message.result);
 }
 
-function handleOffscreenScreenRecordingError(message: OffscreenScreenRecordingErrorMessage): void {
+function handleOffscreenScreenRecordingError(message: ScreenRecordingErrorMessage): void {
   const runtime = sessionsBySid.get(message.sid);
   const recording = runtime?.screenRecording;
 
@@ -3727,7 +3405,7 @@ function handleOffscreenScreenRecordingError(message: OffscreenScreenRecordingEr
 
 async function finalizeScreenRecording(
   runtime: SessionRuntime,
-  result: OffscreenScreenRecordingStopResult
+  result: ScreenRecordingStopResult
 ): Promise<void> {
   const recording = runtime.screenRecording;
 
@@ -3782,16 +3460,6 @@ function ingestScreenRecordingError(
       stage
     }
   });
-}
-
-function resolveScreenRecordingChunkIndex(value: unknown, fallback: number): number {
-  const numberValue = asFiniteNumber(value);
-  return numberValue === null ? Math.max(0, fallback) : Math.max(0, Math.round(numberValue));
-}
-
-function normalizeRecordingOffset(value: unknown): number | undefined {
-  const numberValue = asFiniteNumber(value);
-  return numberValue === null ? undefined : Math.max(0, Math.round(numberValue));
 }
 
 function createScreenRecordingId(sid: string): string {
@@ -4534,117 +4202,6 @@ function toStatusSampling(runtime: SessionRuntime): RecordingSampling {
   };
 }
 
-function normalizePipelineExportDownloadResult(raw: unknown): PipelineExportDownloadResult {
-  const row = asRecord(raw);
-
-  if (!row) {
-    throw new Error("Invalid offscreen export payload.");
-  }
-
-  const fileName =
-    typeof row.fileName === "string" && row.fileName.length > 0
-      ? row.fileName
-      : "session.webblackbox";
-
-  const sizeBytes = asFiniteNumber(row.sizeBytes);
-  const downloadUrl =
-    typeof row.downloadUrl === "string" && row.downloadUrl.length > 0 ? row.downloadUrl : null;
-
-  if (sizeBytes === null || sizeBytes <= 0) {
-    throw new Error("Offscreen export payload did not include valid archive size.");
-  }
-
-  if (!downloadUrl) {
-    throw new Error("Offscreen export payload did not include download URL.");
-  }
-
-  return {
-    fileName,
-    sizeBytes: Math.round(sizeBytes),
-    downloadUrl,
-    downloadId: asFiniteNumber(row.downloadId) ?? undefined,
-    integrity: normalizeHashesManifest(row.integrity),
-    privacyScanner: normalizePrivacyScannerResult(row.privacyScanner)
-  };
-}
-
-function normalizePrivacyScannerResult(raw: unknown): PrivacyScannerResult | undefined {
-  const row = asRecord(raw);
-
-  if (!row) {
-    return undefined;
-  }
-
-  const status = row.status === "blocked" ? "blocked" : row.status === "passed" ? "passed" : null;
-  const scannedAt = typeof row.scannedAt === "string" ? row.scannedAt : new Date().toISOString();
-  const preEncryption = row.preEncryption === true;
-  const findings = Array.isArray(row.findings)
-    ? row.findings.map(normalizePrivacyScannerFinding).filter((finding) => finding !== null)
-    : [];
-
-  if (!status) {
-    return undefined;
-  }
-
-  return {
-    scannedAt,
-    preEncryption,
-    status,
-    findings
-  };
-}
-
-function normalizePrivacyScannerFinding(raw: unknown): PrivacyScannerFinding | null {
-  const row = asRecord(raw);
-
-  if (!row) {
-    return null;
-  }
-
-  const kind = normalizePrivacyScannerFindingKind(row.kind);
-  const path = typeof row.path === "string" && row.path.length > 0 ? row.path : null;
-  const matchCount = asFiniteNumber(row.matchCount);
-  const sampleSha256 =
-    typeof row.sampleSha256 === "string" && /^[a-f0-9]{64}$/u.test(row.sampleSha256)
-      ? row.sampleSha256
-      : "0".repeat(64);
-
-  if (!kind || !path || matchCount === null || matchCount <= 0) {
-    return null;
-  }
-
-  return {
-    kind,
-    severity: "high",
-    path,
-    matchCount: Math.round(matchCount),
-    sampleSha256
-  };
-}
-
-function normalizePrivacyScannerFindingKind(raw: unknown): PrivacyScannerFindingKind | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-
-  switch (raw) {
-    case "jwt":
-    case "bearer-token":
-    case "api-key":
-    case "oauth-code":
-    case "session-cookie":
-    case "email":
-    case "phone":
-    case "credit-card":
-    case "ssn":
-    case "private-key":
-    case "long-secret":
-      return raw;
-    default:
-      return null;
-  }
-}
-
 function buildExportPrivacyWarning(
   scanner: PrivacyScannerResult | undefined
 ): ExportPrivacyWarning | undefined {
@@ -4666,25 +4223,6 @@ function buildExportPrivacyWarning(
     findingCount: scanner.findings.length,
     summary,
     findings
-  };
-}
-
-function normalizeHashesManifest(value: unknown): HashesManifest {
-  const row = asRecord(value);
-  const filesRow = asRecord(row?.files);
-  const files: Record<string, string> = {};
-
-  if (filesRow) {
-    for (const [name, digest] of Object.entries(filesRow)) {
-      if (typeof digest === "string") {
-        files[name] = digest;
-      }
-    }
-  }
-
-  return {
-    manifestSha256: typeof row?.manifestSha256 === "string" ? row.manifestSha256 : "",
-    files
   };
 }
 
@@ -5114,7 +4652,7 @@ function restoreStoppedRuntime(
     config: snapshot.config,
     startedAt: snapshot.startedAt,
     stoppedAt: snapshot.stoppedAt,
-    pipeline: createOffscreenPipelineClient(snapshot.sid),
+    pipeline: createSessionPipelineClient(offscreenClient, snapshot.sid),
     recorderPlugins: createDefaultRecorderPlugins(),
     performanceBudget,
     counters: snapshot.counters
@@ -6176,7 +5714,7 @@ function notifyOffscreenPipelineStatus(): void {
   }
 
   try {
-    const message = {
+    const message: SwPipelineStatusMessage = {
       kind: "sw.pipeline-status",
       activeSessions: sessionsByTab.size,
       sessions: [...sessionsByTab.values()].map((runtime) => ({
@@ -6194,8 +5732,7 @@ function notifyOffscreenPipelineStatus(): void {
       })),
       updatedAt: Date.now()
     };
-    offscreenPortTraffic.recordSent(message.kind, message);
-    port.postMessage(message);
+    offscreenClient.post(port, message);
   } catch (error) {
     connectedPorts.delete(port);
 

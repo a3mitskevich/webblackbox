@@ -32,6 +32,7 @@ import {
 } from "./lib/extension-ui.mjs";
 import {
   enablePortTrafficMeter,
+  findBloatedBinaryTraffic,
   readPortTrafficStats,
   summarizePortTraffic
 } from "./lib/port-traffic.mjs";
@@ -327,6 +328,11 @@ async function main() {
 
   const portTraffic = summarizePortTraffic(await readPortTrafficStats(swClient));
   assert(portTraffic, "Service worker reported no offscreen port traffic.");
+  assert(
+    findBloatedBinaryTraffic(portTraffic).length === 0,
+    "Binary payloads crossed the offscreen port in a bloated form.",
+    { portTraffic }
+  );
 
   const sessionsAfterStop = await readRuntimeSessions(popupClient);
   assert(
