@@ -7,6 +7,7 @@
     "baseUrl": ".",
     "paths": {
       "@webblackbox/pipeline": ["../pipeline/src/index.ts"],
+      "@webblackbox/protocol/schemas": ["../protocol/src/schemas-entry.ts"],
       "@webblackbox/protocol": ["../protocol/src/index.ts"],
       "@webblackbox/recorder": ["../recorder/src/index.ts"]
     }

@@ -9,6 +9,7 @@
       "@webblackbox/cdp-router": ["../../packages/cdp-router/src/index.ts"],
       "@webblackbox/pipeline": ["../../packages/pipeline/src/index.ts"],
       "@webblackbox/pipeline/storage": ["../../packages/pipeline/src/storage-entry.ts"],
+      "@webblackbox/protocol/schemas": ["../../packages/protocol/src/schemas-entry.ts"],
       "@webblackbox/protocol": ["../../packages/protocol/src/index.ts"],
       "@webblackbox/recorder": ["../../packages/recorder/src/index.ts"],
       "webblackbox": ["../../packages/webblackbox/src/index.ts"],
