@@ -15,6 +15,7 @@ import {
 import { resolveRequestScope, resolveScopeByEventId } from "../../../core/filters.js";
 import type { PlayerLocale } from "../../../lib/i18n.js";
 import { matchesScopeFilter, type EventScope, type ScopeFilter } from "../../../lib/scope.js";
+import { isInRange, isSameRange, type TimeRange } from "../../../core/time-range.js";
 import { asFiniteNumber, asRecord, asString } from "../../../lib/parsing.js";
 import { compactText, shortUrl } from "../../../lib/text.js";
 import type { IconName } from "../../components/icon.js";
@@ -72,6 +73,8 @@ export type FeedParams = {
   expanded: readonly string[];
   selectedEventId: string | null;
   locale: PlayerLocale;
+  /** The timeline range: only items inside it are listed (`null` or missing: all). */
+  range?: TimeRange | null;
 };
 
 type StreamStats = { frames: number; signalR: boolean };
@@ -650,14 +653,17 @@ export function computeFeedView(archive: LoadedArchive, params: FeedParams): Fee
   // A scope left over from another recording does not empty a feed without iframes (the toggle
   // that would reset it is not shown then).
   const scope = data.scopeCounts.iframe > 0 ? params.scope : "all";
-  const filtering = matches !== null || scope !== "all";
+  const range = params.range ?? null;
+  const filtering = matches !== null || scope !== "all" || range !== null;
   const { rows, hiddenThirdParty } = buildActivityRows(items, {
     errorsOnly: params.errorsOnly,
     hideThirdParty: params.hideThirdParty,
     ...(filtering
       ? {
           matches: (item: ActivityItem, index: number) =>
-            (!matches || matches.has(index)) && matchesScopeFilter(data.scopeOf(item), scope)
+            (!matches || matches.has(index)) &&
+            matchesScopeFilter(data.scopeOf(item), scope) &&
+            isInRange(range, item.mono)
         }
       : {}),
     pinned: (item) => item.eventId === params.selectedEventId
@@ -676,7 +682,8 @@ export function feedParamsOf(state: PlayerState): FeedParams {
     scope: slice.scope,
     expanded: slice.expanded,
     selectedEventId: state.archive ? resolveSelectedEventId(state.archive, state.selection) : null,
-    locale: state.locale
+    locale: state.locale,
+    range: state.range
   };
 }
 
@@ -688,7 +695,8 @@ function sameParams(left: FeedParams, right: FeedParams): boolean {
     left.scope === right.scope &&
     left.expanded === right.expanded &&
     left.selectedEventId === right.selectedEventId &&
-    left.locale === right.locale
+    left.locale === right.locale &&
+    isSameRange(left.range ?? null, right.range ?? null)
   );
 }
 

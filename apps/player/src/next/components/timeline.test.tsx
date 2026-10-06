@@ -63,4 +63,46 @@ describe("Timeline", () => {
     act(() => controller.setLocale("ru"));
     expect(vi.mocked(format.formatRulerSeconds).mock.calls.length).toBeGreaterThan(rulerCalls);
   });
+
+  it("shows the range with a clear button and expands every lane", async () => {
+    const store = createStore<PlayerState>(createInitialState("en", "system"));
+    const controller = createPlayerController(store, {
+      scheduler: { request: () => 0, cancel: () => undefined },
+      mediaCache: createMediaUrlCache({ createUrl: () => "blob:frame", revokeUrl: () => undefined })
+    });
+    render(<App controller={controller} />);
+    await act(async () => {
+      await controller.openFile({
+        name: "synthetic.webblackbox",
+        arrayBuffer: async () => archiveBytes.slice().buffer
+      });
+    });
+    const minMono = store.getState().archive?.model.minMono ?? 0;
+
+    expect(screen.queryByTestId("timeline-range")).not.toBeInTheDocument();
+    act(() => {
+      controller.seek(minMono + 2_000);
+      controller.markRange("start");
+      controller.seek(minMono + 5_000);
+      controller.markRange("end");
+    });
+    expect(screen.getByTestId("range-chip")).toHaveTextContent("Range 0:02.00 – 0:05.00");
+    expect(screen.getByTestId("timeline-range")).toBeInTheDocument();
+    expect(screen.getByTestId("live-region")).toHaveTextContent("Range 0:02.00 – 0:05.00 selected");
+    act(() => screen.getByTestId("range-clear").click());
+    expect(store.getState().range).toBeNull();
+    expect(screen.queryByTestId("range-chip")).not.toBeInTheDocument();
+
+    expect(screen.queryByTestId("lane-console")).not.toBeInTheDocument();
+    act(() => screen.getByTestId("expand-lanes").click());
+    expect(screen.getByTestId("expand-lanes")).toHaveAttribute("aria-pressed", "true");
+    for (const lane of ["navigation", "console", "storage", "pointer", "filmstrip", "tabs"]) {
+      expect(screen.getByTestId(`lane-${lane}`)).toBeInTheDocument();
+    }
+
+    const frame = screen.getAllByTestId("filmstrip-frame")[0] as HTMLElement;
+    expect(frame).toHaveAccessibleName(/^Screenshot at /);
+    act(() => frame.click());
+    expect(store.getState().selection?.kind).toBe("event");
+  });
 });

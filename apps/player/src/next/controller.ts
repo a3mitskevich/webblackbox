@@ -10,7 +10,7 @@ import {
 import { buildArchiveModel, type ScreenRecordingRecord } from "../core/archive-model.js";
 import { isActivityEvent } from "../core/event-row.js";
 import { filterTimelineEvents } from "../core/filters.js";
-import { formatOffset } from "../core/format.js";
+import { formatClock, formatOffset } from "../core/format.js";
 import { createMediaUrlCache, type MediaUrlCache } from "../core/media-cache.js";
 import { findByTime, stepInList, type Direction, type Selection } from "../core/navigation.js";
 import {
@@ -546,7 +546,18 @@ export function createPlayerController(
       const next = moveRangeEdge(state.range, edge, state.playheadMono, bounds(archive));
 
       if (!isSameRange(state.range, next)) {
-        update({ range: next });
+        const { minMono } = archive.model;
+        update({
+          range: next,
+          announcement: next
+            ? i18n().tn("rangeAnnounce", {
+                range: `${formatClock(next.startMono - minMono, state.locale)} – ${formatClock(
+                  next.endMono - minMono,
+                  state.locale
+                )}`
+              })
+            : state.announcement
+        });
       }
     },
 

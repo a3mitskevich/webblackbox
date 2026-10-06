@@ -36,10 +36,11 @@ export function useNetworkView(model: NetworkModel | null): NetworkView | null {
   const locale = usePlayerState((state) => state.locale);
   const chips = useFeatureSlice(networkSlice, selectChips, shallowEqual);
   const sort = useFeatureSlice(networkSlice, selectSort);
+  const range = usePlayerState((state) => state.range);
 
   return useMemo(
-    () => (model ? buildNetworkView(model, { query, ...chips }, sort, locale) : null),
-    [model, query, chips, sort, locale]
+    () => (model ? buildNetworkView(model, { query, ...chips, range }, sort, locale) : null),
+    [model, query, chips, sort, locale, range]
   );
 }
 

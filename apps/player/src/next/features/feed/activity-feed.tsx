@@ -195,6 +195,7 @@ export function ActivityFeed() {
   const query = usePlayerState((state) => state.query);
   const locale = usePlayerState((state) => state.locale);
   const follow = usePlayerState((state) => state.follow);
+  const range = usePlayerState((state) => state.range);
   const isPlaying = usePlayerState((state) => state.isPlaying);
   const slice = useFeatureSlice(feedSlice, selectSlice);
   const updateSlice = useFeatureSliceUpdate(feedSlice);
@@ -221,10 +222,11 @@ export function ActivityFeed() {
             scope: slice.scope,
             expanded: slice.expanded,
             selectedEventId,
-            locale
+            locale,
+            range
           })
         : null,
-    [archive, query, slice, selectedEventId, locale]
+    [archive, query, slice, selectedEventId, locale, range]
   );
   const entries = useMemo(() => view?.entries ?? [], [view]);
   const scrollRef = useRef<HTMLDivElement>(null);

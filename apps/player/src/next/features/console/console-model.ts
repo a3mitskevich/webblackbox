@@ -8,6 +8,7 @@ import {
 } from "@webblackbox/player-sdk";
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 
+import { isInRange, type TimeRange } from "../../../core/time-range.js";
 import { isConsolePrivacyViolation } from "../../../lib/recording-profile-view.js";
 import type { LoadedArchive } from "../../state.js";
 import type { ConsoleSlice } from "./slice.js";
@@ -64,13 +65,15 @@ export function selectConsoleEntries(archive: LoadedArchive): ConsoleRowEntry[] 
 export function buildConsoleView(
   archive: LoadedArchive,
   slice: Pick<ConsoleSlice, "levels" | "groupSimilar" | "hideThirdParty">,
-  query: string
+  query: string,
+  range: TimeRange | null = null
 ): ConsoleView {
   const entries = selectConsoleEntries(archive);
   const needle = query.trim().toLowerCase();
-  const matching = needle
-    ? entries.filter((entry) => searchText(archive, entry).includes(needle))
-    : entries;
+  const matching = entries.filter(
+    (entry) =>
+      isInRange(range, entry.mono) && (!needle || searchText(archive, entry).includes(needle))
+  );
   const firstParty = slice.hideThirdParty
     ? matching.filter((entry) => !entry.isThirdParty)
     : matching;

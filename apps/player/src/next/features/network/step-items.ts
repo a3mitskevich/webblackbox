@@ -16,7 +16,8 @@ export function networkStepItems(archive: LoadedArchive, state: PlayerState): Li
       type: slice.type,
       failedOnly: slice.failedOnly,
       notCapturedOnly: slice.notCapturedOnly,
-      hideThirdParty: slice.hideThirdParty
+      hideThirdParty: slice.hideThirdParty,
+      range: state.range
     },
     TIME_ORDER,
     state.locale

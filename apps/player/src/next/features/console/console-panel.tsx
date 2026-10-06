@@ -498,20 +498,21 @@ export function ConsolePanel() {
   const t = useFeatureI18n(consoleMessages);
   const archive = usePlayerState((state) => state.archive);
   const query = usePlayerState((state) => state.query);
+  const range = usePlayerState((state) => state.range);
   // Opening a row or switching the stack mode must not rebuild the list.
   const slice = useFeatureSlice(consoleSlice, selectFilters, sameFilters);
   const expandedId = useFeatureSlice(consoleSlice, selectExpandedId);
   const view = useMemo(
     () =>
       archive
-        ? buildConsoleView(archive, slice, query)
+        ? buildConsoleView(archive, slice, query, range)
         : {
             rows: [],
             levelCounts: { error: 0, warn: 0, info: 0, log: 0, debug: 0 },
             hiddenThirdParty: 0,
             total: 0
           },
-    [archive, slice, query]
+    [archive, slice, query, range]
   );
 
   if (!archive) {

@@ -7,6 +7,7 @@ import {
 } from "@webblackbox/player-sdk";
 
 import type { Selection } from "../../../core/navigation.js";
+import { isInRange, type TimeRange } from "../../../core/time-range.js";
 import type { PlayerLocale } from "../../../lib/i18n.js";
 import { describeRequestName, resolveNetworkInitiator } from "../../../lib/network-labels.js";
 import { resolveNetworkSizeBytes } from "../../../lib/network-size.js";
@@ -51,6 +52,8 @@ export type NetworkFilters = {
   failedOnly: boolean;
   notCapturedOnly: boolean;
   hideThirdParty: boolean;
+  /** The timeline range: only rows that start inside it (`null` or missing: all). */
+  range?: TimeRange | null;
 };
 
 export type NetworkSort = { key: NetworkSortKey; direction: NetworkSortDirection };
@@ -335,7 +338,9 @@ export function buildNetworkView(
   sort: NetworkSort,
   locale: PlayerLocale
 ): NetworkView {
-  const matching = filterRowsByQuery(model, filters.query, locale);
+  const range = filters.range ?? null;
+  const queried = filterRowsByQuery(model, filters.query, locale);
+  const matching = range ? queried.filter((row) => isInRange(range, row.startMono)) : queried;
   // The base of the chip counts: the text filter and "Hide third-party".
   const base = filters.hideThirdParty
     ? matching.filter((row) => !isRowThirdParty(model, row))

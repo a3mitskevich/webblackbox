@@ -115,6 +115,29 @@ describe("feed view", () => {
     expect(pinned.entries.map((entry) => entry.item.eventId)).toContain(thirdParty?.item.eventId);
   });
 
+  it("lists only the items inside the timeline range, but keeps the selection", () => {
+    const all = computeFeedView(archive, PARAMS).entries;
+    const middle = all[Math.floor(all.length / 2)]?.item.mono ?? 0;
+    const range = { startMono: middle - 1_000, endMono: middle + 1_000 };
+    const inRange = computeFeedView(archive, { ...PARAMS, range }).entries;
+    const outside = all.find((entry) => entry.item.mono < range.startMono);
+
+    expect(inRange.length).toBeGreaterThan(0);
+    expect(inRange.length).toBeLessThan(all.length);
+    expect(
+      inRange.every(
+        (entry) => entry.item.mono >= range.startMono && entry.item.mono <= range.endMono
+      )
+    ).toBe(true);
+    expect(
+      computeFeedView(archive, {
+        ...PARAMS,
+        range,
+        selectedEventId: outside?.item.eventId ?? null
+      }).entries.map((entry) => entry.item.eventId)
+    ).toContain(outside?.item.eventId);
+  });
+
   it("shows only problems and the actions behind them for Errors only", () => {
     const view = computeFeedView(archive, { ...PARAMS, errorsOnly: true });
     expect(view.entries.length).toBeGreaterThan(1);

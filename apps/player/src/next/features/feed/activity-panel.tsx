@@ -67,6 +67,7 @@ const selectSlice = (slice: FeedSlice): FeedSlice => slice;
 function FeedFilters() {
   const t = useFeatureI18n(feedMessages);
   const archive = usePlayerState((state) => state.archive);
+  const range = usePlayerState((state) => state.range);
   const query = usePlayerState((state) => state.query);
   const locale = usePlayerState((state) => state.locale);
   const selectedEventId = usePlayerState((state) =>
@@ -77,9 +78,9 @@ function FeedFilters() {
   const hidden = useMemo(
     () =>
       archive
-        ? feedViewOf(archive, { ...slice, query, selectedEventId, locale }).hiddenThirdParty
+        ? feedViewOf(archive, { ...slice, query, selectedEventId, locale, range }).hiddenThirdParty
         : 0,
-    [archive, slice, query, selectedEventId, locale]
+    [archive, slice, query, selectedEventId, locale, range]
   );
 
   const showThirdParty = (): void => {

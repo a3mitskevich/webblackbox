@@ -1,4 +1,4 @@
-// e2e:player-next scenarios of the Generate feature (R5), picked up by scripts/e2e-player-next.mjs.
+// e2e:player scenarios of the Generate feature (R5), picked up by scripts/e2e-player.mjs.
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 

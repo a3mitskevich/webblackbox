@@ -1023,7 +1023,111 @@ h2 {
 .hints {
   color: var(--ink-3);
   font-size: 12px;
-  margin: 6px 0 0;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Key hints or the selected range, and the "Expand lanes" switch. */
+.tl-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  min-height: 26px;
+}
+.tl-foot > .btn {
+  flex: none;
+}
+.tl-foot > .btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tl-range-chip {
+  gap: 6px;
+  padding-right: 2px;
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+  font-family: var(--mono);
+}
+/* The selected range across every lane (Shift+drag, [ / ]); under the playhead. */
+.tl-range {
+  position: absolute;
+  top: 16px;
+  bottom: 0;
+  left: calc(74px + (100% - 74px) * var(--rs, 0));
+  width: calc((100% - 74px) * (var(--re, 0) - var(--rs, 0)));
+  background: var(--accent-soft);
+  border-left: 1px solid var(--accent);
+  border-right: 1px solid var(--accent);
+  opacity: 0.55;
+  z-index: 2;
+  pointer-events: none;
+}
+.tick.nav {
+  background: var(--nav);
+}
+.tick.log {
+  background: var(--ink-3);
+  opacity: 0.6;
+}
+.tick.store {
+  background: var(--warn);
+}
+.tick.tabs {
+  background: var(--ink-2);
+}
+.rec-span {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  background: var(--accent);
+  opacity: 0.45;
+  border-radius: 3px;
+}
+/* Pointer lane marks: plain clicks, other buttons, gestures, rage / dead clicks. */
+.pmark {
+  position: absolute;
+  top: 3px;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--fx-click);
+  background: var(--surface);
+  cursor: pointer;
+}
+.pmark-alt {
+  border-style: dashed;
+}
+.pmark-gesture {
+  border-radius: 2px;
+}
+.pmark-problem {
+  border-color: var(--bad);
+  background: var(--bad);
+}
+/* Filmstrip: one frame button per screenshot. */
+.film {
+  position: absolute;
+  top: 1px;
+  width: 6px;
+  height: 14px;
+  margin-left: -3px;
+  padding: 0;
+  border: 1px solid var(--ink-3);
+  border-radius: 1px;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.film:hover,
+.pmark:hover {
+  border-color: var(--accent);
 }
 
 /* Rail */
@@ -1465,8 +1569,15 @@ pre.code {
   .playhead {
     left: calc(100% * var(--p, 0));
   }
+  .tl-range {
+    left: calc(100% * var(--rs, 0));
+    width: calc(100% * (var(--re, 0) - var(--rs, 0)));
+  }
   .hints {
     display: none;
+  }
+  .tl-foot {
+    justify-content: flex-end;
   }
   .rail {
     border-top: 1px solid var(--line);

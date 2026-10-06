@@ -45,6 +45,18 @@ describe("console view", () => {
     expect(view.rows.some((row) => row.entry.isThirdParty)).toBe(false);
   });
 
+  it("keeps only the rows inside the timeline range", () => {
+    const all = buildConsoleView(archive, DEFAULTS, "");
+    const first = all.rows[0]?.entry.mono ?? 0;
+    const view = buildConsoleView(archive, DEFAULTS, "", { startMono: first, endMono: first + 1 });
+
+    expect(view.rows.length).toBeGreaterThan(0);
+    expect(view.rows.length).toBeLessThan(all.rows.length);
+    expect(view.rows.every((row) => row.entry.mono >= first && row.entry.mono <= first + 1)).toBe(
+      true
+    );
+  });
+
   it("narrows by level and text, and groups similar rows", () => {
     const errors = buildConsoleView(archive, { ...DEFAULTS, levels: ["error"] }, "");
     expect(errors.rows.every((row) => row.entry.level === "error")).toBe(true);

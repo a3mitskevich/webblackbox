@@ -158,6 +158,15 @@ describe("network rows", () => {
     expect(socket ? selectionOfRow(socket) : null).toEqual({ kind: "event", id: "open-1" });
   });
 
+  it("keeps only the rows that start inside the timeline range", () => {
+    const all = buildNetworkView(model, FILTERS, BY_START, "en").rows;
+    const second = all[1];
+    const range = second ? { startMono: second.startMono, endMono: second.startMono + 1 } : null;
+
+    expect(ids({ ...FILTERS, range })).toEqual(second ? [second.id] : []);
+    expect(ids({ ...FILTERS, range: null })).toEqual(all.map((row) => row.id));
+  });
+
   it("filters third-party, types, failures and not-captured bodies, with chip counts", () => {
     const view = buildNetworkView(model, FILTERS, BY_START, "en");
     expect(view.rows.map((row) => row.id)).toEqual(["r1", "ws:ws1", "r3", "sse1"]);
