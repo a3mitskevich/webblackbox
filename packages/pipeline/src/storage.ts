@@ -252,12 +252,22 @@ type ChunkRow = {
   value: StoredChunk;
 };
 type BlobRow = DbRow<StoredBlob>;
-type BlobRefsRow = DbRow<string[]>;
+/** One blob tracked for one session; `mime` and `size` describe the blob without reading it. */
+type BlobRefRow = {
+  key: [sid: string, hash: string];
+  sid: string;
+  hash: string;
+  mime: string;
+  size: number;
+};
+/** Before version 4, one row per session listed its blob hashes. */
+type LegacyBlobRefsRow = DbRow<string[]>;
 type SessionRow = DbRow<SessionMetadata>;
 type IndexRow = DbRow<StoredIndexes>;
 type IntegrityRow = DbRow<HashesManifest>;
 
-const DB_VERSION = 3;
+const DB_VERSION = 4;
+const BLOB_REFS_KEYED_BY_SID_HASH_VERSION = 4;
 const CHUNKS_BY_SID_SEQ_INDEX = "by-sid-seq";
 
 export class IndexedDbPipelineStorage implements PipelineStorage {
@@ -385,49 +395,42 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
     return write;
   }
 
+  /**
+   * One transaction: skip a blob the session already tracks, otherwise store it (or count one
+   * more reference to the stored copy) and track it for the session under `[sid, hash]`.
+   */
   private async putBlobNow(blob: StoredBlob, sidHint?: string): Promise<void> {
     const trackingSid = normalizeTrackingSid(sidHint);
+    const refKey: BlobRefRow["key"] | null =
+      trackingSid && SHA256_HEX_PATTERN.test(blob.hash) ? [trackingSid, blob.hash] : null;
 
-    if (trackingSid && (await this.hasTrackedBlobHashForSession(trackingSid, blob.hash))) {
-      return;
-    }
+    await this.writeWithQuotaRecovery(
+      ["blobs", "blobRefs"],
+      async (transaction) => {
+        const blobs = transaction.objectStore("blobs");
+        const refs = transaction.objectStore("blobRefs");
 
-    const existing = await this.getBlob(blob.hash);
-
-    if (existing) {
-      await this.put<BlobRow>(
-        "blobs",
-        {
-          key: blob.hash,
-          value: {
-            ...existing,
-            refCount: existing.refCount + 1
-          }
-        },
-        {
-          allowQuotaRecovery: false
+        if (refKey && (await requestToPromise(refs.getKey(refKey))) !== undefined) {
+          return;
         }
-      );
-      if (trackingSid) {
-        await this.trackBlobHashForSession(trackingSid, blob.hash);
-      }
-      return;
-    }
 
-    await this.put<BlobRow>(
-      "blobs",
-      {
-        key: blob.hash,
-        value: blob
+        const existing = (await requestToPromise<BlobRow | undefined>(blobs.get(blob.hash)))?.value;
+        const row: BlobRow = {
+          key: blob.hash,
+          value: existing ? { ...existing, refCount: existing.refCount + 1 } : blob
+        };
+
+        blobs.put(row);
+
+        if (refKey) {
+          refs.put(createBlobRefRow(refKey, existing ?? blob));
+        }
       },
       {
         allowQuotaRecovery: true,
         protectedSid: sidHint
       }
     );
-    if (trackingSid) {
-      await this.trackBlobHashForSession(trackingSid, blob.hash);
-    }
   }
 
   public async getBlob(hash: string): Promise<StoredBlob | undefined> {
@@ -438,6 +441,15 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
   public async listBlobs(): Promise<StoredBlob[]> {
     const rows = await this.getAll<BlobRow>("blobs");
     return rows.map((row) => row.value);
+  }
+
+  public async listSessionBlobInfo(sid: string): Promise<StoredBlobInfo[]> {
+    const db = await this.db();
+    const rows = await runTransaction(db, "blobRefs", "readonly", (store) =>
+      requestToPromise<BlobRefRow[]>(store.getAll(blobRefRange(sid)))
+    );
+
+    return rows.map(({ hash, mime, size }) => ({ hash, mime, size }));
   }
 
   public async putIndexes(sid: string, indexes: StoredIndexes): Promise<void> {
@@ -512,7 +524,7 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
     return this.dbPromise;
   }
 
-  private async put<TRow>(
+  private put<TRow>(
     storeName: string,
     value: TRow,
     options: {
@@ -520,17 +532,32 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
       protectedSid?: string;
     } = {}
   ): Promise<void> {
-    const allowQuotaRecovery = options.allowQuotaRecovery === true;
-    const recoveryAttempts = allowQuotaRecovery ? MAX_QUOTA_RECOVERY_ATTEMPTS : 0;
+    return this.writeWithQuotaRecovery(
+      [storeName],
+      (transaction) => {
+        transaction.objectStore(storeName).put(value);
+      },
+      options
+    );
+  }
+
+  /** Runs a write transaction; on a quota error, evicts the oldest session and retries. */
+  private async writeWithQuotaRecovery(
+    storeNames: string[],
+    write: (transaction: IDBTransaction) => void | Promise<void>,
+    options: {
+      allowQuotaRecovery?: boolean;
+      protectedSid?: string;
+    }
+  ): Promise<void> {
+    const recoveryAttempts = options.allowQuotaRecovery === true ? MAX_QUOTA_RECOVERY_ATTEMPTS : 0;
     let attempt = 0;
 
     while (true) {
       const db = await this.db();
 
       try {
-        await runTransaction(db, storeName, "readwrite", (store) => {
-          store.put(value);
-        });
+        await runStoresTransaction(db, storeNames, "readwrite", write);
         return;
       } catch (error) {
         if (!isQuotaExceededError(error) || attempt >= recoveryAttempts) {
@@ -622,7 +649,7 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
     return new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(this.dbName, DB_VERSION);
 
-      request.onupgradeneeded = () => {
+      request.onupgradeneeded = (event) => {
         const db = request.result;
 
         for (const storeName of [
@@ -643,6 +670,14 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
 
         if (chunksStore && !chunksStore.indexNames.contains(CHUNKS_BY_SID_SEQ_INDEX)) {
           chunksStore.createIndex(CHUNKS_BY_SID_SEQ_INDEX, ["sid", "seq"], { unique: false });
+        }
+
+        if (
+          transaction &&
+          event.oldVersion > 0 &&
+          event.oldVersion < BLOB_REFS_KEYED_BY_SID_HASH_VERSION
+        ) {
+          migrateLegacyBlobRefs(transaction);
         }
       };
 
@@ -706,45 +741,19 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
     return [...hashes];
   }
 
-  private async trackBlobHashForSession(sid: string, hash: string): Promise<void> {
-    if (!SHA256_HEX_PATTERN.test(hash)) {
-      return;
-    }
-
-    const existing = await this.get<BlobRefsRow>("blobRefs", sid);
-    const next = mergeBlobHashes(existing?.value ?? [], [hash]);
-
-    await this.put<BlobRefsRow>(
-      "blobRefs",
-      {
-        key: sid,
-        value: next
-      },
-      {
-        allowQuotaRecovery: true,
-        protectedSid: sid
-      }
-    );
-  }
-
   private async getTrackedBlobHashes(sid: string): Promise<string[]> {
-    const row = await this.get<BlobRefsRow>("blobRefs", sid);
-    return normalizeBlobHashes(row?.value ?? []);
-  }
+    const db = await this.db();
+    const keys = await runTransaction(db, "blobRefs", "readonly", (store) =>
+      requestToPromise(store.getAllKeys(blobRefRange(sid)))
+    );
 
-  private async hasTrackedBlobHashForSession(sid: string, hash: string): Promise<boolean> {
-    if (!SHA256_HEX_PATTERN.test(hash)) {
-      return false;
-    }
-
-    const tracked = await this.getTrackedBlobHashes(sid);
-    return tracked.includes(hash);
+    return normalizeBlobHashes(keys.map((key) => (key as BlobRefRow["key"])[1]));
   }
 
   private async deleteTrackedBlobHashes(sid: string): Promise<void> {
     const db = await this.db();
     await runTransaction(db, "blobRefs", "readwrite", (store) => {
-      return requestToPromise(store.delete(sid));
+      return requestToPromise(store.delete(blobRefRange(sid)));
     });
   }
 
@@ -777,6 +786,58 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
       }
     );
   }
+}
+
+function createBlobRefRow(
+  key: BlobRefRow["key"],
+  blob: Pick<StoredBlob, "mime" | "size">
+): BlobRefRow {
+  return { key, sid: key[0], hash: key[1], mime: blob.mime, size: blob.size };
+}
+
+/** Every `[sid, hash]` key of one session: arrays sort after strings, `[]` after any hash. */
+function blobRefRange(sid: string): IDBKeyRange {
+  return IDBKeyRange.bound([sid], [sid, []]);
+}
+
+/**
+ * Version 4 upgrade: each legacy `{ key: sid, value: hashes[] }` row becomes one row per
+ * tracked blob, with the blob's type and size read from the blob store.
+ */
+function migrateLegacyBlobRefs(transaction: IDBTransaction): void {
+  const refs = transaction.objectStore("blobRefs");
+  const blobs = transaction.objectStore("blobs");
+  const cursorRequest = refs.openCursor();
+
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+
+    if (!cursor) {
+      return;
+    }
+
+    const row = cursor.value as Partial<LegacyBlobRefsRow>;
+
+    if (typeof row.key === "string" && Array.isArray(row.value)) {
+      const sid = row.key;
+
+      for (const hash of normalizeBlobHashes(row.value)) {
+        const blobRequest = blobs.get(hash);
+
+        blobRequest.onsuccess = () => {
+          const blob = (blobRequest.result as BlobRow | undefined)?.value;
+
+          if (blob) {
+            refs.put(createBlobRefRow([sid, hash], blob));
+          }
+        };
+      }
+
+      cursor.delete();
+    }
+
+    cursor.continue();
+  };
 }
 
 function isQuotaExceededError(error: unknown): boolean {
@@ -853,15 +914,25 @@ function normalizeTrackingSid(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-async function runTransaction<TResult>(
+function runTransaction<TResult>(
   db: IDBDatabase,
   storeName: string,
   mode: IDBTransactionMode,
   handler: (store: IDBObjectStore) => TResult | Promise<TResult>
 ): Promise<TResult> {
-  const transaction = db.transaction(storeName, mode);
-  const store = transaction.objectStore(storeName);
-  const result = await handler(store);
+  return runStoresTransaction(db, [storeName], mode, (transaction) =>
+    handler(transaction.objectStore(storeName))
+  );
+}
+
+async function runStoresTransaction<TResult>(
+  db: IDBDatabase,
+  storeNames: string[],
+  mode: IDBTransactionMode,
+  handler: (transaction: IDBTransaction) => TResult | Promise<TResult>
+): Promise<TResult> {
+  const transaction = db.transaction(storeNames, mode);
+  const result = await handler(transaction);
 
   await new Promise<void>((resolve, reject) => {
     transaction.oncomplete = () => resolve();

@@ -338,7 +338,8 @@ describe("storage", () => {
   it("supports legacy indexeddb layouts where chunks store has no sid/seq index", async () => {
     const sid = "S-legacy-layout";
     const dbName = createDbName();
-    const db = await openRawDb(dbName, 3, (raw) => {
+    // Opened at the current version, so no upgrade adds the index behind the storage's back.
+    const db = await openRawDb(dbName, 4, (raw) => {
       for (const storeName of ["sessions", "chunks", "blobs", "blobRefs", "indexes", "integrity"]) {
         if (!raw.objectStoreNames.contains(storeName)) {
           raw.createObjectStore(storeName, { keyPath: "key" });
@@ -374,6 +375,7 @@ describe("storage", () => {
     const storage = new IndexedDbPipelineStorage(dbName);
     const chunks = await storage.listChunks(sid);
     expect(chunks.map((chunk) => chunk.meta.chunkId)).toEqual(["C-1", "C-2"]);
+    expect((await storage.listChunkMetas(sid)).map((meta) => meta.chunkId)).toEqual(["C-1", "C-2"]);
     expect((await storage.getLatestChunkMeta(sid))?.chunkId).toBe("C-2");
 
     await storage.deleteSession(sid);
@@ -460,5 +462,109 @@ describe("storage", () => {
 
     await storage.deleteSession(sid);
     expect(await innerStorage.getBlob(hash)).toBeUndefined();
+  });
+
+  it("lists chunk metadata in sequence order without other sessions' chunks", async () => {
+    const storage = new IndexedDbPipelineStorage(createDbName());
+
+    await storage.putChunk(createChunk(SESSION_A.sid, "C-2", 2, "a2"));
+    await storage.putChunk(createChunk(SESSION_B.sid, "C-1", 1, "b1"));
+    await storage.putChunk(createChunk(SESSION_A.sid, "C-1", 1, "a1"));
+
+    expect(await storage.listChunkMetas(SESSION_A.sid)).toEqual([
+      chunkMeta("C-1", 1),
+      chunkMeta("C-2", 2)
+    ]);
+  });
+
+  it("describes a session's tracked blobs without reading their bytes", async () => {
+    const storage = new IndexedDbPipelineStorage(createDbName());
+    const first = createBlob("1".repeat(64), Uint8Array.from([1, 2, 3]));
+    const second = { ...createBlob("2".repeat(64), new Uint8Array(10)), mime: "text/plain" };
+
+    await storage.putBlob(first, SESSION_A.sid);
+    await storage.putBlob(second, SESSION_A.sid);
+    // Same bytes under another type: the stored copy's type is what gets exported.
+    await storage.putBlob({ ...first, mime: "text/html" }, SESSION_B.sid);
+
+    expect(
+      (await storage.listSessionBlobInfo(SESSION_A.sid)).sort((a, b) =>
+        a.hash.localeCompare(b.hash)
+      )
+    ).toEqual([
+      { hash: first.hash, mime: first.mime, size: 3 },
+      { hash: second.hash, mime: "text/plain", size: 10 }
+    ]);
+    expect(await storage.listSessionBlobInfo(SESSION_B.sid)).toEqual([
+      { hash: first.hash, mime: first.mime, size: 3 }
+    ]);
+  });
+
+  it("writes a blob and its session reference in one transaction", async () => {
+    const storage = new IndexedDbPipelineStorage(createDbName());
+
+    await storage.putSession(SESSION_A);
+
+    const transaction = vi.spyOn(IDBDatabase.prototype, "transaction");
+
+    try {
+      for (let index = 0; index < 20; index += 1) {
+        const hash = index.toString(16).padStart(64, "0");
+        await storage.putBlob(createBlob(hash, Uint8Array.from([index])), SESSION_A.sid);
+      }
+
+      const writes = transaction.mock.calls.filter(([, mode]) => mode === "readwrite");
+      expect(writes).toHaveLength(20);
+    } finally {
+      transaction.mockRestore();
+    }
+  });
+
+  it("migrates per-session hash lists from version 3 to one row per tracked blob", async () => {
+    const dbName = createDbName();
+    const shared = createBlob("a".repeat(64), Uint8Array.from([1, 2]));
+    const onlyA = createBlob("b".repeat(64), Uint8Array.from([3, 4, 5]));
+    const db = await openRawDb(dbName, 3, (raw) => {
+      for (const storeName of ["sessions", "chunks", "blobs", "blobRefs", "indexes", "integrity"]) {
+        raw.createObjectStore(storeName, { keyPath: "key" });
+      }
+    });
+
+    await writeRawRows(db, "sessions", [
+      { key: SESSION_A.sid, value: SESSION_A },
+      { key: SESSION_B.sid, value: SESSION_B }
+    ]);
+    await writeRawRows(db, "blobs", [
+      { key: shared.hash, value: { ...shared, refCount: 2 } },
+      { key: onlyA.hash, value: onlyA }
+    ]);
+    await writeRawRows(db, "blobRefs", [
+      // A hash whose blob is gone is dropped; a malformed entry too.
+      { key: SESSION_A.sid, value: [shared.hash, onlyA.hash, "c".repeat(64), "not-a-hash"] },
+      { key: SESSION_B.sid, value: [shared.hash] }
+    ]);
+    db.close();
+
+    const storage = new IndexedDbPipelineStorage(dbName);
+
+    expect(
+      (await storage.listSessionBlobInfo(SESSION_A.sid)).sort((a, b) =>
+        a.hash.localeCompare(b.hash)
+      )
+    ).toEqual([
+      { hash: shared.hash, mime: shared.mime, size: 2 },
+      { hash: onlyA.hash, mime: onlyA.mime, size: 3 }
+    ]);
+
+    // Already tracked after the migration: no second reference.
+    await storage.putBlob(shared, SESSION_A.sid);
+    expect((await storage.getBlob(shared.hash))?.refCount).toBe(2);
+
+    await storage.deleteSession(SESSION_A.sid);
+    expect(await storage.getBlob(onlyA.hash)).toBeUndefined();
+    expect((await storage.getBlob(shared.hash))?.refCount).toBe(1);
+
+    await storage.deleteSession(SESSION_B.sid);
+    expect(await storage.listBlobs()).toEqual([]);
   });
 });
