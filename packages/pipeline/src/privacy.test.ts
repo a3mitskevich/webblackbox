@@ -1,7 +1,12 @@
 import { DEFAULT_CAPTURE_POLICY, type WebBlackboxEvent } from "@webblackbox/protocol";
 import { describe, expect, it } from "vitest";
 
-import { buildPrivacyManifest } from "./privacy.js";
+import {
+  assemblePrivacyManifest,
+  buildPrivacyManifest,
+  scanPrivacyBlob,
+  scanPrivacyEvents
+} from "./privacy.js";
 import type { StoredBlob } from "./storage.js";
 
 function createEvent(
@@ -253,5 +258,49 @@ describe("privacy manifest", () => {
 
     expect(manifest.encryption).toEqual({ archive: "encrypted", algorithm: "AES-GCM" });
     expect(manifest.categories).toEqual([]);
+  });
+
+  it("assembles the same manifest from per-chunk and per-blob scans", async () => {
+    const generatedAt = new Date(0);
+    const events = [
+      createEvent("E-a", { message: "mail me at someone@example.test" }),
+      createEvent("E-b", { message: "nothing here" }, 1, "privacy.violation"),
+      createEvent("E-c", { message: "Call support at 415-555-0101" })
+    ];
+    const blob: StoredBlob = {
+      hash: "b".repeat(64),
+      mime: "application/json",
+      size: 40,
+      bytes: new TextEncoder().encode('{"token":"Bearer abcdefghijklmnopqrstuvwx"}'),
+      createdAt: 0,
+      refCount: 1
+    };
+    const whole = await buildPrivacyManifest({
+      events,
+      blobs: [blob],
+      encrypted: true,
+      generatedAt
+    });
+    const pieces = assemblePrivacyManifest({
+      eventScans: [
+        await scanPrivacyEvents(events.slice(0, 2)),
+        await scanPrivacyEvents(events.slice(2))
+      ],
+      blobFindings: [await scanPrivacyBlob(blob)],
+      blobCount: 1,
+      encrypted: true,
+      generatedAt
+    });
+
+    expect({ ...pieces, scanner: { ...pieces.scanner, scannedAt: "" } }).toEqual({
+      ...whole,
+      scanner: { ...whole.scanner, scannedAt: "" }
+    });
+    expect(pieces.totals).toEqual({ events: 3, blobs: 1, privacyViolations: 1 });
+    expect(pieces.scanner.findings.map((finding) => finding.path)).toEqual([
+      "event:E-a",
+      "event:E-c",
+      `blob:${blob.hash}`
+    ]);
   });
 });
