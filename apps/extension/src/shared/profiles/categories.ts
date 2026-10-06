@@ -60,21 +60,6 @@ export function rankCategoryLevel<TKey extends CaptureCategoryKey>(
   return (CAPTURE_CATEGORY_LEVELS[key] as readonly string[]).indexOf(value);
 }
 
-/** `categories` with every level above `ceiling` lowered to the ceiling's level. */
-export function clampCategoriesToCeiling(
-  categories: CaptureCategories,
-  ceiling: CaptureCategories
-): CaptureCategories {
-  return Object.fromEntries(
-    CAPTURE_CATEGORY_KEYS.map((key) => [
-      key,
-      rankCategoryLevel(key, categories[key]) > rankCategoryLevel(key, ceiling[key])
-        ? ceiling[key]
-        : categories[key]
-    ])
-  ) as CaptureCategories;
-}
-
 /** Category keys where `categories` reveals more than `ceiling`. */
 export function findCategoriesAboveCeiling(
   categories: CaptureCategories,

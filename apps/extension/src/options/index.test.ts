@@ -172,7 +172,7 @@ describe("options page", () => {
     expect(saveState()).toBe("All changes saved");
     expect(saveButton().disabled).toBe(true);
 
-    typeNumber("ringBufferMinutes", "15");
+    typeNumber("domFlushMs", "150");
     typeNumber("archiveMaxSizeMb", "256");
 
     expect(saveState()).toBe("Unsaved changes");
@@ -182,7 +182,10 @@ describe("options page", () => {
     await flush();
 
     expect(storage.data[STORAGE_KEY]).toEqual(
-      expect.objectContaining({ ringBufferMinutes: 15, optionsVersion: 1 })
+      expect.objectContaining({
+        sampling: expect.objectContaining({ domFlushMs: 150 }),
+        optionsVersion: 1
+      })
     );
     expect(JSON.parse(localStorage.getItem(ARCHIVE_KEY) ?? "null")).toEqual(
       expect.objectContaining({ maxArchiveMb: 256 })
@@ -567,7 +570,7 @@ describe("options page", () => {
     const storage = installChromeStub({ [PROFILES_KEY]: STORE_WITH_RULE });
     await importOptionsModule();
 
-    typeNumber("ringBufferMinutes", "15");
+    typeNumber("domFlushMs", "150");
     typeNumber("archiveMaxSizeMb", "256");
     typeText("[data-rule-id='stage'] [name='ruleName']", "x".repeat(81));
     saveButton().click();
@@ -580,20 +583,20 @@ describe("options page", () => {
   });
 
   it("resets one section to defaults and discards edits with Cancel", async () => {
-    installChromeStub({ [STORAGE_KEY]: { ringBufferMinutes: 30 } });
+    installChromeStub({ [STORAGE_KEY]: { sampling: { domFlushMs: 300 } } });
     await importOptionsModule();
 
-    expect(query<HTMLInputElement>("#ringBufferMinutes").value).toBe("30");
+    expect(query<HTMLInputElement>("#domFlushMs").value).toBe("300");
 
     typeNumber("budgetLcpWarnMs", "4000");
     query<HTMLElement>("[data-action='section-reset'][data-section='sampling']").click();
 
-    expect(query<HTMLInputElement>("#ringBufferMinutes").value).toBe("10");
+    expect(query<HTMLInputElement>("#domFlushMs").value).toBe("100");
     expect(query<HTMLInputElement>("#budgetLcpWarnMs").value).toBe("4000");
 
     query<HTMLButtonElement>("[data-action='settings-cancel']").click();
 
-    expect(query<HTMLInputElement>("#ringBufferMinutes").value).toBe("30");
+    expect(query<HTMLInputElement>("#domFlushMs").value).toBe("300");
     expect(query<HTMLInputElement>("#budgetLcpWarnMs").value).toBe("2500");
     expect(saveState()).toBe("All changes saved");
   });
@@ -657,11 +660,11 @@ describe("options page", () => {
       const storage = installChromeStub();
       await importOptionsModule();
 
-      typeNumber("ringBufferMinutes", "15");
+      typeNumber("domFlushMs", "150");
       await chooseLanguage("ru");
 
       expect(storage.data[LOCALE_KEY]).toBe("ru");
-      expect(query<HTMLInputElement>("#ringBufferMinutes").value).toBe("15");
+      expect(query<HTMLInputElement>("#domFlushMs").value).toBe("150");
       expect(saveState()).toBe("Unsaved changes");
       expect(languageNotice().hidden).toBe(false);
       expect(languageNotice().textContent).toMatch(/reopen this page/);

@@ -90,10 +90,6 @@ export function createBaseProfile(
     sampling: {},
     recorder: {},
     sitePolicies: [],
-    export: {
-      encryption: "optional",
-      privacyScanner: "warn"
-    },
     ...overrides
   };
 }
@@ -143,11 +139,7 @@ const QA_PRESET = createBaseProfile({
     includeUrls: [],
     excludeUrls: []
   },
-  sourceMaps: { mode: "embed" },
-  export: {
-    encryption: "required",
-    privacyScanner: "block"
-  }
+  sourceMaps: { mode: "embed" }
 });
 
 const FULL_CAPTURE_PRESET = createBaseProfile({
@@ -195,10 +187,6 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
     wheel: true
   },
   sourceMaps: { mode: "embed" },
-  export: {
-    encryption: "required",
-    privacyScanner: "block"
-  },
   localData: { ...FULL_CAPTURE_LOCAL_DATA_SETTINGS }
 });
 
