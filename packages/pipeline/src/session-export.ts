@@ -336,10 +336,16 @@ class SessionExportSource {
     const timeIndex: ChunkTimeIndexEntry[] = [];
 
     for (const chunk of plan.chunks) {
-      const bytes = await this.readExportBytes(chunk);
-      // A re-encoded chunk is described by the bytes actually written.
+      const { bytes, codec } = await this.readExportBytes(chunk);
+      // A re-encoded chunk is described by the bytes actually written: a codec can fall back to
+      // "none" on this pass (a compression timeout) even though it compressed while planning.
       const meta = chunk.filtered
-        ? { ...chunk.exportMeta, byteLength: bytes.byteLength, sha256: await sha256Hex(bytes) }
+        ? {
+            ...chunk.exportMeta,
+            codec,
+            byteLength: bytes.byteLength,
+            sha256: await sha256Hex(bytes)
+          }
         : chunk.exportMeta;
 
       timeIndex.push(meta);
@@ -439,15 +445,17 @@ class SessionExportSource {
     return this.filterEvents(await decodeChunkEvents(chunk.bytes, chunk.meta.codec));
   }
 
-  private async readExportBytes(plan: ChunkPlan): Promise<Uint8Array> {
+  private async readExportBytes(
+    plan: ChunkPlan
+  ): Promise<{ bytes: Uint8Array; codec: ChunkCodec }> {
     const chunk = await this.requireChunk(plan.meta.chunkId);
 
     if (!plan.filtered) {
-      return chunk.bytes;
+      return { bytes: chunk.bytes, codec: chunk.meta.codec };
     }
 
     const events = this.filterEvents(await decodeChunkEvents(chunk.bytes, chunk.meta.codec));
-    return (await encodeChunkEvents(events, plan.exportMeta.codec)).bytes;
+    return encodeChunkEvents(events, plan.exportMeta.codec);
   }
 
   private async requireChunk(chunkId: string): Promise<StoredChunk> {

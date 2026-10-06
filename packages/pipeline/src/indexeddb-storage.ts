@@ -226,13 +226,25 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
     return rows.map((row) => row.value);
   }
 
+  /**
+   * Tracked blobs whose blob row still exists: a reference can outlive its blob when another
+   * session's delete released more references than it held, and an export must not plan a
+   * blob it cannot read.
+   */
   public async listSessionBlobInfo(sid: string): Promise<StoredBlobInfo[]> {
     const db = await this.db();
-    const rows = await runTransaction(db, "blobRefs", "readonly", (store) =>
-      requestToPromise<BlobRefRow[]>(store.getAll(blobRefRange(sid)))
-    );
 
-    return rows.map(({ hash, mime, size }) => ({ hash, mime, size }));
+    return runStoresTransaction(db, ["blobRefs", "blobs"], "readonly", async (transaction) => {
+      const blobs = transaction.objectStore("blobs");
+      const rows = await requestToPromise<BlobRefRow[]>(
+        transaction.objectStore("blobRefs").getAll(blobRefRange(sid))
+      );
+      const stored = await Promise.all(rows.map((row) => requestToPromise(blobs.getKey(row.hash))));
+
+      return rows
+        .filter((_, index) => stored[index] !== undefined)
+        .map(({ hash, mime, size }) => ({ hash, mime, size }));
+    });
   }
 
   public async putIndexes(sid: string, indexes: StoredIndexes): Promise<void> {

@@ -500,6 +500,23 @@ describe("storage", () => {
     ]);
   });
 
+  it("leaves out tracked blobs whose blob row is gone", async () => {
+    const storage = new IndexedDbPipelineStorage(createDbName());
+    const kept = createBlob("1".repeat(64), Uint8Array.from([1]));
+    const released = createBlob("2".repeat(64), Uint8Array.from([2, 2]));
+
+    await storage.putBlob(kept, SESSION_A.sid);
+    await storage.putBlob(released, SESSION_A.sid);
+    // Session B never stored this blob, but its delete is told to release it (as quota
+    // eviction does with hashes found in B's events): A's reference outlives the blob.
+    await storage.deleteSession(SESSION_B.sid, [released.hash]);
+
+    expect(await storage.getBlob(released.hash)).toBeUndefined();
+    expect(await storage.listSessionBlobInfo(SESSION_A.sid)).toEqual([
+      { hash: kept.hash, mime: kept.mime, size: 1 }
+    ]);
+  });
+
   it("writes a blob and its session reference in one transaction", async () => {
     const storage = new IndexedDbPipelineStorage(createDbName());
 

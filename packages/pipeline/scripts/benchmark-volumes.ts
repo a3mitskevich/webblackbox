@@ -70,8 +70,9 @@ export type PipelineVolumeBenchmarkReport = {
   chunkCount: number;
   ingestDurationMs: number;
   ingestThroughputOpsPerSec: number;
-  blobPutAvgMsFirst: number;
-  blobPutAvgMsLast: number;
+  /** Median blob write time of the session's first and last writes (one GC pause moves a mean). */
+  blobPutMedianMsFirst: number;
+  blobPutMedianMsLast: number;
   defaultExport: ExportMeasurement;
   fullExport: ExportMeasurement | null;
 };
@@ -348,8 +349,17 @@ async function measureExport(
   };
 }
 
-function average(values: number[]): number {
-  return values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+function median(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+
+  return sorted.length % 2 === 1
+    ? (sorted[middle] as number)
+    : ((sorted[middle - 1] as number) + (sorted[middle] as number)) / 2;
 }
 
 async function run(): Promise<void> {
@@ -433,8 +443,8 @@ async function run(): Promise<void> {
     chunkCount: chunkMetas.length,
     ingestDurationMs: ingestMs,
     ingestThroughputOpsPerSec: eventCount / Math.max(ingestMs / 1000, 0.000_001),
-    blobPutAvgMsFirst: average(blobPutMs.slice(0, BLOB_LATENCY_WINDOW)),
-    blobPutAvgMsLast: average(blobPutMs.slice(-BLOB_LATENCY_WINDOW)),
+    blobPutMedianMsFirst: median(blobPutMs.slice(0, BLOB_LATENCY_WINDOW)),
+    blobPutMedianMsLast: median(blobPutMs.slice(-BLOB_LATENCY_WINDOW)),
     defaultExport,
     fullExport
   };

@@ -210,10 +210,12 @@ function runVolumeChecks(volumes, thresholds) {
       )}`
     ),
     // Machine-independent: blob writes must not slow down as the session tracks more blobs.
+    // Medians, so a GC pause among the last writes on a shared runner does not fail the gate.
     assertCheck(
       "pipelineVolumes.blobPutLatencyGrowth",
-      volumes.blobPutAvgMsLast <= volumes.blobPutAvgMsFirst * thresholds.blobPutLatencyGrowthMax,
-      `expected the last blob writes within ${thresholds.blobPutLatencyGrowthMax}x the first, got ${volumes.blobPutAvgMsFirst.toFixed(2)} -> ${volumes.blobPutAvgMsLast.toFixed(2)} ms`
+      volumes.blobPutMedianMsLast <=
+        volumes.blobPutMedianMsFirst * thresholds.blobPutLatencyGrowthMax,
+      `expected the last blob writes within ${thresholds.blobPutLatencyGrowthMax}x the first, got ${volumes.blobPutMedianMsFirst.toFixed(2)} -> ${volumes.blobPutMedianMsLast.toFixed(2)} ms`
     ),
     assertCheck(
       "pipelineVolumes.defaultExport.durationMs",
