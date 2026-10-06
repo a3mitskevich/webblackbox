@@ -17,8 +17,11 @@
       "dependsOn": ["^typecheck"],
       "outputs": []
     },
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
     "test": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^transit"],
       "outputs": []
     }
   }
