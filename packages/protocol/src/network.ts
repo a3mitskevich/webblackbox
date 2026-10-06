@@ -1,4 +1,11 @@
-import type { WebBlackboxEvent } from "./types.js";
+import { BODY_SKIP_REASONS } from "./constants.js";
+import type { BodySkipReason, WebBlackboxEvent } from "./types.js";
+
+const BODY_SKIP_REASON_SET: ReadonlySet<string> = new Set(BODY_SKIP_REASONS);
+
+export function isBodySkipReason(value: unknown): value is BodySkipReason {
+  return typeof value === "string" && BODY_SKIP_REASON_SET.has(value);
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)

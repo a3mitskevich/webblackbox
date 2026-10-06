@@ -8,6 +8,7 @@
     "baseUrl": ".",
     "paths": {
       "@webblackbox/player-sdk": ["../../packages/player-sdk/src/index.ts"],
+      "@webblackbox/protocol/schemas": ["../../packages/protocol/src/schemas-entry.ts"],
       "@webblackbox/protocol": ["../../packages/protocol/src/index.ts"]
     }
   },
