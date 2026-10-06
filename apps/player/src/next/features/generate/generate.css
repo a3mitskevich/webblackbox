@@ -1,0 +1,156 @@
+/* Generate (R5): the header menu and the generator dialogs. Scoped to .gen-*; tokens from next.css. */
+.gen-menu-layer {
+  z-index: 40;
+}
+.gen-menu {
+  min-width: 260px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  outline: 0;
+}
+.gen-menu-range {
+  padding: 6px 10px 4px;
+  color: var(--ink-3);
+  font: 11.5px var(--mono);
+}
+.gen-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+  outline: 0;
+}
+.gen-menu-item[data-highlighted] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.gen-menu-item[data-disabled] {
+  color: var(--ink-3);
+  cursor: default;
+}
+.gen-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+.dlg.gen-dlg {
+  width: min(920px, calc(100vw - 32px));
+}
+.gen-body {
+  min-height: 0;
+}
+.gen-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.gen-range legend {
+  padding: 0 4px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.gen-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.gen-range .text-input {
+  width: 92px;
+  height: 30px;
+  font-family: var(--mono);
+}
+.gen-range .btn.small[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.gen-range-summary {
+  flex: 1 1 160px;
+  align-self: center;
+  color: var(--ink-3);
+  font: 12px var(--mono);
+  text-align: right;
+}
+.gen-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 16px;
+}
+.gen-number {
+  width: 92px;
+  height: 30px;
+}
+.gen-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  font-size: 13px;
+}
+.gen-start {
+  flex: 1 1 200px;
+  align-self: center;
+  overflow: hidden;
+  color: var(--ink-3);
+  font: 12px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gen-preview {
+  display: flex;
+  flex-direction: column;
+  height: min(46vh, 520px);
+  min-height: 160px;
+}
+.gen-status {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.gen-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gen-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.gen-actions {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.gen-actions .ncopy {
+  display: inline-flex;
+  align-items: center;
+}
+.gen-actions .btn.small {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+@media (max-width: 899px) {
+  .gen-range-summary {
+    text-align: left;
+  }
+}

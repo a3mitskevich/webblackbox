@@ -1,9 +1,24 @@
-/** The header menu entry (R5 fills it in). */
-export function GenerateMenu() {
-  return null;
-}
+import "./generate.css";
 
-/** The generator dialogs, mounted once at the app root (R5 fills it in). */
+import { lazy, Suspense } from "react";
+
+import { useFeatureSlice } from "../slice.js";
+import { generateSlice, type GenerateSlice } from "./api.js";
+
+export { GenerateMenu } from "./generate-menu.js";
+
+/** The dialogs, the generators and Shiki load as their own chunk on first use. */
+const LazyGenerateDialogs = lazy(() => import("./generate-dialogs.js"));
+
+const selectRequest = (slice: GenerateSlice) => slice.request;
+
+/** The generator dialogs, mounted once at the app root; nothing loads until one is opened. */
 export function GenerateDialogs() {
-  return null;
+  const request = useFeatureSlice(generateSlice, selectRequest);
+
+  return request ? (
+    <Suspense fallback={null}>
+      <LazyGenerateDialogs />
+    </Suspense>
+  ) : null;
 }
