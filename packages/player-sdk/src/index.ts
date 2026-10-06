@@ -3716,6 +3716,12 @@ function collectInvertedCandidateIds(
     .split(/[^a-zA-Z0-9_:.\-/]+/g)
     .map((token) => token.trim())
     .filter((token) => token.length >= 2);
+  // A token missing from the index may have been left out as too frequent (the pipeline bounds
+  // the index), so the other tokens' postings would miss events that hold it: scan every event.
+  if (tokens.some((token) => !inverted.has(token))) {
+    return null;
+  }
+
   const keys = new Set<string>([normalized, ...tokens]);
   const output = new Set<string>();
 

@@ -186,7 +186,11 @@ Three indexes are built for efficient querying:
 2. **Request Index** — Maps network request IDs to event IDs for request tracing
 3. **Inverted Index** — Maps searchable terms to event IDs for full-text search
 
-In the extension pipeline, chunks are persisted first and indexes are rebuilt on demand during `finalizeIndexes()` / export. This avoids keeping full-session request and inverted indexes resident in offscreen memory during long-running recordings.
+In the extension pipeline, chunks are persisted first (gzip-compressed) and indexes are rebuilt on demand during `finalizeIndexes()` / export. This avoids keeping full-session request and inverted indexes resident in offscreen memory during long-running recordings. The inverted index leaves out terms found in more than half the events of a large session and caps its total postings; a term missing from the index means a full scan for readers.
+
+### Export
+
+The export streams the archive (`exportArchive`): chunks are selected newest first from their metadata and decoded one at a time, blob sizes come from the `blobRefs` store (one row per `[sid, hash]`), the exact archive size is computed before writing, and chunks, indexes and blobs are then encrypted and written one by one into a STORE ZIP. The offscreen document collects the stream into a `Blob` and downloads it.
 
 ### Blob Storage
 

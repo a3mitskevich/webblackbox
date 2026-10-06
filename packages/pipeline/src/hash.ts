@@ -1,3 +1,5 @@
+import { toBufferSource } from "./archive-crypto.js";
+
 function toUint8Array(input: ArrayBuffer | Uint8Array | string): Uint8Array {
   if (typeof input === "string") {
     return new TextEncoder().encode(input);
@@ -15,9 +17,7 @@ export async function sha256Hex(input: ArrayBuffer | Uint8Array | string): Promi
   const subtle = globalThis.crypto?.subtle;
 
   if (subtle) {
-    const source = new Uint8Array(data.byteLength);
-    source.set(data);
-    const digest = await subtle.digest("SHA-256", source.buffer);
+    const digest = await subtle.digest("SHA-256", toBufferSource(data));
     return bufferToHex(new Uint8Array(digest));
   }
 

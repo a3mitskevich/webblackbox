@@ -81,35 +81,102 @@ const SCANNER_PATTERNS: ScannerPattern[] = [
   }
 ];
 
+/** Scanner findings, category counts and totals of a run of events (one chunk, say). */
+export type PrivacyEventScan = {
+  findings: PrivacyScannerFinding[];
+  categories: PrivacyManifestCategorySummary[];
+  events: number;
+  privacyViolations: number;
+};
+
+export type PrivacyManifestParts = {
+  /** Event scans in event order: their findings are listed in this order. */
+  eventScans: PrivacyEventScan[];
+  /** Findings per exported blob, in archive order. */
+  blobFindings: PrivacyScannerFinding[][];
+  blobCount: number;
+  capturePolicy?: CapturePolicy;
+  encrypted: boolean;
+  transfer?: PrivacyManifest["transfer"];
+  generatedAt?: Date;
+};
+
 export async function buildPrivacyManifest(input: PrivacyManifestInput): Promise<PrivacyManifest> {
-  const generatedAt = input.generatedAt ?? new Date();
-  const scanner = await scanPrivacyTargets([
-    ...input.events.map((event) => ({
-      path: `event:${event.id}`,
-      text: extractEventScanText(event)
-    })),
-    ...input.blobs.map((blob) => ({
-      path: `blob:${blob.hash}`,
-      text: decodeBlobForScanning(blob)
-    }))
-  ]);
+  const blobFindings: PrivacyScannerFinding[][] = [];
+
+  for (const blob of input.blobs) {
+    blobFindings.push(await scanPrivacyBlob(blob));
+  }
+
+  return assemblePrivacyManifest({
+    eventScans: [await scanPrivacyEvents(input.events)],
+    blobFindings,
+    blobCount: input.blobs.length,
+    capturePolicy: input.capturePolicy,
+    encrypted: input.encrypted,
+    transfer: input.transfer,
+    generatedAt: input.generatedAt
+  });
+}
+
+/** Scans events for secrets and counts them by privacy category. */
+export async function scanPrivacyEvents(events: WebBlackboxEvent[]): Promise<PrivacyEventScan> {
+  return {
+    findings: await scanPrivacyTargets(
+      events.map((event) => ({
+        path: `event:${event.id}`,
+        text: extractEventScanText(event)
+      }))
+    ),
+    categories: summarizePrivacyCategories(events),
+    events: events.length,
+    privacyViolations: events.filter((event) => event.type === "privacy.violation").length
+  };
+}
+
+/** True when blobs of this type are text the scanner reads; other blobs need not be loaded. */
+export function isPrivacyScannedMime(mime: string): boolean {
+  return isLikelyTextBlob(mime);
+}
+
+/** Scanner findings for one blob (none for binary types). */
+export function scanPrivacyBlob(
+  blob: Pick<StoredBlob, "hash" | "mime" | "bytes">
+): Promise<PrivacyScannerFinding[]> {
+  return scanPrivacyTargets([{ path: `blob:${blob.hash}`, text: decodeBlobForScanning(blob) }]);
+}
+
+/** Builds the privacy manifest from scans gathered piece by piece. */
+export function assemblePrivacyManifest(parts: PrivacyManifestParts): PrivacyManifest {
+  const generatedAt = parts.generatedAt ?? new Date();
+  const findings = [
+    ...parts.eventScans.flatMap((scan) => scan.findings),
+    ...parts.blobFindings.flat()
+  ];
+  const scanner: PrivacyScannerResult = {
+    scannedAt: new Date().toISOString(),
+    preEncryption: true,
+    // "blocked" is the archived name for "findings to review": exports never stop on it.
+    status: findings.length > 0 ? "blocked" : "passed",
+    findings
+  };
 
   return {
     schemaVersion: 1,
     generatedAt: generatedAt.toISOString(),
-    effectivePolicy: input.capturePolicy,
-    consent: input.capturePolicy?.consent,
-    transfer: input.transfer,
-    categories: summarizePrivacyCategories(input.events),
+    effectivePolicy: parts.capturePolicy,
+    consent: parts.capturePolicy?.consent,
+    transfer: parts.transfer,
+    categories: mergeCategorySummaries(parts.eventScans.map((scan) => scan.categories)),
     scanner,
     encryption: {
-      archive: input.encrypted ? "encrypted" : "plaintext",
-      algorithm: input.encrypted ? "AES-GCM" : undefined
+      archive: parts.encrypted ? "encrypted" : "plaintext",
+      algorithm: parts.encrypted ? "AES-GCM" : undefined
     },
     totals: {
-      events: input.events.length,
-      blobs: input.blobs.length,
-      privacyViolations: input.events.filter((event) => event.type === "privacy.violation").length
+      events: parts.eventScans.reduce((sum, scan) => sum + scan.events, 0),
+      blobs: parts.blobCount,
+      privacyViolations: parts.eventScans.reduce((sum, scan) => sum + scan.privacyViolations, 0)
     }
   };
 }
@@ -149,7 +216,7 @@ function collectStringLeaves(value: unknown, output: string[]): void {
   }
 }
 
-async function scanPrivacyTargets(targets: ScanTarget[]): Promise<PrivacyScannerResult> {
+async function scanPrivacyTargets(targets: ScanTarget[]): Promise<PrivacyScannerFinding[]> {
   const findings: PrivacyScannerFinding[] = [];
 
   for (const target of targets) {
@@ -174,13 +241,7 @@ async function scanPrivacyTargets(targets: ScanTarget[]): Promise<PrivacyScanner
     }
   }
 
-  return {
-    scannedAt: new Date().toISOString(),
-    preEncryption: true,
-    // "blocked" is the archived name for "findings to review": exports never stop on it.
-    status: findings.length > 0 ? "blocked" : "passed",
-    findings
-  };
+  return findings;
 }
 
 function collectMatches(text: string, scanner: ScannerPattern): string[] {
@@ -240,7 +301,34 @@ function summarizePrivacyCategories(events: WebBlackboxEvent[]): PrivacyManifest
   return [...summaries.values()].sort((left, right) => left.category.localeCompare(right.category));
 }
 
-function decodeBlobForScanning(blob: StoredBlob): string {
+function mergeCategorySummaries(
+  groups: PrivacyManifestCategorySummary[][]
+): PrivacyManifestCategorySummary[] {
+  const merged = new Map<PrivacyDataCategory, PrivacyManifestCategorySummary>();
+
+  for (const summary of groups.flat()) {
+    const existing = merged.get(summary.category);
+
+    merged.set(
+      summary.category,
+      existing
+        ? {
+            category: summary.category,
+            events: existing.events + summary.events,
+            low: existing.low + summary.low,
+            medium: existing.medium + summary.medium,
+            high: existing.high + summary.high,
+            redacted: existing.redacted + summary.redacted,
+            unredacted: existing.unredacted + summary.unredacted
+          }
+        : summary
+    );
+  }
+
+  return [...merged.values()].sort((left, right) => left.category.localeCompare(right.category));
+}
+
+function decodeBlobForScanning(blob: Pick<StoredBlob, "mime" | "bytes">): string {
   if (!isLikelyTextBlob(blob.mime)) {
     return "";
   }
