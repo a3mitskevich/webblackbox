@@ -121,6 +121,49 @@ async function expectFixtureSession(player: WebBlackboxPlayer): Promise<void> {
   expect(new TextDecoder().decode(blob?.bytes)).toBe(BODY_TEXT);
 }
 
+/** A session of `count` clicks exported by the current pipeline, opened in the Player. */
+async function openClickSession(
+  count: number,
+  dataFor: (index: number) => Record<string, string>
+): Promise<WebBlackboxPlayer> {
+  const pipeline = new FlightRecorderPipeline({
+    session: {
+      sid: SID,
+      tabId: 1,
+      startedAt: T0,
+      mode: "lite",
+      url: "https://x.test/",
+      tags: []
+    },
+    storage: new MemoryPipelineStorage(),
+    chunkCodec: "gzip"
+  });
+
+  await pipeline.start();
+
+  for (let index = 0; index < count; index += 1) {
+    await pipeline.ingest({
+      v: 1,
+      sid: SID,
+      tab: 1,
+      id: `E-${index}`,
+      t: T0 + index,
+      mono: index,
+      type: "user.click",
+      privacy: { category: "actions", sensitivity: "low", redacted: true },
+      data: dataFor(index)
+    });
+  }
+
+  const exported = await pipeline.exportBundle({
+    passphrase: LEGACY_PASSPHRASE,
+    maxArchiveBytes: null,
+    recentWindowMs: null
+  });
+
+  return WebBlackboxPlayer.open(exported.bytes, { passphrase: LEGACY_PASSPHRASE });
+}
+
 describe("archive compatibility", () => {
   it("opens a format 1 archive (plaintext manifest, no encryption)", async () => {
     const player = await WebBlackboxPlayer.open(await readFixture("legacy-format1.webblackbox"));
@@ -154,43 +197,10 @@ describe("archive compatibility", () => {
 
   it("finds events by terms the bounded inverted index leaves out", async () => {
     const count = INVERTED_INDEX_LIMITS.minEventsForDocumentCutoff + 100;
-    const pipeline = new FlightRecorderPipeline({
-      session: {
-        sid: SID,
-        tabId: 1,
-        startedAt: T0,
-        mode: "lite",
-        url: "https://x.test/",
-        tags: []
-      },
-      storage: new MemoryPipelineStorage(),
-      chunkCodec: "gzip"
-    });
-
-    await pipeline.start();
-
-    for (let index = 0; index < count; index += 1) {
-      await pipeline.ingest({
-        v: 1,
-        sid: SID,
-        tab: 1,
-        id: `E-${index}`,
-        t: T0 + index,
-        mono: index,
-        type: "user.click",
-        privacy: { category: "actions", sensitivity: "low", redacted: true },
-        data: { selector: "#save", label: `rare-${index}` }
-      });
-    }
-
-    const exported = await pipeline.exportBundle({
-      passphrase: LEGACY_PASSPHRASE,
-      maxArchiveBytes: null,
-      recentWindowMs: null
-    });
-    const player = await WebBlackboxPlayer.open(exported.bytes, {
-      passphrase: LEGACY_PASSPHRASE
-    });
+    const player = await openClickSession(count, (index) => ({
+      selector: "#save",
+      label: `rare-${index}`
+    }));
     const terms = new Set(player.archive.invertedIndex.map((entry) => entry.term));
 
     expect(terms.has("save")).toBe(false);
@@ -198,5 +208,21 @@ describe("archive compatibility", () => {
     expect(player.query({ text: "save" })).toHaveLength(count);
     expect(player.query({ text: "rare-7" }).map((event) => event.id)).toEqual(["E-7"]);
     expect(player.search("save", count)).toHaveLength(count);
+  });
+
+  it("does not narrow a phrase search to the tokens the bounded index kept", async () => {
+    // Every event holds the phrase "save /api/item", but only the last one has "/api/item" as
+    // a whole term; "save" is in every event, so the index leaves it out.
+    const count = INVERTED_INDEX_LIMITS.minEventsForDocumentCutoff + 100;
+    const player = await openClickSession(count, (index) => ({
+      selector: "#save",
+      text: index === count - 1 ? "save /api/item" : `save /api/item/${index}`
+    }));
+    const terms = new Set(player.archive.invertedIndex.map((entry) => entry.term));
+
+    expect(terms.has("save")).toBe(false);
+    expect(terms.has("/api/item")).toBe(true);
+    expect(player.query({ text: "save /api/item" })).toHaveLength(count);
+    expect(player.search("save /api/item", count)).toHaveLength(count);
   });
 });
