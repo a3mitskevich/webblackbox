@@ -7,7 +7,8 @@ import { buildSessionView } from "../../../core/session-view.js";
 import { createInitialState, type LoadedArchive, type PlayerState } from "../../state.js";
 import { buildNetworkView, getNetworkModel, isRowFailed, selectionOfRow } from "./rows.js";
 import { networkSlice } from "./slice.js";
-import { networkStepItems } from "./step-items.js";
+import { labelStreamMessages, shownStream } from "./message-labels.js";
+import { networkStepItems, realtimeStepItems } from "./step-items.js";
 
 let archive: LoadedArchive;
 
@@ -60,6 +61,37 @@ describe("networkStepItems", () => {
     expect(failed.every(isRowFailed)).toBe(true);
     expect(networkStepItems(archive, state).map((item) => item.selection)).toEqual(
       failed.map(selectionOfRow)
+    );
+  });
+});
+
+describe("realtimeStepItems", () => {
+  it("steps through the shown connection's messages, without service ones when hidden", () => {
+    const model = getNetworkModel(archive);
+    const stream = shownStream(model, null, null);
+    const all = realtimeStepItems(archive, stateWith({}));
+    const withoutService = realtimeStepItems(archive, stateWith({ hideService: true }));
+
+    expect(stream).not.toBeNull();
+    expect(all.map((item) => item.selection)).toEqual(
+      stream?.messages.map((entry) => ({ kind: "event", id: entry.eventId }))
+    );
+    expect(withoutService).toHaveLength(stream ? labelStreamMessages(stream, true).length : 0);
+    expect(withoutService.length).toBeLessThanOrEqual(all.length);
+  });
+
+  it("follows the connection of the selected event", () => {
+    const model = getNetworkModel(archive);
+    const other = model.streams.find((stream) => stream !== shownStream(model, null, null));
+    const message = other?.messages[0];
+
+    if (!other || !message) {
+      return;
+    }
+
+    const state = { ...stateWith({}), selection: { kind: "event" as const, id: message.eventId } };
+    expect(realtimeStepItems(archive, state).map((item) => item.mono)).toEqual(
+      other.messages.map((entry) => entry.mono)
     );
   });
 });

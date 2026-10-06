@@ -2,10 +2,8 @@ import { useCallback, useId, useMemo, useState, type KeyboardEvent } from "react
 
 import {
   isRealtimePayloadCut,
-  isServiceRealtimeRecord,
   parseRealtimePayload,
   realtimeMessageBytes,
-  type ParsedRealtimePayload,
   type RealtimeNetworkEntry,
   type RealtimeRecord,
   type RealtimeStream
@@ -19,6 +17,7 @@ import { useFeatureI18n } from "../messages.js";
 import { CodeView } from "./code-view.js";
 import { decodeBase64, formatPartialJson } from "./formatters.js";
 import { nextListIndex, pageRowsOf, rowDomId } from "./list-keys.js";
+import { labelStreamMessages, type MessageLabel } from "./message-labels.js";
 import { networkMessages, type NetworkTranslator } from "./messages.js";
 import { useRealtimeText } from "./use-archive-data.js";
 import { HexView } from "./viewers.js";
@@ -27,53 +26,9 @@ const MESSAGE_ROW_HEIGHT = 26;
 /** Inline (non-virtualized) code blocks up to this many lines; longer ones scroll. */
 const INLINE_MAX_LINES = 400;
 
-/** What a conversation row shows: the hub method (or kind) and a one-line preview. */
-export type MessageLabel = {
-  entry: RealtimeNetworkEntry;
-  parsed: ParsedRealtimePayload;
-  title: string | null;
-  preview: string;
-  service: boolean;
-};
-
-function previewOf(record: RealtimeRecord | undefined): string {
-  if (!record) {
-    return "";
-  }
-
-  const value = record.value as { arguments?: unknown } | undefined;
-
-  if (record.target && value && value.arguments !== undefined) {
-    return JSON.stringify(value.arguments);
-  }
-
-  return record.text.replace(/\s+/g, " ");
-}
-
-export function labelMessage(entry: RealtimeNetworkEntry, signalr: boolean): MessageLabel {
-  const parsed = parseRealtimePayload(entry.payloadPreview, {
-    truncated: isRealtimePayloadCut(entry),
-    opcode: entry.opcode,
-    signalr
-  });
-  const first = parsed.records[0];
-
-  return {
-    entry,
-    parsed,
-    title: first?.target ?? null,
-    preview: previewOf(first),
-    service: parsed.records.length > 0 && parsed.records.every(isServiceRealtimeRecord)
-  };
-}
-
 /** Labels of a stream's messages, optionally without the service ones. */
 export function useMessageLabels(stream: RealtimeStream, hideService: boolean): MessageLabel[] {
-  return useMemo(() => {
-    const signalr = stream.format === "signalr";
-    const labels = stream.messages.map((entry) => labelMessage(entry, signalr));
-    return hideService ? labels.filter((label) => !label.service) : labels;
-  }, [stream, hideService]);
+  return useMemo(() => labelStreamMessages(stream, hideService), [stream, hideService]);
 }
 
 export function kindText(t: NetworkTranslator, record: RealtimeRecord | undefined): string {

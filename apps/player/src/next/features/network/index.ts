@@ -4,7 +4,7 @@ import type { PlayerLocale } from "../../../lib/i18n.js";
 import type { PlayerFeature } from "../types.js";
 import { networkMessages } from "./messages.js";
 import { getNetworkModel } from "./rows.js";
-import { networkStepItems } from "./step-items.js";
+import { networkStepItems, realtimeStepItems } from "./step-items.js";
 
 const networkLabel = (locale: PlayerLocale): string =>
   networkMessages.translate(locale, "networkTab");
@@ -32,6 +32,7 @@ export const networkFeature: PlayerFeature = {
       label: realtimeLabel,
       count: (archive) =>
         getNetworkModel(archive).streams.reduce((sum, stream) => sum + stream.messages.length, 0),
+      stepItems: realtimeStepItems,
       Panel: RealtimePanel
     }
   ]

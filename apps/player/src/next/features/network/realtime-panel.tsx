@@ -20,20 +20,9 @@ import { useFeatureI18n } from "../messages.js";
 import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
 import { nextListIndex, pageRowsOf, rowDomId } from "./list-keys.js";
 import { networkMessages } from "./messages.js";
-import {
-  directionOf,
-  kindText,
-  MessageView,
-  useMessageLabels,
-  type MessageLabel
-} from "./messages-view.js";
-import {
-  socketPath,
-  socketRowId,
-  socketSelection,
-  streamOfSelection,
-  type NetworkModel
-} from "./rows.js";
+import { directionOf, kindText, MessageView, useMessageLabels } from "./messages-view.js";
+import { shownStream, type MessageLabel } from "./message-labels.js";
+import { socketPath, socketRowId, socketSelection, type NetworkModel } from "./rows.js";
 import { networkSlice } from "./slice.js";
 import { useNetworkModel, useNowMono } from "./use-network.js";
 import "./network.css";
@@ -73,22 +62,10 @@ function useShownStream(model: NetworkModel | null): RealtimeStream | null {
   const selection = usePlayerState((state) => state.selection);
   const chosen = useFeatureSlice(networkSlice, (slice) => slice.realtimeStreamKey);
 
-  return useMemo(() => {
-    if (!model || model.streams.length === 0) {
-      return null;
-    }
-
-    return (
-      streamOfSelection(model, selection) ??
-      model.streams.find((stream) => socketRowId(stream) === chosen) ??
-      // The busiest connection, not the first: sockets opened before the recording come first.
-      model.streams.reduce<RealtimeStream | null>(
-        (busiest, stream) =>
-          !busiest || stream.messages.length > busiest.messages.length ? stream : busiest,
-        null
-      )
-    );
-  }, [model, selection, chosen]);
+  return useMemo(
+    () => (model && model.streams.length > 0 ? shownStream(model, selection, chosen) : null),
+    [model, selection, chosen]
+  );
 }
 
 /** Index of the last message at or before `mono` (labels are in time order), or -1. */
