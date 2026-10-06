@@ -1,242 +1,77 @@
 import { createCdpRouter, createChromeDebuggerTransport } from "@webblackbox/cdp-router";
 import { IndexedDbPipelineStorage, sweepPipelineSessions } from "@webblackbox/pipeline/storage";
-import {
-  createSessionId,
-  BODY_REDACTION_TOKEN,
-  DEFAULT_CAPTURE_POLICY,
-  DEFAULT_POINTER_CAPTURE_OPTIONS,
-  DEFAULT_RECORDER_CONFIG,
-  sanitizeUrlForPrivacy,
-  type CapturePolicy,
-  type CaptureMode,
-  type PointerCaptureOptions,
-  type SessionMetadata,
-  type WebBlackboxEvent
-} from "@webblackbox/protocol";
-import {
-  createDefaultRecorderPlugins,
-  type RawRecorderEvent,
-  WebBlackboxRecorder
-} from "@webblackbox/recorder";
-import { INJECTED_BRIDGE_NONCE_SETTER_KEY } from "webblackbox/injected-hooks";
+import { BODY_REDACTION_TOKEN } from "@webblackbox/protocol";
+import type { RawRecorderEvent } from "@webblackbox/recorder";
 
 import { PIPELINE_DB_NAME } from "../shared/at-rest.js";
-import {
-  getChromeApi,
-  type ChromeTabChangeInfo,
-  type FrameCommittedDetails,
-  type PortLike,
-  type RuntimeMessageSender
-} from "../shared/chrome-api.js";
+import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { CONTENT_INJECTION_STORAGE_KEY } from "../shared/content-injection.js";
-import {
-  PORT_NAMES,
-  type ExtensionInboundMessage,
-  type ExtensionOutboundMessage,
-  type FullModeVisualCapture,
-  type SessionListMessage,
-  type SessionListItem
-} from "../shared/messages.js";
-import {
-  OFFSCREEN_CONNECT_REQUEST_KIND,
-  type SwPipelineStatusMessage
-} from "../shared/offscreen-messages.js";
+import { OFFSCREEN_CONNECT_REQUEST_KIND } from "../shared/offscreen-messages.js";
 import {
   normalizePerformanceBudget,
   PERFORMANCE_BUDGET_STORAGE_KEY,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
 import {
-  AUTO_PROFILE_ID,
-  buildProfileRecorderConfig,
-  listEnterpriseCappedCategories,
-  selectRecordingProfile,
-  toArchivedProfileInfo,
-  type ProfileSelection
-} from "../shared/profiles/resolve.js";
-import { SCRIPT_RAW_TYPE } from "./source-maps.js";
-import { resolveStartEngine } from "../shared/profiles/engine.js";
-import type { ProfilesState } from "../shared/profiles/storage.js";
-import {
-  applyEnterprisePolicyToRecorderConfig,
   createBoundedManagedPolicyReader,
-  ENTERPRISE_POLICY_STORAGE_KEY,
-  getSessionStartBlockReason,
-  isEnterpriseOriginAllowed,
-  normalizeEnterprisePolicy,
-  readManagedEnterprisePolicy,
-  type EnterpriseRecorderPolicy
+  readManagedEnterprisePolicy
 } from "../shared/options-storage.js";
 import { migrateSettingsStorage } from "../shared/settings-migration.js";
-import {
-  applyBodyUrlFilters,
-  DEFAULT_BODY_CAPTURE_MAX_BYTES,
-  DEFAULT_BODY_MIME_ALLOWLIST,
-  normalizeBodyCaptureMaxBytes as normalizeBodyCaptureMaxBytesUtil,
-  isInlineRequestBodyAllowed,
-  resolveFullBodyCaptureRule as resolveFullBodyCaptureRuleUtil,
-  type BodyCaptureRule
-} from "./body-capture-utils.js";
-import {
-  shouldStopForCaptureScopeOriginChange,
-  shouldStopForEnterpriseOriginPolicy as shouldStopForEnterpriseOriginPolicyInput
-} from "./capture-scope.js";
-import {
-  bootstrapAtRestKey,
-  isOffscreenDocumentPort,
-  toStorageKeyMessage,
-  type AtRestKeyRecord
-} from "./at-rest-key.js";
 import { createArtifactsController } from "./artifacts.js";
 import { createScreenshotArtifactsController } from "./artifacts-screenshot.js";
 import { createScreenRecordingController } from "./artifacts-screen-recording.js";
 import { createStorageArtifactsController } from "./artifacts-storage.js";
 import { createProfileArtifactsController } from "./artifacts-profiles.js";
-import {
-  createContentInjectionController,
-  injectContentScriptIntoFrame,
-  isInjectableFrameUrl
-} from "./content-injection.js";
+import { bootstrapAtRestKey, toStorageKeyMessage, type AtRestKeyRecord } from "./at-rest-key.js";
+import { createContentInjectionController } from "./content-injection.js";
 import { createSessionExportController } from "./export-session.js";
+import { createFullCdpController, readContentScriptRecord } from "./full-cdp.js";
+import { createInboundRouter } from "./inbound-router.js";
 import {
-  createFullCdpController,
-  readContentScriptRecord,
-  toScriptScanStatus
-} from "./full-cdp.js";
+  materializeLiteContentEvent,
+  shouldMaterializeLiteContentEvent
+} from "./lite-materialize.js";
+import { createLiteNetworkBaselineController } from "./lite-network.js";
+import { createOffscreenClient, createSessionPipelineClient } from "./offscreen-client.js";
+import { createOffscreenPortConnector } from "./offscreen-port.js";
+import { createPipelineBuffer } from "./pipeline-buffer.js";
+import { createPortRegistry } from "./port-registry.js";
+import { createPortTrafficMeter } from "./port-traffic.js";
+import { isProfileSettingsChange } from "./profile-change.js";
+import { createProfileReevaluation } from "./profile-reevaluation.js";
+import { createRecordedTabWatch } from "./recorded-tab-watch.js";
+import { createSessionAnnotations } from "./session-annotations.js";
+import { createSessionCommands } from "./session-commands.js";
+import { createSessionListView, toSessionMetadata } from "./session-list.js";
+import { createSessionRegistry, type SessionRuntime } from "./session-registry.js";
+import { resolveRawEventSession } from "./session-routing.js";
+import { SCRIPT_RAW_TYPE } from "./source-maps.js";
+import { createStopDrainTracker, shouldAllowStopDrainContentEvent } from "./stop-drain.js";
 import { sidFromRetentionAlarm } from "./stopped-session-store.js";
 import {
   createStoppedSessionLifecycle,
   type StoppedSessionLifecycleController
 } from "./stopped-session-lifecycle.js";
-import {
-  materializeLiteContentEvent,
-  resolveLiteBodyCaptureRule,
-  resolveProfileBodyMimeAllowlist,
-  shouldMaterializeLiteContentEvent
-} from "./lite-materialize.js";
-import { createLiteNetworkBaselineController } from "./lite-network.js";
-import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
-import {
-  createOffscreenClient,
-  createSessionPipelineClient,
-  OFFSCREEN_DISCONNECTED_ERROR,
-  type OffscreenEventMessage
-} from "./offscreen-client.js";
-import { createOffscreenPortConnector } from "./offscreen-port.js";
-import { createPortTrafficMeter } from "./port-traffic.js";
-import { createRecordedTabWatch } from "./recorded-tab-watch.js";
-import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
-import {
-  classifyMessageSender,
-  classifyPortSender,
-  isBroadcastDeliveredToPort,
-  isInboundKindAllowed,
-  type InboundSenderContext,
-  type SenderTrustContext
-} from "./port-sender.js";
-import {
-  buildProfileCancellation,
-  detectProfileChange,
-  isProfileSettingsChange,
-  reselectStartedProfile,
-  shouldDeferProfileCheck,
-  toProfileCancelNotice,
-  toSessionProfileRequest,
-  type ProfileCancellation,
-  type ProfileCancelTrigger,
-  type SessionProfileSnapshot
-} from "./profile-change.js";
-import {
-  buildProfilePreview,
-  loadProfilesState,
-  capturedVisualsOf,
-  isTabLoading,
-  NO_RECORDING_PROFILE_ERROR,
-  readTabPageContext
-} from "./profile-runtime.js";
-import {
-  createSessionRegistry,
-  createSessionRuntime,
-  resolveUrlOrigin,
-  type SessionAnnotation,
-  type SessionRuntime
-} from "./session-registry.js";
-import { resolveRawEventSession } from "./session-routing.js";
-import { startWithOptionalReload } from "./start-with-reload.js";
 import { createThrottledPush } from "./throttled-push.js";
-import {
-  resolveTabsContextLevel,
-  TabsContextTracker,
-  type TabsContextEmission
-} from "./tabs-context/tracker.js";
+import { TabsContextTracker, type TabsContextEmission } from "./tabs-context/tracker.js";
 import { resolveUiActionTabId } from "./ui-action-target.js";
-
-type RecordingSampling = {
-  mousemoveHz: number;
-  scrollHz: number;
-  domFlushMs: number;
-  snapshotIntervalMs: number;
-  screenshotIdleMs: number;
-  bodyCaptureMaxBytes: number;
-};
 
 const chromeApi = getChromeApi();
 
 const sessionRegistry = createSessionRegistry();
-const sessionAnnotations = new Map<string, SessionAnnotation>();
-const connectedPorts = new Set<PortLike>();
-let offscreenPort: PortLike | null = null;
-const pendingStopDrainAcks = new Map<
-  string,
-  {
-    sid: string;
-    tabId: number;
-    ackReceived: boolean;
-    resolve: () => void;
-    timeout: ReturnType<typeof setTimeout>;
-  }
->();
-const inFlightContentMessagesByTab = new Map<number, number>();
 const offscreenSessionRecovery = new Map<string, Promise<void>>();
-let freezeBadgeTimer: ReturnType<typeof setTimeout> | null = null;
 
 const OFFSCREEN_PATH = "offscreen.html";
 const SERVICE_WORKER_BOOTED_AT = Date.now();
-/**
- * How long stop waits for response bodies still being read before recording them as skipped:
- * a base plus a share per pending body, capped.
- */
-const FULL_MODE_BODY_STOP_DRAIN_MS = 3_000;
-const FULL_MODE_BODY_STOP_DRAIN_PER_BODY_MS = 25;
-const FULL_MODE_BODY_STOP_DRAIN_MAX_MS = 15_000;
-const FREEZE_BADGE_HIGHLIGHT_MS = 15_000;
-const PERFORMANCE_BUDGET_BREACH_COOLDOWN_MS = 15_000;
-const PERFORMANCE_BUDGET_ERROR_RATE_MIN_SAMPLES = 10;
 const BEST_EFFORT_QUEUE_MAX_PENDING = 80;
-const PIPELINE_BATCH_MAX_EVENTS = 160;
-const PIPELINE_BATCH_DRAIN_CHUNK_EVENTS = 160;
-const PIPELINE_BATCH_FLUSH_MS = 120;
 /** Shortest gap between session-list pushes driven by recorded events (counters, errors). */
 const SESSION_LIST_EVENT_PUSH_INTERVAL_MS = 500;
-const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
 // Full mode's "what the page captures" decision is made once, at the source: the capture agent
 // applies `shouldPageCapture` (webblackbox/capture-scope); events that arrive here are trusted.
-/** Full mode reads bodies through CDP whatever loaded them, so SVG images (text) are kept too. */
-const FULL_DEFAULT_BODY_MIME_ALLOWLIST = [...DEFAULT_BODY_MIME_ALLOWLIST, "image/svg+xml"];
-const ACTIVE_SESSION_STORAGE_KEY = "webblackbox.runtime.sessions";
-const SESSION_ANNOTATIONS_STORAGE_KEY = "webblackbox.runtime.sessionAnnotations";
-const STOP_DRAIN_CONTENT_RAW_TYPES = new Set([
-  "snapshot",
-  "localStorageSnapshot",
-  "indexedDbSnapshot",
-  "cookieSnapshot",
-  "screenshot"
-]);
 const PERF_LOG_FLAG = "__WEBBLACKBOX_PERF__";
 const PORT_DEBUG_LOG_FLAG = "__WEBBLACKBOX_DEBUG_PORT__";
 const OFFSCREEN_PORT_READY_TIMEOUT_MS = 5_000;
 const OFFSCREEN_PORT_READY_WAIT_MS = 25;
-const STOP_DRAIN_ACK_TIMEOUT_MS = 3_000;
 // Chrome can hold `storage.managed` reads back while the browser starts; see the reader.
 const ENTERPRISE_POLICY_READ_TIMEOUT_MS = 3_000;
 
@@ -245,16 +80,61 @@ const tabsContextTracker = createTabsContextTracker();
 console.info("[WebBlackbox] service worker booted");
 
 const contentInjection = createContentInjectionController(chromeApi);
+const offscreenPortTraffic = createPortTrafficMeter();
+const portRegistry = createPortRegistry({
+  offscreenPortTraffic,
+  shouldLogPortDebug
+});
+const stopDrain = createStopDrainTracker({
+  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid)
+});
+const sessionListView = createSessionListView({
+  sessionRegistry,
+  broadcast: (message) => {
+    portRegistry.broadcast(message);
+  }
+});
+const pipelineBuffer = createPipelineBuffer({
+  enqueue,
+  enqueueWithResult,
+  wait,
+  shouldLogPerf
+});
 const sessionListPush = createThrottledPush(
-  () => broadcast(buildSessionListMessage()),
+  () => sessionListView.broadcastSessionList(),
   SESSION_LIST_EVENT_PUSH_INTERVAL_MS
 );
+
+function pushSessionList(): void {
+  sessionListPush.now();
+}
+
+function resolveUiActionTarget(
+  requestedTabId: number | undefined,
+  senderTabId: number | undefined
+): Promise<number | undefined> {
+  return resolveUiActionTabId({
+    requestedTabId,
+    senderTabId,
+    queryActiveTabId: async () => {
+      const activeTabs =
+        (await chromeApi?.tabs?.query?.({ active: true, currentWindow: true })) ?? [];
+      return activeTabs[0]?.id;
+    },
+    fallbackTabId: () => sessionRegistry.byTab.keys().next().value
+  });
+}
+
 const recordedTabWatch = createRecordedTabWatch(chromeApi, {
-  onTabUpdated: handleRecordedTabUpdated,
-  onTabRemoved: (tabId) => {
-    void stopSession(tabId);
+  onTabUpdated: (tabId, changeInfo) => {
+    inboundRouter.handleRecordedTabUpdated(tabId, changeInfo);
   },
-  onFrameCommitted: handleRecordedFrameCommitted
+  onTabRemoved: (tabId) => {
+    void sessionCommands.stopSession(tabId);
+  },
+  onFrameCommitted: (details) => {
+    inboundRouter.handleRecordedFrameCommitted(details);
+  }
 });
 const screenshotArtifacts = createScreenshotArtifactsController({
   ingestRawEvent,
@@ -275,19 +155,22 @@ const artifacts = createArtifactsController({
   captureAdvancedProfiles: profileArtifacts.captureAdvancedProfiles,
   captureStorageSnapshots: storageArtifacts.captureStorageSnapshots,
   captureCookieValues: storageArtifacts.captureCookieValues,
-  broadcast,
-  setFreezeBadge
+  broadcast: (message) => {
+    portRegistry.broadcast(message);
+  },
+  setFreezeBadge: () => sessionCommands.setFreezeBadge()
 });
 const fullCdp = createFullCdpController({
   createRouter: () => createCdpRouter(createChromeDebuggerTransport()),
   ingestRawEvent,
   enqueue,
-  stopSession,
+  stopSession: (tabId) => sessionCommands.stopSession(tabId),
   captureFullModeArtifacts: artifacts.captureFullModeArtifacts,
   captureScreenshot: screenshotArtifacts.captureScreenshot,
   shouldCaptureIncidentArtifacts: artifacts.shouldCaptureIncidentArtifacts,
   captureIncidentArtifacts: artifacts.captureIncidentArtifacts,
-  resolveBodyRule: resolveFullBodyCaptureRule,
+  resolveBodyRule: (runtime, url, mimeType) =>
+    sessionCommands.resolveFullBodyCaptureRule(runtime, url, mimeType),
   bodyRedactedToken: BODY_REDACTION_TOKEN
 });
 const liteNetworkBaseline = createLiteNetworkBaselineController({
@@ -298,7 +181,7 @@ const liteNetworkBaseline = createLiteNetworkBaselineController({
 });
 const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
   {
-    getPort: () => offscreenPort,
+    getPort: () => portRegistry.getOffscreenPort(),
     hasDocument: hasOffscreenDocument,
     createDocument: createOffscreenDocument,
     closeDocument: async () => {
@@ -314,7 +197,6 @@ const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
     pollMs: OFFSCREEN_PORT_READY_WAIT_MS
   }
 );
-const offscreenPortTraffic = createPortTrafficMeter();
 const offscreenClient = createOffscreenClient({
   ensurePort: ensureOffscreenPortReady,
   recoverSession: recoverOffscreenSession,
@@ -337,44 +219,6 @@ const orphanedOffscreenCleanup = closeOrphanedOffscreenDocument().catch((error) 
 let atRestKeyReady: Promise<AtRestKeyRecord> | null = null;
 /** This worker minted the key: a new browser session, nothing stored before is readable. */
 let atRestKeyMinted = false;
-const stoppedSessionLifecycle: StoppedSessionLifecycleController = createStoppedSessionLifecycle({
-  sessionRegistry,
-  alarms: chromeApi?.alarms,
-  sessionStorageArea: chromeApi?.storage?.session,
-  localStorageArea: chromeApi?.storage?.local,
-  closeOffscreenDocument: async () => {
-    await chromeApi?.offscreen?.closeDocument?.();
-  },
-  getAtRestKey,
-  isAtRestKeyFresh: () => atRestKeyMinted,
-  waitForRuntimeState: () => runtimeStateRestored,
-  loadPerformanceBudgetConfig,
-  getSessionAnnotation,
-  createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
-  createFullBodyCapture: fullCdp.createFullBodyCapture,
-  toSessionMetadata,
-  flushBufferedPipelineEvents,
-  refreshActionBadge,
-  pushSessionList,
-  persistRuntimeState,
-  notifyOffscreenPipelineStatus,
-  indexedDB: globalThis.indexedDB,
-  sweepStoredSessions: (shouldDelete) =>
-    sweepPipelineSessions(new IndexedDbPipelineStorage(PIPELINE_DB_NAME), shouldDelete),
-  bootedAt: SERVICE_WORKER_BOOTED_AT
-});
-const sessionExport = createSessionExportController({
-  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
-  stopSession,
-  flushBufferedPipelineEvents,
-  attachStoppedPipeline: (runtime) => stoppedSessionLifecycle.attachStoppedPipeline(runtime),
-  disposeStoppedSession: (runtime) => stoppedSessionLifecycle.disposeStoppedSession(runtime),
-  enqueueWithResult,
-  downloads: chromeApi?.downloads,
-  auditStorageArea: chromeApi?.storage?.local,
-  broadcast
-});
-let offscreenDocumentReady: Promise<void> | null = null;
 
 void getAtRestKey().catch((error) => {
   console.warn("[WebBlackbox] at-rest encryption key unavailable", error);
@@ -388,7 +232,139 @@ const settingsMigrated = migrateSettingsStorage(chromeApi?.storage?.local).then(
     );
   }
 });
-const runtimeStateRestored = restoreRuntimeState().catch((error) => {
+
+const annotations = createSessionAnnotations({
+  sessionStorageArea: chromeApi?.storage?.session,
+  localStorageArea: chromeApi?.storage?.local,
+  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
+  pushSessionList
+});
+const profileReevaluation = createProfileReevaluation({
+  chromeApi,
+  settingsMigrated,
+  readEnterprisePolicy,
+  resolveUiActionTarget,
+  ingestRawEvent,
+  stopSession: (tabId) => sessionCommands.stopSession(tabId),
+  monotonicTime
+});
+const stoppedSessionLifecycle: StoppedSessionLifecycleController = createStoppedSessionLifecycle({
+  sessionRegistry,
+  alarms: chromeApi?.alarms,
+  sessionStorageArea: chromeApi?.storage?.session,
+  localStorageArea: chromeApi?.storage?.local,
+  closeOffscreenDocument: async () => {
+    await chromeApi?.offscreen?.closeDocument?.();
+  },
+  getAtRestKey,
+  isAtRestKeyFresh: () => atRestKeyMinted,
+  waitForRuntimeState: () => runtimeStateRestored,
+  loadPerformanceBudgetConfig,
+  getSessionAnnotation: (sid) => annotations.get(sid),
+  createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
+  createFullBodyCapture: fullCdp.createFullBodyCapture,
+  toSessionMetadata,
+  flushBufferedPipelineEvents: pipelineBuffer.flushBufferedPipelineEvents,
+  refreshActionBadge: () => sessionCommands.refreshActionBadge(),
+  pushSessionList,
+  persistRuntimeState: () => sessionCommands.persistRuntimeState(),
+  notifyOffscreenPipelineStatus: () => {
+    inboundRouter.notifyOffscreenPipelineStatus();
+  },
+  indexedDB: globalThis.indexedDB,
+  sweepStoredSessions: (shouldDelete) =>
+    sweepPipelineSessions(new IndexedDbPipelineStorage(PIPELINE_DB_NAME), shouldDelete),
+  bootedAt: SERVICE_WORKER_BOOTED_AT
+});
+const sessionExport = createSessionExportController({
+  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
+  stopSession: (tabId) => sessionCommands.stopSession(tabId),
+  flushBufferedPipelineEvents: pipelineBuffer.flushBufferedPipelineEvents,
+  attachStoppedPipeline: (runtime) => stoppedSessionLifecycle.attachStoppedPipeline(runtime),
+  disposeStoppedSession: (runtime) => stoppedSessionLifecycle.disposeStoppedSession(runtime),
+  enqueueWithResult,
+  downloads: chromeApi?.downloads,
+  auditStorageArea: chromeApi?.storage?.local,
+  broadcast: (message) => {
+    portRegistry.broadcast(message);
+  }
+});
+const sessionCommands = createSessionCommands({
+  sessionRegistry,
+  annotations,
+  stopDrain,
+  pipelineBuffer,
+  profile: profileReevaluation,
+  fullCdp,
+  screenRecording,
+  storageArtifacts,
+  liteNetworkBaseline,
+  recordedTabWatch,
+  tabsContextTracker,
+  stoppedSessionLifecycle,
+  tabs: chromeApi?.tabs,
+  scripting: chromeApi?.scripting,
+  action: chromeApi?.action,
+  storageLocal: chromeApi?.storage?.local,
+  broadcast: (message) => {
+    portRegistry.broadcast(message);
+  },
+  notifyOffscreenPipelineStatus: () => {
+    inboundRouter.notifyOffscreenPipelineStatus();
+  },
+  pushSessionList,
+  scheduleSessionListPush: () => {
+    sessionListPush.schedule();
+  },
+  ingestRawEvent,
+  enqueueWithResult,
+  updateSessionMetadataFromEvent: (runtime, event) => {
+    inboundRouter.updateSessionMetadataFromEvent(runtime, event);
+  },
+  handleFreezeNotice: (runtime, reason) => {
+    artifacts.handleFreezeNotice(runtime, reason);
+  },
+  getAtRestKey,
+  ensureOffscreenDocument,
+  createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
+  loadPerformanceBudgetConfig,
+  monotonicTime
+});
+const inboundRouter = createInboundRouter({
+  sessionRegistry,
+  portRegistry,
+  stopDrain,
+  offscreenClient,
+  screenRecording,
+  sessionCommands,
+  sessionList: sessionListView,
+  sessionExport,
+  annotations,
+  profile: profileReevaluation,
+  contentInjection,
+  storageArtifacts,
+  tabsContextTracker,
+  runtime: chromeApi?.runtime,
+  tabs: chromeApi?.tabs,
+  scripting: chromeApi?.scripting,
+  offscreenPath: OFFSCREEN_PATH,
+  resolveUiActionTarget,
+  ingestRawEvent,
+  sendAtRestKeyToOffscreen,
+  recoverActiveOffscreenPipelines: recoverAllActiveOffscreenPipelines,
+  markStoppedPipelinesDetached: () => {
+    stoppedSessionLifecycle.markStoppedPipelinesDetached();
+  },
+  waitForRuntimeState: () => runtimeStateRestored,
+  pushSessionList,
+  wait,
+  monotonicTime,
+  perfNow,
+  shouldLogPortDebug
+});
+let offscreenDocumentReady: Promise<void> | null = null;
+
+const runtimeStateRestored = sessionCommands.restoreRuntimeState().catch((error) => {
   console.warn("[WebBlackbox] failed to restore runtime state", error);
 });
 
@@ -419,250 +395,24 @@ chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
 });
 
 chromeApi?.runtime?.onInstalled.addListener(() => {
-  void setIdleBadge();
+  void sessionCommands.setIdleBadge();
 });
 
 chromeApi?.runtime?.onConnect.addListener((port) => {
-  if (
-    !Object.values(PORT_NAMES).includes(port.name as (typeof PORT_NAMES)[keyof typeof PORT_NAMES])
-  ) {
-    return;
-  }
-
-  const senderContext = resolvePortSenderContext(port);
-
-  if (senderContext === "untrusted") {
-    // Port names are chosen by the connecting script: never let an arbitrary frame
-    // claim the offscreen pipeline or receive session broadcasts.
-    console.warn("[WebBlackbox] rejected port from untrusted sender", {
-      portName: port.name,
-      tabId: port.sender?.tab?.id,
-      frameId: port.sender?.frameId
-    });
-    port.disconnect?.();
-    return;
-  }
-
-  // The offscreen port carries the at-rest key and every recorded event: only the extension's own
-  // offscreen document may take it. The sender check above already covers this; the explicit
-  // check keeps the key from depending on that classification alone.
-  if (port.name === PORT_NAMES.offscreen && !isTrustedOffscreenPort(port)) {
-    console.warn("[WebBlackbox] refused an offscreen port from another context", {
-      tabId: port.sender?.tab?.id
-    });
-    port.disconnect?.();
-    return;
-  }
-
-  connectedPorts.add(port);
-
-  if (port.name === PORT_NAMES.offscreen) {
-    offscreenPort = port;
-    void sendAtRestKeyToOffscreen(port);
-    notifyOffscreenPipelineStatus();
-  }
-
-  if (port.name === PORT_NAMES.content) {
-    void syncContentPortStateOnConnect(port).catch((error) => {
-      logInboundMessageFailure("content.connect", error, port);
-    });
-  }
-
-  pushSessionList();
-
-  const onMessage = (rawMessage: unknown) => {
-    if (handleOffscreenRuntimeMessage(rawMessage, port)) {
-      return;
-    }
-
-    const message = parseInboundMessage(rawMessage);
-
-    if (!message || !isInboundKindAllowed(message.kind, senderContext)) {
-      return;
-    }
-
-    dispatchInboundMessage(message, port);
-  };
-
-  const onDisconnect = () => {
-    connectedPorts.delete(port);
-
-    if (offscreenPort === port) {
-      offscreenPort = null;
-      offscreenClient.rejectPending(OFFSCREEN_DISCONNECTED_ERROR);
-      stoppedSessionLifecycle.markStoppedPipelinesDetached();
-
-      if (sessionRegistry.tabCount() > 0) {
-        void recoverAllActiveOffscreenPipelines().catch((error) => {
-          console.warn("[WebBlackbox] failed to recover active offscreen pipelines", error);
-        });
-      }
-    }
-
-    port.onMessage.removeListener(onMessage);
-    port.onDisconnect.removeListener(onDisconnect);
-  };
-
-  port.onMessage.addListener(onMessage);
-  port.onDisconnect.addListener(onDisconnect);
+  inboundRouter.handlePortConnect(port);
 });
-
-function resolvePortSenderContext(port: PortLike): InboundSenderContext {
-  const trustContext = resolveSenderTrustContext();
-  return trustContext ? classifyPortSender(port.name, port.sender, trustContext) : "untrusted";
-}
-
-function resolveMessageSenderContext(sender: RuntimeMessageSender): InboundSenderContext {
-  const trustContext = resolveSenderTrustContext();
-  return trustContext ? classifyMessageSender(sender, trustContext) : "untrusted";
-}
-
-function resolveSenderTrustContext(): SenderTrustContext | null {
-  const runtime = chromeApi?.runtime;
-
-  if (!runtime?.id || typeof runtime.getURL !== "function") {
-    return null;
-  }
-
-  return {
-    extensionId: runtime.id,
-    extensionOrigin: runtime.getURL("").replace(/\/+$/, ""),
-    offscreenUrl: runtime.getURL(OFFSCREEN_PATH)
-  };
-}
-
-async function syncContentPortStateOnConnect(port: PortLike): Promise<void> {
-  const tabId = port.sender?.tab?.id;
-
-  if (typeof tabId !== "number") {
-    return;
-  }
-
-  const runtime = sessionRegistry.getByTab(tabId);
-
-  if (!runtime || runtime.stoppedAt) {
-    return;
-  }
-
-  // Only the connecting frame: re-running the hooks script resets a frame's live capture config
-  // (the script installs inactive), and only that frame gets the recording status back below.
-  await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce, port.sender?.frameId);
-
-  syncContentPortRecordingState(port);
-}
-
-function syncContentPortRecordingState(port: PortLike): void {
-  const tabId = port.sender?.tab?.id;
-
-  if (typeof tabId !== "number") {
-    return;
-  }
-
-  const runtime = sessionRegistry.getByTab(tabId);
-
-  if (!runtime || runtime.stoppedAt) {
-    return;
-  }
-
-  const sampling = toStatusSampling(runtime);
-
-  try {
-    port.postMessage({
-      kind: "sw.recording-status",
-      active: true,
-      sid: runtime.sid,
-      mode: runtime.mode,
-      sampling,
-      capturePolicy: runtime.config.capturePolicy,
-      injectedBridgeNonce: runtime.injectedBridgeNonce,
-      pointer: toStatusPointer(runtime),
-      ...toScriptScanStatus(runtime)
-    });
-  } catch (error) {
-    logPortSendFailure("sw.recording-status", error, {
-      tabId,
-      sid: runtime.sid,
-      mode: runtime.mode
-    });
-  }
-}
 
 chromeApi?.runtime?.onMessage.addListener((rawMessage, sender, sendResponse) => {
-  const message = parseInboundMessage(rawMessage);
-
-  if (!message || !isInboundKindAllowed(message.kind, resolveMessageSenderContext(sender))) {
-    return;
-  }
-
-  void handleInboundMessage(message, undefined, sender.tab?.id, sender.frameId)
-    .then((result) => {
-      sendResponse(result ?? { ok: true });
-    })
-    .catch((error) => {
-      logInboundMessageFailure(message.kind, error, undefined, {
-        tabId: sender.tab?.id,
-        frameId: sender.frameId
-      });
-      sendResponse({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
-
-  return true;
+  return inboundRouter.handleRuntimeMessage(rawMessage, sender, sendResponse);
 });
-
-function dispatchInboundMessage(
-  message: ExtensionInboundMessage,
-  port?: PortLike,
-  senderTabId?: number,
-  senderFrameId?: number
-): void {
-  void handleInboundMessage(message, port, senderTabId, senderFrameId).catch((error) => {
-    logInboundMessageFailure(message.kind, error, port, {
-      tabId: senderTabId,
-      frameId: senderFrameId
-    });
-  });
-}
 
 chromeApi?.commands?.onCommand.addListener((command) => {
   if (command !== "mark-bug") {
     return;
   }
 
-  void relayMarkerCommand();
+  void inboundRouter.relayMarkerCommand();
 });
-
-function handleRecordedTabUpdated(tabId: number, changeInfo: ChromeTabChangeInfo): void {
-  if (typeof changeInfo.url === "string" && changeInfo.url.length > 0) {
-    void handleTabUrlChanged(tabId, changeInfo.url);
-  }
-
-  if (changeInfo.status === "complete") {
-    void restoreTabInstrumentationAfterNavigation(tabId);
-  }
-}
-
-/**
- * With injection on Start only, nothing registered covers a recorded tab's new documents, so each
- * committed frame (reload, navigation, iframe added later) gets the content script right away.
- */
-function handleRecordedFrameCommitted(details: FrameCommittedDetails): void {
-  const runtime = sessionRegistry.getByTab(details.tabId);
-
-  if (
-    !runtime ||
-    runtime.stopping ||
-    runtime.stoppedAt ||
-    contentInjection.currentMode() !== "on-start" ||
-    !isInjectableFrameUrl(details.url)
-  ) {
-    return;
-  }
-
-  void injectContentScriptIntoFrame(chromeApi, details.tabId, details.frameId);
-}
 
 // Deleting or editing a profile, or a policy change, re-checks running recordings at once.
 chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
@@ -671,227 +421,9 @@ chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
   }
 
   for (const runtime of sessionRegistry.tabRuntimes()) {
-    scheduleProfileReevaluation(runtime, "settings-changed");
+    profileReevaluation.scheduleProfileReevaluation(runtime, "settings-changed");
   }
 });
-
-async function handleInboundMessage(
-  message: ExtensionInboundMessage,
-  port?: PortLike,
-  senderTabId?: number,
-  senderFrameId?: number
-): Promise<unknown> {
-  // A message may be what woke this worker: answer it once an earlier worker's stopped recordings
-  // are restored, so they are listed and exportable.
-  await runtimeStateRestored;
-
-  if (message.kind === "ui.start") {
-    const tabId = await resolveUiActionTarget(message.tabId, senderTabId);
-
-    if (typeof tabId !== "number") {
-      return;
-    }
-
-    // Both engines: the reload follows the start, so the capture (Full: CDP) sees the page load.
-    await startWithOptionalReload(tabId, message.reloadPage === true, {
-      start: () =>
-        startSession(tabId, message.mode, {
-          visualCapture: resolveFullModeVisualCapture(message),
-          profileId: typeof message.profileId === "string" ? message.profileId : undefined
-        }),
-      reload: reloadRecordingTab,
-      stop: stopSession
-    });
-    return;
-  }
-
-  if (message.kind === "ui.stop") {
-    const tabId = await resolveUiActionTarget(message.tabId, senderTabId);
-
-    if (typeof tabId !== "number") {
-      return;
-    }
-
-    await stopSession(tabId);
-    return;
-  }
-
-  if (message.kind === "ui.export") {
-    return sessionExport.exportSession(
-      message.sid,
-      message.passphrase,
-      message.saveAs,
-      sessionExport.resolveExportPolicy(message.policy)
-    );
-  }
-
-  if (message.kind === "ui.resolve-profile") {
-    const preview = await resolveProfilePreview(message.tabId, senderTabId, message.profileId);
-
-    if (port) {
-      sendPortMessage(port, preview);
-      return;
-    }
-
-    return preview;
-  }
-
-  if (message.kind === "ui.delete") {
-    await deleteSessionBySid(message.sid);
-    return;
-  }
-
-  if (message.kind === "ui.annotate") {
-    await updateSessionAnnotation(message.sid, message.tags, message.note);
-    return;
-  }
-
-  if (message.kind === "ui.ack-profile-cancel") {
-    await acknowledgeProfileCancel(message.sid);
-    return;
-  }
-
-  if (message.kind === "ui.request-session-list") {
-    const sessionList = buildSessionListMessage();
-
-    if (port) {
-      sendPortMessage(port, sessionList);
-      return;
-    }
-
-    return sessionList;
-  }
-
-  if (message.kind === "content.marker") {
-    const tabId = senderTabId ?? port?.sender?.tab?.id;
-    const frame = normalizeContentFrameId(senderFrameId ?? port?.sender?.frameId);
-
-    if (typeof tabId === "number") {
-      ingestRawEvent({
-        source: "content",
-        rawType: "marker",
-        tabId,
-        sid: sessionRegistry.getByTab(tabId)?.sid ?? "",
-        t: Date.now(),
-        mono: monotonicTime(),
-        frame,
-        payload: {
-          message: message.message
-        }
-      });
-    }
-
-    return;
-  }
-
-  if (message.kind === "content.ready") {
-    const tabId = senderTabId ?? port?.sender?.tab?.id;
-
-    if (typeof tabId !== "number") {
-      return {
-        kind: "sw.recording-status",
-        active: false
-      };
-    }
-
-    const runtime = sessionRegistry.getByTab(tabId);
-
-    if (!runtime || runtime.stoppedAt) {
-      return {
-        kind: "sw.recording-status",
-        active: false
-      };
-    }
-
-    // The sender's frame only: the reply below reaches only that frame's content script.
-    await ensureInjectedHooks(
-      tabId,
-      runtime.injectedBridgeNonce,
-      senderFrameId ?? port?.sender?.frameId
-    );
-
-    const sampling = toStatusSampling(runtime);
-
-    if (port?.name === PORT_NAMES.content) {
-      syncContentPortRecordingState(port);
-      return {
-        ok: true
-      };
-    }
-
-    return {
-      kind: "sw.recording-status",
-      active: true,
-      sid: runtime.sid,
-      mode: runtime.mode,
-      sampling,
-      capturePolicy: runtime.config.capturePolicy,
-      injectedBridgeNonce: runtime.injectedBridgeNonce,
-      pointer: toStatusPointer(runtime),
-      ...toScriptScanStatus(runtime)
-    };
-  }
-
-  if (message.kind === "content.stop-drained") {
-    markStopDrainAckReceived(message.sid);
-    return;
-  }
-
-  if (message.kind === "content.events") {
-    const tabId = senderTabId ?? port?.sender?.tab?.id;
-    const frame = normalizeContentFrameId(senderFrameId ?? port?.sender?.frameId);
-
-    if (
-      typeof tabId !== "number" ||
-      !Array.isArray(message.events) ||
-      message.events.length === 0
-    ) {
-      return;
-    }
-
-    adjustInFlightContentMessages(tabId, 1);
-    let sliceStartedAt = perfNow();
-
-    try {
-      for (const rawEvent of message.events) {
-        ingestRawEvent({
-          ...rawEvent,
-          tabId,
-          frame: rawEvent.frame ?? frame
-        });
-
-        if (perfNow() - sliceStartedAt >= CONTENT_EVENT_SLICE_BUDGET_MS) {
-          await wait(0);
-          sliceStartedAt = perfNow();
-        }
-      }
-    } finally {
-      adjustInFlightContentMessages(tabId, -1);
-    }
-  }
-}
-
-async function deleteSessionBySid(sid: string): Promise<void> {
-  const runtime = sessionRegistry.getBySid(sid);
-
-  if (!runtime) {
-    if (sessionAnnotations.delete(sid)) {
-      await persistSessionAnnotations().catch(() => undefined);
-    }
-    return;
-  }
-
-  if (!runtime.stoppedAt) {
-    await stopSession(runtime.tabId);
-  }
-
-  await stoppedSessionLifecycle.disposeStoppedSession(runtime);
-
-  if (sessionAnnotations.delete(sid)) {
-    await persistSessionAnnotations().catch(() => undefined);
-    pushSessionList();
-  }
-}
 
 function createTabsContextTracker(): TabsContextTracker | null {
   const tabs = chromeApi?.tabs;
@@ -937,558 +469,6 @@ function ingestTabsContext(recordedTabId: number, emission: TabsContextEmission)
     mono: monotonicTime(),
     payload: emission.payload
   });
-}
-
-/** Starts recording the tab; resolves with the engine it runs in. */
-async function startSession(
-  tabId: number,
-  requestedMode: CaptureMode,
-  options: { visualCapture?: FullModeVisualCapture; profileId?: string } = {}
-): Promise<CaptureMode> {
-  const existing = sessionRegistry.getByTab(tabId);
-
-  if (existing) {
-    await stopSession(tabId);
-  }
-
-  // Nothing is recorded unless it can be encrypted at rest.
-  await getAtRestKey();
-  await ensureOffscreenDocument();
-
-  const sid = createSessionId();
-  const startedAt = Date.now();
-  const tabMetadata = await resolveTabSessionMetadata(tabId);
-  const sessionOrigin = resolveUrlOrigin(sanitizeUrlForPrivacy(tabMetadata.url)) ?? "";
-  const enterprisePolicy = await loadEnterprisePolicy();
-
-  const startBlockReason = getSessionStartBlockReason(sessionOrigin, enterprisePolicy);
-
-  if (startBlockReason) {
-    throw new Error(startBlockReason);
-  }
-
-  const profileRequest = options.profileId ?? AUTO_PROFILE_ID;
-  const profileSelection = await resolveTabProfileSelection(tabId, profileRequest);
-
-  if (!profileSelection) {
-    throw new Error(NO_RECORDING_PROFILE_ERROR);
-  }
-
-  // A profile that needs the Full engine never runs in Lite, whatever the caller asked for: Lite
-  // would drop its bodies, socket messages and visuals without a trace. Upgrading (rather than
-  // refusing) keeps the start the user asked for; the popup already shows the engine as Full.
-  const mode = resolveStartEngine(requestedMode, profileSelection.profile);
-  const loadedRecorderConfig = buildProfileRecorderConfig({
-    mode,
-    profile: profileSelection.profile,
-    visualCapture: options.visualCapture
-  });
-  const recorderConfig = applyEnterprisePolicyToRecorderConfig(
-    withSessionCapturePolicy(loadedRecorderConfig, {
-      tabId,
-      origin: sessionOrigin,
-      startedAt
-    }),
-    enterprisePolicy
-  );
-  const performanceBudget = await loadPerformanceBudgetConfig();
-  const annotation = getSessionAnnotation(sid);
-  const metadata: SessionMetadata = {
-    sid,
-    tabId,
-    startedAt,
-    mode,
-    url: sanitizeUrlForPrivacy(tabMetadata.url),
-    title: tabMetadata.title,
-    tags: [...annotation.tags]
-  };
-
-  const recorderPlugins = createDefaultRecorderPlugins();
-  const pipeline = createSessionPipelineClient(offscreenClient, sid);
-  await pipeline.start(metadata, recorderConfig.redaction, recorderConfig.capturePolicy);
-
-  const runtime = createSessionRuntime(
-    {
-      sid,
-      tabId,
-      mode,
-      profile: {
-        request: toSessionProfileRequest(profileRequest, profileSelection),
-        visualCapture: options.visualCapture,
-        selection: profileSelection,
-        profileConfig: loadedRecorderConfig,
-        visualsCaptured: capturedVisualsOf(recorderConfig)
-      },
-      url: metadata.url,
-      title: metadata.title,
-      annotation,
-      config: recorderConfig,
-      startedAt,
-      pipeline,
-      recorderPlugins,
-      performanceBudget,
-      pageUrl: tabMetadata.url
-    },
-    { createFullBodyCapture: fullCdp.createFullBodyCapture }
-  );
-
-  runtime.recorder = new WebBlackboxRecorder(
-    {
-      ...recorderConfig,
-      mode
-    },
-    {
-      onEvent: (event) => {
-        updateSessionMetadataFromEvent(runtime, event);
-        trackSessionCounters(runtime, event);
-        evaluatePerformanceBudget(runtime, event);
-        enqueuePipelineEvent(runtime, event);
-      },
-      onFreeze: (reason) => {
-        artifacts.handleFreezeNotice(runtime, reason);
-      },
-      shouldKeepInlineNetworkBody: (context) =>
-        isInlineRequestBodyAllowed(context, (url, mimeType) =>
-          runtime.mode === "full"
-            ? resolveFullBodyCaptureRule(runtime, url, mimeType)
-            : resolveLiteBodyCaptureRule(runtime, url, mimeType)
-        )
-    },
-    undefined,
-    recorderPlugins
-  );
-
-  sessionRegistry.register(runtime);
-  recordedTabWatch.sync(true);
-
-  if (mode === "lite") {
-    liteNetworkBaseline.install();
-  }
-
-  ingestRawEvent({
-    source: "system",
-    rawType: "config",
-    sid,
-    tabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: {
-      ...recorderConfig,
-      profile: toArchivedProfileInfo(
-        profileSelection,
-        listEnterpriseCappedCategories(loadedRecorderConfig, recorderConfig)
-      )
-    }
-  });
-
-  // Other tabs of the site right after the config, before instrumentation can take a while.
-  await tabsContextTracker?.startSession(tabId, {
-    url: tabMetadata.url,
-    level: resolveTabsContextLevel(recorderConfig.capturePolicy)
-  });
-
-  await ensureContentScriptInjected(tabId);
-  await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
-
-  if (mode === "full" && recorderConfig.capturePolicy?.categories.cdp !== "off") {
-    await fullCdp.attachCdp(runtime);
-  }
-
-  if (screenRecording.shouldStartScreenRecording(runtime)) {
-    try {
-      await screenRecording.startScreenRecording(runtime);
-    } catch (error) {
-      await stopSession(tabId);
-      throw error;
-    }
-  }
-
-  const sampling = toStatusSampling(runtime);
-
-  await setRecordingBadge();
-  const pointer = toStatusPointer(runtime);
-
-  await notifyTabStatus(
-    tabId,
-    true,
-    sid,
-    mode,
-    sampling,
-    recorderConfig.capturePolicy,
-    runtime.injectedBridgeNonce,
-    pointer
-  );
-  broadcast({
-    kind: "sw.recording-status",
-    active: true,
-    sid,
-    mode,
-    sampling,
-    capturePolicy: recorderConfig.capturePolicy,
-    pointer,
-    ...toScriptScanStatus(runtime)
-  });
-  pushSessionList();
-  await persistRuntimeState();
-  notifyOffscreenPipelineStatus();
-  return mode;
-}
-
-async function reloadRecordingTab(tabId: number): Promise<void> {
-  if (!chromeApi?.tabs?.reload) {
-    throw new Error("Current Chrome API cannot reload the active tab.");
-  }
-
-  await chromeApi.tabs.reload(tabId);
-}
-
-async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<void> {
-  const runtime = sessionRegistry.getByTab(tabId);
-
-  if (!runtime || runtime.stopping || runtime.stoppedAt) {
-    return;
-  }
-
-  await ensureContentScriptInjected(tabId);
-  await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
-  await notifyTabStatus(
-    tabId,
-    true,
-    runtime.sid,
-    runtime.mode,
-    toStatusSampling(runtime),
-    runtime.config.capturePolicy,
-    runtime.injectedBridgeNonce,
-    toStatusPointer(runtime)
-  );
-  // Title, meta tags and selectors are only reliable once the page has loaded.
-  scheduleProfileReevaluation(runtime, "page-loaded");
-}
-
-async function stopSession(tabId: number): Promise<void> {
-  const runtime = sessionRegistry.getByTab(tabId);
-
-  if (!runtime || runtime.stopping) {
-    return;
-  }
-
-  runtime.stopping = true;
-  // Changes of other tabs seen before Stop still belong to the session.
-  await tabsContextTracker?.settle();
-  tabsContextTracker?.stopSession(tabId);
-  const stopDrainAck = createStopDrainAck(runtime);
-  await screenRecording.stopScreenRecording(runtime, "session-stop").catch((error) => {
-    console.warn("[WebBlackbox] failed to stop screen recording", error);
-  });
-
-  if (runtime.mode === "full" && runtime.config.capturePolicy?.categories.cookies === "allow") {
-    await storageArtifacts.captureCookieValues(runtime, "session-stop").catch((error) => {
-      console.warn("[WebBlackbox] failed to capture cookie values at stop", error);
-    });
-  }
-
-  // Bodies still being read are kept (or recorded as skipped) before the debugger detaches.
-  await runtime.fullBodyCapture.drain(
-    Math.min(
-      FULL_MODE_BODY_STOP_DRAIN_MAX_MS,
-      FULL_MODE_BODY_STOP_DRAIN_MS +
-        runtime.fullBodyCapture.pendingCount() * FULL_MODE_BODY_STOP_DRAIN_PER_BODY_MS
-    )
-  );
-  await runtime.cdpIngestChain;
-  await flushBufferedPipelineEvents(runtime);
-  await teardownCaptureInstrumentation(runtime);
-  sessionRegistry.unregisterTab(runtime.tabId);
-  recordedTabWatch.sync(sessionRegistry.tabCount() > 0);
-  liteNetworkBaseline.uninstallIfUnused();
-  runtime.stoppedAt = Date.now();
-  stoppedSessionLifecycle.scheduleStoppedRuntimeCleanup(runtime);
-  await stoppedSessionLifecycle.rememberStoppedSessionRecord(runtime).catch((error) => {
-    console.warn("[WebBlackbox] failed to persist stopped session record", error);
-  });
-  // Written now and again after the final flush: the worker may die while the page drains.
-  await stoppedSessionLifecycle.rememberStoppedSession(runtime);
-
-  await refreshActionBadge();
-
-  await notifyTabStatus(
-    tabId,
-    false,
-    runtime.sid,
-    runtime.mode,
-    toStatusSampling(runtime),
-    runtime.config.capturePolicy
-  );
-  broadcast({
-    kind: "sw.recording-status",
-    active: false,
-    sid: runtime.sid,
-    mode: runtime.mode,
-    capturePolicy: runtime.config.capturePolicy
-  });
-  pushSessionList();
-  await persistRuntimeState();
-  notifyOffscreenPipelineStatus();
-  await stopDrainAck;
-  await flushBufferedPipelineEvents(runtime);
-  runtime.stopDrained = true;
-  // The recording now waits for its export, possibly in a later worker: its tail goes to the
-  // encrypted store and a snapshot lets that worker list and export it.
-  await enqueueWithResult(runtime, () => runtime.pipeline.flush()).catch((error) => {
-    console.warn("[WebBlackbox] failed to flush the stopped recording", error);
-  });
-  await stoppedSessionLifecycle.rememberStoppedSession(runtime);
-}
-
-/**
- * Resolves the profile for a tab from the current store, rules and page signals; null when no
- * profile exists.
- */
-async function resolveTabProfileSelection(
-  tabId: number,
-  request: string
-): Promise<ProfileSelection | null> {
-  const state = await loadSessionProfilesState();
-  const page = (await readTabPageContext(chromeApi, tabId, state.rules)) ?? {
-    url: `tab:${tabId}`
-  };
-
-  return selectRecordingProfile({ state, page, requestedProfileId: request });
-}
-
-async function loadSessionProfilesState(): Promise<ProfilesState> {
-  await settingsMigrated;
-  return loadProfilesState(
-    chromeApi,
-    { enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY },
-    readEnterprisePolicy
-  );
-}
-
-async function resolveProfilePreview(
-  requestedTabId: number | undefined,
-  senderTabId: number | undefined,
-  requestedProfileId: string | undefined
-): Promise<ReturnType<typeof buildProfilePreview>> {
-  const state = await loadSessionProfilesState();
-  // The same tab `ui.start` would record, so the preview shows the profile Start applies.
-  const tabId = await resolveUiActionTarget(requestedTabId, senderTabId);
-
-  if (typeof tabId !== "number") {
-    return buildProfilePreview(state, null);
-  }
-
-  const page = await readTabPageContext(chromeApi, tabId, state.rules);
-  const selection = page
-    ? selectRecordingProfile({
-        state,
-        page,
-        requestedProfileId: requestedProfileId ?? AUTO_PROFILE_ID
-      })
-    : null;
-
-  if (!selection) {
-    return buildProfilePreview(state, null);
-  }
-
-  // The preview renders the profile on its recommended transport to name the enterprise caps.
-  const profileConfig = buildProfileRecorderConfig({
-    mode: selection.profile.base,
-    profile: selection.profile
-  });
-  const effectiveConfig = applyEnterprisePolicyToRecorderConfig(
-    profileConfig,
-    await loadEnterprisePolicy()
-  );
-
-  return buildProfilePreview(
-    state,
-    selection,
-    listEnterpriseCappedCategories(profileConfig, effectiveConfig)
-  );
-}
-
-/**
- * Serializes profile re-evaluations per session. Only the latest request runs: older queued or
- * in-flight ones are dropped, so a navigation burst costs one page probe, not one per step.
- */
-function scheduleProfileReevaluation(runtime: SessionRuntime, trigger: ProfileCancelTrigger): void {
-  const generation = nextProfileGeneration(runtime);
-
-  runtime.profile.reevaluation = runtime.profile.reevaluation
-    .then(() => reevaluateSessionProfile(runtime, trigger, generation))
-    .catch((error) => {
-      console.warn("[WebBlackbox] recording profile re-evaluation failed", error);
-    });
-}
-
-function nextProfileGeneration(runtime: SessionRuntime): number {
-  const generation = runtime.profile.generation + 1;
-  runtime.profile = { ...runtime.profile, generation };
-  return generation;
-}
-
-function isProfileRequestCurrent(runtime: SessionRuntime, generation: number): boolean {
-  return runtime.profile.generation === generation && !runtime.stopping && !runtime.stoppedAt;
-}
-
-/**
- * Re-runs the rules after navigation or page load. A session records with one profile: when the
- * effective profile is no longer the one it started with (another profile picked by the rules,
- * the profile deleted or edited, the enterprise policy changed), the recording is cancelled.
- * What was captured is kept for export or deletion, and the popup explains why and how to fix it.
- */
-async function reevaluateSessionProfile(
-  runtime: SessionRuntime,
-  trigger: ProfileCancelTrigger,
-  generation: number
-): Promise<void> {
-  if (!isProfileRequestCurrent(runtime, generation)) {
-    return;
-  }
-
-  const [state, enterprisePolicy, tabLoading] = await Promise.all([
-    loadSessionProfilesState(),
-    loadEnterprisePolicy(),
-    isTabLoading(chromeApi, runtime.tabId)
-  ]);
-
-  // Rules that read the page cannot match before it loads; the page-loaded check decides.
-  if (shouldDeferProfileCheck({ trigger, tabLoading, rules: state.rules })) {
-    return;
-  }
-
-  const page = await readTabPageContext(chromeApi, runtime.tabId, state.rules, {
-    requireSignals: true
-  });
-
-  const started = runtime.profile.selection;
-  // A tab or page that cannot be read right now says nothing about the rules: only the started
-  // profile itself is checked (deleted, edited or capped by the policy).
-  const nextSelection = page
-    ? selectRecordingProfile({ state, page, requestedProfileId: runtime.profile.request })
-    : reselectStartedProfile(started, state);
-  const next = nextSelection
-    ? await buildSessionProfileSnapshot(runtime, nextSelection, enterprisePolicy)
-    : null;
-
-  // The session may have stopped or a newer request may have landed while this one was loading.
-  if (!isProfileRequestCurrent(runtime, generation)) {
-    return;
-  }
-
-  const reason = detectProfileChange({
-    started: {
-      selection: started,
-      profileConfig: runtime.profile.profileConfig,
-      effectiveConfig: runtime.config
-    },
-    next,
-    startedProfileExists: state.catalog.some((profile) => profile.id === started.profile.id)
-  });
-
-  if (reason) {
-    await cancelSessionForProfileChange(
-      runtime,
-      buildProfileCancellation({
-        reason,
-        trigger,
-        at: Date.now(),
-        started,
-        next: nextSelection
-      })
-    );
-  }
-}
-
-/** The recorder configs a selection would run with in this session. */
-async function buildSessionProfileSnapshot(
-  runtime: SessionRuntime,
-  selection: ProfileSelection,
-  enterprisePolicy: EnterpriseRecorderPolicy
-): Promise<SessionProfileSnapshot> {
-  const profileConfig = buildProfileRecorderConfig({
-    mode: runtime.mode,
-    profile: selection.profile,
-    visualCapture: runtime.profile.visualCapture
-  });
-  const effectiveConfig = applyEnterprisePolicyToRecorderConfig(
-    withSessionCapturePolicy(profileConfig, {
-      tabId: runtime.tabId,
-      origin: runtime.scopeOrigin ?? "",
-      startedAt: runtime.startedAt
-    }),
-    enterprisePolicy
-  );
-
-  return { selection, profileConfig, effectiveConfig };
-}
-
-/**
- * Records why the profile changed (`meta.config.profileCancel`), then stops the session like the
- * Stop button does: the data stays for export or deletion. The badge and the popup tell the user.
- */
-async function cancelSessionForProfileChange(
-  runtime: SessionRuntime,
-  cancellation: ProfileCancellation
-): Promise<void> {
-  runtime.profile = { ...runtime.profile, cancellation, cancellationAcknowledged: false };
-  ingestRawEvent({
-    source: "system",
-    rawType: "config",
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    t: cancellation.at,
-    mono: monotonicTime(),
-    payload: {
-      ...runtime.config,
-      profile: cancellation.started,
-      profileCancel: cancellation
-    }
-  });
-  console.warn(
-    `[WebBlackbox] recording ${runtime.sid} stopped: profile changed (${cancellation.reason})`
-  );
-
-  // Stopping updates the badge to `!` while the notice is unread.
-  await stopSession(runtime.tabId);
-}
-
-/**
- * REC while anything records, otherwise `!` while a profile-change notice is unread, otherwise
- * no badge.
- */
-async function refreshActionBadge(): Promise<void> {
-  if (sessionRegistry.tabCount() > 0) {
-    await setRecordingBadge();
-    return;
-  }
-
-  const unread = [...sessionRegistry.sidRuntimes()].some(
-    (runtime) => runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
-  );
-
-  if (!unread) {
-    await setIdleBadge();
-    return;
-  }
-
-  await chromeApi?.action?.setBadgeText({ text: "!" }).catch(() => undefined);
-  await chromeApi?.action?.setBadgeBackgroundColor({ color: "#b35c00" }).catch(() => undefined);
-}
-
-async function acknowledgeProfileCancel(sid: string): Promise<void> {
-  const runtime = sessionRegistry.getBySid(sid);
-
-  if (!runtime?.profile.cancellation || runtime.profile.cancellationAcknowledged) {
-    return;
-  }
-
-  runtime.profile = { ...runtime.profile, cancellationAcknowledged: true };
-  pushSessionList();
-  await refreshActionBadge();
-  // A later worker restores the acknowledged notice, not the unread one.
-  await stoppedSessionLifecycle.rememberStoppedSession(runtime);
 }
 
 /**
@@ -1557,20 +537,6 @@ function ingestRawEvent(
   runtime.recorder.ingest(nextRawEvent);
 }
 
-function shouldAllowStopDrainContentEvent(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): boolean {
-  // Only while the stop drains: a snapshot that arrives after the drain (the session may already
-  // be exported and deleted) would leave its blob behind in the pipeline's storage.
-  return (
-    rawEvent.source === "content" &&
-    rawEvent.sid === runtime.sid &&
-    runtime.stopDrained !== true &&
-    STOP_DRAIN_CONTENT_RAW_TYPES.has(rawEvent.rawType)
-  );
-}
-
 function updateRuntimeInteractionState(runtime: SessionRuntime, rawEvent: RawRecorderEvent): void {
   if (rawEvent.source !== "content") {
     return;
@@ -1623,260 +589,9 @@ const POINTER_TRACKING_RAW_TYPES = new Set([
   "auxclick"
 ]);
 
-function trackSessionCounters(runtime: SessionRuntime, event: WebBlackboxEvent): void {
-  runtime.capturedEventCount += 1;
-
-  if (event.type === "error.exception" || event.type === "error.unhandledrejection") {
-    runtime.capturedErrorCount += 1;
-    sessionListPush.schedule();
-    return;
-  }
-
-  if (runtime.capturedEventCount % 50 === 0) {
-    sessionListPush.schedule();
-  }
-}
-
-function evaluatePerformanceBudget(runtime: SessionRuntime, event: WebBlackboxEvent): void {
-  const budget = runtime.performanceBudget;
-  let updated = false;
-
-  if (event.type === "perf.vitals") {
-    const lcpMs = readLcpFromVitalsEvent(event.data);
-
-    if (lcpMs !== null && lcpMs >= budget.lcpWarnMs) {
-      updated =
-        registerPerformanceBudgetBreach(runtime, "lcp", `LCP ${Math.round(lcpMs)}ms`) || updated;
-    }
-  }
-
-  if (event.type === "network.response") {
-    const { duration, failed } = extractPerformanceBudgetNetworkSample(event.data);
-
-    runtime.networkBudgetSample.total += 1;
-
-    if (failed) {
-      runtime.networkBudgetSample.failed += 1;
-    }
-
-    if (typeof duration === "number" && duration >= budget.requestWarnMs) {
-      updated =
-        registerPerformanceBudgetBreach(
-          runtime,
-          "slow-request",
-          `Slow request ${Math.round(duration)}ms`
-        ) || updated;
-    }
-
-    if (runtime.networkBudgetSample.total >= PERFORMANCE_BUDGET_ERROR_RATE_MIN_SAMPLES) {
-      const errorRatePct =
-        (runtime.networkBudgetSample.failed / runtime.networkBudgetSample.total) * 100;
-
-      if (errorRatePct >= budget.errorRateWarnPct) {
-        updated =
-          registerPerformanceBudgetBreach(
-            runtime,
-            "error-rate",
-            `Error rate ${errorRatePct.toFixed(1)}%`
-          ) || updated;
-      }
-    }
-  }
-
-  if (updated) {
-    sessionListPush.schedule();
-  }
-}
-
-function readLcpFromVitalsEvent(payload: unknown): number | null {
-  const record = asRecord(payload);
-  const metric = asString(record?.metric) ?? asString(record?.name);
-
-  if (
-    metric &&
-    metric !== "largest-contentful-paint" &&
-    metric !== "largest-contentful-paint-render-time" &&
-    metric !== "largest-contentful-paint-load-time" &&
-    metric !== "lcp"
-  ) {
-    return null;
-  }
-
-  const value = asFiniteNumber(record?.value);
-  const startTime = asFiniteNumber(record?.startTime);
-  const duration = asFiniteNumber(record?.duration);
-  const candidate = Math.max(
-    value ?? Number.NEGATIVE_INFINITY,
-    startTime ?? Number.NEGATIVE_INFINITY,
-    duration ?? Number.NEGATIVE_INFINITY
-  );
-
-  return Number.isFinite(candidate) ? candidate : null;
-}
-
-function registerPerformanceBudgetBreach(
-  runtime: SessionRuntime,
-  key: string,
-  detail: string
-): boolean {
-  const now = Date.now();
-  const lastBreachAt = runtime.lastBudgetBreachAt.get(key) ?? Number.NEGATIVE_INFINITY;
-
-  if (now - lastBreachAt < PERFORMANCE_BUDGET_BREACH_COOLDOWN_MS) {
-    return false;
-  }
-
-  runtime.lastBudgetBreachAt.set(key, now);
-  runtime.budgetAlertCount += 1;
-  console.info("[WebBlackbox] performance budget breach", {
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    key,
-    detail
-  });
-
-  if (runtime.performanceBudget.autoFreezeOnBreach) {
-    artifacts.handleFreezeNotice(runtime, "perf");
-  }
-
-  return true;
-}
-
-function enqueuePipelineEvent(runtime: SessionRuntime, event: WebBlackboxEvent): void {
-  runtime.pipelineEventBuffer.push(event);
-
-  if (runtime.pipelineEventBuffer.length >= PIPELINE_BATCH_MAX_EVENTS) {
-    queuePipelineBatchFlush(runtime);
-    return;
-  }
-
-  if (runtime.pipelineFlushTimer !== null || runtime.pipelineFlushQueued) {
-    return;
-  }
-
-  runtime.pipelineFlushTimer = setTimeout(() => {
-    runtime.pipelineFlushTimer = null;
-    queuePipelineBatchFlush(runtime);
-  }, PIPELINE_BATCH_FLUSH_MS);
-}
-
-function queuePipelineBatchFlush(runtime: SessionRuntime): void {
-  if (runtime.pipelineFlushTimer !== null) {
-    clearTimeout(runtime.pipelineFlushTimer);
-    runtime.pipelineFlushTimer = null;
-  }
-
-  if (runtime.pipelineFlushQueued || runtime.pipelineEventBuffer.length === 0) {
-    return;
-  }
-
-  runtime.pipelineFlushQueued = true;
-
-  enqueue(runtime, async () => {
-    try {
-      await drainPipelineBufferBatches(runtime, "queue");
-    } finally {
-      runtime.pipelineFlushQueued = false;
-
-      if (runtime.pipelineEventBuffer.length > 0 && !runtime.stopping) {
-        queuePipelineBatchFlush(runtime);
-      }
-    }
-  });
-}
-
-async function flushBufferedPipelineEvents(runtime: SessionRuntime): Promise<void> {
-  if (runtime.pipelineFlushTimer !== null) {
-    clearTimeout(runtime.pipelineFlushTimer);
-    runtime.pipelineFlushTimer = null;
-  }
-
-  if (runtime.pipelineEventBuffer.length === 0 && !runtime.pipelineFlushQueued) {
-    return;
-  }
-
-  await enqueueWithResult(runtime, async () => {
-    await drainPipelineBufferBatches(runtime, "drain");
-  });
-}
-
-async function drainPipelineBufferBatches(
-  runtime: SessionRuntime,
-  reason: "queue" | "drain"
-): Promise<void> {
-  let flushed = 0;
-
-  while (runtime.pipelineEventBuffer.length > 0) {
-    const batchSize = Math.min(
-      runtime.pipelineEventBuffer.length,
-      PIPELINE_BATCH_DRAIN_CHUNK_EVENTS
-    );
-    const batch = runtime.pipelineEventBuffer.slice(0, batchSize);
-
-    if (batch.length === 0) {
-      break;
-    }
-
-    // The pipeline serializes each event once; its byte count is the session size.
-    runtime.capturedSizeBytes += await runtime.pipeline.ingestBatch(batch);
-    runtime.pipelineEventBuffer.splice(0, batch.length);
-    flushed += batch.length;
-
-    if (runtime.pipelineEventBuffer.length > 0) {
-      await wait(0);
-    }
-  }
-
-  if (shouldLogPerf() && flushed > 0) {
-    console.info("[WebBlackbox][perf] pipeline buffer flushed", {
-      sid: runtime.sid,
-      reason,
-      flushed,
-      queueDepth: runtime.queueDepth,
-      stopping: runtime.stopping
-    });
-  }
-}
-
 async function ensureOffscreenPortReady(): Promise<PortLike> {
   await orphanedOffscreenCleanup;
   return offscreenPortConnector.ensurePort();
-}
-
-function handleOffscreenRuntimeMessage(rawMessage: unknown, port: PortLike): boolean {
-  if (port.name !== PORT_NAMES.offscreen) {
-    return false;
-  }
-
-  const message = offscreenClient.receive(rawMessage);
-
-  if (message) {
-    handleOffscreenEvent(message);
-  }
-
-  // Nothing on the offscreen port is meant for the inbound router.
-  return true;
-}
-
-function handleOffscreenEvent(message: OffscreenEventMessage): void {
-  switch (message.kind) {
-    case "offscreen.ready":
-      notifyOffscreenPipelineStatus();
-      return;
-    case "offscreen.keepalive":
-      return;
-    case "offscreen.screen-recording-chunk":
-      screenRecording.handleOffscreenScreenRecordingChunk(message);
-      return;
-    case "offscreen.screen-recording-ended":
-      void screenRecording.handleOffscreenScreenRecordingEnded(message).catch((error) => {
-        console.warn("[WebBlackbox] failed to finalize screen recording", error);
-      });
-      return;
-    case "offscreen.screen-recording-error":
-      screenRecording.handleOffscreenScreenRecordingError(message);
-      return;
-  }
 }
 
 async function recoverAllActiveOffscreenPipelines(): Promise<void> {
@@ -1911,7 +626,7 @@ async function recoverOffscreenSession(sid: string): Promise<void> {
       redactionProfile: runtime.config.redaction,
       capturePolicy: runtime.config.capturePolicy
     });
-    notifyOffscreenPipelineStatus();
+    inboundRouter.notifyOffscreenPipelineStatus();
   })()
     .catch((error) => {
       console.warn("[WebBlackbox] failed to recover offscreen pipeline session", {
@@ -1934,24 +649,6 @@ function wait(durationMs: number): Promise<void> {
   });
 }
 
-function resolveFullBodyCaptureRule(
-  runtime: SessionRuntime,
-  url: string,
-  mimeType: string | undefined
-): BodyCaptureRule {
-  return applyBodyUrlFilters(
-    resolveFullBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(
-        runtime,
-        FULL_DEFAULT_BODY_MIME_ALLOWLIST
-      ),
-      fallbackMaxBytes: DEFAULT_BODY_CAPTURE_MAX_BYTES
-    }),
-    url,
-    runtime.profile.selection.profile.network
-  );
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -1960,128 +657,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function normalizeContentFrameId(value: unknown): string | undefined {
-  const candidate = asFiniteNumber(value);
-
-  if (candidate === null) {
-    return undefined;
-  }
-
-  const frameId = Math.max(0, Math.floor(candidate));
-
-  if (frameId <= 0) {
-    return undefined;
-  }
-
-  return `content-frame-${frameId}`;
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function normalizeSamplingInterval(candidate: unknown, fallback: number): number {
-  const value = asFiniteNumber(candidate);
-
-  if (value === null) {
-    return fallback;
-  }
-
-  return Math.max(250, Math.round(value));
-}
-
-function normalizeOptionalSamplingInterval(candidate: unknown, fallback: number): number {
-  const value = asFiniteNumber(candidate);
-
-  if (value === null) {
-    return fallback;
-  }
-
-  if (value <= 0) {
-    return 0;
-  }
-
-  return Math.max(250, Math.round(value));
-}
-
-function toStatusPointer(runtime: SessionRuntime): PointerCaptureOptions {
-  return { ...DEFAULT_POINTER_CAPTURE_OPTIONS, ...runtime.config.pointer };
-}
-
-function toStatusSampling(runtime: SessionRuntime): RecordingSampling {
-  const sampling = runtime.config.sampling;
-
-  return {
-    mousemoveHz: Math.max(1, Math.round(asFiniteNumber(sampling.mousemoveHz) ?? 20)),
-    scrollHz: Math.max(1, Math.round(asFiniteNumber(sampling.scrollHz) ?? 15)),
-    domFlushMs: normalizeSamplingInterval(sampling.domFlushMs, 100),
-    snapshotIntervalMs: normalizeSamplingInterval(sampling.snapshotIntervalMs, 20_000),
-    screenshotIdleMs: normalizeOptionalSamplingInterval(
-      sampling.screenshotIdleMs,
-      DEFAULT_RECORDER_CONFIG.sampling.screenshotIdleMs
-    ),
-    bodyCaptureMaxBytes:
-      runtime.config.capturePolicy?.categories.network === "body-allowlist"
-        ? normalizeBodyCaptureMaxBytesUtil(sampling.bodyCaptureMaxBytes, 0)
-        : 0
-  };
-}
-
-/**
- * Installs the page hooks in a frame (the top frame by default). On a frame that already has them
- * the script only resets their config to inactive, so callers send the frame its recording
- * status afterwards.
- */
-async function ensureInjectedHooks(
-  tabId: number,
-  bridgeNonce: string,
-  frameId?: number
-): Promise<void> {
-  const target = frameId === undefined ? { tabId } : { tabId, frameIds: [frameId] };
-
-  await chromeApi?.scripting
-    ?.executeScript({
-      target,
-      world: "MAIN",
-      files: ["injected.js"]
-    })
-    .catch(() => undefined);
-  // Hand the nonce over as a function argument rather than a DOM event, which page
-  // scripts could observe.
-  await chromeApi?.scripting
-    ?.executeScript({
-      target,
-      world: "MAIN",
-      func: applyInjectedBridgeNonce,
-      args: [INJECTED_BRIDGE_NONCE_SETTER_KEY, bridgeNonce]
-    })
-    .catch(() => undefined);
-}
-
-/** Runs in the page MAIN world; must stay self-contained (serialized by Chrome). */
-function applyInjectedBridgeNonce(setterKey: string, nonce: string): void {
-  const setter = (window as unknown as Record<string, unknown>)[setterKey];
-
-  if (typeof setter === "function") {
-    setter(nonce);
-  }
-}
-
-/**
- * Runs on Start and after navigations of a recorded tab, whatever the injection mode: frames that
- * already run the content script ignore the second copy (see content/script-guard.ts), and tabs
- * opened before the extension was installed or registered get it too.
- */
-async function ensureContentScriptInjected(tabId: number): Promise<void> {
-  await chromeApi?.scripting
-    ?.executeScript({
-      target: { tabId, allFrames: true },
-      world: "ISOLATED",
-      files: ["content.js"]
-    })
-    .catch(() => undefined);
 }
 
 /**
@@ -2124,10 +699,6 @@ async function initializeAtRestKey(): Promise<AtRestKeyRecord> {
   }
 
   return state.record;
-}
-
-function isTrustedOffscreenPort(port: PortLike): boolean {
-  return isOffscreenDocumentPort(port, chromeApi?.runtime?.getURL(OFFSCREEN_PATH) ?? "");
 }
 
 /** Hands the key to the offscreen document; the port was checked on connect. */
@@ -2250,723 +821,10 @@ function enqueueWithResult<TResult>(
   });
 }
 
-async function teardownCaptureInstrumentation(runtime: SessionRuntime): Promise<void> {
-  if (runtime.pipelineFlushTimer !== null) {
-    clearTimeout(runtime.pipelineFlushTimer);
-    runtime.pipelineFlushTimer = null;
-  }
-
-  await fullCdp.cleanupCdpInstrumentation(runtime, runtime.cdpRouter);
-}
-
-function toSessionListItem(runtime: SessionRuntime): SessionListItem {
-  const activeRuntime = sessionRegistry.getByTab(runtime.tabId);
-  const active = activeRuntime?.sid === runtime.sid;
-
-  return {
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    mode: runtime.mode,
-    startedAt: runtime.startedAt,
-    active,
-    stoppedAt: runtime.stoppedAt,
-    url: sanitizeUrlForPrivacy(runtime.url),
-    title: runtime.title,
-    eventCount: runtime.capturedEventCount,
-    errorCount: runtime.capturedErrorCount,
-    budgetAlertCount: runtime.budgetAlertCount,
-    sizeBytes: runtime.capturedSizeBytes,
-    tags: [...runtime.tags],
-    note: runtime.note,
-    profileName: runtime.profile.selection.profile.name,
-    ...(runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
-      ? { profileCancel: toProfileCancelNotice(runtime.profile.cancellation) }
-      : {})
-  };
-}
-
-function toSessionMetadata(runtime: SessionRuntime): SessionMetadata {
-  return {
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    startedAt: runtime.startedAt,
-    mode: runtime.mode,
-    url: sanitizeUrlForPrivacy(runtime.url),
-    title: runtime.title,
-    tags: [...runtime.tags]
-  };
-}
-
-async function resolveTabSessionMetadata(
-  tabId: number
-): Promise<Pick<SessionMetadata, "url" | "title">> {
-  const fallbackUrl = `tab:${tabId}`;
-
-  if (!chromeApi?.tabs?.get) {
-    return {
-      url: fallbackUrl
-    };
-  }
-
-  try {
-    const tab = await chromeApi.tabs.get(tabId);
-    const url =
-      typeof tab?.url === "string" && tab.url.length > 0
-        ? sanitizeUrlForPrivacy(tab.url)
-        : fallbackUrl;
-    const title =
-      typeof tab?.title === "string" && tab.title.trim().length > 0 ? tab.title.trim() : undefined;
-
-    return {
-      url,
-      title
-    };
-  } catch {
-    return {
-      url: fallbackUrl
-    };
-  }
-}
-
-function updateSessionMetadataFromEvent(runtime: SessionRuntime, event: WebBlackboxEvent): void {
-  void updateSessionMetadataFromEventAsync(runtime, event).catch((error) => {
-    console.warn("[WebBlackbox] failed to update session navigation metadata", error);
-  });
-}
-
-async function updateSessionMetadataFromEventAsync(
-  runtime: SessionRuntime,
-  event: WebBlackboxEvent
-): Promise<void> {
-  if (
-    event.type !== "nav.commit" &&
-    event.type !== "nav.history.push" &&
-    event.type !== "nav.history.replace" &&
-    event.type !== "nav.hash"
-  ) {
-    return;
-  }
-
-  const payload = asRecord(event.data);
-
-  if (!shouldUpdateSessionMetadataFromNavigation(event, payload)) {
-    return;
-  }
-
-  const frame = asRecord(payload?.frame);
-  const nextUrl = asString(payload?.url) ?? asString(frame?.url);
-  const nextTitle = asString(payload?.title) ?? asString(payload?.documentTitle);
-  let changed = false;
-
-  const sanitizedNextUrl = nextUrl ? sanitizeUrlForPrivacy(nextUrl) : undefined;
-
-  if (sanitizedNextUrl && sanitizedNextUrl !== runtime.url) {
-    const nextOrigin = resolveUrlOrigin(sanitizedNextUrl);
-
-    if (shouldStopOnOriginChange(runtime, nextOrigin)) {
-      await stopSession(runtime.tabId);
-      return;
-    }
-
-    if (await shouldStopForEnterpriseOriginPolicy(nextOrigin)) {
-      await stopSession(runtime.tabId);
-      return;
-    }
-
-    runtime.url = sanitizedNextUrl;
-    changed = true;
-  }
-
-  if (nextTitle && nextTitle.trim().length > 0 && nextTitle !== runtime.title) {
-    runtime.title = nextTitle.trim();
-    changed = true;
-  }
-
-  if (changed) {
-    pushSessionList();
-  }
-}
-
-function pushSessionList(): void {
-  sessionListPush.now();
-}
-
-function buildSessionListMessage(): SessionListMessage {
-  const sessions: SessionListItem[] = [...sessionRegistry.sidRuntimes()]
-    .map((runtime) => toSessionListItem(runtime))
-    .sort((left, right) => {
-      const activeDiff = Number(right.active) - Number(left.active);
-
-      if (activeDiff !== 0) {
-        return activeDiff;
-      }
-
-      return right.startedAt - left.startedAt;
-    });
-
-  return {
-    kind: "sw.session-list",
-    sessions
-  };
-}
-
-async function handleTabUrlChanged(tabId: number, rawUrl: string): Promise<void> {
-  const runtime = sessionRegistry.getByTab(tabId);
-
-  if (!runtime || runtime.stoppedAt) {
-    return;
-  }
-
-  const nextUrl = sanitizeUrlForPrivacy(rawUrl);
-  const nextOrigin = resolveUrlOrigin(nextUrl);
-
-  if (shouldStopOnOriginChange(runtime, nextOrigin)) {
-    await stopSession(tabId);
-    return;
-  }
-
-  if (await shouldStopForEnterpriseOriginPolicy(nextOrigin)) {
-    await stopSession(tabId);
-    return;
-  }
-
-  if (nextUrl !== runtime.url) {
-    runtime.url = nextUrl;
-    pushSessionList();
-  }
-
-  // Relations to other tabs are computed against the recorded tab's origin.
-  void tabsContextTracker?.updateSession(tabId, { url: rawUrl });
-  storageArtifacts.rememberVisitedPageUrl(runtime, rawUrl);
-
-  scheduleProfileReevaluation(runtime, "navigation");
-}
-
-function shouldStopOnOriginChange(runtime: SessionRuntime, nextOrigin: string | null): boolean {
-  return shouldStopForCaptureScopeOriginChange({
-    scopeOrigin: runtime.scopeOrigin,
-    nextOrigin,
-    stopOnOriginChange: runtime.config.capturePolicy?.scope.stopOnOriginChange === true,
-    activeTabScopedBuild: isActiveTabScopedBuild()
-  });
-}
-
-async function shouldStopForEnterpriseOriginPolicy(nextOrigin: string | null): Promise<boolean> {
-  const enterprisePolicy = await loadEnterprisePolicy();
-
-  return shouldStopForEnterpriseOriginPolicyInput({
-    nextOrigin,
-    isEnterpriseOriginAllowed: (origin) => isEnterpriseOriginAllowed(origin, enterprisePolicy)
-  });
-}
-
-function isActiveTabScopedBuild(): boolean {
-  const manifest = chromeApi?.runtime?.getManifest?.();
-  const permissions = new Set(manifest?.permissions ?? []);
-  const hostPermissions = manifest?.host_permissions ?? [];
-
-  return permissions.has("activeTab") && hostPermissions.length === 0;
-}
-
-function broadcast(message: ExtensionOutboundMessage): void {
-  for (const port of connectedPorts) {
-    if (isBroadcastDeliveredToPort(message.kind, port.name)) {
-      sendPortMessage(port, message);
-    }
-  }
-}
-
-function sendPortMessage(port: PortLike, message: ExtensionOutboundMessage): void {
-  try {
-    if (port === offscreenPort) {
-      offscreenPortTraffic.recordSent(message.kind, message);
-    }
-
-    port.postMessage(message);
-  } catch (error) {
-    connectedPorts.delete(port);
-
-    if (offscreenPort === port) {
-      offscreenPort = null;
-    }
-
-    logPortSendFailure(message.kind, error, {
-      portName: port.name
-    });
-  }
-}
-
-function resolveFullModeVisualCapture(
-  message: ExtensionInboundMessage
-): FullModeVisualCapture | undefined {
-  if (message.kind !== "ui.start") {
-    return undefined;
-  }
-
-  // Kept for a Lite request too: when the profile needs the Full engine the start runs in Full,
-  // and an explicit choice (e.g. "none") must hold there. A Lite session ignores it.
-  return isFullModeVisualCapture(message.visualCapture) ? message.visualCapture : undefined;
-}
-
-function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture {
-  return value === "screenshots" || value === "recording" || value === "both" || value === "none";
-}
-
-async function loadEnterprisePolicy(): Promise<EnterpriseRecorderPolicy> {
-  return normalizeEnterprisePolicy((await readEnterprisePolicy()) ?? {});
-}
-
-function withSessionCapturePolicy(
-  config: typeof DEFAULT_RECORDER_CONFIG,
-  context: {
-    tabId: number;
-    origin: string;
-    startedAt: number;
-  }
-): typeof DEFAULT_RECORDER_CONFIG {
-  const basePolicy =
-    config.capturePolicy ?? DEFAULT_RECORDER_CONFIG.capturePolicy ?? DEFAULT_CAPTURE_POLICY;
-  const capturePolicy: CapturePolicy = {
-    ...basePolicy,
-    consent: {
-      ...basePolicy.consent,
-      grantedAt: new Date(context.startedAt).toISOString()
-    },
-    scope: {
-      ...basePolicy.scope,
-      tabId: context.tabId,
-      origin: context.origin,
-      allowedOrigins: [...basePolicy.scope.allowedOrigins],
-      stopOnOriginChange: false
-    },
-    redaction: config.redaction
-  };
-
-  return {
-    ...config,
-    capturePolicy
-  };
-}
-
 async function loadPerformanceBudgetConfig(): Promise<PerformanceBudgetConfig> {
   await settingsMigrated;
   const storedValues = await chromeApi?.storage?.local?.get(PERFORMANCE_BUDGET_STORAGE_KEY);
   return normalizePerformanceBudget(storedValues?.[PERFORMANCE_BUDGET_STORAGE_KEY]);
-}
-
-async function updateSessionAnnotation(
-  sid: string,
-  tagsInput: unknown,
-  noteInput: unknown
-): Promise<void> {
-  const tags = normalizeSessionTags(tagsInput);
-  const note = normalizeSessionNote(noteInput);
-  const runtime = sessionRegistry.getBySid(sid);
-
-  if (runtime) {
-    runtime.tags = [...tags];
-    runtime.note = note;
-  }
-
-  sessionAnnotations.set(sid, {
-    tags: [...tags],
-    note
-  });
-
-  await persistSessionAnnotations().catch(() => undefined);
-  pushSessionList();
-}
-
-function getSessionAnnotation(sid: string): SessionAnnotation {
-  const annotation = sessionAnnotations.get(sid);
-
-  if (!annotation) {
-    return {
-      tags: []
-    };
-  }
-
-  return {
-    tags: [...annotation.tags],
-    note: annotation.note
-  };
-}
-
-/**
- * Tags and notes describe recordings that do not survive a browser restart, so they live in the
- * in-memory `storage.session` area too; a copy left on disk by older builds is removed.
- */
-async function loadSessionAnnotations(): Promise<void> {
-  sessionAnnotations.clear();
-  await chromeApi?.storage?.local?.remove?.(SESSION_ANNOTATIONS_STORAGE_KEY).catch(() => undefined);
-
-  const area = chromeApi?.storage?.session;
-
-  if (!area) {
-    return;
-  }
-
-  const values = await area.get(SESSION_ANNOTATIONS_STORAGE_KEY).catch(() => undefined);
-  const raw = asRecord(values?.[SESSION_ANNOTATIONS_STORAGE_KEY]);
-
-  if (!raw) {
-    return;
-  }
-
-  for (const [sid, payload] of Object.entries(raw)) {
-    const row = asRecord(payload);
-    const tags = normalizeSessionTags(row?.tags);
-    const note = normalizeSessionNote(row?.note);
-
-    sessionAnnotations.set(sid, {
-      tags,
-      note
-    });
-  }
-}
-
-async function persistSessionAnnotations(): Promise<void> {
-  const area = chromeApi?.storage?.session;
-
-  if (!area) {
-    return;
-  }
-
-  const serialized: Record<string, SessionAnnotation> = {};
-
-  for (const [sid, annotation] of sessionAnnotations.entries()) {
-    serialized[sid] = {
-      tags: [...annotation.tags],
-      note: annotation.note
-    };
-  }
-
-  await area.set({
-    [SESSION_ANNOTATIONS_STORAGE_KEY]: serialized
-  });
-}
-
-function normalizeSessionTags(input: unknown): string[] {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-
-  const seen = new Set<string>();
-  const tags: string[] = [];
-
-  for (const raw of input) {
-    if (typeof raw !== "string") {
-      continue;
-    }
-
-    const normalized = raw.trim().slice(0, 40);
-
-    if (normalized.length === 0 || seen.has(normalized)) {
-      continue;
-    }
-
-    seen.add(normalized);
-    tags.push(normalized);
-
-    if (tags.length >= 12) {
-      break;
-    }
-  }
-
-  return tags;
-}
-
-function normalizeSessionNote(input: unknown): string | undefined {
-  if (typeof input !== "string") {
-    return undefined;
-  }
-
-  const normalized = input.trim();
-
-  if (normalized.length === 0) {
-    return undefined;
-  }
-
-  return normalized.slice(0, 500);
-}
-
-async function persistRuntimeState(): Promise<void> {
-  if (!chromeApi?.storage?.local?.set) {
-    return;
-  }
-
-  const sessions = [...sessionRegistry.tabRuntimes()].map((runtime) => ({
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    mode: runtime.mode,
-    startedAt: runtime.startedAt
-  }));
-
-  await chromeApi.storage.local.set({
-    [ACTIVE_SESSION_STORAGE_KEY]: sessions
-  });
-}
-
-async function restoreRuntimeState(): Promise<void> {
-  await loadSessionAnnotations();
-
-  if (!chromeApi?.storage?.local?.get) {
-    return;
-  }
-
-  const values = await chromeApi.storage.local.get(ACTIVE_SESSION_STORAGE_KEY);
-  const persisted = values?.[ACTIVE_SESSION_STORAGE_KEY];
-
-  if (Array.isArray(persisted) && persisted.length > 0) {
-    await chromeApi.storage.local
-      .set({
-        [ACTIVE_SESSION_STORAGE_KEY]: []
-      })
-      .catch(() => undefined);
-
-    for (const item of persisted) {
-      const row = asRecord(item);
-      const tabId = typeof row?.tabId === "number" ? row.tabId : undefined;
-
-      if (typeof tabId === "number") {
-        await notifyTabStatus(tabId, false);
-      }
-    }
-  }
-
-  await stoppedSessionLifecycle.restoreStoppedSessions();
-  await setIdleBadge();
-  pushSessionList();
-  notifyOffscreenPipelineStatus();
-  await stoppedSessionLifecycle.sweepStalePipelineSessions().catch((error) => {
-    console.warn("[WebBlackbox] failed to sweep stale pipeline sessions", error);
-  });
-}
-
-function notifyOffscreenPipelineStatus(): void {
-  const port = offscreenPort;
-
-  if (!port) {
-    return;
-  }
-
-  try {
-    const message: SwPipelineStatusMessage = {
-      kind: "sw.pipeline-status",
-      activeSessions: sessionRegistry.tabCount(),
-      sessions: [...sessionRegistry.tabRuntimes()].map((runtime) => ({
-        sid: runtime.sid,
-        tabId: runtime.tabId,
-        mode: runtime.mode,
-        startedAt: runtime.startedAt,
-        active: true,
-        eventCount: runtime.capturedEventCount,
-        errorCount: runtime.capturedErrorCount,
-        budgetAlertCount: runtime.budgetAlertCount,
-        sizeBytes: runtime.capturedSizeBytes,
-        tags: [...runtime.tags],
-        note: runtime.note
-      })),
-      updatedAt: Date.now()
-    };
-    offscreenClient.post(port, message);
-  } catch (error) {
-    connectedPorts.delete(port);
-
-    if (offscreenPort === port) {
-      offscreenPort = null;
-    }
-
-    logPortSendFailure("sw.pipeline-status", error, {
-      activeSessions: sessionRegistry.tabCount()
-    });
-  }
-}
-
-async function notifyTabStatus(
-  tabId: number,
-  active: boolean,
-  sid?: string,
-  mode?: CaptureMode,
-  sampling?: RecordingSampling,
-  capturePolicy?: CapturePolicy,
-  injectedBridgeNonce?: string,
-  pointer?: PointerCaptureOptions
-): Promise<void> {
-  if (!chromeApi?.tabs?.sendMessage) {
-    return;
-  }
-
-  const runtime = active ? sessionRegistry.getByTab(tabId) : undefined;
-
-  await chromeApi.tabs
-    .sendMessage(tabId, {
-      kind: "sw.recording-status",
-      active,
-      sid,
-      mode,
-      sampling,
-      capturePolicy,
-      injectedBridgeNonce,
-      pointer,
-      ...(runtime ? toScriptScanStatus(runtime) : {})
-    })
-    .catch(() => undefined);
-}
-
-function adjustInFlightContentMessages(tabId: number, delta: 1 | -1): void {
-  const next = (inFlightContentMessagesByTab.get(tabId) ?? 0) + delta;
-
-  if (next <= 0) {
-    inFlightContentMessagesByTab.delete(tabId);
-    resolveStopDrainAcksForTab(tabId);
-    return;
-  }
-
-  inFlightContentMessagesByTab.set(tabId, next);
-}
-
-function createStopDrainAck(runtime: SessionRuntime): Promise<void> {
-  const existing = pendingStopDrainAcks.get(runtime.sid);
-
-  if (existing) {
-    clearTimeout(existing.timeout);
-    pendingStopDrainAcks.delete(runtime.sid);
-  }
-
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      pendingStopDrainAcks.delete(runtime.sid);
-      resolve();
-    }, STOP_DRAIN_ACK_TIMEOUT_MS);
-
-    pendingStopDrainAcks.set(runtime.sid, {
-      sid: runtime.sid,
-      tabId: runtime.tabId,
-      ackReceived: false,
-      resolve,
-      timeout
-    });
-  });
-}
-
-function markStopDrainAckReceived(sid: string): void {
-  const pending = pendingStopDrainAcks.get(sid);
-
-  if (!pending) {
-    return;
-  }
-
-  pending.ackReceived = true;
-  resolveStopDrainAckIfReady(pending);
-}
-
-function resolveStopDrainAcksForTab(tabId: number): void {
-  for (const pending of pendingStopDrainAcks.values()) {
-    if (pending.tabId === tabId) {
-      resolveStopDrainAckIfReady(pending);
-    }
-  }
-}
-
-function resolveStopDrainAckIfReady(pending: {
-  sid: string;
-  tabId: number;
-  ackReceived: boolean;
-  resolve: () => void;
-  timeout: ReturnType<typeof setTimeout>;
-}): void {
-  if (!pending.ackReceived) {
-    return;
-  }
-
-  if ((inFlightContentMessagesByTab.get(pending.tabId) ?? 0) > 0) {
-    return;
-  }
-
-  pendingStopDrainAcks.delete(pending.sid);
-  clearTimeout(pending.timeout);
-
-  const runtime = sessionRegistry.getBySid(pending.sid);
-
-  if (!runtime) {
-    pending.resolve();
-    return;
-  }
-
-  void runtime.queue.finally(() => {
-    pending.resolve();
-  });
-}
-
-async function relayMarkerCommand(): Promise<void> {
-  const activeTabs = (await chromeApi?.tabs?.query?.({ active: true, currentWindow: true })) ?? [];
-  const tabId = activeTabs[0]?.id;
-
-  if (typeof tabId !== "number") {
-    return;
-  }
-
-  await chromeApi?.tabs?.sendMessage(tabId, { kind: "sw.marker-command" }).catch(() => undefined);
-}
-
-function resolveUiActionTarget(
-  requestedTabId: number | undefined,
-  senderTabId: number | undefined
-): Promise<number | undefined> {
-  return resolveUiActionTabId({
-    requestedTabId,
-    senderTabId,
-    queryActiveTabId: async () => {
-      const activeTabs =
-        (await chromeApi?.tabs?.query?.({ active: true, currentWindow: true })) ?? [];
-      return activeTabs[0]?.id;
-    },
-    fallbackTabId: () => sessionRegistry.byTab.keys().next().value
-  });
-}
-
-function parseInboundMessage(message: unknown): ExtensionInboundMessage | null {
-  if (message === null || typeof message !== "object" || Array.isArray(message)) {
-    return null;
-  }
-
-  const kind = (message as { kind?: unknown }).kind;
-
-  if (typeof kind !== "string") {
-    return null;
-  }
-
-  return message as ExtensionInboundMessage;
-}
-
-async function setIdleBadge(): Promise<void> {
-  await chromeApi?.action?.setBadgeText({ text: "" }).catch(() => undefined);
-}
-
-async function setRecordingBadge(): Promise<void> {
-  await chromeApi?.action?.setBadgeText({ text: "REC" }).catch(() => undefined);
-  await chromeApi?.action?.setBadgeBackgroundColor({ color: "#c92a2a" }).catch(() => undefined);
-}
-
-async function setFreezeBadge(): Promise<void> {
-  await chromeApi?.action?.setBadgeText({ text: "ERR" }).catch(() => undefined);
-  await chromeApi?.action?.setBadgeBackgroundColor({ color: "#9b2226" }).catch(() => undefined);
-
-  if (freezeBadgeTimer !== null) {
-    clearTimeout(freezeBadgeTimer);
-  }
-
-  freezeBadgeTimer = setTimeout(() => {
-    freezeBadgeTimer = null;
-
-    if (sessionRegistry.tabCount() > 0) {
-      void setRecordingBadge();
-      return;
-    }
-
-    void setIdleBadge();
-  }, FREEZE_BADGE_HIGHLIGHT_MS);
 }
 
 function monotonicTime(): number {
@@ -2997,35 +855,4 @@ function shouldLogPortDebug(): boolean {
     shouldLogPerf() ||
     (globalThis as unknown as Record<string, unknown>)[PORT_DEBUG_LOG_FLAG] === true
   );
-}
-
-function logPortSendFailure(
-  kind: string,
-  error: unknown,
-  context: Record<string, unknown> = {}
-): void {
-  if (!shouldLogPortDebug()) {
-    return;
-  }
-
-  console.debug("[WebBlackbox][port] service worker postMessage failed", {
-    kind,
-    ...context,
-    error: error instanceof Error ? error.message : String(error)
-  });
-}
-
-function logInboundMessageFailure(
-  kind: string,
-  error: unknown,
-  port?: PortLike,
-  context: Record<string, unknown> = {}
-): void {
-  console.warn("[WebBlackbox] inbound message failed", {
-    kind,
-    port: port?.name,
-    tabId: context.tabId ?? port?.sender?.tab?.id,
-    frameId: context.frameId ?? port?.sender?.frameId,
-    error: error instanceof Error ? error.message : String(error)
-  });
 }
