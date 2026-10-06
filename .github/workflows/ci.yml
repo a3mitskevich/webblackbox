@@ -40,7 +40,9 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
-        run: pnpm test
+        # turbo runs up to 10 packages at once and every vitest starts its own worker pool; on a
+        # 4-vCPU runner that oversubscription pushed heavy tests past vitest's 5 s timeout.
+        run: pnpm exec turbo run test --concurrency=2
 
       - name: Benchmark Regression Gate
         run: pnpm bench:ci
@@ -75,7 +77,7 @@ jobs:
             command: pnpm --filter @webblackbox/share-server e2e:share
             needsChrome: false
           - surface: player
-            command: pnpm --filter @webblackbox/player e2e:playback
+            command: pnpm --filter @webblackbox/player e2e:player
             needsChrome: true
           - surface: player-pressure
             command: pnpm --filter @webblackbox/player-sdk test:pressure
@@ -108,6 +110,7 @@ jobs:
             needsChrome: true
           - surface: ui
             command: WB_UI_SHOTS_OUT=/tmp/wb-ui-shots pnpm --filter @webblackbox/extension e2e:ui
+            needsChrome: true
           - surface: tabs-context
             command: pnpm --filter @webblackbox/extension e2e:tabs-context
             needsChrome: true

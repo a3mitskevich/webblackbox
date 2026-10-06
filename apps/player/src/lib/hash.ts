@@ -18,6 +18,19 @@ export async function sha256HexFromText(value: string): Promise<string | null> {
   }
 }
 
+export async function sha256HexFromBytes(bytes: Uint8Array<ArrayBuffer>): Promise<string | null> {
+  if (typeof globalThis.crypto === "undefined" || !globalThis.crypto?.subtle) {
+    return null;
+  }
+
+  try {
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+    return toHex(new Uint8Array(digest));
+  } catch {
+    return null;
+  }
+}
+
 function toHex(bytes: Uint8Array): string {
   let hex = "";
 

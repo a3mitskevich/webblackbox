@@ -1,6 +1,12 @@
 import { buildPlaywrightActionLines, selectPlaywrightActions } from "@webblackbox/player-sdk";
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 
+/**
+ * The HAR the generated test replays: the name the Player downloads it under (Generate → HAR file),
+ * so saving both next to each other is all the setup the test needs.
+ */
+export const HAR_FILE_NAME = "webblackbox-session.har";
+
 export type PlayerPlaywrightScriptOptions = {
   name?: string;
   maxActions?: number;
@@ -24,7 +30,7 @@ export function generatePlaywrightScriptFromEvents(
     `test(${JSON.stringify(name)}, async ({ browser }) => {`,
     "  const context = await browser.newContext();",
     includeHarReplay
-      ? "  await context.routeFromHAR('./session.har', { notFound: 'fallback' });"
+      ? `  await context.routeFromHAR('./${HAR_FILE_NAME}', { notFound: 'fallback' });`
       : "  // HAR replay disabled.",
     "  const page = await context.newPage();",
     `  await page.goto(${JSON.stringify(startUrl)});`

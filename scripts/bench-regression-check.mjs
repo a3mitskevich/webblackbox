@@ -19,7 +19,12 @@ const ciEnv = {
   BENCH_BLOB_POOL: process.env.BENCH_BLOB_POOL ?? "24",
   BENCH_BLOB_BYTES: process.env.BENCH_BLOB_BYTES ?? "24576",
   BENCH_MAX_ARCHIVE_MB: process.env.BENCH_MAX_ARCHIVE_MB ?? "100",
-  BENCH_RECENT_MINUTES: process.env.BENCH_RECENT_MINUTES ?? "20"
+  BENCH_RECENT_MINUTES: process.env.BENCH_RECENT_MINUTES ?? "20",
+  BENCH_PLAYER_EVENTS: process.env.BENCH_PLAYER_EVENTS ?? "60000",
+  BENCH_PLAYER_DURATION_MS: process.env.BENCH_PLAYER_DURATION_MS ?? "600000",
+  BENCH_PLAYER_RENDER_TICKS: process.env.BENCH_PLAYER_RENDER_TICKS ?? "120",
+  // The render pass is part of the gate: an inherited BENCH_PLAYER_RENDER=0 must not skip it.
+  BENCH_PLAYER_RENDER: "1"
 };
 
 main().catch((error) => {
@@ -31,7 +36,11 @@ async function main() {
   const thresholds = JSON.parse(await readFile(thresholdsPath, "utf8"));
   const recorder = runBenchCommand(["--filter", "@webblackbox/recorder", "bench"]);
   const pipeline = runBenchCommand(["--filter", "@webblackbox/pipeline", "bench"]);
-  const checks = runChecks(recorder, pipeline, thresholds);
+  const player = runBenchCommand(["--filter", "@webblackbox/player", "bench"]);
+  const checks = [
+    ...runChecks(recorder, pipeline, thresholds),
+    ...runPlayerChecks(player, thresholds.player)
+  ];
 
   await mkdir(dirname(reportPath), { recursive: true });
   await writeFile(
@@ -42,6 +51,7 @@ async function main() {
         env: ciEnv,
         recorder,
         pipeline,
+        player,
         checks
       },
       null,
@@ -57,6 +67,12 @@ async function main() {
     Math.round(recorder.recorderIngest.throughputOpsPerSec)
   );
   console.log("Pipeline ingest throughput:", Math.round(pipeline.ingestThroughputOpsPerSec));
+  console.log(
+    "Player long archive:",
+    `${player.eventCount} events, open ${Math.round(player.openMs)} ms,`,
+    `model ${Math.round(player.modelBuildMs)} ms, tick p95 ${player.tickMs.p95.toFixed(3)} ms,`,
+    `render tick p95 ${player.render ? player.render.tickP95.toFixed(2) : "skipped"} ms`
+  );
   console.log("Benchmark report:", reportPath);
 
   if (failed.length > 0) {
@@ -164,6 +180,48 @@ function runChecks(recorder, pipeline, thresholds) {
       `expected >= ${thresholds.pipeline.archiveDropRatioMin}, got ${pipeline.archiveDropRatio.toFixed(3)}`
     )
   );
+
+  return checks;
+}
+
+/**
+ * The Player on a long recording (PROPOSAL §12: follow + rail re-render every 120 ms): opening
+ * and modelling the archive, the per-archive rail derivations, the per-tick work while playing,
+ * and the React re-render per tick (jsdom).
+ */
+function runPlayerChecks(player, limits) {
+  const maxMs = (name, value, limit) =>
+    assertCheck(
+      `player.${name}`,
+      value <= limit,
+      `expected <= ${limit} ms, got ${value.toFixed(2)} ms`
+    );
+  const checks = [
+    assertCheck(
+      "player.eventCount",
+      player.eventCount >= limits.minEvents,
+      `the bench archive must be long: expected >= ${limits.minEvents} events, got ${player.eventCount}`
+    ),
+    maxMs("openMs", player.openMs, limits.openMaxMs),
+    maxMs("modelBuildMs", player.modelBuildMs, limits.modelBuildMaxMs),
+    maxMs("derivationsMs", player.derivationsMs, limits.derivationsMaxMs),
+    maxMs("tickMs.p95", player.tickMs.p95, limits.tickP95MaxMs)
+  ];
+
+  if (!player.render) {
+    checks.push(
+      assertCheck("player.render", false, "the render pass did not run (BENCH_PLAYER_RENDER)")
+    );
+  } else {
+    checks.push(
+      assertCheck(
+        "player.render.failedPanels",
+        player.render.failedPanels.length === 0,
+        `panels crashed on the long archive: ${player.render.failedPanels.join(", ")}`
+      ),
+      maxMs("render.tickP95", player.render.tickP95, limits.renderTickP95MaxMs)
+    );
+  }
 
   return checks;
 }
