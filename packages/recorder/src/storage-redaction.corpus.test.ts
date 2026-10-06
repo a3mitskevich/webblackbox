@@ -7,7 +7,11 @@ import { DEFAULT_REDACTION_PROFILE, type RedactionProfile } from "@webblackbox/p
 import { describe, expect, it } from "vitest";
 
 import { redactPayload } from "./redaction.js";
-import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
+import {
+  growthRatio,
+  LINEAR_GROWTH_LIMIT,
+  GROWTH_TEST_TIMEOUT_MS
+} from "./test-support/linear-growth.js";
 
 const DEFAULT_PROFILE: RedactionProfile = {
   ...DEFAULT_REDACTION_PROFILE,
@@ -138,7 +142,7 @@ describe("storage value corpus", () => {
     });
   }
 
-  it("scans hostile values in linear time", () => {
+  it("scans hostile values in linear time", { timeout: GROWTH_TEST_TIMEOUT_MS }, () => {
     // Growth, not an absolute budget, so parallel load cannot fail the test.
     for (const [unit, count] of [
       ["A", 10_000],
