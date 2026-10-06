@@ -764,6 +764,11 @@ button.sess:hover .sess-title {
   height: 100%;
   object-fit: contain;
 }
+/* The page's rectangle inside the media frame (left/top/width/height set from the viewport). */
+.pointer-box {
+  position: absolute;
+  pointer-events: none;
+}
 .pointer-layer {
   position: absolute;
   inset: 0;
@@ -1227,6 +1232,34 @@ button.sess:hover .sess-title {
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   scrollbar-width: none;
+}
+/* The tab row and its scroll buttons, shown over an end that hides tabs. */
+.rail-tabs-bar {
+  position: relative;
+  min-width: 0;
+}
+.rail-tabs-scroll {
+  position: absolute;
+  top: 0;
+  bottom: 1px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  padding: 0;
+  border: 0;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.rail-tabs-scroll.start {
+  left: 0;
+  background: linear-gradient(to right, var(--surface) 60%, transparent);
+}
+.rail-tabs-scroll.end {
+  right: 0;
+  background: linear-gradient(to left, var(--surface) 60%, transparent);
+}
+.rail-tabs-scroll:hover {
+  color: var(--ink);
 }
 .rail-tab {
   display: flex;

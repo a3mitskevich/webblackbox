@@ -191,17 +191,38 @@ describe("React player", () => {
     });
     expect(screen.getByTestId("clock")).toHaveTextContent("0:09.45");
 
-    act(() => {
-      fireEvent.click(screen.getByTestId("other-tabs-chip"));
-    });
-    expect(store.getState().selection?.kind).toBe("event");
-
     const drag = new Event("dragenter", { bubbles: true, cancelable: true });
     Object.defineProperty(drag, "dataTransfer", { value: { types: ["Files"], files: [] } });
     act(() => {
       window.dispatchEvent(drag);
     });
     expect(screen.getByTestId("drop-overlay")).toHaveTextContent("Drop the archive to open it");
+  });
+
+  it("opens the Tabs panel from the other-tabs badge without moving the playhead", async () => {
+    const { controller, store } = renderPlayer();
+    await openArchive(controller);
+
+    const lobby = screen.getAllByTestId("chapter").find((node) => node.textContent === "#/lobby");
+    act(() => {
+      fireEvent.click(lobby as HTMLElement);
+    });
+    key("l");
+    const before = store.getState();
+    expect(before.selection).not.toBeNull();
+    expect(before.playheadMono).toBeGreaterThan(before.archive?.model.minMono ?? 0);
+
+    act(() => {
+      fireEvent.click(screen.getByTestId("other-tabs-chip"));
+    });
+
+    const after = store.getState();
+    expect(after.tab).toBe("tabs");
+    expect(screen.getByTestId("tab-tabs")).toHaveAttribute("aria-selected", "true");
+    expect(after.playheadMono).toBe(before.playheadMono);
+    expect(after.selection).toEqual(before.selection);
+    expect(after.archive).toBe(before.archive);
+    expect(after.query).toBe(before.query);
   });
 
   it("matches physical keys, so the keymap works on a Russian layout", async () => {
