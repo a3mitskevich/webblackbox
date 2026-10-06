@@ -314,7 +314,48 @@
     "network": "сеть",
     "screenshot": "скриншот",
     "recording": "видео",
-    "action": "действие"
+    "action": "действие",
+    "pointer": "указатель",
+    "tabs": "другая вкладка"
+  },
+  "pointerLaneLabel": "Действия указателя",
+  "pointerKinds": {
+    "click": "Клик",
+    "double": "Двойной клик",
+    "right": "Правый клик",
+    "middle": "Клик средней кнопкой",
+    "hold": "Долгое нажатие",
+    "drag": "Перетаскивание",
+    "dnd": "Перетаскивание элемента",
+    "wheel": "Прокрутка колесом",
+    "zoom": "Масштаб (Ctrl + колесо)",
+    "hover": "Наведение",
+    "selection": "Выделение текста",
+    "rage": "Многократные клики",
+    "dead": "Клик без реакции"
+  },
+  "pointerRippleLabels": {
+    "double": "двойной",
+    "right": "правый",
+    "middle": "средний",
+    "hold": "удержание",
+    "drag": "перетаскивание",
+    "dnd": "сброс"
+  },
+  "stackView": {
+    "heading": "Стек вызовов",
+    "showOriginal": "Показать по исходникам",
+    "showRaw": "Показать как записано",
+    "loadMapFiles": "Выбрать файлы .map",
+    "loadMapFolder": "Выбрать папку с картами",
+    "symbolServerPlaceholder": "URL сервера символов (карты по имени файла)",
+    "symbolServerApply": "Применить",
+    "mapsLoaded": "Загружено карт исходного кода: {count}.",
+    "resolving": "Определение исходных позиций…",
+    "noMap": "нет карты исходного кода",
+    "noMapping": "нет соответствия для этой позиции",
+    "mapError": "ошибка карты исходного кода",
+    "invalidSymbolServer": "URL сервера символов должен начинаться с http:// или https://."
   },
   "privacyHiddenByProfile": "Скрыто профилем: {what}",
   "privacySubjects": {
@@ -329,6 +370,8 @@
     "tab-recording": "видео вкладки",
     "storage": "хранилище",
     "storage-details": "подробности хранилища",
+    "tabs": "другие вкладки сайта",
+    "tab-details": "пути и заголовки других вкладок",
     "profile": "данные профилирования",
     "unknown": "данные"
   },
@@ -348,6 +391,8 @@
   "profileBannerDowngraded": "Записано по профилю {name} вместо {requested}: {requested} был запрещён на этом сайте, поэтому данных, которые записывает только {requested}, нет.",
   "profileBannerCapped": "Политика организации ограничила профиль {name}: {categories}.",
   "profileBannerUnknownProfile": "неизвестный профиль",
+  "summaryParallelTabs": "Других вкладок этого сайта: {count}",
+  "summaryParallelTabsDetail": "Не больше {max} одновременно, {start} на старте записи; того же источника: {sameOrigin}, того же сайта: {sameSite}. Нажмите, чтобы открыть подробности.",
   "networkTypes": {
     "document": "Документ",
     "fetch": "Fetch/XHR",

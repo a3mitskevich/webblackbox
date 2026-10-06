@@ -267,7 +267,9 @@ async function handleSwMessage(message: ExtensionOutboundMessage): Promise<void>
       mode: message.mode,
       sampling: message.sampling,
       capturePolicy: message.capturePolicy,
-      injectedBridgeNonce: message.injectedBridgeNonce
+      injectedBridgeNonce: message.injectedBridgeNonce,
+      scriptSourceMaps: message.scriptSourceMaps === true,
+      pointer: message.pointer
     };
 
     if (message.active) {

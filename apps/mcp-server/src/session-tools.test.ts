@@ -13,7 +13,8 @@ import {
   generateBugReportBundle,
   generatePlaywrightFromArchive,
   listArchives,
-  summarizeActions
+  summarizeActions,
+  summarizeSession
 } from "./session-tools.js";
 
 const tempDirs: string[] = [];
@@ -127,6 +128,76 @@ describe("session tools", () => {
         format: "webp"
       })
     );
+  });
+
+  it("reports other tabs of the site that were open in parallel in the session summary", async () => {
+    const root = await mkdtemp(join(tmpdir(), "wb-mcp-parallel-tabs-"));
+    tempDirs.push(root);
+
+    const tab = {
+      tabId: 42,
+      windowId: 1,
+      relation: "same-origin",
+      origin: "https://shop.test",
+      path: "/account/logout",
+      title: "Signed out",
+      active: false,
+      focused: false,
+      incognito: false,
+      firstSeenAt: 2_000
+    };
+    const tabEvents: WebBlackboxEvent[] = [
+      {
+        v: 1,
+        sid: "S-R-1",
+        tab: 1,
+        t: 2_001,
+        mono: 11,
+        type: "meta.tabs.snapshot",
+        id: "E-T-1",
+        data: {
+          reason: "start",
+          level: "allow",
+          origin: "https://shop.test",
+          site: "shop.test",
+          tabs: [tab]
+        }
+      },
+      {
+        v: 1,
+        sid: "S-R-1",
+        tab: 1,
+        t: 2_050,
+        mono: 60,
+        type: "meta.tabs.change",
+        id: "E-T-2",
+        data: { change: "closed", level: "allow", tab, openCount: 0 }
+      }
+    ];
+    const archivePath = join(root, "tabs.webblackbox");
+    const archiveBytes = await createArchiveFixture([...createRegressionEvents(), ...tabEvents]);
+    await writeFile(archivePath, Buffer.from(archiveBytes));
+
+    const plain = join(root, "plain.webblackbox");
+    await writeFile(plain, Buffer.from(await createArchiveFixture(createRegressionEvents())));
+
+    const result = await summarizeSession({ path: archivePath });
+
+    expect(result.parallelTabs).toMatchObject({
+      recorded: true,
+      summary: { openAtStart: 1, maxConcurrent: 1, distinctTabs: 1, sameOrigin: 1 },
+      changes: [
+        {
+          eventId: "E-T-2",
+          change: "closed",
+          tabId: 42,
+          origin: "https://shop.test",
+          path: "/account/logout",
+          title: "Signed out"
+        }
+      ]
+    });
+    expect((await summarizeSession({ path: plain })).parallelTabs.recorded).toBe(false);
   });
 
   it("finds root-cause candidates with nearby network and console context", async () => {

@@ -175,6 +175,7 @@ describe("detectProfileChange", () => {
       ...mine,
       network: { ...mine.network, excludeUrls: [...mine.network.excludeUrls, "*/health*"] }
     };
+    const editedSourceMaps = { ...mine, sourceMaps: { mode: "off" as const } };
     const renamed = { ...mine, name: "Mine (renamed)", description: "Other words" };
     const next = (profile: typeof mine) =>
       snapshot(select(state({ profiles: [createDefaultProfile(), profile] }), "mine"));
@@ -183,8 +184,27 @@ describe("detectProfileChange", () => {
       detectProfileChange({ started, next: next(editedNetwork), startedProfileExists: true })
     ).toBe("profile-edited");
     expect(
+      detectProfileChange({ started, next: next(editedSourceMaps), startedProfileExists: true })
+    ).toBe("profile-edited");
+    expect(
       detectProfileChange({ started, next: next(renamed), startedProfileExists: true })
     ).toBeNull();
+  });
+
+  it("reports an edit of the profile's pointer streams or pointer rate", () => {
+    const mine = qaCopy();
+    const started = snapshot(select(state({ profiles: [createDefaultProfile(), mine] }), "mine"));
+    const next = (profile: typeof mine) =>
+      snapshot(select(state({ profiles: [createDefaultProfile(), profile] }), "mine"));
+    const hoverToggled = { ...mine, pointer: { ...mine.pointer, hover: !mine.pointer.hover } };
+    const fasterPointer = { ...mine, pointer: { ...mine.pointer, mousemoveHz: 50 } };
+
+    expect(
+      detectProfileChange({ started, next: next(hoverToggled), startedProfileExists: true })
+    ).toBe("profile-edited");
+    expect(
+      detectProfileChange({ started, next: next(fasterPointer), startedProfileExists: true })
+    ).toBe("profile-edited");
   });
 
   it("keeps recording when a General settings save pins the values Default already ran with", () => {
@@ -234,6 +254,20 @@ describe("detectProfileChange", () => {
   it("reports an edit when the same profile now records something else", () => {
     const mine = qaCopy();
     const edited = { ...mine, categories: { ...mine.categories, console: "metadata" as const } };
+    const started = snapshot(select(state({ profiles: [createDefaultProfile(), mine] }), "mine"));
+    const next = snapshot(select(state({ profiles: [createDefaultProfile(), edited] }), "mine"));
+
+    expect(detectProfileChange({ started, next, startedProfileExists: true })).toBe(
+      "profile-edited"
+    );
+  });
+
+  it("reports an edit of the parallel tabs level", () => {
+    const mine = qaCopy();
+    const edited = {
+      ...mine,
+      categories: { ...mine.categories, tabsContext: "metadata" as const }
+    };
     const started = snapshot(select(state({ profiles: [createDefaultProfile(), mine] }), "mine"));
     const next = snapshot(select(state({ profiles: [createDefaultProfile(), edited] }), "mine"));
 

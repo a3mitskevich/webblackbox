@@ -1,6 +1,7 @@
-import type { CapturePolicy } from "@webblackbox/protocol";
+import { DEFAULT_CAPTURE_POLICY, type CapturePolicy } from "@webblackbox/protocol";
 
-export type CaptureCategories = CapturePolicy["categories"];
+/** Every category set: a profile always names each level, unlike older stored policies. */
+export type CaptureCategories = Required<CapturePolicy["categories"]>;
 export type CaptureCategoryKey = keyof CaptureCategories;
 
 /**
@@ -21,7 +22,8 @@ export const CAPTURE_CATEGORY_LEVELS: {
   indexedDb: ["off", "counts-only", "names-only", "allow"],
   cookies: ["off", "count-only", "names-only", "allow"],
   cdp: ["off", "safe-subset", "full"],
-  heapProfiles: ["off", "lab-only"]
+  heapProfiles: ["off", "lab-only"],
+  tabsContext: ["off", "metadata", "allow"]
 };
 
 export const CAPTURE_CATEGORY_KEYS = Object.keys(CAPTURE_CATEGORY_LEVELS) as CaptureCategoryKey[];
@@ -34,6 +36,17 @@ const STORAGE_RANKS: Record<CaptureCategories["storage"], number> = {
   "lengths-only": 2,
   allow: 3
 };
+
+/** A policy's categories with the ones it predates (`tabsContext`) at their defaults. */
+export function completeCaptureCategories(
+  categories: CapturePolicy["categories"]
+): CaptureCategories {
+  return {
+    ...categories,
+    tabsContext:
+      categories.tabsContext ?? DEFAULT_CAPTURE_POLICY.categories.tabsContext ?? "metadata"
+  };
+}
 
 /** Numeric rank of a category level (higher = more data); -1 for unknown values. */
 export function rankCategoryLevel<TKey extends CaptureCategoryKey>(

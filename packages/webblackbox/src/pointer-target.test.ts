@@ -1,0 +1,197 @@
+/* @vitest-environment jsdom */
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { DEFAULT_CAPTURE_POLICY, type CapturePolicy } from "@webblackbox/protocol";
+
+import { buildReadableSelector, buildReadableTarget } from "./pointer-target.js";
+
+const READABLE_POLICY: CapturePolicy = {
+  ...DEFAULT_CAPTURE_POLICY,
+  categories: { ...DEFAULT_CAPTURE_POLICY.categories, actions: "allow" }
+};
+
+function mount(html: string): void {
+  document.body.innerHTML = html;
+}
+
+function element(selector: string): Element {
+  const found = document.querySelector(selector);
+
+  if (!found) {
+    throw new Error(`missing ${selector}`);
+  }
+
+  return found;
+}
+
+describe("readable pointer targets", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("skips generated ids and escapes attribute values", () => {
+    mount(`
+      <div id="ember12345"><button name='say "hi"'>Hi</button></div>
+      <button id="checkout">Pay</button>
+    `);
+
+    expect(buildReadableSelector(element("button[name]"))).toBe('button[name="say \\"hi\\""]');
+    expect(buildReadableSelector(element("#checkout"))).toBe("#checkout");
+    expect(buildReadableSelector(element("#ember12345"))).toBe("div");
+  });
+
+  it("reads labels of button-like inputs but never values of text fields", () => {
+    mount(`
+      <input id="submit" type="submit" value="Send order" />
+      <input id="email" type="email" value="person@example.com" />
+    `);
+
+    expect(buildReadableTarget(element("#submit"), READABLE_POLICY)).toMatchObject({
+      role: "button",
+      text: "Send order"
+    });
+
+    const email = buildReadableTarget(element("#email"), READABLE_POLICY);
+    expect(email).toMatchObject({ role: "textbox", css: "#email" });
+    expect(JSON.stringify(email)).not.toContain("person@example.com");
+  });
+
+  it("clips long visible text", () => {
+    mount(`<a href="/x">${"Very long link text ".repeat(5)}</a>`);
+
+    const text = buildReadableTarget(element("a"), READABLE_POLICY)?.text ?? "";
+    expect(text).toHaveLength(40);
+    expect(text.endsWith("…")).toBe(true);
+  });
+
+  it("fails closed on invalid blocked selectors and honours unmask selectors", () => {
+    mount(`<div class="card" data-sensitive><button id="open">Open</button></div>`);
+
+    expect(
+      buildReadableTarget(element("#open"), {
+        ...READABLE_POLICY,
+        redaction: { ...READABLE_POLICY.redaction, blockedSelectors: ["[[invalid"] }
+      })
+    ).toBeUndefined();
+    expect(buildReadableTarget(element("#open"), READABLE_POLICY)).toBeUndefined();
+    expect(
+      buildReadableTarget(element("#open"), {
+        ...READABLE_POLICY,
+        redaction: { ...READABLE_POLICY.redaction, unmaskSelectors: ["#open"] }
+      })
+    ).toMatchObject({ text: "Open" });
+  });
+
+  it("keeps blocked, editable and script descendants out of a wrapper's label", () => {
+    mount(`
+      <a id="card" href="/card">
+        Card <span data-sensitive>4111 1111 1111 1111</span>
+        <script>window.secret = 1</script><span contenteditable="true">draft</span> ending
+      </a>
+    `);
+
+    const readable = buildReadableTarget(element("#card"), READABLE_POLICY);
+    expect(readable?.text).toBe("Card ending");
+    expect(JSON.stringify(readable)).not.toMatch(/4111|secret|draft/);
+  });
+
+  it("reads only the start of a large subtree for the label", () => {
+    mount(`<div id="big">${"<p>word word word</p>".repeat(5_000)}</div>`);
+
+    const text = buildReadableTarget(element("#big"), READABLE_POLICY)?.text ?? "";
+    expect(text).toHaveLength(40);
+    expect(text.startsWith("word word word")).toBe(true);
+  });
+
+  describe("DOM value patterns", () => {
+    const withDomRule = (contentRedaction = true): CapturePolicy => ({
+      ...READABLE_POLICY,
+      redaction: {
+        ...READABLE_POLICY.redaction,
+        contentRedaction,
+        valuePatterns: [{ pattern: "acct-\\d+", targets: ["dom"] }]
+      }
+    });
+
+    it("masks every label field with the profile's dom patterns", () => {
+      mount(`
+        <button id="pay" role="button acct-11" aria-label="Pay acct-22" data-testid="pay-acct-33"
+          name="acct-44">Pay acct-55 now</button>
+      `);
+
+      const readable = buildReadableTarget(element("#pay"), withDomRule());
+
+      expect(readable).toMatchObject({
+        role: "button [REDACTED]",
+        ariaLabel: "Pay [REDACTED]",
+        text: "Pay [REDACTED] now",
+        testId: "pay-[REDACTED]",
+        name: "[REDACTED]"
+      });
+      expect(JSON.stringify(readable)).not.toMatch(/acct-\d/);
+    });
+
+    it("masks before clipping, drops a selector the patterns would change and labels inputs", () => {
+      mount(`
+        <a id="long" href="/x">${"padding ".repeat(4)}acct-123456789</a>
+        <button data-testid="acct-77">Go</button>
+        <input id="send" type="submit" value="Send acct-88" />
+      `);
+
+      const long = buildReadableTarget(element("#long"), withDomRule());
+      expect(long?.text).not.toMatch(/acct-\d|\d{3}/);
+      expect(buildReadableTarget(element("[data-testid]"), withDomRule())?.css).toBeUndefined();
+      expect(buildReadableTarget(element("#send"), withDomRule())?.text).toBe("Send [REDACTED]");
+    });
+
+    it("drops a selector that embeds a value an anchored rule masks", () => {
+      mount(`<button data-testid="acme-12">Go</button><button id="acme-34">Go</button>`);
+      const anchored: CapturePolicy = {
+        ...READABLE_POLICY,
+        redaction: {
+          ...READABLE_POLICY.redaction,
+          valuePatterns: [{ pattern: "^acme-\\d+$", targets: ["dom"] }]
+        }
+      };
+
+      const byTestId = buildReadableTarget(element("[data-testid]"), anchored);
+      expect(byTestId).toMatchObject({ testId: "[REDACTED]" });
+      expect(byTestId?.css).toBeUndefined();
+      expect(buildReadableTarget(element("#acme-34"), anchored)?.css).toBeUndefined();
+    });
+
+    it("masks a label a rule matches only after whitespace is collapsed", () => {
+      mount(`<button id="pulse" aria-label="Pulse
+        DOM">Pulse
+        DOM</button>`);
+      const policy: CapturePolicy = {
+        ...READABLE_POLICY,
+        redaction: {
+          ...READABLE_POLICY.redaction,
+          valuePatterns: [{ pattern: "Pulse DOM", targets: ["dom"] }]
+        }
+      };
+
+      expect(buildReadableTarget(element("#pulse"), policy)).toMatchObject({
+        text: "[REDACTED]",
+        ariaLabel: "[REDACTED]"
+      });
+    });
+
+    it("masks nothing when content masking is off", () => {
+      mount(`<button id="pay" aria-label="Pay acct-22">Pay acct-55</button>`);
+
+      expect(buildReadableTarget(element("#pay"), withDomRule(false))).toMatchObject({
+        ariaLabel: "Pay acct-22",
+        text: "Pay acct-55"
+      });
+    });
+  });
+
+  it("returns nothing when the profile keeps actions as metadata", () => {
+    mount(`<button id="go">Go</button>`);
+
+    expect(buildReadableTarget(element("#go"), DEFAULT_CAPTURE_POLICY)).toBeUndefined();
+  });
+});

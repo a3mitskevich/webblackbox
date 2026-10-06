@@ -1,7 +1,7 @@
 import { sanitizeUrlForPrivacy } from "@webblackbox/protocol";
 import {
   isContentRedactionEnabled,
-  maskValuePatterns,
+  maskDomText,
   recordUrl,
   usesBuiltInHeuristics,
   type RedactionRules
@@ -279,13 +279,13 @@ function applyUserRules(root: Element | DocumentFragment, context: SanitizeConte
       const value = URL_ATTRIBUTES.has(name)
         ? recordUrl(attribute.value, context.rules)
         : attribute.value;
-      attribute.value = maskValuePatterns(value, context.rules, "dom");
+      attribute.value = maskDomText(value, context.rules);
     }
   }
 
   for (const node of collectNodes(root, NodeFilter.SHOW_TEXT)) {
     const text = node.nodeValue ?? "";
-    const masked = maskValuePatterns(text, context.rules, "dom");
+    const masked = maskDomText(text, context.rules);
 
     if (masked !== text) {
       node.nodeValue = masked;
@@ -364,16 +364,15 @@ function sanitizeAttributes(element: Element, context: SanitizeContext): void {
     if (isDroppedAttribute(element, name)) {
       element.removeAttributeNode(attribute);
     } else {
-      attribute.value = maskValuePatterns(
+      attribute.value = maskDomText(
         sanitizeAttributeValue(name, attribute.value, context),
-        context.rules,
-        "dom"
+        context.rules
       );
     }
   }
 
   if (element.localName === "style" && element.textContent) {
-    element.textContent = maskValuePatterns(sanitizeCss(element.textContent), context.rules, "dom");
+    element.textContent = maskDomText(sanitizeCss(element.textContent), context.rules);
   }
 }
 
@@ -459,7 +458,7 @@ function sanitizeTextNodes(root: Element | DocumentFragment, context: SanitizeCo
     const text = node.nodeValue ?? "";
     const sanitized = isSecretJson(text, context)
       ? MASKED_TEXT
-      : maskValuePatterns(enforceTextInvariant(text, MASKED_TEXT, false), context.rules, "dom");
+      : maskDomText(enforceTextInvariant(text, MASKED_TEXT, false), context.rules);
 
     if (sanitized !== text) {
       node.nodeValue = sanitized;

@@ -69,6 +69,7 @@ export const EXTENSION_MANIFEST_PROFILES = ["dev", "store-safe"];
 // and persistent host access comes from `<all_urls>`, so neither `cookies`
 // nor `activeTab` belongs in the dev/enterprise permission set.
 const DEV_PERMISSIONS = [
+  "alarms",
   "debugger",
   "downloads",
   "offscreen",
@@ -80,6 +81,7 @@ const DEV_PERMISSIONS = [
 ];
 const STORE_SAFE_PERMISSIONS = [
   "activeTab",
+  "alarms",
   "downloads",
   "offscreen",
   "scripting",
