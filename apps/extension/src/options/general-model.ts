@@ -13,6 +13,7 @@ import {
 } from "../shared/content-injection.js";
 import type { ExtensionMessageKey, ExtensionUnit } from "../shared/i18n.js";
 import { OPTIONS_STORAGE_VERSION } from "../shared/options-storage.js";
+import { parsePlayerUrl } from "../shared/player-url.js";
 import {
   DEFAULT_PERFORMANCE_BUDGET,
   normalizePerformanceBudget,
@@ -33,6 +34,11 @@ export type GeneralDraft = {
   injection: ContentInjectionMode;
   /** Stored under its own key (`webblackbox.startReloadOffer`), not in `webblackbox.options`. */
   startReloadOffer: boolean;
+  /**
+   * The user's own Player URL ("" = none), stored under `webblackbox.playerUrl`. A managed value
+   * is shown instead of it but never copied into the draft.
+   */
+  playerUrl: string;
 };
 
 export type GeneralSectionId = "sensitivity" | "pointer" | "sampling" | "budgets" | "export";
@@ -92,7 +98,24 @@ export type ChoiceFieldSpec = SpecText & {
   set: (draft: GeneralDraft, value: string) => GeneralDraft;
 };
 
-export type GeneralFieldSpec = NumberFieldSpec | ToggleFieldSpec | ListFieldSpec | ChoiceFieldSpec;
+export type TextValidation = { ok: true; value: string } | { ok: false; key: ExtensionMessageKey };
+
+export type TextFieldSpec = SpecText & {
+  kind: "text";
+  placeholder: ExtensionMessageKey;
+  /** Shown instead of the hint when the organization's policy sets the field (read-only). */
+  managedHint: ExtensionMessageKey;
+  validate: (raw: string) => TextValidation;
+  get: (draft: GeneralDraft) => string;
+  set: (draft: GeneralDraft, value: string) => GeneralDraft;
+};
+
+export type GeneralFieldSpec =
+  | NumberFieldSpec
+  | ToggleFieldSpec
+  | ListFieldSpec
+  | ChoiceFieldSpec
+  | TextFieldSpec;
 
 type SamplingKey = keyof RecorderConfig["sampling"];
 type BudgetNumberKey = "lcpWarnMs" | "requestWarnMs" | "errorRateWarnPct";
@@ -376,6 +399,21 @@ export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
     max: RECENT_WINDOW_MINUTES_LIMITS.max,
     get: (draft) => draft.archive.recentMinutes,
     set: (draft, value) => withArchive(draft, { recentMinutes: value })
+  },
+  {
+    kind: "text",
+    id: "playerUrl",
+    section: "export",
+    label: "optionsPlayerUrl",
+    hint: "optionsPlayerUrlHint",
+    placeholder: "optionsPlayerUrlPlaceholder",
+    managedHint: "optionsPlayerUrlManaged",
+    validate: (raw) => {
+      const parsed = parsePlayerUrl(raw);
+      return parsed.ok ? parsed : { ok: false, key: "optionsErrorPlayerUrl" };
+    },
+    get: (draft) => draft.playerUrl,
+    set: (draft, value) => ({ ...draft, playerUrl: value })
   }
 ];
 
@@ -442,7 +480,8 @@ export function createDefaultGeneralDraft(): GeneralDraft {
     performanceBudget: { ...DEFAULT_PERFORMANCE_BUDGET },
     archive: { ...DEFAULT_EXPORT_POLICY_PREFS },
     injection: DEFAULT_CONTENT_INJECTION_MODE,
-    startReloadOffer: DEFAULT_START_RELOAD_OFFER
+    startReloadOffer: DEFAULT_START_RELOAD_OFFER,
+    playerUrl: ""
   };
 }
 
@@ -457,6 +496,7 @@ export function resetGeneralSection(draft: GeneralDraft, section: GeneralSection
       case "toggle":
         return spec.set(next, spec.get(defaults));
       case "choice":
+      case "text":
         return spec.set(next, spec.get(defaults));
       case "list":
         return spec.set(next, [...spec.get(defaults)]);
@@ -491,6 +531,10 @@ export function isInjectionChanged(draft: GeneralDraft, baseline: GeneralDraft):
 
 export function isStartReloadOfferChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
   return draft.startReloadOffer !== baseline.startReloadOffer;
+}
+
+export function isPlayerUrlChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
+  return draft.playerUrl !== baseline.playerUrl;
 }
 
 const GENERAL_SECTION_IDS: readonly GeneralSectionId[] = [

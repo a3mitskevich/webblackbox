@@ -8,6 +8,7 @@ import {
   type ExtensionOutboundMessage,
   type SessionListItem
 } from "../shared/messages.js";
+import { loadPlayerUrlSetting, PLAYER_URL_STORAGE_KEY } from "../shared/player-url.js";
 import { openConfirmDialog, openPassphraseDialog } from "../shared/ui/dialogs.js";
 import { el } from "../shared/ui/dom.js";
 import { preserveFocus } from "../shared/ui/focus.js";
@@ -30,15 +31,13 @@ import {
   type SessionFormatters
 } from "./table.js";
 
-/** Hosted Player; archives are opened there locally and never uploaded. */
-const PLAYER_URL = "https://webllm.github.io/webblackbox/";
-
 const chromeApi = getChromeApi();
 // Resolved before the port opens, so no port message can arrive before its listener exists.
-const i18n = createExtensionI18n({
-  pageTitleKey: "pageTitleSessions",
-  locale: await loadExtensionLocale()
-});
+const [pageLocale, playerSetting] = await Promise.all([
+  loadExtensionLocale(),
+  loadPlayerUrlSetting(chromeApi?.storage)
+]);
+const i18n = createExtensionI18n({ pageTitleKey: "pageTitleSessions", locale: pageLocale });
 const port = chromeApi?.runtime?.connect({ name: PORT_NAMES.sessions });
 const { locale, t } = i18n;
 const format: SessionFormatters = {
@@ -52,7 +51,11 @@ const format: SessionFormatters = {
 };
 const root = document.getElementById("sessions-root");
 
-type PendingExport = { openPlayer: boolean };
+/**
+ * `playerUrl`: the Player to open once the export finished ("" for a plain export). Only the page
+ * is opened; the archive stays in the downloads folder and is dropped into the Player by hand.
+ */
+type PendingExport = { playerUrl: string };
 
 type Page = {
   root: HTMLElement;
@@ -69,10 +72,13 @@ const state: {
   filters: SessionFilters;
   selected: Set<string>;
   expandedSid?: string;
+  /** Configured Player ("" = none): Settings or the organization's policy. */
+  playerUrl: string;
 } = {
   sessions: [],
   filters: { ...EMPTY_FILTERS },
-  selected: new Set()
+  selected: new Set(),
+  playerUrl: playerSetting.url
 };
 /** Exports started on this page, by sid: their failures are reported here. */
 const pendingExports = new Map<string, PendingExport>();
@@ -82,6 +88,7 @@ if (root) {
   root.replaceChildren(page.root);
   renderList(page);
   bindPage(page);
+  followPlayerUrl(page);
 
   port?.onMessage.addListener((message) => {
     const typed = message as ExtensionOutboundMessage;
@@ -151,6 +158,22 @@ function createPage(): Page {
     bulk,
     list
   };
+}
+
+/** A Player URL saved in Settings or pushed by policy shows up without reloading the page. */
+function followPlayerUrl(page: Page): void {
+  chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
+    if (areaName !== "managed" && !(areaName === "local" && PLAYER_URL_STORAGE_KEY in changes)) {
+      return;
+    }
+
+    void loadPlayerUrlSetting(chromeApi?.storage).then((setting) => {
+      if (setting.url !== state.playerUrl) {
+        state.playerUrl = setting.url;
+        renderList(page);
+      }
+    });
+  });
 }
 
 function showNotice(page: Page, text: string): void {
@@ -250,7 +273,8 @@ function renderListContent(page: Page): void {
       selected: state.selected,
       ...(state.expandedSid ? { expandedSid: state.expandedSid } : {}),
       now: Date.now(),
-      format
+      format,
+      canOpenPlayer: state.playerUrl !== ""
     })
   );
 }
@@ -369,7 +393,7 @@ async function handleButton(page: Page, button: HTMLButtonElement): Promise<void
     const passphrase = await askPassphrase(shortenSessionId(exportSid));
 
     if (passphrase !== null) {
-      requestExport(exportSid, passphrase, { openPlayer: Boolean(data.player) });
+      requestExport(exportSid, passphrase, { playerUrl: data.player ? state.playerUrl : "" });
     }
 
     return;
@@ -419,7 +443,7 @@ async function exportSelected(): Promise<void> {
   const passphrase = await askPassphrase(t("sessionsSelectedCount", { count: sids.length }));
 
   if (passphrase !== null) {
-    sids.forEach((sid) => requestExport(sid, passphrase, { openPlayer: false }));
+    sids.forEach((sid) => requestExport(sid, passphrase, { playerUrl: "" }));
   }
 }
 
@@ -477,8 +501,8 @@ function handleExportStatus(
       showNotice(page, formatExportPrivacyWarning(status.privacyWarning));
     }
 
-    if (pending?.openPlayer && typeof chromeApi?.tabs?.create === "function") {
-      void chromeApi.tabs.create({ url: PLAYER_URL, active: true });
+    if (pending?.playerUrl && typeof chromeApi?.tabs?.create === "function") {
+      void chromeApi.tabs.create({ url: pending.playerUrl, active: true });
     }
 
     return;
