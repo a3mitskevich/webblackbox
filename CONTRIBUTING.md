@@ -95,6 +95,14 @@ pnpm --filter @webblackbox/extension e2e:perf:lite
 pnpm --filter @webblackbox/extension package:chrome
 ```
 
+UI strings of the extension pages live in per-feature fragments,
+`apps/extension/src/shared/locales/<feature>.<locale>.json`, one per locale (`en`, `ru`, `zh-CN`).
+A new feature adds its own three files instead of editing a shared dictionary. `build`, `dev`,
+`test` and `typecheck` merge the fragments into the git-ignored `locales/generated/`; a key defined
+by two features fails the merge, and `locales.test.ts` checks that every locale has every key.
+Run `node apps/extension/scripts/generate-locales.mjs` if your editor reports a missing
+`locales/generated/*.json` before the first build.
+
 ## Working on the Player
 
 ```bash
