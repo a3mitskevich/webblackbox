@@ -8,6 +8,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
+      "@webblackbox/protocol/schemas": resolve(root, "../protocol/src/schemas-entry.ts"),
       "@webblackbox/protocol": resolve(root, "../protocol/src/index.ts")
     }
   },

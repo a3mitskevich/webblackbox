@@ -9,6 +9,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@webblackbox/pipeline": resolve(root, "../pipeline/src/index.ts"),
+      "@webblackbox/protocol/schemas": resolve(root, "../protocol/src/schemas-entry.ts"),
       "@webblackbox/protocol": resolve(root, "../protocol/src/index.ts"),
       "@webblackbox/recorder": resolve(root, "../recorder/src/index.ts")
     }
