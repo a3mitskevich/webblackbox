@@ -1,5 +1,21 @@
 # @webblackbox/pipeline
 
+## 0.7.0
+
+### Minor Changes
+
+- Archive format 2: every export is encrypted and the passphrase is now mandatory — `exportBundle`/`createWebBlackboxArchive` throw without one. `manifest.json` carries only the plaintext envelope; the full manifest moves to encrypted `meta/manifest.json`, `protocolVersion` is 2, all entries are AES-GCM encrypted, and the default KDF cost rises to 600,000 iterations. Reading format 1 archives is unchanged.
+- Removed the `assertPrivacyScannerPassed` export and the `strictPrivacyScanner`, `allowPlaintextLocalExport`, and `trustedPlaintextExemptionEvidenceRefs` options; the privacy scanner no longer blocks export.
+- Added the `@webblackbox/pipeline/storage` subpath export (storage and session sweep without jszip), `sweepPipelineSessions`, `generatePipelineStorageKeyBytes`/`importPipelineStorageKey`, `EncryptedPipelineStorage.listSessions`/`purgeUnreadableSessions`, optional `PipelineStorage.listSessions`, and `computeChunkTimeBounds`.
+- At-rest encrypted storage now seals whole session/index/integrity records, not only chunk and blob bytes; legacy rows are still read or purged when the key is lost.
+- WebSocket/SSE stream payloads above 16 KB are externalized to a blob with a preview and hash during ingest.
+
+### Patch Changes
+
+- Chunk time bounds are now the min/max over chunk events instead of first/last, and IndexedDB blob tracking no longer loses blobs under parallel writes.
+- Updated dependencies
+  - @webblackbox/protocol@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

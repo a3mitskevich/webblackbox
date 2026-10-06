@@ -1,5 +1,21 @@
 # @webblackbox/player-sdk
 
+## 0.7.0
+
+### Minor Changes
+
+- Reads archive format 2: `open()` detects the plaintext envelope, decrypts `meta/manifest.json`, and merges it with the envelope; format 1 archives load as before.
+- Hardened archive loading: `open()` enforces configurable size caps and rejects oversized archives with `ArchiveLimitError`, manifest/index files are validated against protocol schemas, unknown `protocolVersion` values are rejected, and archive KDF iterations are bounded to 10,000–10,000,000.
+- `query()` results are now always merged into timeline order (`mono`, `t`, `id`) instead of chunk arrival order, and range filtering uses parsed chunk bounds.
+- Added screen-recording access (`getScreenRecordings`, `getScreenRecordingBlob`, seekable WebM patching), capture-completeness reports (`getCaptureCompleteness`), event-inspection helpers, pointer timeline/signals, and realtime payload text access.
+- Added source-map symbolication (`SourceMapSymbolicator`, `createArchiveSymbolicator`, source map providers) with the new `@jridgewell/trace-mapping` dependency.
+- Bug reports gain "Parallel Tabs", "Not Captured", and "Pointer Signals" sections; generated Playwright scripts replay a wider action set and quote values safely.
+
+### Patch Changes
+
+- Updated dependencies
+  - @webblackbox/protocol@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

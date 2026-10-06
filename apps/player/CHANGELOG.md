@@ -1,5 +1,19 @@
 # @webblackbox/player
 
+## 0.7.0
+
+### Minor Changes
+
+- Rewrote the Player in React on Vite with panels for console, network, storage diff, and parallel tabs, plus symbolicated stack traces, pointer ripples, and capture-completeness surfacing.
+- Opens archive format 2 files (encrypted full manifest with a plaintext envelope) and shows an "about this recording" view with profile chip and banners.
+- Added Russian and Chinese locales and a player menu with the version and source link.
+
+### Patch Changes
+
+- Updated dependencies
+  - @webblackbox/player-sdk@0.7.0
+  - @webblackbox/protocol@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

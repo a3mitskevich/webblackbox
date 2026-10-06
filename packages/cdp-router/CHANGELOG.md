@@ -1,5 +1,16 @@
 # @webblackbox/cdp-router
 
+## 0.7.0
+
+### Minor Changes
+
+- The router now routes only the tabs it attached itself: CDP events, detaches, and child targets of tabs it never `attach()`ed are no longer forwarded to listeners or tracked, and `getAttachedTargets` of a foreign tab returns `[]`. Consumers that relied on global `chrome.debugger` event delivery must attach the tab through the router first. Exported signatures are unchanged.
+
+### Patch Changes
+
+- Updated dependencies
+  - @webblackbox/protocol@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

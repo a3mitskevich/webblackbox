@@ -1,5 +1,15 @@
 # @webblackbox/protocol
 
+## 0.7.0
+
+### Minor Changes
+
+- Added archive format 2: every export is encrypted, `manifest.json` becomes a minimal plaintext envelope (`ArchiveEnvelopeManifest`), and the full manifest moves to encrypted `meta/manifest.json`. `ExportManifest.protocolVersion` widened to `1 | 2`; format 1 archives still validate.
+- Added pointer, tabs-context, script-symbolication, and body-skip event types (`user.pointerdown/up`, `user.contextmenu`, `user.auxclick`, `user.click.reaction`, `user.drag.start/end`, `user.selection`, `user.wheel`, `user.hover`, `meta.tabs.snapshot`, `meta.tabs.change`, `sys.script`, `network.body.skipped`) with payload schemas.
+- Added subpath exports `./schemas`, `./secret-detection`, `./linear-regex`, `./redaction-rules`, and `./archive-encryption` so page bundles can skip zod; switched to unbundled per-module output with `"sideEffects": false`.
+- Added `normalizeMimeType`, recording-profile redaction fields, capture-policy categories for tabs context, and `BODY_SKIP_REASONS`/`isBodySkipReason` helpers.
+- Changed `sanitizeUrlForPrivacy` output for `ws:`/`wss:` URLs (origin plus templated path instead of a fully redacted placeholder) and tightened archive KDF iteration validation to 10,000–10,000,000.
+
 ## 0.6.0
 
 ### Minor Changes

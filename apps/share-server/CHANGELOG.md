@@ -1,5 +1,19 @@
 # @webblackbox/share-server
 
+## 0.7.0
+
+### Minor Changes
+
+- Plaintext uploads are now always rejected and the `WEBBLACKBOX_SHARE_ALLOW_PLAINTEXT_UPLOADS` switch is removed; self-hosters who enabled it must export encrypted archives instead.
+- Hardened trust boundaries: `WEBBLACKBOX_TRUSTED_PROXIES` CIDR parsing with right-most-untrusted-hop forwarded-header resolution, a `WEBBLACKBOX_SHARE_ALLOWED_HOSTS` Host allowlist, and rejection of forwarding headers in keyless loopback mode.
+- Archive analysis now runs in a heap- and time-limited worker thread with `WEBBLACKBOX_SHARE_MAX_UNCOMPRESSED_BYTES`, `WEBBLACKBOX_SHARE_ANALYSIS_TIMEOUT_MS`, `WEBBLACKBOX_SHARE_MAX_HEAP_MB`, and `WEBBLACKBOX_SHARE_CONCURRENCY`; oversized archives get a 413.
+
+### Patch Changes
+
+- Audit events are written before the share response is sent.
+- Updated dependencies
+  - @webblackbox/player-sdk@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

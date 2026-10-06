@@ -1,5 +1,20 @@
 # webblackbox
 
+## 0.7.0
+
+### Minor Changes
+
+- Removed the `WebBlackboxLiteSdkOptions.trustedPlaintextExemptionEvidenceRefs` option together with the plaintext-exemption path; exports are always encrypted.
+- Added the `./capture-scope` and `./input-value-policy` subpath exports and the injected-hooks bridge nonce API (`INJECTED_BRIDGE_NONCE_SETTER_KEY`, `INJECTED_RAW_EVENT_TYPES`).
+- The lite page hook keeps whole console text (up to 64 KiB), full caller stacks, and full `error.stack` under `console: allow`, and storage snapshot payloads now follow the capture policy.
+
+### Patch Changes
+
+- Updated dependencies
+  - @webblackbox/pipeline@0.7.0
+  - @webblackbox/protocol@0.7.0
+  - @webblackbox/recorder@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes
