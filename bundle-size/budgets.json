@@ -1,38 +1,40 @@
 {
-  "entries": [
+  "absolute": [
     {
-      "path": "packages/recorder/dist/index.js",
-      "maxBytes": 78300,
-      "maxGzipBytes": 18400,
-      "note": "Measured 76,018 / 17,842 B (+3%): full console detail, the CDP cache tracker and byte-capped stream bodies (#9) plus per-profile redaction rules (#10)."
-    },
-    {
-      "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 79000,
-      "maxGzipBytes": 18000
-    },
-    {
-      "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 103500,
-      "maxGzipBytes": 24900,
-      "note": "Measured 100,424 / 24,105 B (+3%): #7's bounded, validated archive loading and #9's event ordering plus archive format 2 with the encrypted manifest (#10)."
-    },
-    {
-      "path": "apps/player/build/main.js",
-      "maxBytes": 1800000,
-      "maxGzipBytes": 330000
+      "path": "apps/extension/build/injected.js",
+      "maxBytes": 32000,
+      "maxGzipBytes": 11000,
+      "forbidSources": ["node_modules/zod/"],
+      "note": "MAIN-world page hook, executed on every recorded navigation. 20,549 B / 7,346 B gzip at introduction."
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 83200,
-      "maxGzipBytes": 21850,
-      "note": "Measured 81,966 / 21,510 B (+1.5%): the content script bundles both shared i18n locale tables (~60 KB of it), which the redesigned UI (#12) and the Page injection settings grew (last: the unsaved-changes guard and the profile deletion, restore and skipped-rule strings), plus the capture-scope and redaction changes (#10) and the single-run guard. #14 moves the tables out of content.js."
+      "maxBytes": 65700,
+      "maxGzipBytes": 18700,
+      "forbidSources": ["node_modules/zod/"],
+      "note": "Content script in every recorded frame. 22,431 B / 7,420 B gzip at introduction. 38,144 B / 11,643 B with #10: the shared UI dictionary it bundles for the keyboard-marker label grew with the profile strings, plus the typed-value policy for password fields; #14 loads the dictionary with the content agent instead. 63,804 B / 18,135 B with #12: the redesigned UI grew that dictionary."
     },
     {
-      "path": "apps/extension/build/sw.js",
-      "maxBytes": 919600,
-      "maxGzipBytes": 164800,
-      "note": "Measured 892,782 / 159,934 B (+3%): the service worker recovery (#8) and the CDP Network allowlist (#9) plus recording profiles, redaction rules and the linear regex engine (#10)."
+      "path": "apps/extension/build/content-agent.js",
+      "maxBytes": 190000,
+      "maxGzipBytes": 60000,
+      "forbidSources": ["node_modules/zod/"],
+      "note": "Lite capture agent imported by content.js in every recorded frame; snapdom is ~96 KB of it. 138,139 B / 43,110 B gzip at introduction."
     }
-  ]
+  ],
+  "delta": {
+    "maxGrowthPercent": 8,
+    "minGrowthBytes": 2048,
+    "entries": [
+      "apps/extension/build/sw.js",
+      "apps/extension/build/offscreen.js",
+      "apps/extension/build/popup.js",
+      "apps/extension/build/options.js",
+      "apps/extension/build/sessions.js",
+      "apps/player/build/main.js",
+      "packages/recorder/dist/index.js",
+      "packages/pipeline/dist/index.js",
+      "packages/player-sdk/dist/index.js"
+    ]
+  }
 }

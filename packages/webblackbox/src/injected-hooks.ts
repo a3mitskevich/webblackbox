@@ -1,6 +1,7 @@
 import {
   DEFAULT_CAPTURE_POLICY,
   isContentRedactionEnabled,
+  normalizeMimeType,
   recordUrl,
   type CapturePolicy
 } from "@webblackbox/protocol";
@@ -784,7 +785,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
 
       try {
         const response = await originalFetch(...args);
-        const contentType = normalizeContentType(response.headers.get("content-type"));
+        const contentType = normalizeMimeType(response.headers.get("content-type"));
         const encodedDataLength = parseHeaderInt(response.headers.get("content-length"));
 
         emit("fetch", {
@@ -962,7 +963,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
       this.addEventListener(
         "loadend",
         () => {
-          const contentType = normalizeContentType(this.getResponseHeader("content-type"));
+          const contentType = normalizeMimeType(this.getResponseHeader("content-type"));
 
           emit("xhr", {
             phase: "end",
@@ -1066,7 +1067,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
       return;
     }
 
-    const contentType = normalizeContentType(response.headers.get("content-type"));
+    const contentType = normalizeMimeType(response.headers.get("content-type"));
 
     if (!isBodyCaptureMimeAllowed(contentType)) {
       return;
@@ -1500,16 +1501,6 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
 
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) ? parsed : undefined;
-  }
-
-  function normalizeContentType(value: string | null): string | undefined {
-    if (!value) {
-      return undefined;
-    }
-
-    const [mime] = value.split(";");
-    const normalized = mime?.trim().toLowerCase();
-    return normalized && normalized.length > 0 ? normalized : undefined;
   }
 
   function estimateBodyLength(body: unknown): number | undefined {
