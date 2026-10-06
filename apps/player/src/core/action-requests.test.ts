@@ -44,13 +44,21 @@ describe("action requests", () => {
       failed: true,
       errorText: "net::ERR_ABORTED"
     });
-    expect(countActionRequests(collectActionRequests({ waterfallByReqId }, events))).toEqual({
+    expect(
+      countActionRequests(
+        collectActionRequests({ eventById: archive.model.eventById, waterfallByReqId }, events)
+      )
+    ).toEqual({
       requests: 6,
       failed: 5
     });
 
     waterfallByReqId.set(entry.reqId, { ...entry, failed: true, errorText: "net::ERR_FAILED" });
-    expect(countActionRequests(collectActionRequests({ waterfallByReqId }, events))).toEqual({
+    expect(
+      countActionRequests(
+        collectActionRequests({ eventById: archive.model.eventById, waterfallByReqId }, events)
+      )
+    ).toEqual({
       requests: 6,
       failed: 6
     });
@@ -70,5 +78,41 @@ describe("action requests", () => {
     expect(contents?.requests.map((request) => request.reqId)).toEqual(
       expect.arrayContaining(derived.requests.map((request) => request.reqId))
     );
+  });
+
+  it("leaves a late response of an earlier request to the action that sent it", () => {
+    const events = archive.model.events.filter((event) => event.ref?.act === "A-000002");
+    const own = collectActionRequests(archive.model, events);
+    const request = own[0];
+
+    if (!request) {
+      throw new Error("the lobby click has no request");
+    }
+
+    // The next action receives only the response of A-000002's first request.
+    const lateResponse = events.find(
+      (event) =>
+        event.type === "network.response" &&
+        event.data &&
+        JSON.stringify(event.data).includes(request.reqId)
+    );
+
+    if (!lateResponse) {
+      throw new Error("no response event for the request");
+    }
+
+    const later = { ...lateResponse, mono: lateResponse.mono + 1 };
+    expect(collectActionRequests(archive.model, [later])).toEqual([]);
+    // Without any request event in the archive, a request belongs to the action it started in.
+    const withoutRequestEvent = {
+      eventById: new Map(
+        [...archive.model.eventById].filter(([, event]) => event.type !== "network.request")
+      ),
+      waterfallByReqId: archive.model.waterfallByReqId
+    };
+    expect(collectActionRequests(withoutRequestEvent, [later])).toEqual([]);
+    expect(
+      collectActionRequests(withoutRequestEvent, [{ ...later, mono: request.startMono - 1 }])
+    ).toHaveLength(1);
   });
 });

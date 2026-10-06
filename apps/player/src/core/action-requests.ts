@@ -22,14 +22,23 @@ type ActionArchive = {
 const contentsCache = new WeakMap<ActionArchive, ReadonlyMap<string, ActionContents>>();
 
 /**
- * Every request of an action, from its own events: deduplicated, in start order, with the
+ * Every request an action started, from its own events: deduplicated, in start order, with the
  * waterfall's error text. The action timeline keeps only the first few requests, so the feed row
  * ("6 requests · 5 failed") and the inspector both count from this list.
+ *
+ * An action owns a request when it holds the request's `network.request` event. A late response
+ * of an earlier request carries the newer action's `ref.act`; it does not make the newer action
+ * its cause. A request recorded without a request event belongs to the action it started in.
  */
 export function collectActionRequests(
-  model: Pick<ArchiveModel, "waterfallByReqId">,
+  model: Pick<ArchiveModel, "eventById" | "waterfallByReqId">,
   events: readonly WebBlackboxEvent[]
 ): ActionConsequenceRequest[] {
+  // No spread: an action can hold tens of thousands of events.
+  const startMono = events.reduce(
+    (earliest, event) => Math.min(earliest, event.mono),
+    Number.POSITIVE_INFINITY
+  );
   const seen = new Set<string>();
   const requests: ActionConsequenceRequest[] = [];
 
@@ -37,7 +46,7 @@ export function collectActionRequests(
     const reqId = extractRequestId(event);
     const entry = reqId && !seen.has(reqId) ? model.waterfallByReqId.get(reqId) : undefined;
 
-    if (!reqId || !entry) {
+    if (!reqId || !entry || !isStartedBy(model, entry, event, startMono)) {
       continue;
     }
 
@@ -55,6 +64,22 @@ export function collectActionRequests(
   }
 
   return requests.sort((left, right) => left.startMono - right.startMono);
+}
+
+function isStartedBy(
+  model: Pick<ArchiveModel, "eventById">,
+  entry: { startMono: number; eventIds: readonly string[] },
+  event: WebBlackboxEvent,
+  actionStartMono: number
+): boolean {
+  if (event.type === "network.request") {
+    return true;
+  }
+
+  const hasRequestEvent = entry.eventIds.some(
+    (id) => model.eventById.get(id)?.type === "network.request"
+  );
+  return !hasRequestEvent && entry.startMono >= actionStartMono;
 }
 
 /**
