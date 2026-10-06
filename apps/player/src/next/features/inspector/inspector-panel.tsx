@@ -16,6 +16,7 @@ import { CopyButton } from "../network/copy-button.js";
 import { inspectSelection, type Inspection } from "./inspector-model.js";
 import { describeInspection, eventTitle, shortPath } from "./inspector-text.js";
 import { inspectorMessages, type InspectorTranslate } from "./messages.js";
+import { placeTarget } from "./target-frame.js";
 
 const BUTTON_KEYS = {
   left: "buttonLeft",
@@ -70,6 +71,8 @@ function TargetSection({ inspection, t }: PartProps) {
 
   const round = (value: number): string => i18n.formatNumber(Math.round(value));
   const pointer = target.pointer;
+  // The stage draws the box only where it can place it (not in an iframe of unknown position).
+  const outlined = placeTarget(inspection) !== null;
   const modifiers = pointer?.modifiers.length ? pointer.modifiers.join("+") : t("noModifiers");
 
   return (
@@ -103,7 +106,7 @@ function TargetSection({ inspection, t }: PartProps) {
                 height: round(target.rect.height)
               })}
               {" · "}
-              {t("outlinedOnVideo")}
+              {t(outlined ? "outlinedOnVideo" : "notOutlined")}
             </span>
           </Field>
         ) : null}
@@ -112,7 +115,7 @@ function TargetSection({ inspection, t }: PartProps) {
             {t("pointerValue", {
               x: round(pointer.x),
               y: round(pointer.y),
-              button: pointer.button ? t(BUTTON_KEYS[pointer.button]) : "—"
+              button: t(pointer.button ? BUTTON_KEYS[pointer.button] : "noButton")
             })}
             {" · "}
             {modifiers}
@@ -137,8 +140,13 @@ function ConsequenceLabel({ item, t }: { item: ActionConsequence; t: InspectorTr
     case "request":
       return (
         <>
-          <span className="insp-code bad">{item.status ?? "✕"}</span>
-          {item.count > 1 ? <span className="insp-count">×{item.count}</span> : null}
+          <span className="insp-code bad">{item.status ?? <span aria-hidden="true">✕</span>}</span>
+          {item.count > 1 ? (
+            <span className="insp-count">
+              <span aria-hidden="true">×{item.count}</span>
+              <span className="visually-hidden">{t("repeatCount", { count: item.count })}</span>
+            </span>
+          ) : null}
           <span className="insp-method">{item.method}</span>
           <span className="insp-path" title={item.label}>
             {shortPath(item.label)}
@@ -198,11 +206,12 @@ function CausedSection({ inspection, t }: PartProps) {
     >
       <dl className="insp-stats">
         {stats.map((stat) => (
+          // Label first, so a screen reader says "failed 5"; the CSS shows the number above it.
           <div key={stat.key} className="insp-stat" data-testid={`inspector-stat-${stat.key}`}>
+            <dt>{stat.label}</dt>
             <dd className={stat.bad && stat.value > 0 ? "bad" : undefined}>
               {i18n.formatNumber(stat.value)}
             </dd>
-            <dt>{stat.label}</dt>
           </div>
         ))}
       </dl>
@@ -218,6 +227,7 @@ function CausedSection({ inspection, t }: PartProps) {
               >
                 <span className="insp-off">+{i18n.formatSeconds(item.offsetMs)}</span>
                 <Icon name={CONSEQUENCE_ICONS[item.kind]} />
+                {item.failed ? <span className="visually-hidden">{t("failedItem")}</span> : null}
                 <ConsequenceLabel item={item} t={t} />
               </button>
             </li>

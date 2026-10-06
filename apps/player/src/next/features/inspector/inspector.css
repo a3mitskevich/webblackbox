@@ -115,7 +115,11 @@
 }
 .insp-stat {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
+}
+/* The label comes first in the DOM (read before the number) and is shown under it. */
+.insp-stat dt {
+  order: 1;
 }
 .insp-stat dd {
   margin: 0;

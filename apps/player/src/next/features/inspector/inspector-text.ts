@@ -46,6 +46,26 @@ const TARGET_VERBS = new Set<EventPhraseVerb>([
 const QUOTED_DETAIL_VERBS = new Set<EventPhraseVerb>(["console", "exception", "marker", "storage"]);
 const PATH_TAIL_MAX = 48;
 
+type PluralForm = "One" | "Few" | "Many" | "Other";
+/** Messages with a key per plural form: `outcomeOkOne`, `outcomeOkFew`… */
+type PluralMessage = "outcomeFailed" | "outcomeOk";
+
+/**
+ * The key of `base` in the plural form `count` takes in the locale (Intl.PluralRules, like the
+ * feed's problem count). Exactly one always takes the `One` form: Chinese has no plural
+ * categories, but "1 个请求成功" still reads better than "全部 1 个请求均成功".
+ */
+function pluralKey(
+  base: PluralMessage,
+  count: number,
+  locale: PlayerLocale
+): `${PluralMessage}${PluralForm}` {
+  const form = count === 1 ? "one" : new Intl.PluralRules(locale).select(count);
+  const suffix: PluralForm =
+    form === "one" ? "One" : form === "few" ? "Few" : form === "many" ? "Many" : "Other";
+  return `${base}${suffix}`;
+}
+
 /** `https://h/gw/bff/users/api/v1.0/casino-user?x` → `…/users/api/v1.0/casino-user`. */
 export function shortPath(url: string, max = PATH_TAIL_MAX): string {
   let path = url;
@@ -70,7 +90,7 @@ export function shortPath(url: string, max = PATH_TAIL_MAX): string {
 /**
  * The one-line summary (casefile C): "The user clicked “Live table 64” on #/lobby." and, for an
  * action, what came of it: "7 of 195 requests failed; the first, 401 GET …/casino-user, came
- * 0.12 s later."
+ * 0.12 s later." Failed requests are named even when an error came first.
  */
 export function describeInspection(
   inspection: Inspection,
@@ -104,10 +124,11 @@ function describeOutcome(
   reaction: Inspection["reaction"]
 ): string {
   if (consequences) {
-    const first = consequences.firstFailure;
+    // The first failed request, even when a console error or exception came before it.
+    const first = consequences.firstFailedRequest;
 
-    if (consequences.failedRequests > 0 && first?.kind === "request") {
-      return t("outcomeFailed", {
+    if (consequences.failedRequests > 0 && first) {
+      return t(pluralKey("outcomeFailed", consequences.requests, i18n.locale), {
         failed: i18n.formatNumber(consequences.failedRequests),
         requests: i18n.formatNumber(consequences.requests),
         first: [first.status ?? "", first.method ?? "", shortPath(first.label)]
@@ -124,7 +145,9 @@ function describeOutcome(
     }
 
     if (consequences.requests > 0) {
-      return t("outcomeOk", { requests: i18n.formatNumber(consequences.requests) });
+      return t(pluralKey("outcomeOk", consequences.requests, i18n.locale), {
+        requests: i18n.formatNumber(consequences.requests)
+      });
     }
   }
 

@@ -1,7 +1,7 @@
 import { usePlayerState } from "../../context.js";
 import type { PlayerState } from "../../state.js";
 import { shallowEqual } from "../../store.js";
-import { inspectSelection } from "./inspector-model.js";
+import { inspectSelection, type Inspection } from "./inspector-model.js";
 
 /** The target stays outlined from just before its event until this long after it. */
 export const TARGET_FRAME_BEFORE_MS = 250;
@@ -18,35 +18,49 @@ export type InspectedTargetFrame = {
   viewportHeight: number | null;
 };
 
-export function selectTargetFrame(state: PlayerState): InspectedTargetFrame | null {
-  if (!state.detailsOpen || !state.archive) {
+/**
+ * The inspected target's box in the top viewport, or `null` when it cannot be placed: no box, or
+ * an iframe whose position the capture could not read (cross-origin parents record no offset).
+ */
+export function placeTarget(inspection: Inspection): InspectedTargetFrame | null {
+  const target = inspection.target;
+  const rect = target?.rect;
+
+  if (!target || !rect) {
     return null;
   }
 
-  const inspection = inspectSelection(state.archive, state.selection);
-  const rect = inspection?.target?.rect;
+  const frameOffset = target.frameOffset ?? (inspection.inFrame ? null : { x: 0, y: 0 });
 
-  if (!inspection || !rect) {
+  if (!frameOffset) {
     return null;
   }
-
-  const offset = state.playheadMono - inspection.event.mono;
-
-  if (offset < -TARGET_FRAME_BEFORE_MS || offset > TARGET_FRAME_AFTER_MS) {
-    return null;
-  }
-
-  const frameOffset = inspection.target?.frameOffset ?? { x: 0, y: 0 };
-  const viewport = inspection.target?.viewport ?? null;
 
   return {
     x: rect.x + frameOffset.x,
     y: rect.y + frameOffset.y,
     width: rect.width,
     height: rect.height,
-    viewportWidth: frameOffset.x === 0 && frameOffset.y === 0 ? (viewport?.width ?? null) : null,
-    viewportHeight: frameOffset.x === 0 && frameOffset.y === 0 ? (viewport?.height ?? null) : null
+    viewportWidth: inspection.topViewport?.width ?? null,
+    viewportHeight: inspection.topViewport?.height ?? null
   };
+}
+
+export function selectTargetFrame(state: PlayerState): InspectedTargetFrame | null {
+  // The inspector is shown in place of the Activity list: no outline behind another rail tab.
+  if (!state.detailsOpen || state.tab !== "activity" || !state.archive) {
+    return null;
+  }
+
+  const inspection = inspectSelection(state.archive, state.selection);
+  const frame = inspection ? placeTarget(inspection) : null;
+
+  if (!inspection || !frame) {
+    return null;
+  }
+
+  const offset = state.playheadMono - inspection.event.mono;
+  return offset < -TARGET_FRAME_BEFORE_MS || offset > TARGET_FRAME_AFTER_MS ? null : frame;
 }
 
 /**

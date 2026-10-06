@@ -2,6 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import type { NetworkWaterfallEntry } from "@webblackbox/player-sdk";
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -14,10 +15,13 @@ import { createInitialState, type LoadedArchive, type PlayerState } from "../../
 import { createStore } from "../../store.js";
 import { generateSlice } from "../generate/api.js";
 import { loadSyntheticArchive } from "../test-archive.js";
-import { inspectSelection } from "./inspector-model.js";
+import { INSPECTION_CACHE_SIZE, inspectSelection, type Inspection } from "./inspector-model.js";
 import { describeInspection, shortPath } from "./inspector-text.js";
 import { inspectorMessages, type InspectorTranslate } from "./messages.js";
-import { selectTargetFrame } from "./target-frame.js";
+import { placeTarget, selectTargetFrame } from "./target-frame.js";
+
+/** The lobby click's one successful request (`GET …/game/64`). */
+const LOBBY_OK_REQUEST = "90080.1700";
 
 let archiveBytes: Uint8Array;
 let archive: LoadedArchive;
@@ -46,6 +50,16 @@ function lobbyClick(): WebBlackboxEvent {
   return event;
 }
 
+function lobbyInspection(): Inspection {
+  const inspection = inspectSelection(archive, { kind: "event", id: lobbyClick().id });
+
+  if (!inspection) {
+    throw new Error("No inspection");
+  }
+
+  return inspection;
+}
+
 function translate(locale: PlayerLocale): InspectorTranslate {
   return (key, values) => inspectorMessages.translate(locale, key, values);
 }
@@ -65,8 +79,12 @@ describe("inspector model", () => {
       },
       phrase: { verb: "click", target: "Live table 64", route: "#/lobby" }
     });
-    expect(inspection?.consequences?.failedRequests).toBeGreaterThanOrEqual(2);
+    // Every request of the action, not the action timeline's first five.
+    expect(inspection?.consequences).toMatchObject({ requests: 6, failedRequests: 5 });
     expect(inspection?.consequences?.items[0]).toMatchObject({ kind: "request", status: 401 });
+    expect(
+      inspection?.consequences?.items.find((item) => item.label.includes("/chats/"))
+    ).toMatchObject({ status: 401, count: 3 });
     expect(inspection?.playwrightStep.join("\n")).toContain("#lobbyGame_64 picture > img");
     expect(inspection?.playwrightRange.endMono).toBeGreaterThan(click.mono);
     expect(inspection?.playwrightRange.startMono).toBeLessThanOrEqual(click.mono);
@@ -83,13 +101,169 @@ describe("inspector model", () => {
 
     const en = describeInspection(inspection, translate("en"), createPlayerI18n("en"));
     expect(en.sentence).toBe("The user clicked “Live table 64” on #/lobby.");
-    expect(en.outcome).toMatch(
-      /^\d+ of \d+ requests failed; the first, 401 GET .+, came .+ later\.$/
-    );
+    expect(en.outcome).toMatch(/^5 of 6 requests failed; the first, 401 GET .+, came .+ later\.$/);
 
     const ru = describeInspection(inspection, translate("ru"), createPlayerI18n("ru"));
     expect(ru.sentence).toBe("Пользователь нажал на «Live table 64» на #/lobby.");
-    expect(ru.outcome).toMatch(/^Запросов с ошибкой: \d+ из \d+; первый — 401 GET/);
+    expect(ru.outcome).toMatch(/^Запросов с ошибкой: 5 из 6; первый — 401 GET/);
+  });
+
+  it("names the failed requests when an error came before them", () => {
+    const inspection = lobbyInspection();
+    const consequences = inspection.consequences;
+
+    if (!consequences?.firstFailedRequest) {
+      throw new Error("No failed request");
+    }
+
+    const errorFirst: Inspection = {
+      ...inspection,
+      consequences: {
+        ...consequences,
+        consoleErrors: 1,
+        firstFailure: {
+          ...consequences.firstFailedRequest,
+          kind: "console-error",
+          label: "AuthError",
+          offsetMs: 1,
+          reqId: null
+        }
+      }
+    };
+    const { outcome } = describeInspection(errorFirst, translate("en"), createPlayerI18n("en"));
+
+    expect(outcome).toMatch(/^5 of 6 requests failed; the first, 401 GET /);
+  });
+
+  it("words request counts with the plural form of the locale", () => {
+    const inspection = lobbyInspection();
+    const outcome = (locale: PlayerLocale, requests: number, failedRequests = 0): string => {
+      const consequences = inspection.consequences;
+
+      if (!consequences) {
+        throw new Error("No consequences");
+      }
+
+      const counted: Inspection = {
+        ...inspection,
+        consequences: {
+          ...consequences,
+          requests,
+          failedRequests,
+          consoleErrors: 0,
+          exceptions: 0,
+          firstFailure: failedRequests > 0 ? consequences.firstFailedRequest : null,
+          firstFailedRequest: failedRequests > 0 ? consequences.firstFailedRequest : null
+        }
+      };
+      return describeInspection(counted, translate(locale), createPlayerI18n(locale)).outcome;
+    };
+
+    expect(outcome("en", 1)).toBe("1 request succeeded.");
+    expect(outcome("en", 4)).toBe("All 4 requests succeeded.");
+    expect(outcome("en", 1, 1)).toMatch(/^1 of 1 request failed: 401 GET .+, .+ later\.$/);
+    expect(outcome("ru", 1)).toBe("1 запрос выполнен успешно.");
+    expect(outcome("ru", 21)).toBe("21 запрос выполнен успешно.");
+    expect(outcome("ru", 3)).toBe("3 запроса выполнены успешно.");
+    expect(outcome("ru", 5)).toBe("Все 5 запросов выполнены успешно.");
+    expect(outcome("zh-CN", 1)).toBe("1 个请求成功。");
+    expect(outcome("zh-CN", 7)).toBe("全部 7 个请求均成功。");
+  });
+
+  it("does not count cancelled requests as failures", () => {
+    const withEntry = (patch: Partial<NetworkWaterfallEntry>): LoadedArchive => {
+      const waterfallByReqId = new Map(archive.model.waterfallByReqId);
+      const entry = waterfallByReqId.get(LOBBY_OK_REQUEST);
+
+      if (!entry) {
+        throw new Error("No lobby request");
+      }
+
+      waterfallByReqId.set(LOBBY_OK_REQUEST, { ...entry, ...patch });
+      return { ...archive, model: { ...archive.model, waterfallByReqId } };
+    };
+    const select = { kind: "event", id: lobbyClick().id } as const;
+    const cancelled = withEntry({ status: undefined, failed: true, errorText: "net::ERR_ABORTED" });
+    const reset = withEntry({
+      status: undefined,
+      failed: true,
+      errorText: "net::ERR_CONNECTION_RESET"
+    });
+
+    expect(inspectSelection(cancelled, select)?.consequences).toMatchObject({
+      requests: 6,
+      failedRequests: 5
+    });
+    expect(inspectSelection(reset, select)?.consequences).toMatchObject({
+      requests: 6,
+      failedRequests: 6
+    });
+  });
+
+  it("names the route the action happened on, not the merged chapter strip label", () => {
+    const click = lobbyClick();
+    const lobbyPush = archive.model.events.find(
+      (event) => event.type === "nav.history.push" && JSON.stringify(event.data).includes("#/lobby")
+    );
+    // The chapter strip merges narrow chapters and marks reloads; the summary must not read it.
+    const merged: LoadedArchive = {
+      ...archive,
+      view: {
+        ...archive.view,
+        chapters: [
+          {
+            startMono: archive.model.minMono,
+            endMono: archive.model.maxMono,
+            label: "↻ #/ → #/error → #/lobby …",
+            kind: "reload",
+            isErrorRoute: true
+          }
+        ]
+      }
+    };
+    const inspection = inspectSelection(merged, { kind: "event", id: click.id });
+
+    expect(inspection?.phrase.route).toBe("#/lobby");
+    expect(inspection?.playwrightRange.startMono).toBe(lobbyPush?.mono);
+  });
+
+  it("finds the reaction of a click re-timed to wall clock by its capture mono", () => {
+    const click = lobbyClick();
+    const retimed = { ...click, mono: click.mono + 5_000_000 };
+    const probe = {
+      ...click,
+      id: "E-reaction",
+      type: "user.click.reaction",
+      mono: retimed.mono + 20,
+      data: { clickMono: click.mono, mutated: true, latencyMs: 12, windowMs: 1_000 }
+    } as WebBlackboxEvent;
+    const eventById = new Map(archive.model.eventById);
+    eventById.set(click.id, retimed);
+    eventById.set(probe.id, probe);
+    // `archive.player.events` keep the capture monos; the model holds the re-timed ones.
+    const retimedArchive: LoadedArchive = {
+      ...archive,
+      model: { ...archive.model, eventById, events: [...archive.model.events, probe] }
+    };
+
+    expect(inspectSelection(retimedArchive, { kind: "event", id: click.id })?.reaction).toEqual({
+      mutated: true,
+      latencyMs: 12,
+      windowMs: 1_000
+    });
+  });
+
+  it("keeps a bounded number of inspections per archive", () => {
+    const copy: LoadedArchive = { ...archive };
+    const first = inspectSelection(copy, { kind: "event", id: archive.model.events[0]?.id ?? "" });
+
+    for (const event of archive.model.events.slice(1, INSPECTION_CACHE_SIZE + 1)) {
+      inspectSelection(copy, { kind: "event", id: event.id });
+    }
+
+    const again = inspectSelection(copy, { kind: "event", id: archive.model.events[0]?.id ?? "" });
+    expect(again).not.toBe(first);
+    expect(again).toEqual(first);
   });
 
   it("has no inspection for a missing selection", () => {
@@ -117,6 +291,51 @@ describe("inspector model", () => {
     expect(selectTargetFrame(state)).toMatchObject({ x: 324, y: 382, width: 120, height: 36 });
     expect(selectTargetFrame({ ...state, detailsOpen: false })).toBeNull();
     expect(selectTargetFrame({ ...state, playheadMono: click.mono + 10_000 })).toBeNull();
+    // The inspector replaces the Activity list only: another rail tab hides it.
+    expect(selectTargetFrame({ ...state, tab: "network" })).toBeNull();
+  });
+
+  it("moves an iframe target by the frame offset and skips frames without one", () => {
+    const click = lobbyClick();
+    const inFrame = (data: Record<string, unknown>): PlayerState => {
+      const eventById = new Map(archive.model.eventById);
+      eventById.set(click.id, {
+        ...click,
+        frame: "content-iframe",
+        data: { ...(click.data as Record<string, unknown>), ...data }
+      } as WebBlackboxEvent);
+      return {
+        ...createInitialState("en", "light"),
+        archive: { ...archive, model: { ...archive.model, eventById } },
+        selection: { kind: "event", id: click.id },
+        playheadMono: click.mono,
+        detailsOpen: true
+      };
+    };
+    const topViewport = (click.data as { viewport: { w: number; h: number } }).viewport;
+
+    expect(
+      selectTargetFrame(inFrame({ frameOffset: { x: 0, y: 0 }, viewport: { w: 300, h: 150 } }))
+    ).toEqual({
+      x: 324,
+      y: 382,
+      width: 120,
+      height: 36,
+      // The frame's own viewport is not the video's: the top one comes from the page's events.
+      viewportWidth: topViewport.w,
+      viewportHeight: topViewport.h
+    });
+    expect(selectTargetFrame(inFrame({ frameOffset: { x: 10, y: 20 } }))).toMatchObject({
+      x: 334,
+      y: 402
+    });
+
+    const crossOrigin = inFrame({});
+    expect(selectTargetFrame(crossOrigin)).toBeNull();
+    const inspection = crossOrigin.archive
+      ? inspectSelection(crossOrigin.archive, crossOrigin.selection)
+      : null;
+    expect(inspection && placeTarget(inspection)).toBeNull();
   });
 });
 
@@ -162,7 +381,21 @@ describe("InspectorPanel", () => {
     expect(within(inspector).getByTestId("inspector-selector")).toHaveTextContent(
       "#lobbyGame_64 picture > img"
     );
-    expect(within(inspector).getByTestId("inspector-stat-failed")).toHaveTextContent(/[1-9]/);
+    const failedStat = within(inspector).getByTestId("inspector-stat-failed");
+    // Label first for screen readers; the number is shown above it.
+    expect(failedStat.firstElementChild?.tagName).toBe("DT");
+    expect(failedStat.querySelector("dd")).toHaveTextContent("5");
+    expect(
+      within(inspector).getByTestId("inspector-stat-requests").querySelector("dd")
+    ).toHaveTextContent("6");
+    expect(within(inspector).getByTestId("inspector-box")).toHaveTextContent(
+      "outlined on the video"
+    );
+    const chats = within(inspector)
+      .getAllByTestId("inspector-consequence")
+      .find((item) => item.textContent?.includes("chats"));
+    expect(chats).toHaveTextContent("failed");
+    expect(chats).toHaveTextContent("repeated 3 times");
     expect(within(inspector).getAllByTestId("inspector-consequence").length).toBeGreaterThan(0);
     expect(document.activeElement).toBe(inspector);
 

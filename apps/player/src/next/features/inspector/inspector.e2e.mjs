@@ -34,8 +34,8 @@ async function openLobbyClick(ctx) {
 }
 
 /**
- * The click's target (selector, box outlined on the video), what it caused (counts and the 401s)
- * and a one-line summary.
+ * The click's target (selector, box outlined on the video), what it caused (6 requests, 5 of them
+ * 401s) and a one-line summary.
  */
 async function inspectClick(ctx) {
   await openLobbyClick(ctx);
@@ -48,10 +48,16 @@ async function inspectClick(ctx) {
   const summary = await text(ctx, "inspector-summary");
   ctx.assert(
     summary.startsWith("The user clicked “Live table 64” on #/lobby.") &&
-      /requests failed; the first, 401 GET/.test(summary),
+      summary.includes("5 of 6 requests failed; the first, 401 GET"),
     "The summary does not say what the user did and what failed",
     { summary }
   );
+  // Every request of the action counts (the action timeline lists only the first five).
+  const stats = await ctx.evaluate(`({
+    requests: document.querySelector('${ctx.testId("inspector-stat-requests")} dd')?.textContent,
+    failed: document.querySelector('${ctx.testId("inspector-stat-failed")} dd')?.textContent
+  })`);
+  ctx.assert(stats.requests === "6" && stats.failed === "5", "Wrong request counts", stats);
   const selector = await text(ctx, "inspector-selector");
   ctx.assert(selector === "#lobbyGame_64 picture > img", "Wrong target selector", { selector });
 
