@@ -349,6 +349,70 @@ h2 {
 .chip-button:hover {
   border-color: var(--ink-3);
 }
+/* Header menus (Base UI Menu): the player menu and Generate. */
+.menu-layer {
+  z-index: 40;
+}
+.menu {
+  min-width: 240px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  outline: 0;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+  outline: 0;
+}
+.menu-item[data-highlighted] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.menu-item[data-disabled] {
+  color: var(--ink-3);
+  cursor: default;
+}
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+.menu-note {
+  margin: 0;
+  padding: 6px 10px 4px;
+  color: var(--ink-3);
+  font: 11.5px var(--mono);
+}
+/* The session block is the way into "About this recording". */
+button.sess {
+  margin: 0;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+button.sess:hover .sess-title {
+  text-decoration: underline;
+}
+.chip.warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: transparent;
+}
 .hdr-spacer {
   flex: 1;
 }
@@ -1602,4 +1666,109 @@ pre.code {
     animation: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Recording profile warnings above the stage (downgraded, capped, cut short). */
+.profile-banners {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 6px 16px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.profile-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  flex: 1 1 360px;
+  min-width: 0;
+}
+/* "About this recording" */
+.archive-info h3 {
+  margin: 14px 0 6px;
+  font-size: 13px;
+}
+.notice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.notice.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.notice.bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+.facts-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+.facts-kv-row {
+  display: contents;
+}
+.facts-kv dt {
+  color: var(--ink-3);
+}
+.facts-kv dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.facts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.fact {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 13px;
+}
+.fact p {
+  margin: 0;
+}
+.fact-title {
+  font-weight: 600;
+}
+.fact-status {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.fact-text {
+  color: var(--ink-2);
+}
+/* ● complete, ◐ partial, ○ not recorded (the status is also written out). */
+.fact-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  border: 2px solid var(--ok);
+  background: var(--ok);
+}
+.fact-partial .fact-dot {
+  border-color: var(--warn);
+  background: linear-gradient(90deg, var(--warn) 50%, transparent 50%);
+}
+.fact-none .fact-dot {
+  border-color: var(--ink-3);
+  background: none;
 }

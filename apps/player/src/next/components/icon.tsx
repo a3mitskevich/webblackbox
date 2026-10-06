@@ -13,6 +13,8 @@ import {
   Code,
   Copy,
   Database,
+  Ellipsis,
+  ExternalLink,
   File,
   FileText,
   Flag,
@@ -85,7 +87,9 @@ const ICONS = {
   code: Code,
   report: FileText,
   info: Info,
-  lanes: Rows3
+  lanes: Rows3,
+  more: Ellipsis,
+  external: ExternalLink
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

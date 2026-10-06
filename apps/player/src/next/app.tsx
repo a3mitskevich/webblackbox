@@ -1,6 +1,7 @@
 import { CSPProvider } from "@base-ui/react/csp-provider";
 import { useRef } from "react";
 
+import { ArchiveInfoDialog, ProfileBanners } from "./components/archive-info.js";
 import { HintProvider } from "./components/hint.js";
 import {
   ArchiveStatusLine,
@@ -49,6 +50,9 @@ function StageColumn() {
 
   return (
     <section className="stage-col" aria-label={i18n.tn("stageLabel")}>
+      <PanelBoundary resetKeys={[archive]}>
+        <ProfileBanners />
+      </PanelBoundary>
       <PanelBoundary resetKeys={[archive]}>
         <ProblemsStrip />
       </PanelBoundary>
@@ -102,6 +106,7 @@ function Layout() {
       <DropOverlay />
       <PassphraseDialog />
       <ShortcutsDialog />
+      <ArchiveInfoDialog />
       <GenerateDialogs />
       <ToastHost />
       <LiveRegion />

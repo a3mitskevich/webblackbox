@@ -88,9 +88,9 @@ export function GenerateMenu() {
         <ChevronDown {...ICON_PROPS} size={14} />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner sideOffset={6} align="end" className="gen-menu-layer">
-          <Menu.Popup className="gen-menu" data-testid="generate-menu">
-            <div className="gen-menu-range" data-testid="generate-menu-range">
+        <Menu.Positioner sideOffset={6} align="end" className="menu-layer">
+          <Menu.Popup className="menu" data-testid="generate-menu">
+            <div className="menu-note" data-testid="generate-menu-range">
               {rangeLabel ? t("menuRange", { range: rangeLabel }) : t("menuWholeSession")}
             </div>
             {GENERATE_MENU_ENTRIES.map((entry) => {
@@ -99,7 +99,7 @@ export function GenerateMenu() {
               return (
                 <Menu.Item
                   key={entry.kind}
-                  className="gen-menu-item"
+                  className="menu-item"
                   onClick={() => openGenerate(controller.store, { kind: entry.kind })}
                   data-testid={entry.testId}
                 >
@@ -108,9 +108,9 @@ export function GenerateMenu() {
                 </Menu.Item>
               );
             })}
-            <Menu.Separator className="gen-menu-sep" />
+            <Menu.Separator className="menu-sep" />
             <Menu.Item
-              className="gen-menu-item"
+              className="menu-item"
               onClick={() => void copyBugReport()}
               data-testid="generate-copy-bug-report"
             >

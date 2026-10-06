@@ -601,6 +601,10 @@ export function createPlayerController(
       update({ shortcutsOpen });
     },
 
+    setArchiveInfoOpen(archiveInfoOpen: boolean): void {
+      update({ archiveInfoOpen: archiveInfoOpen && store.getState().archive !== null });
+    },
+
     /** "Reset layout": the splitters return to their default sizes (stored sizes are dropped). */
     resetLayout(): void {
       store.setState((state) => ({ ...state, layoutRevision: state.layoutRevision + 1 }));

@@ -1,4 +1,5 @@
-import { useId, type ChangeEvent, type RefObject } from "react";
+import { Menu } from "@base-ui/react/menu";
+import { useId, useMemo, type ChangeEvent, type RefObject } from "react";
 
 import { formatRecordedAt } from "../../core/format.js";
 import { nextThemePreference, type ThemePreference } from "../../core/preferences.js";
@@ -6,6 +7,7 @@ import { PLAYER_LOCALES, type PlayerLocale } from "../../lib/i18n.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import { GenerateMenu } from "../features/generate/index.js";
 import { ShareButton } from "../features/share/share-button.js";
+import { archiveContentsOf, profileBannerLines } from "./archive-info.js";
 import { Hint } from "./hint.js";
 import { Icon, type IconName } from "./icon.js";
 
@@ -20,6 +22,10 @@ const THEME_ICONS: Record<ThemePreference, IconName> = {
   light: "sun",
   dark: "moon"
 };
+
+/** The Player's version (Vite `define`), shown in the player menu. */
+const PLAYER_VERSION = typeof __PLAYER_VERSION__ === "string" ? __PLAYER_VERSION__ : "0.0.0";
+const SOURCE_URL = "https://github.com/webllm/webblackbox";
 
 const THEME_LABEL_KEYS = {
   system: "themeSystem",
@@ -105,12 +111,18 @@ export function Header({ searchRef }: HeaderProps) {
         <span className="hide-narrow">WebBlackbox</span>
       </div>
       {meta ? (
-        <div className="sess" data-testid="session">
-          <span className="sess-title">{hostOf(meta.origin)}</span>
-          <span className="sess-sub" title={subtitle}>
-            {subtitle}
-          </span>
-        </div>
+        <Hint label={i18n.tn("aboutRecordingHint")}>
+          <button
+            type="button"
+            className="sess"
+            aria-label={`${hostOf(meta.origin)} · ${subtitle} · ${i18n.tn("aboutRecording")}`}
+            onClick={() => controller.setArchiveInfoOpen(true)}
+            data-testid="session"
+          >
+            <span className="sess-title">{hostOf(meta.origin)}</span>
+            <span className="sess-sub">{subtitle}</span>
+          </button>
+        </Hint>
       ) : null}
       {meta ? (
         <span className={meta.encrypted ? "chip ok" : "chip"} data-testid="encryption-chip">
@@ -118,6 +130,7 @@ export function Header({ searchRef }: HeaderProps) {
           {meta.encrypted ? i18n.tn("encrypted") : i18n.tn("notEncrypted")}
         </span>
       ) : null}
+      <ProfileChip />
       {meta && meta.otherTabs > 0 && meta.tabsEventId ? (
         <Hint label={i18n.tn("otherTabs", { count: i18n.formatNumber(meta.otherTabs) })}>
           <button
@@ -218,6 +231,7 @@ export function Header({ searchRef }: HeaderProps) {
       </Hint>
       {archive ? <GenerateMenu /> : null}
       <ShareButton />
+      <PlayerMenu />
       <ArchiveInput className="btn primary" label={i18n.tn("openArchive")} hideLabelWhenNarrow />
     </header>
   );
@@ -229,4 +243,110 @@ function hostOf(origin: string): string {
   } catch {
     return origin;
   }
+}
+
+/**
+ * The recording profile next to "Encrypted" (PROPOSAL §12: "recorded with profile X instead of
+ * Y"): amber when it was downgraded, capped by policy or cut short; opens "About this recording".
+ */
+function ProfileChip() {
+  const controller = useController();
+  const i18n = useI18n();
+  const archive = usePlayerState((state) => state.archive);
+  const profile = useMemo(() => {
+    if (!archive) {
+      return null;
+    }
+
+    const names = archiveContentsOf(archive).profiles.map((entry) => entry.name);
+    return names.length > 0
+      ? { label: names.join(" → "), warn: profileBannerLines(archive, i18n).length > 0 }
+      : null;
+  }, [archive, i18n]);
+
+  if (!profile) {
+    return null;
+  }
+
+  return (
+    <Hint label={i18n.tn("aboutRecordingHint")}>
+      <button
+        type="button"
+        className={profile.warn ? "chip chip-button warn" : "chip chip-button"}
+        aria-label={`${i18n.tn("factProfile")}: ${profile.label}`}
+        onClick={() => controller.setArchiveInfoOpen(true)}
+        data-testid="profile-chip"
+        data-warn={profile.warn}
+      >
+        {profile.warn ? <Icon name="flag" /> : null}
+        <span className="lbl">{profile.label}</span>
+      </button>
+    </Hint>
+  );
+}
+
+/** "⋯": about the recording, shortcuts, layout reset, the Player version and its source. */
+function PlayerMenu() {
+  const controller = useController();
+  const i18n = useI18n();
+  const hasArchive = usePlayerState((state) => state.archive !== null);
+
+  return (
+    <Menu.Root>
+      <Hint label={i18n.tn("playerMenu")}>
+        <Menu.Trigger
+          className="btn icon-only"
+          aria-label={i18n.tn("playerMenu")}
+          data-testid="player-menu"
+        >
+          <Icon name="more" />
+        </Menu.Trigger>
+      </Hint>
+      <Menu.Portal>
+        <Menu.Positioner sideOffset={6} align="end" className="menu-layer">
+          <Menu.Popup className="menu" data-testid="player-menu-popup">
+            <Menu.Item
+              className="menu-item"
+              disabled={!hasArchive}
+              onClick={() => controller.setArchiveInfoOpen(true)}
+              data-testid="menu-about-recording"
+            >
+              <Icon name="info" />
+              {i18n.tn("aboutRecording")}
+            </Menu.Item>
+            <Menu.Item
+              className="menu-item"
+              onClick={() => controller.setShortcutsOpen(true)}
+              data-testid="menu-shortcuts"
+            >
+              <Icon name="keyboard" />
+              {i18n.tn("shortcuts")}
+            </Menu.Item>
+            <Menu.Item
+              className="menu-item"
+              onClick={() => controller.resetLayout()}
+              data-testid="menu-reset-layout"
+            >
+              <Icon name="layout" />
+              {i18n.tn("resetLayout")}
+            </Menu.Item>
+            <Menu.Separator className="menu-sep" />
+            <Menu.LinkItem
+              className="menu-item"
+              href={SOURCE_URL}
+              target="_blank"
+              rel="noreferrer"
+              data-testid="menu-source"
+            >
+              <Icon name="external" />
+              {i18n.tn("sourceCode")}
+            </Menu.LinkItem>
+            <p className="menu-note" data-testid="player-version">
+              {i18n.tn("playerVersion", { version: PLAYER_VERSION })}
+            </p>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
 }
