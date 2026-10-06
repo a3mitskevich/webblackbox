@@ -53,7 +53,13 @@ describe("EventChunker", () => {
 
     expect(stringify).toHaveBeenCalledTimes(events.length);
     expect(chunk?.bytes).toEqual(expected);
-    expect(chunk?.meta).toMatchObject({ eventCount: 3, tStart: 1, tEnd: 3 });
+    expect(chunk?.meta).toMatchObject({
+      eventCount: 3,
+      tStart: 1,
+      tEnd: 3,
+      monoStart: 1,
+      monoEnd: 3
+    });
   });
 
   it("reports the UTF-8 bytes of each event's line", async () => {
