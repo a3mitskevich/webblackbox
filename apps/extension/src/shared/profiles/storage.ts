@@ -354,8 +354,7 @@ const MANAGED_PROFILE_BLOCKS = [
   "network",
   "pointer",
   "sampling",
-  "recorder",
-  "export"
+  "recorder"
 ] as const;
 
 /**

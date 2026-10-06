@@ -177,6 +177,23 @@ describe("parseProfilesStore", () => {
     });
   });
 
+  it("reads profiles saved with the retired export rules and drops them", () => {
+    const legacy = {
+      ...duplicateProfile(createDefaultProfile(), { id: "legacy", name: "Legacy" }),
+      export: { encryption: "required", privacyScanner: "block" }
+    };
+    const parsed = parseProfilesStore(
+      storeWith({
+        profiles: [createDefaultProfile(), legacy] as unknown as RecordingProfilesStore["profiles"]
+      })
+    );
+    const profile = parsed?.store.profiles.find((entry) => entry.id === "legacy");
+
+    expect(parsed?.issues).toEqual([]);
+    expect(profile).toBeDefined();
+    expect(JSON.parse(JSON.stringify(profile))).not.toHaveProperty("export");
+  });
+
   it("re-adds a missing Default profile", () => {
     const parsed = parseProfilesStore(storeWith({ profiles: [] }));
 
@@ -255,7 +272,13 @@ describe("parseManagedProfilesPolicy", () => {
   it("fills blocks an admin left out and still rejects invalid values", () => {
     const managed = parseManagedProfilesPolicy({
       profiles: [
-        { id: "corp-qa", name: "Corp QA", base: "full", categories: { console: "allow" } },
+        {
+          id: "corp-qa",
+          name: "Corp QA",
+          base: "full",
+          categories: { console: "allow" },
+          export: { encryption: "required", privacyScanner: "block" }
+        },
         { id: "bad", name: "Bad", categories: { console: "everything" } }
       ]
     });
@@ -265,7 +288,6 @@ describe("parseManagedProfilesPolicy", () => {
     expect(profile?.categories.console).toBe("allow");
     expect(profile?.categories.inputs).toBe(createDefaultProfile().categories.inputs);
     expect(profile?.redaction).toEqual(createDefaultProfile().redaction);
-    expect(profile?.export).toEqual(createDefaultProfile().export);
     expect(managed.issues).toEqual([
       expect.objectContaining({ kind: "invalid-profile", index: 1 })
     ]);

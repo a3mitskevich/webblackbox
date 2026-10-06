@@ -118,13 +118,6 @@ const profileSchema = {
         }
       }
     },
-    export: {
-      type: "object",
-      properties: {
-        encryption: { type: "string", enum: ["required", "optional"] },
-        privacyScanner: { type: "string", enum: ["block", "warn"] }
-      }
-    },
     localData: {
       type: "object",
       properties: {

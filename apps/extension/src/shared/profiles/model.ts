@@ -72,11 +72,6 @@ export type ProfileSourceMapSettings = {
   maxMapBytes?: number;
 };
 
-export type ProfileExportSettings = {
-  encryption: "required" | "optional";
-  privacyScanner: "block" | "warn";
-};
-
 /** What happens to the encrypted local copy of a recording on this device. */
 export type ProfileLocalDataSettings = {
   /** Delete the local recording once its export has been handed to the browser's downloads. */
@@ -108,7 +103,6 @@ export type RecordingProfile = {
   sitePolicies: SiteCapturePolicy[];
   /** Capture policy envelope migrated from v1 options (consent, context, retention); optional. */
   basePolicy?: CapturePolicy;
-  export: ProfileExportSettings;
   /** Absent = the defaults (delete after export, today's 10-minute retention). */
   localData?: ProfileLocalDataSettings;
 };
@@ -192,6 +186,15 @@ const samplingSchema = z
   .partial()
   .strict();
 
+/**
+ * A setting older profiles carry but nothing reads any more: accepted so stored, imported and
+ * managed profiles still parse, and dropped from the result.
+ */
+const legacyIgnoredSchema = z
+  .unknown()
+  .optional()
+  .transform((): undefined => undefined);
+
 export const recordingProfileSchema = z
   .object({
     id: idSchema,
@@ -234,12 +237,7 @@ export const recordingProfileSchema = z
       .strict(),
     sitePolicies: z.array(siteCapturePolicySchema).max(MAX_LIST_ENTRIES),
     basePolicy: capturePolicySchema.optional(),
-    export: z
-      .object({
-        encryption: z.enum(["required", "optional"]),
-        privacyScanner: z.enum(["block", "warn"])
-      })
-      .strict(),
+    export: legacyIgnoredSchema,
     localData: z
       .object({
         deleteAfterExport: z.boolean(),
