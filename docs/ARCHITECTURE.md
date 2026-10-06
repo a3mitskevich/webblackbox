@@ -283,7 +283,7 @@ Page World          Extension World         Background
 
 - **Page World** → Extension: `window.postMessage` (injected → content)
 - **Extension** → Background: `chrome.runtime.connect` + `port.postMessage` (content → SW)
-- **Background** → Offscreen: `chrome.runtime.connect` + `port.postMessage` (SW ↔ offscreen)
+- **Background** → Offscreen: `chrome.runtime.connect` + `port.postMessage` (SW ↔ offscreen). The messages are defined once in `apps/extension/src/shared/offscreen-messages.ts` and checked by hand-written guards on the receiving side. Ports carry JSON, so binary data never travels as a typed array: blobs the worker produces (screenshots, bodies, DOM snapshots) go as base64, and tab video chunks are written to the pipeline inside the offscreen document, which sends the worker only their hashes.
 - **CDP**: `chrome.debugger.sendCommand/onEvent` (SW ↔ browser)
 
 ## Security Considerations

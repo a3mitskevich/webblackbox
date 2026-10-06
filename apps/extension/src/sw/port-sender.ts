@@ -100,8 +100,14 @@ export function isInboundKindAllowed(kind: string, context: InboundSenderContext
  * Broadcasts reach every connected port except recording status for content scripts: each content
  * script follows only its own tab's recording, which the service worker sends to that tab. Another
  * tab's status would make it record under that tab's session, or stop while its tab records.
+ * The offscreen document reads only recording status (see `SwToOffscreenMessage`); anything
+ * else would just cross its port to be dropped.
  */
 export function isBroadcastDeliveredToPort(kind: string, portName: string): boolean {
+  if (portName === PORT_NAMES.offscreen) {
+    return kind === "sw.recording-status";
+  }
+
   return !(kind === "sw.recording-status" && portName === PORT_NAMES.content);
 }
 

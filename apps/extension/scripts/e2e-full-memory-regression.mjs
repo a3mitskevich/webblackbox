@@ -30,6 +30,12 @@ import {
   waitForIndicatorText,
   waitForPopupRuntimeReady
 } from "./lib/extension-ui.mjs";
+import {
+  enablePortTrafficMeter,
+  findBloatedBinaryTraffic,
+  readPortTrafficStats,
+  summarizePortTraffic
+} from "./lib/port-traffic.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(root, "..");
@@ -159,6 +165,7 @@ async function main() {
   const swClient = await connectToDiscoveredTarget(swTarget, browserClient);
   state.swClient = swClient;
   await swClient.send("Runtime.enable").catch(() => undefined);
+  await enablePortTrafficMeter(swClient);
 
   const swExceptions = [];
   const offscreenExceptions = [];
@@ -319,6 +326,14 @@ async function main() {
     indicatorGone
   });
 
+  const portTraffic = summarizePortTraffic(await readPortTrafficStats(swClient));
+  assert(portTraffic, "Service worker reported no offscreen port traffic.");
+  assert(
+    findBloatedBinaryTraffic(portTraffic).length === 0,
+    "Binary payloads crossed the offscreen port in a bloated form.",
+    { portTraffic }
+  );
+
   const sessionsAfterStop = await readRuntimeSessions(popupClient);
   assert(
     Array.isArray(sessionsAfterStop) && sessionsAfterStop.length === 0,
@@ -355,6 +370,7 @@ async function main() {
   console.log("Offscreen summary:", JSON.stringify(offscreenSummary));
   console.log("SW summary:", JSON.stringify(swSummary));
   console.log("Page summary:", JSON.stringify(pageSummary));
+  console.log("Port traffic (SW<->offscreen):", JSON.stringify(portTraffic));
   console.log(`Chrome log: ${chromeLogPath}`);
   console.log("Full memory regression passed.");
 

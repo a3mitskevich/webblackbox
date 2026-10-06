@@ -41,6 +41,12 @@ import {
 } from "./lib/e2e-utils.mjs";
 import { waitForIndicatorGone, waitForIndicatorText } from "./lib/extension-ui.mjs";
 import { PLAYER_READY_SELECTOR, runPlayerSmoke } from "./lib/player-smoke.mjs";
+import {
+  enablePortTrafficMeter,
+  findBloatedBinaryTraffic,
+  readPortTrafficStats,
+  summarizePortTraffic
+} from "./lib/port-traffic.mjs";
 import { REALISTIC_DEFAULT_DURATION_MS, startRealisticSite } from "./lib/realistic-site.mjs";
 import {
   attachFidelitySocketServer,
@@ -406,6 +412,10 @@ async function main() {
 
   await sleep(1_200);
 
+  if (state.swClient) {
+    await enablePortTrafficMeter(state.swClient);
+  }
+
   const start = await startSessionFromControl(control, captureMode, demoUrl, {
     visualCapture: fullVisualCapture
   });
@@ -757,6 +767,17 @@ async function main() {
     throw new Error(`Player page runtime exceptions: ${JSON.stringify(playerExceptions)}`);
   }
 
+  // Read before the restart check: a new worker starts its totals from zero.
+  const portTraffic = state.swClient
+    ? summarizePortTraffic(await readPortTrafficStats(state.swClient).catch(() => null))
+    : null;
+  assert(!state.swClient || portTraffic, "Service worker reported no offscreen port traffic");
+  assert(
+    findBloatedBinaryTraffic(portTraffic).length === 0,
+    "Binary payloads crossed the offscreen port in a bloated form",
+    { portTraffic }
+  );
+
   const restartResult = realWorldScenario.includes("restart")
     ? await verifyExtensionRestart(control, baseUrl, extensionId)
     : { ok: true, skipped: true };
@@ -792,6 +813,7 @@ async function main() {
   if (completenessResult.lines) {
     console.log(["Capture completeness:", ...completenessResult.lines].join("\n"));
   }
+  console.log("Port traffic (SW<->offscreen):", JSON.stringify(portTraffic));
   console.log("Player smoke:", JSON.stringify(playerResult));
   console.log("Extension restart:", JSON.stringify(restartResult));
   console.log(`Chrome log: ${chromeLogPath}`);
