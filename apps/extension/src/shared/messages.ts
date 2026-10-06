@@ -26,12 +26,6 @@ export type UiStartSessionMessage = {
   mode: CaptureMode;
   reloadPage?: boolean;
   visualCapture?: FullModeVisualCapture;
-  /**
-   * Backward-compatible alias for older popup/runtime callers. New callers
-   * should send `visualCapture` so screenshots can be disabled for
-   * recording-only full sessions.
-   */
-  recordScreen?: boolean;
   /** Recording profile id, or `"auto"` / absent to let site rules pick one. */
   profileId?: string;
 };

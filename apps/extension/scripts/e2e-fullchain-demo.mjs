@@ -1974,10 +1974,7 @@ async function configureE2eRecorderOptions(control, mode) {
 }
 
 async function startSessionFromControl(control, mode, expectedUrl, options = {}) {
-  const visualCapture =
-    mode === "full"
-      ? (options.visualCapture ?? (options.recordScreen === true ? "both" : "screenshots"))
-      : null;
+  const visualCapture = mode === "full" ? (options.visualCapture ?? "screenshots") : null;
 
   if (control.kind === "popup") {
     return startSessionFromPopup(control.client, mode, expectedUrl, control.useUiActions, {
@@ -2016,10 +2013,7 @@ async function startSessionFromControl(control, mode, expectedUrl, options = {})
 }
 
 async function startSessionFromPopup(popupClient, mode, expectedUrl, useUiActions, options = {}) {
-  const visualCapture =
-    mode === "full"
-      ? (options.visualCapture ?? (options.recordScreen === true ? "both" : "screenshots"))
-      : null;
+  const visualCapture = mode === "full" ? (options.visualCapture ?? "screenshots") : null;
 
   if (useUiActions) {
     const expression = `

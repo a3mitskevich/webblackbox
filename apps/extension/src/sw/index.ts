@@ -61,11 +61,7 @@ import {
   normalizePerformanceBudget,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
-import {
-  applyFullModeVisualCapture,
-  resolveModeBaseConfig,
-  shouldInjectPageHooksForMode
-} from "../shared/mode-profile.js";
+import { applyFullModeVisualCapture, resolveModeBaseConfig } from "../shared/mode-profile.js";
 import {
   capStorageValue,
   capturesPageStorageInFullMode,
@@ -859,9 +855,7 @@ async function syncContentPortStateOnConnect(port: PortLike): Promise<void> {
 
   // Only the connecting frame: re-running the hooks script resets a frame's live capture config
   // (the script installs inactive), and only that frame gets the recording status back below.
-  if (shouldInjectHooksForMode(runtime.mode)) {
-    await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce, port.sender?.frameId);
-  }
+  await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce, port.sender?.frameId);
 
   syncContentPortRecordingState(port);
 }
@@ -970,7 +964,6 @@ function handleRecordedFrameCommitted(details: FrameCommittedDetails): void {
     !runtime ||
     runtime.stopping ||
     runtime.stoppedAt ||
-    !shouldInjectHooksForMode(runtime.mode) ||
     contentInjection.currentMode() !== "on-start" ||
     !isInjectableFrameUrl(details.url)
   ) {
@@ -1120,13 +1113,11 @@ async function handleInboundMessage(
     }
 
     // The sender's frame only: the reply below reaches only that frame's content script.
-    if (shouldInjectHooksForMode(runtime.mode)) {
-      await ensureInjectedHooks(
-        tabId,
-        runtime.injectedBridgeNonce,
-        senderFrameId ?? port?.sender?.frameId
-      );
-    }
+    await ensureInjectedHooks(
+      tabId,
+      runtime.injectedBridgeNonce,
+      senderFrameId ?? port?.sender?.frameId
+    );
 
     const sampling = toStatusSampling(runtime);
 
@@ -1403,10 +1394,8 @@ async function startSession(
     level: resolveTabsContextLevel(recorderConfig.capturePolicy)
   });
 
-  if (shouldInjectHooksForMode(mode)) {
-    await ensureContentScriptInjected(tabId);
-    await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
-  }
+  await ensureContentScriptInjected(tabId);
+  await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
 
   if (mode === "full" && recorderConfig.capturePolicy?.categories.cdp !== "off") {
     await attachCdp(runtime);
@@ -1463,12 +1452,7 @@ async function reloadRecordingTab(tabId: number): Promise<void> {
 async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<void> {
   const runtime = sessionsByTab.get(tabId);
 
-  if (
-    !runtime ||
-    runtime.stopping ||
-    runtime.stoppedAt ||
-    !shouldInjectHooksForMode(runtime.mode)
-  ) {
+  if (!runtime || runtime.stopping || runtime.stoppedAt) {
     return;
   }
 
@@ -4629,10 +4613,6 @@ function toStatusSampling(runtime: SessionRuntime): RecordingSampling {
   };
 }
 
-function shouldInjectHooksForMode(mode: CaptureMode): boolean {
-  return shouldInjectPageHooksForMode(mode);
-}
-
 function normalizePipelineExportDownloadResult(raw: unknown): PipelineExportDownloadResult {
   const row = asRecord(raw);
 
@@ -6001,11 +5981,7 @@ function resolveFullModeVisualCapture(
 
   // Kept for a Lite request too: when the profile needs the Full engine the start runs in Full,
   // and an explicit choice (e.g. "none") must hold there. A Lite session ignores it.
-  if (isFullModeVisualCapture(message.visualCapture)) {
-    return message.visualCapture;
-  }
-
-  return message.mode === "full" && message.recordScreen === true ? "both" : undefined;
+  return isFullModeVisualCapture(message.visualCapture) ? message.visualCapture : undefined;
 }
 
 function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture {
