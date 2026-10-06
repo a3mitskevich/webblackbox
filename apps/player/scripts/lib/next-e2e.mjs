@@ -139,8 +139,10 @@ export async function readSnapshot(client) {
 export async function press(client, key, options = {}) {
   const code = options.code ?? (key.length === 1 ? `Key${key.toUpperCase()}` : key);
   // A printable key types its character; Enter must carry "\r" to activate a focused button.
-  const text = key.length === 1 ? key : key === "Enter" ? "\r" : undefined;
-  const modifiers = options.shift ? 8 : 0;
+  // CDP modifiers: Alt 1, Ctrl 2, Meta 4, Shift 8. Ctrl / Meta combinations type nothing.
+  const modifiers = options.modifiers ?? (options.shift ? 8 : 0);
+  const typed = key.length === 1 ? key : key === "Enter" ? "\r" : undefined;
+  const text = modifiers & 6 ? undefined : typed;
   await client.send("Input.dispatchKeyEvent", {
     type: "keyDown",
     key,

@@ -29,6 +29,7 @@ import {
   verifySplitters,
   verifyTheme
 } from "./e2e-next/shell.mjs";
+import { TOOL_SCENARIOS } from "./e2e-next/tools.mjs";
 import {
   CdpClient,
   CHROME_CANDIDATES,
@@ -146,7 +147,11 @@ async function main() {
   results.hash = await verifyHashRestore(client, origin, archivePath);
   results.splitters = await verifySplitters(client, { origin, archivePath });
   results.responsive = await verifyNarrowLayout(client);
-  results.features = await runFeatureScenarios(suites, { client, origin, archivePath });
+  results.features = await runFeatureScenarios([TOOL_SCENARIOS, ...suites], {
+    client,
+    origin,
+    archivePath
+  });
   results.cspGuard = await verifyCspGuard(client, { origin, archivePath }, cspViolations);
 
   if (screenshotsDir) {
