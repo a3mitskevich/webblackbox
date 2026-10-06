@@ -666,6 +666,14 @@ async function main() {
     ? checkRealisticTraffic(archive, scenarioResult)
     : { ok: true, skipped: "demo-scenario" };
   assert(trafficResult.ok, "Exported archive misses requests the page sent", trafficResult);
+  const duplicatedContentTypeResult = completenessMode
+    ? checkDuplicatedContentTypeBody(archive)
+    : { ok: true, skipped: "demo-scenario" };
+  assert(
+    duplicatedContentTypeResult.ok,
+    "Exported archive left out a body sent with a duplicated Content-Type",
+    duplicatedContentTypeResult
+  );
   assert(completenessResult.ok, "Exported archive lost bodies silently", {
     failures: completenessResult.failures,
     report: completenessResult.lines
@@ -2503,6 +2511,20 @@ function checkRealisticTraffic(archive, scenario) {
   return { ok: sent > 0 && recorded >= sent, sent, recorded };
 }
 
+/** The POST that sent Content-Type twice ("application/json, application/json") kept its body. */
+function checkDuplicatedContentTypeBody(archive) {
+  const entry = archive
+    .getNetworkWaterfall()
+    .find((candidate) => candidate.url.includes("/api/echo/json-twice"));
+
+  return {
+    ok: typeof entry?.requestBodyText === "string" && entry.requestBodyText.length > 0,
+    found: Boolean(entry),
+    contentType: entry?.requestHeaders["content-type"],
+    skipReason: entry?.requestBodySkipReason
+  };
+}
+
 /**
  * What the realistic site must leave in a Full-capture archive. Bodies: none lost silently, the
  * 2.6 MB bundle recorded as too large, no reads lost to load, SVG kept as text, `data:` URLs not
@@ -2520,8 +2542,9 @@ function realisticCompletenessExpectations(scenario, { reloadAfterStart = false 
     maxInternalRequests: 0,
     minRequests: 300,
     minResponseBodies: 250,
-    // string, JSON, untyped Blob, typed Blob, ArrayBuffer, URLSearchParams, PUT, XHR, beacon.
-    minRequestBodies: 9,
+    // string, JSON, JSON with Content-Type sent twice, untyped Blob, typed Blob, ArrayBuffer,
+    // URLSearchParams, PUT, XHR, beacon.
+    minRequestBodies: 10,
     minSkipReasons: {
       "too-large": 1,
       "started-before-capture": reloadAfterStart ? 0 : held
@@ -2531,6 +2554,7 @@ function realisticCompletenessExpectations(scenario, { reloadAfterStart = false 
       "session-limit": 0,
       "not-retained": 0,
       "fetch-failed": 0,
+      "mime-not-allowed": 0,
       "started-before-capture": reloadAfterStart ? 0 : held
     },
     minSvgBodies: Number(scenario?.svgLoads ?? 0) + (reloadAfterStart ? 1 : 0),

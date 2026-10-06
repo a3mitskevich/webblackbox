@@ -581,6 +581,12 @@ const PAGE_SCRIPT = `
     const variants = [
       ['string', () => fetch(echo('string'), { method: 'POST', body: json })],
       ['json', () => fetch(echo('json'), { method: 'POST', body: json, headers: jsonHeaders })],
+      // Some sites send Content-Type twice; Chrome joins it to "application/json, application/json".
+      ['json-twice', () => fetch(echo('json-twice'), {
+        method: 'POST',
+        body: json,
+        headers: [['content-type', 'application/json'], ['content-type', 'application/json']]
+      })],
       ['blob-untyped', () => fetch(echo('blob-untyped'), { method: 'POST', body: new Blob([json]) })],
       ['blob-json', () => fetch(echo('blob-json'), {
         method: 'POST', body: new Blob([json], { type: 'application/json' })
