@@ -156,6 +156,7 @@ import {
 } from "./lite-network-baseline.js";
 import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
 import { createOffscreenPortConnector, OFFSCREEN_UNAVAILABLE_ERROR } from "./offscreen-port.js";
+import { createPortTrafficMeter } from "./port-traffic.js";
 import { createRecordedTabWatch } from "./recorded-tab-watch.js";
 import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
@@ -520,6 +521,7 @@ const pendingOffscreenRequests = new Map<
   }
 >();
 const offscreenSessionRecovery = new Map<string, Promise<void>>();
+const offscreenPortTraffic = createPortTrafficMeter();
 let offscreenRequestSeq = 0;
 let freezeBadgeTimer: ReturnType<typeof setTimeout> | null = null;
 let stoppedSessionRecordsQueue: Promise<unknown> = Promise.resolve();
@@ -2688,11 +2690,13 @@ async function requestOffscreenPipelineOnce<TResult>(
     });
 
     try {
-      port.postMessage({
+      const message = {
         kind: "sw.pipeline-request",
         requestId,
         ...request
-      });
+      };
+      offscreenPortTraffic.recordSent(request.op, message, request.bytes?.byteLength ?? 0);
+      port.postMessage(message);
     } catch (error) {
       clearTimeout(timeout);
       pendingOffscreenRequests.delete(requestId);
@@ -2743,6 +2747,13 @@ function handleOffscreenRuntimeMessage(rawMessage: unknown, port: PortLike): boo
   }
 
   const kind = (rawMessage as { kind?: unknown }).kind;
+  offscreenPortTraffic.recordReceived(
+    typeof kind === "string" ? kind : "unknown",
+    rawMessage,
+    kind === "offscreen.screen-recording-chunk"
+      ? (asFiniteNumber((rawMessage as { size?: unknown }).size) ?? 0)
+      : 0
+  );
 
   if (kind === "offscreen.ready") {
     notifyOffscreenPipelineStatus();
@@ -6255,7 +6266,7 @@ function notifyOffscreenPipelineStatus(): void {
   }
 
   try {
-    port.postMessage({
+    const message = {
       kind: "sw.pipeline-status",
       activeSessions: sessionsByTab.size,
       sessions: [...sessionsByTab.values()].map((runtime) => ({
@@ -6272,7 +6283,9 @@ function notifyOffscreenPipelineStatus(): void {
         note: runtime.note
       })),
       updatedAt: Date.now()
-    });
+    };
+    offscreenPortTraffic.recordSent(message.kind, message);
+    port.postMessage(message);
   } catch (error) {
     connectedPorts.delete(port);
 
