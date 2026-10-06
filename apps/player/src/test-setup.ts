@@ -10,3 +10,10 @@ if (typeof window !== "undefined" && typeof window.ResizeObserver === "undefined
 
   window.ResizeObserver = InertResizeObserver;
 }
+
+// Panels and dialogs load lazily (their own chunks): under a parallel `pnpm test` the first
+// import can take longer than testing-library's 1 s default for findBy* / waitFor.
+if (typeof window !== "undefined") {
+  const { configure } = await import("@testing-library/react");
+  configure({ asyncUtilTimeout: 5_000 });
+}
