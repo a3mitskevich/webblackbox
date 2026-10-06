@@ -8,6 +8,7 @@ import {
 } from "../../core/format.js";
 import { ratioOf } from "../../core/timeline-lanes.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
+import { useScrubHover } from "../features/feed/index.js";
 import type { LoadedArchive } from "../state.js";
 
 type Lane = "errors" | "network" | "realtime";
@@ -42,6 +43,7 @@ export function Timeline() {
   const playheadMono = usePlayerState((state) => state.playheadMono);
   const locale = usePlayerState((state) => state.locale);
   const scrubbing = useRef(false);
+  const hover = useScrubHover(archive);
 
   if (!archive) {
     return null;
@@ -112,6 +114,7 @@ export function Timeline() {
       | undefined;
 
     surface.focus();
+    hover.onLeave();
 
     if (lane && pickNearest(lane, value)) {
       return;
@@ -125,6 +128,10 @@ export function Timeline() {
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>): void => {
     if (scrubbing.current) {
       seekToRatio(trackRatio(event.currentTarget, event.clientX));
+    } else if (event.pointerType !== "touch") {
+      const value = trackRatio(event.currentTarget, event.clientX);
+      const top = event.currentTarget.getBoundingClientRect().top;
+      hover.onMove(span.minMono + value * span.durationMono, event.clientX, top);
     }
   };
 
@@ -164,6 +171,7 @@ export function Timeline() {
           onPointerMove={handlePointerMove}
           onPointerUp={stopScrubbing}
           onPointerCancel={stopScrubbing}
+          onPointerLeave={hover.onLeave}
           onKeyDown={handleKeyDown}
           data-testid="scrubber"
         >
@@ -177,6 +185,7 @@ export function Timeline() {
         />
       </div>
       <p className="hints">{i18n.tn("keyHints")}</p>
+      {hover.card}
     </div>
   );
 }

@@ -14,9 +14,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 181000,
-      "maxGzipBytes": 45000,
-      "note": "Combined integration of the 8 open PRs and #21 on main, measured 155,484 / 38,623 B (+3%): #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, #16's tabs context and #21's capture completeness report. Player R3 (PR #20) measured 175,633 / 43,680 B (+3%): realtime message parsing (SignalR records), WebSocket/SSE streams and request timing/initiator details, plus R2's third-party classifier."
+      "maxBytes": 205000,
+      "maxGzipBytes": 51000,
+      "note": "Combined integration of the 8 open PRs and #21 on main, measured 155,484 / 38,623 B (+3%): #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, #16's tabs context and #21's capture completeness report. Player rewrite (#20): R2's third-party marking, problem grouping and Activity feed items (third-party.ts, problems.ts, activity-feed.ts) and R3's realtime message parsing (SignalR records), WebSocket/SSE streams and request timing/initiator details, measured TBD (+3%)."
     },
     {
       "path": "apps/player/build/main.js",

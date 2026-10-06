@@ -174,8 +174,17 @@ describe("buildSessionView", () => {
       "#/live/64"
     ]);
     expect(view.chapters.filter((chapter) => chapter.isErrorRoute)).toHaveLength(2);
-    expect(view.errorEvents).toHaveLength(1);
-    expect(view.errorTicks).toHaveLength(1);
+    // Problems (player-sdk): failed requests, exceptions and console errors by `data.level`.
+    expect(view.problems[0]).toMatchObject({ category: "auth", status: 401, thirdParty: false });
+    expect(view.problems.map((group) => group.key)).toContain("net:ERR_ADDRESS_INVALID:third");
+    const ownProblems = view.problems.filter((group) => !group.thirdParty);
+    expect(ownProblems.length).toBeLessThan(view.problems.length);
+    expect(view.errorEvents).toHaveLength(ownProblems.reduce((sum, group) => sum + group.count, 0));
+    // The logged AuthError only echoes the exception thrown with it: E stops once, at the throw.
+    expect(view.errorEvents.map((event) => event.type)).toContain("error.exception");
+    expect(view.errorEvents.map((event) => event.type)).not.toContain("console.entry");
+    expect(view.errorEvents.map((event) => event.type)).toContain("network.request");
+    expect(view.errorTicks.length).toBeGreaterThan(1);
     expect(view.densityBins.some((bin) => bin.failed)).toBe(true);
     expect(view.realtimeTicks.length).toBeGreaterThan(1);
     expect(view.actionMarks.map((mark) => mark.kind)).toContain("click");

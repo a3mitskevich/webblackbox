@@ -8,6 +8,7 @@ import { createMediaUrlCache } from "../core/media-cache.js";
 import type { FrameScheduler } from "../core/playback-clock.js";
 import {
   createPlayerController,
+  type ListStepItem,
   resolveSelectedEventId,
   resolveSelectionMono,
   selectActivityEvents,
@@ -88,8 +89,8 @@ async function waitForPhase(store: ReturnType<typeof setup>["store"], phase: str
   await vi.waitFor(() => expect(store.getState().status.phase).toBe(phase));
 }
 
-async function loaded() {
-  const context = setup();
+async function loaded(options: PlayerControllerOptions = {}) {
+  const context = setup(options);
   await context.controller.openFile(source());
   return context;
 }
@@ -270,18 +271,25 @@ describe("navigation and selection", () => {
       throw new Error("archive not loaded");
     }
 
+    // E steps through problem occurrences: failed requests, console errors, exceptions.
+    const errors = archive.view.errorEvents;
     controller.stepError(1);
-    const error = store.getState();
-    expect(error.selection?.kind).toBe("event");
-    expect(error.announcement).toMatch(/^Error 1 of 1: error\.exception AuthError/);
+    expect(store.getState().selection?.id).toBe(errors[0]?.id);
+    expect(store.getState().announcement).toMatch(new RegExp(`^Error 1 of ${errors.length}: `));
 
+    controller.seekEdge("end");
     controller.stepError(1);
     expect(store.getState().announcement).toBe("No more errors in this direction.");
+    controller.stepError(-1);
+    const error = store.getState();
+    expect(error.selection?.id).toBe(errors[errors.length - 1]?.id);
+    expect(error.announcement).toMatch(new RegExp(`^Error ${errors.length} of ${errors.length}: `));
 
     controller.stepList(1);
     const next = store.getState();
     const list = selectActivityEvents(archive, "");
     const errorIndex = list.findIndex((event) => event.id === error.selection?.id);
+    expect(errorIndex).toBeGreaterThanOrEqual(0);
     expect(next.selection?.id).toBe(list[errorIndex + 1]?.id);
 
     controller.seekEdge("start");
@@ -294,6 +302,31 @@ describe("navigation and selection", () => {
     controller.clearSelection();
     controller.stepList(1);
     expect(store.getState().announcement).toBe("No more events in this direction.");
+  });
+
+  it("steps through the active tab's own rows when it provides them", async () => {
+    const stepItems = (state: PlayerState): ListStepItem[] | null =>
+      state.tab === "network" && state.archive
+        ? state.archive.model.waterfall.map((entry) => ({
+            selection: { kind: "request", id: entry.reqId },
+            mono: entry.startMono
+          }))
+        : null;
+    const { store, controller } = await loaded({ stepItems });
+    const waterfall = store.getState().archive?.model.waterfall ?? [];
+
+    controller.setTab("network");
+    controller.stepList(1);
+    expect(store.getState().selection).toEqual({ kind: "request", id: waterfall[0]?.reqId });
+    controller.stepList(1);
+    expect(store.getState().selection).toEqual({ kind: "request", id: waterfall[1]?.reqId });
+    controller.stepList(-1);
+    expect(store.getState().selection).toEqual({ kind: "request", id: waterfall[0]?.reqId });
+
+    // Another tab without its own rows steps through the Activity events.
+    controller.setTab("activity");
+    controller.stepList(1);
+    expect(store.getState().selection?.kind).toBe("event");
   });
 
   it("selects requests and actions at their time and maps them to list rows", async () => {

@@ -1,7 +1,13 @@
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
-import { buildRouteChapters, type PlayerArchive } from "@webblackbox/player-sdk";
+import {
+  buildRouteChapters,
+  groupProblems,
+  listProblemOccurrences,
+  type PlayerArchive,
+  type ProblemGroup
+} from "@webblackbox/player-sdk";
 
-import { isErrorEvent, type ArchiveModel } from "./archive-model.js";
+import type { ArchiveModel } from "./archive-model.js";
 import { findIdleGaps, type IdleGap } from "./playback-clock.js";
 import {
   buildDensityBins,
@@ -52,7 +58,13 @@ export type SessionView = {
   errorTicks: number[];
   realtimeTicks: number[];
   actionMarks: ActionMark[];
-  /** Error events (same rule as the classic player) for E / Shift+E. */
+  /** Failures grouped for the problems strip (player-sdk `groupProblems`). */
+  problems: ProblemGroup[];
+  /**
+   * One event per problem occurrence, in time order, for E / Shift+E and the Errors lane: failed
+   * requests, exceptions and console errors (by `data.level`, PROPOSAL §2.3) — first-party ones,
+   * or all when every problem is third-party.
+   */
   errorEvents: WebBlackboxEvent[];
   idleGaps: IdleGap[];
 };
@@ -80,7 +92,19 @@ export function buildSessionView(
   const window: TimelineWindow = { minMono: model.minMono, durationMono: model.durationMono };
   const manifest = archive.manifest;
   const tabsEvent = model.tabsContext.snapshots[0] ?? model.tabsContext.changes[0];
-  const errorEvents = model.events.filter(isErrorEvent);
+  const problems = groupProblems({
+    events: model.events,
+    requests: model.waterfall,
+    firstPartyUrl: manifest.site.origin
+  });
+  // E / Shift+E and the Errors lane skip third-party noise (analytics, extensions) unless the
+  // recording has nothing else; its strip chips still reach it.
+  const ownProblems = problems.filter((group) => !group.thirdParty);
+  const steppedProblems = ownProblems.length > 0 ? ownProblems : problems;
+  const errorEvents = listProblemOccurrences(steppedProblems).flatMap((occurrence) => {
+    const event = model.eventById.get(occurrence.eventId);
+    return event ? [event] : [];
+  });
   const chapters = buildRouteChapters(model.events, {
     endMono: model.maxMono,
     initialUrl: manifest.site.origin
@@ -126,6 +150,7 @@ export function buildSessionView(
       kind: classifyAction(action.triggerType),
       triggerType: action.triggerType
     })),
+    problems,
     errorEvents,
     idleGaps: findIdleGaps(model.events.map((event) => event.mono))
   };

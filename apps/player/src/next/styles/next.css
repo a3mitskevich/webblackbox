@@ -1330,6 +1330,11 @@ h2 {
   box-shadow: var(--shadow);
   transition: opacity 100ms ease-out;
 }
+.tip.multiline {
+  max-width: min(420px, calc(100vw - 32px));
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
 .tip[data-starting-style],
 .tip[data-ending-style] {
   opacity: 0;
