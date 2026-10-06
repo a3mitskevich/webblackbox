@@ -28,10 +28,10 @@ export type RailTabRegistration = {
   /** The tab label in a locale (usually from the feature's dictionary). */
   label: (locale: PlayerLocale) => string;
   /**
-   * The count shown next to the label; omit for none. Recomputed only when the archive or the
-   * filter text changes (never per playback frame), so it may scan the archive.
+   * The count shown next to the label; omit for none. Recomputed only when the archive, the
+   * filter text or the locale changes (never per playback frame), so it may scan the archive.
    */
-  count?: (archive: LoadedArchive, query: string) => number;
+  count?: (archive: LoadedArchive, query: string, locale: PlayerLocale) => number;
   /** Shows the count as a problem (red), e.g. console errors. */
   isAlert?: (count: number) => boolean;
   /**

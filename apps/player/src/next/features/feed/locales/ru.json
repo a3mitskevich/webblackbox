@@ -80,5 +80,7 @@
   "netOffline": "Нет сети",
   "netFailed": "Запрос не выполнен",
   "exception": "Исключение",
-  "consoleError": "Ошибка в консоли"
+  "consoleError": "Ошибка в консоли",
+  "durationMs": "{value} мс",
+  "resourceFailed": "Ошибка загрузки {tag}"
 }

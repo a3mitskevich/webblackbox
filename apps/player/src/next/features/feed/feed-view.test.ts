@@ -145,13 +145,56 @@ describe("feed view", () => {
     expect(computeFeedView(archive, { ...PARAMS, scope: "main" }).entries).toEqual(
       computeFeedView(archive, PARAMS).entries
     );
-    expect(computeFeedView(archive, { ...PARAMS, scope: "iframe" }).entries).toHaveLength(0);
+    // A scope picked in another recording does not empty a feed that has no iframe rows.
+    expect(computeFeedView(archive, { ...PARAMS, scope: "iframe" }).entries).toEqual(
+      computeFeedView(archive, PARAMS).entries
+    );
   });
 
   it("counts every event, or the matches of the filter", () => {
     expect(countActivity(archive, "")).toBe(archive.model.events.length);
     expect(countActivity(archive, "casino-user")).toBeGreaterThan(0);
     expect(countActivity(archive, "casino-user")).toBeLessThan(archive.model.events.length);
+    // Labels are matched in the locale the feed speaks, so the count agrees with the list.
+    expect(countActivity(archive, "Маршрут", "en")).toBe(0);
+    expect(countActivity(archive, "Маршрут", "ru")).toBe(
+      computeFeedView(archive, { ...PARAMS, query: "Маршрут", hideThirdParty: false, locale: "ru" })
+        .entries.length
+    );
+    expect(countActivity(archive, "Маршрут", "ru")).toBeGreaterThan(0);
+  });
+
+  it("writes durations in the locale and names element load errors", () => {
+    const request = texts({ locale: "ru" }).find((row) => row.entry.item.kind === "request");
+    expect(request?.row.secondary).toMatch(/^\d+ мс/);
+    const failure = {
+      ...archive.model.events[0]!,
+      id: "res-1",
+      type: "error.resource",
+      data: { tag: "SCRIPT", url: "https://app.example.test/js/missing.js" }
+    } as (typeof archive.model.events)[number];
+    const withFailure: LoadedArchive = {
+      ...archive,
+      model: { ...archive.model, eventById: new Map([[failure.id, failure]]) }
+    };
+    const row = describeFeedItem(
+      {
+        eventId: failure.id,
+        mono: failure.mono,
+        kind: "exception",
+        actId: null,
+        parentActId: null,
+        isProblem: true,
+        thirdParty: false,
+        repeatKey: "x"
+      },
+      describeContext(withFailure, "en")
+    );
+    expect(row).toMatchObject({
+      lead: "Failed to load script",
+      subject: "/js/missing.js",
+      tone: "error"
+    });
   });
 
   it("speaks the locale and memoizes the view for the same filters", () => {

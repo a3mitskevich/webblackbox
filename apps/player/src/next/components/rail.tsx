@@ -17,8 +17,8 @@ function RailTabButton({ registration }: { registration: RailTabRegistration }) 
   const archive = usePlayerState((state) => state.archive);
   const query = usePlayerState((state) => state.query);
   const count = useMemo(
-    () => (archive && registration.count ? registration.count(archive, query) : null),
-    [archive, query, registration]
+    () => (archive && registration.count ? registration.count(archive, query, locale) : null),
+    [archive, query, locale, registration]
   );
   const isAlert = count !== null && (registration.isAlert?.(count) ?? false);
 

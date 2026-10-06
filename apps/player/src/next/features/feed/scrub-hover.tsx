@@ -1,11 +1,11 @@
 import { PreviewCard } from "@base-ui/react/preview-card";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { formatOffset } from "../../../core/format.js";
 import { resolveShotForMono } from "../../../core/stage-media.js";
+import { lowerBoundByMono, upperBoundByMono } from "../../../lib/range.js";
 import { compactText } from "../../../lib/text.js";
 import { Icon } from "../../components/icon.js";
-import { useController, usePlayerState } from "../../context.js";
+import { useController, useI18n, usePlayerState } from "../../context.js";
 import type { LoadedArchive } from "../../state.js";
 import { describeContext, describeFeedItem, feedDataOf } from "./feed-view.js";
 
@@ -62,13 +62,21 @@ type CardBodyProps = { archive: LoadedArchive; mono: number };
 
 function CardBody({ archive, mono }: CardBodyProps) {
   const controller = useController();
+  const i18n = useI18n();
   const locale = usePlayerState((state) => state.locale);
   const thumbnail = useThumbnail(archive, mono);
   const context = useMemo(() => describeContext(archive, locale), [archive, locale]);
   const near = useMemo(() => {
     const reach = archive.model.durationMono * NEAR_SHARE;
-    return feedDataOf(archive)
-      .curated.filter((item) => Math.abs(item.mono - mono) <= reach && !item.thirdParty)
+    const curated = feedDataOf(archive).curated;
+    const pickMono = (item: (typeof curated)[number]) => item.mono;
+    // Curated items are in time order: only the window around the pointer is looked at.
+    return curated
+      .slice(
+        lowerBoundByMono(curated, mono - reach, pickMono),
+        upperBoundByMono(curated, mono + reach, pickMono)
+      )
+      .filter((item) => !item.thirdParty)
       .sort((left, right) => Math.abs(left.mono - mono) - Math.abs(right.mono - mono))
       .slice(0, MAX_TAGS)
       .sort((left, right) => left.mono - right.mono);
@@ -77,7 +85,7 @@ function CardBody({ archive, mono }: CardBodyProps) {
   return (
     <>
       <div className="hover-head">
-        <span className="mono">{formatOffset(mono - archive.model.minMono, locale)} s</span>
+        <span className="mono">{i18n.formatSeconds(mono - archive.model.minMono)}</span>
         <span className="mono hover-route">{routeAt(archive, mono)}</span>
       </div>
       {thumbnail ? <img className="hover-thumb" src={thumbnail} alt="" /> : null}

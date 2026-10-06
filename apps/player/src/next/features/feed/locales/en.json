@@ -80,5 +80,7 @@
   "netOffline": "Offline",
   "netFailed": "Request failed",
   "exception": "Exception",
-  "consoleError": "Console error"
+  "consoleError": "Console error",
+  "durationMs": "{value} ms",
+  "resourceFailed": "Failed to load {tag}"
 }

@@ -2,31 +2,27 @@ import type { ProblemGroup } from "@webblackbox/player-sdk";
 
 import "./feed.css";
 
-import { formatOffset } from "../../../core/format.js";
 import { Hint } from "../../components/hint.js";
 import { Icon } from "../../components/icon.js";
-import { useController, usePlayerState } from "../../context.js";
+import { useController, useI18n, usePlayerState } from "../../context.js";
 import { resolveSelectedEventId } from "../../controller.js";
 import type { LoadedArchive } from "../../state.js";
 import { useFeatureI18n } from "../messages.js";
 import { feedMessages, type FeedTranslator } from "./messages.js";
 import { problemTitle, problemsCount } from "./problem-text.js";
 
+/** "10.89s" / "10,89 с": an offset from the start of the recording. */
+type FormatAt = (mono: number) => string;
+
 type ProblemChipProps = {
   group: ProblemGroup;
   archive: LoadedArchive;
   selectedEventId: string | null;
   t: FeedTranslator;
-  locale: string;
+  at: FormatAt;
 };
 
-function describeTimes(
-  group: ProblemGroup,
-  archive: LoadedArchive,
-  t: FeedTranslator,
-  locale: string
-): string {
-  const at = (mono: number) => `${formatOffset(mono - archive.model.minMono, locale)} s`;
+function describeTimes(group: ProblemGroup, t: FeedTranslator, at: FormatAt): string {
   return group.count === 1
     ? t("problemOnce", { first: at(group.firstMono) })
     : t("problemTimes", {
@@ -36,7 +32,7 @@ function describeTimes(
       });
 }
 
-function ProblemChip({ group, archive, selectedEventId, t, locale }: ProblemChipProps) {
+function ProblemChip({ group, archive, selectedEventId, t, at }: ProblemChipProps) {
   const controller = useController();
   const title = problemTitle(group, t);
   const current = group.occurrences.findIndex(
@@ -45,7 +41,7 @@ function ProblemChip({ group, archive, selectedEventId, t, locale }: ProblemChip
   // Third-party noise says so (the mockup's "Failed to load ×6 third-party"); hosts are in the hint.
   const where = group.thirdParty ? t("thirdParty") : group.where;
   const hint = [
-    describeTimes(group, archive, t, locale),
+    describeTimes(group, t, at),
     group.hosts.length > 0 ? t("problemHosts", { hosts: group.hosts.join(", ") }) : "",
     group.count > 1 ? t("problemStepHint") : ""
   ]
@@ -68,14 +64,14 @@ function ProblemChip({ group, archive, selectedEventId, t, locale }: ProblemChip
         problem: title,
         index: index + 1,
         count: group.count,
-        time: `${formatOffset(occurrence.mono - archive.model.minMono, locale)} s`
+        time: at(occurrence.mono)
       })
     );
   };
 
   return (
     <li>
-      <Hint label={hint}>
+      <Hint label={hint} multiline>
         <button
           type="button"
           className={["problem", current >= 0 ? "sel" : "", group.thirdParty ? "third" : ""]
@@ -104,6 +100,7 @@ function ProblemChip({ group, archive, selectedEventId, t, locale }: ProblemChip
  */
 export function ProblemsStrip() {
   const t = useFeatureI18n(feedMessages);
+  const i18n = useI18n();
   const archive = usePlayerState((state) => state.archive);
   const locale = usePlayerState((state) => state.locale);
   const selectedEventId = usePlayerState((state) =>
@@ -115,6 +112,8 @@ export function ProblemsStrip() {
   }
 
   const groups = archive.view.problems;
+  const minMono = archive.model.minMono;
+  const at: FormatAt = (mono) => i18n.formatSeconds(mono - minMono);
 
   return (
     <section className="problems" aria-label={t("problemsLabel")} data-testid="problems-strip">
@@ -133,7 +132,7 @@ export function ProblemsStrip() {
               archive={archive}
               selectedEventId={selectedEventId}
               t={t}
-              locale={locale}
+              at={at}
             />
           ))}
         </ul>

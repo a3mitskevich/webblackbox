@@ -180,7 +180,9 @@ describe("buildSessionView", () => {
     const ownProblems = view.problems.filter((group) => !group.thirdParty);
     expect(ownProblems.length).toBeLessThan(view.problems.length);
     expect(view.errorEvents).toHaveLength(ownProblems.reduce((sum, group) => sum + group.count, 0));
-    expect(view.errorEvents.map((event) => event.type)).toContain("console.entry");
+    // The logged AuthError only echoes the exception thrown with it: E stops once, at the throw.
+    expect(view.errorEvents.map((event) => event.type)).toContain("error.exception");
+    expect(view.errorEvents.map((event) => event.type)).not.toContain("console.entry");
     expect(view.errorEvents.map((event) => event.type)).toContain("network.request");
     expect(view.errorTicks.length).toBeGreaterThan(1);
     expect(view.densityBins.some((bin) => bin.failed)).toBe(true);

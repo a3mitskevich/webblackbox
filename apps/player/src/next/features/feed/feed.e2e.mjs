@@ -261,7 +261,7 @@ async function timelineHoverCard(ctx) {
       tags: card.querySelectorAll('${ctx.testId("scrub-hover-tag")}').length
     };
   })()`);
-  ctx.assert(/\d[.,]\d\d s/.test(card.text), "The hover card shows no time", card);
+  ctx.assert(/\d[.,]\d\d\s?(s|с|秒)/.test(card.text), "The hover card shows no time", card);
 
   if (card.tags > 0) {
     await ctx.click("scrub-hover-tag");

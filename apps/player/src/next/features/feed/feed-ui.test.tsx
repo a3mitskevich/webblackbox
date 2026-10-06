@@ -83,7 +83,7 @@ describe("timeline hover card", () => {
       fireEvent.pointerMove(scrubber, { clientX: 0, clientY: 0, pointerType: "mouse" });
     });
     const card = await screen.findByTestId("scrub-hover");
-    expect(card).toHaveTextContent("0.00 s");
+    expect(card).toHaveTextContent("0.00s");
     const [tag] = within(card).getAllByTestId("scrub-hover-tag");
 
     act(() => {

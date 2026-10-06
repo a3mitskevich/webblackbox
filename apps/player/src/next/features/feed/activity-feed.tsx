@@ -290,10 +290,13 @@ export function ActivityFeed() {
     }
   };
 
+  // The getters refresh the measurements; `measurementsCache` read before them is one layout old.
+  const virtualRows = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
   const nowTop =
     nowIndex < entries.length
       ? (virtualizer.measurementsCache[nowIndex]?.start ?? nowIndex * ROW_ESTIMATE)
-      : virtualizer.getTotalSize();
+      : totalSize;
 
   return (
     <div
@@ -307,8 +310,8 @@ export function ActivityFeed() {
       data-testid="event-list"
       data-searching={view?.searching}
     >
-      <div className="vlist-canvas" style={{ height: virtualizer.getTotalSize() }}>
-        {virtualizer.getVirtualItems().map((row) => {
+      <div className="vlist-canvas" style={{ height: totalSize }}>
+        {virtualRows.map((row) => {
           const entry = entries[row.index];
 
           return entry ? (

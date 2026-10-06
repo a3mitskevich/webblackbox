@@ -85,7 +85,7 @@ type FeedData = {
   actionById: ReadonlyMap<string, ActionTimelineEntry>;
   streams: ReadonlyMap<string, StreamStats>;
   navigationKinds: ReadonlyMap<string, RouteChapterKind>;
-  /** Flagged rows: the first problem after each action, the first of each first-party group. */
+  /** Flagged rows: the first problem after each action, and the first one before any action. */
   flags: ReadonlyMap<string, ProblemFlag>;
   /** Frame of each curated item, and how many items each frame has (the scope toggle). */
   scopeOf: (item: ActivityItem) => EventScope;
@@ -371,7 +371,7 @@ function describeRequest(item: ActivityItem, { archive, t }: DescribeContext): D
     entry.method.toUpperCase(),
     shortUrl(entry.url),
     [
-      `${Math.round(entry.durationMs)} ms`,
+      t("durationMs", { value: Math.round(entry.durationMs) }),
       outcome,
       host !== hostOf(archive.view.meta.origin) ? host : ""
     ],
@@ -419,6 +419,18 @@ function readLocation(event: WebBlackboxEvent | undefined): string {
   return name && lineNumber ? `${name}:${lineNumber}` : name;
 }
 
+/** `error.resource`: a script, stylesheet or image that did not load (its tag and URL). */
+function describeResourceError(event: WebBlackboxEvent, { t }: DescribeContext): Described {
+  const data = asRecord(event.data);
+  const tag = (asString(data?.tag) ?? "").toLowerCase();
+
+  return line(t("resourceFailed", { tag }), shortUrl(asString(data?.url) ?? ""), [], {
+    glyph: "error",
+    tone: "error",
+    subjectIsCode: true
+  });
+}
+
 function describeMessage(item: ActivityItem, event: WebBlackboxEvent | undefined): Described {
   const data = asRecord(event?.data);
   const message =
@@ -446,7 +458,9 @@ function describeBody(item: ActivityItem, context: DescribeContext): Described {
     case "realtime":
       return describeRealtime(event, context);
     default:
-      return describeMessage(item, event);
+      return event?.type === "error.resource"
+        ? describeResourceError(event, context)
+        : describeMessage(item, event);
   }
 }
 
@@ -551,15 +565,19 @@ export function matchFeedItems(haystack: readonly string[], query: string): Set<
 
 /**
  * The Activity tab count: every event of the recording ("Activity 1 896" in the mockup), or the
- * items matching the text filter while one is typed (labels matched in English).
+ * items matching the text filter while one is typed (labels in the locale, as the feed matches).
  */
-export function countActivity(archive: LoadedArchive, query: string): number {
+export function countActivity(
+  archive: LoadedArchive,
+  query: string,
+  locale: PlayerLocale = "en"
+): number {
   if (!query.trim()) {
     return archive.model.events.length;
   }
 
   const items = feedDataOf(archive).all();
-  return matchFeedItems(haystackOf(items, describeContext(archive, "en")), query).size;
+  return matchFeedItems(haystackOf(items, describeContext(archive, locale)), query).size;
 }
 
 function toEntries(rows: readonly ActivityRow[], params: FeedParams): FeedEntry[] {
@@ -601,14 +619,17 @@ export function computeFeedView(archive: LoadedArchive, params: FeedParams): Fee
   const matches = searching
     ? matchFeedItems(haystackOf(items, describeContext(archive, params.locale)), params.query)
     : null;
-  const filtering = matches !== null || params.scope !== "all";
+  // A scope left over from another recording does not empty a feed without iframes (the toggle
+  // that would reset it is not shown then).
+  const scope = data.scopeCounts.iframe > 0 ? params.scope : "all";
+  const filtering = matches !== null || scope !== "all";
   const { rows, hiddenThirdParty } = buildActivityRows(items, {
     errorsOnly: params.errorsOnly,
     hideThirdParty: params.hideThirdParty,
     ...(filtering
       ? {
           matches: (item: ActivityItem, index: number) =>
-            (!matches || matches.has(index)) && matchesScopeFilter(data.scopeOf(item), params.scope)
+            (!matches || matches.has(index)) && matchesScopeFilter(data.scopeOf(item), scope)
         }
       : {}),
     pinned: (item) => item.eventId === params.selectedEventId

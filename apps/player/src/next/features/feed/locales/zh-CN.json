@@ -80,5 +80,7 @@
   "netOffline": "离线",
   "netFailed": "请求失败",
   "exception": "异常",
-  "consoleError": "控制台错误"
+  "consoleError": "控制台错误",
+  "durationMs": "{value} 毫秒",
+  "resourceFailed": "{tag} 加载失败"
 }
