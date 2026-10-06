@@ -175,6 +175,12 @@ const policyProperties = {
   siteDenylist: stringList("Origins (or *.domain) where recording is blocked."),
   dataCategoryCaps: categoriesSchema("Ceiling for every profile's capture levels."),
   disableLabMode: { type: "boolean" },
+  playerUrl: {
+    type: "string",
+    description:
+      'Self-hosted Player opened by "Export and open in Player": https://, or http://localhost ' +
+      "for local use. Users see it read-only; archives are never sent there."
+  },
   retention: {
     type: "object",
     properties: {

@@ -226,6 +226,8 @@ export type TextFieldOptions = FieldText & {
   placeholder?: string;
   wide?: boolean;
   mono?: boolean;
+  /** Shown but not editable (e.g. set by the organization's policy). */
+  readOnly?: boolean;
 };
 
 export function textField(options: TextFieldOptions): HTMLElement {
@@ -242,6 +244,7 @@ export function textField(options: TextFieldOptions): HTMLElement {
     }
   });
   input.value = options.value;
+  input.readOnly = options.readOnly ?? false;
   return fieldShell({ ...options, controlId: options.id, control: input });
 }
 

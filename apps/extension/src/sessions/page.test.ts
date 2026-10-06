@@ -61,15 +61,43 @@ const SESSIONS: SessionListItem[] = [
   }
 ];
 
-function setup() {
+const PLAYER_URL_KEY = "webblackbox.playerUrl";
+
+type StorageChangeHandler = (changes: Record<string, unknown>, areaName: string) => void;
+
+/** `local` / `managed`: storage contents; without them the page has no storage (no Player). */
+function setup(
+  storage: { local?: Record<string, unknown>; managed?: Record<string, unknown> } = {}
+) {
   const port = new FakePort();
   const create = vi.fn(async () => ({ id: 5 }));
+  const local = { ...storage.local };
+  const managed = { ...storage.managed };
+  const changeHandlers = new Set<StorageChangeHandler>();
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
     writable: true,
-    value: { runtime: { connect: vi.fn(() => port) }, tabs: { create } }
+    value: {
+      runtime: { connect: vi.fn(() => port) },
+      tabs: { create },
+      ...(storage.local || storage.managed
+        ? {
+            storage: {
+              local: { get: vi.fn(async () => ({ ...local })), set: vi.fn() },
+              managed: { get: vi.fn(async () => ({ ...managed })) },
+              onChanged: {
+                addListener: (handler: StorageChangeHandler) => changeHandlers.add(handler)
+              }
+            }
+          }
+        : {})
+    }
   });
-  return { port, create };
+  const changeStorage = (area: "local" | "managed", values: Record<string, unknown>): void => {
+    Object.assign(area === "local" ? local : managed, values);
+    changeHandlers.forEach((handler) => handler(values, area));
+  };
+  return { port, create, changeStorage };
 }
 
 async function flush(): Promise<void> {
@@ -322,8 +350,52 @@ describe("sessions page", () => {
     localStorage.clear();
   });
 
+  it("offers no Player action until a Player URL is configured", async () => {
+    const { port, changeStorage } = setup({ local: {} });
+    await load(port);
+
+    expect(document.querySelector("[data-player]")).toBeNull();
+    expect(document.querySelector("[data-export='sid-old']")).not.toBeNull();
+
+    changeStorage("local", { [PLAYER_URL_KEY]: "https://player.example.com/" });
+    await flush();
+
+    expect(document.querySelector("[data-player='sid-old']")).not.toBeNull();
+
+    changeStorage("local", { [PLAYER_URL_KEY]: "" });
+    await flush();
+
+    expect(document.querySelector("[data-player]")).toBeNull();
+  });
+
+  it("ignores a stored Player URL that is not https", async () => {
+    const { port } = setup({ local: { [PLAYER_URL_KEY]: "http://player.example.com/" } });
+    await load(port);
+
+    expect(document.querySelector("[data-player]")).toBeNull();
+  });
+
+  it("opens the organization's Player when the policy sets one", async () => {
+    const { port, create } = setup({
+      local: { [PLAYER_URL_KEY]: "https://mine.example.com/" },
+      managed: { enterprisePolicy: { playerUrl: "https://player.corp.example/qa/" } }
+    });
+    await load(port);
+
+    click("[data-player='sid-old']");
+    await flush();
+    typePassphrase("player-secret");
+    click("[data-passphrase-submit]");
+    await flush();
+    port.emit({ kind: "sw.export-status", sid: "sid-old", ok: true, fileName: "a.webblackbox" });
+    await flush();
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith({ url: "https://player.corp.example/qa/", active: true });
+  });
+
   it("opens the Player once the export of that session finished", async () => {
-    const { port, create } = setup();
+    const { port, create } = setup({ local: { [PLAYER_URL_KEY]: "https://player.example.com" } });
     await load(port);
 
     click("[data-player='sid-old']");
@@ -337,10 +409,9 @@ describe("sessions page", () => {
     port.emit({ kind: "sw.export-status", sid: "sid-old", ok: true, fileName: "a.webblackbox" });
     await flush();
 
-    expect(create).toHaveBeenCalledWith({
-      url: "https://webllm.github.io/webblackbox/",
-      active: true
-    });
+    expect(create).toHaveBeenCalledWith({ url: "https://player.example.com/", active: true });
+    // Only the page is opened: neither the archive nor the passphrase goes to the Player.
+    expect(JSON.stringify(create.mock.calls)).not.toContain("player-secret");
   });
 
   it("edits tags and notes in the row's detail panel", async () => {
