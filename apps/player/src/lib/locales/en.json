@@ -252,6 +252,8 @@
     "stageScreenshot": "screenshot",
     "stageImageAlt": "Recorded page at {time}",
     "railLabel": "Inspector",
+    "railScrollStart": "Scroll the tabs back",
+    "railScrollEnd": "Scroll the tabs forward",
     "toastClose": "Dismiss notice",
     "shortcutsTitle": "Keyboard shortcuts",
     "shortcutKeysLabel": "Keys",

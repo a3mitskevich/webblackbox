@@ -252,6 +252,8 @@
     "stageScreenshot": "скриншот",
     "stageImageAlt": "Страница в момент {time}",
     "railLabel": "Инспектор",
+    "railScrollStart": "Прокрутить вкладки назад",
+    "railScrollEnd": "Прокрутить вкладки вперёд",
     "toastClose": "Закрыть уведомление",
     "shortcutsTitle": "Горячие клавиши",
     "shortcutKeysLabel": "Клавиши",

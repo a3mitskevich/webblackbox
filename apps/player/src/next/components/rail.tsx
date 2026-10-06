@@ -1,11 +1,13 @@
 import { Tabs } from "@base-ui/react/tabs";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 
 import { RAIL_TABS, type RailTab } from "../../core/url-hash.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import { RAIL_TAB_ORDER } from "../features/registry.js";
 import type { RailTabRegistration } from "../features/types.js";
+import { Icon } from "./icon.js";
 import { PanelBoundary } from "./panel-boundary.js";
+import { useTabOverflow } from "./use-tab-overflow.js";
 
 function isRailTab(value: unknown): value is RailTab {
   return typeof value === "string" && (RAIL_TABS as readonly string[]).includes(value);
@@ -29,6 +31,59 @@ function RailTabButton({ registration }: { registration: RailTabRegistration }) 
         <span className={isAlert ? "c bad" : "c"}>{i18n.formatNumber(count)}</span>
       )}
     </Tabs.Tab>
+  );
+}
+
+/**
+ * The tab row. When the rail is too narrow for every tab, the row scrolls sideways: buttons at
+ * the hidden ends (pointer only — they are not in the tab order; keyboard users move with the
+ * arrow keys, which scroll the selected tab into view), the mouse wheel, or a touch swipe.
+ */
+function RailTabList({ selected }: { selected: string }) {
+  const i18n = useI18n();
+  const listRef = useRef<HTMLDivElement>(null);
+  const { overflow, scrollPage } = useTabOverflow(listRef, selected);
+
+  return (
+    <div className="rail-tabs-bar">
+      <Tabs.List
+        ref={listRef}
+        className="rail-tabs"
+        aria-label={i18n.tn("railLabel")}
+        activateOnFocus
+        data-testid="rail-tabs"
+      >
+        {RAIL_TAB_ORDER.map((registration) => (
+          <RailTabButton key={registration.id} registration={registration} />
+        ))}
+      </Tabs.List>
+      {overflow.start ? (
+        <button
+          type="button"
+          className="rail-tabs-scroll start"
+          tabIndex={-1}
+          aria-hidden="true"
+          aria-label={i18n.tn("railScrollStart")}
+          onClick={() => scrollPage(-1)}
+          data-testid="rail-tabs-scroll-start"
+        >
+          <Icon name="scrollStart" />
+        </button>
+      ) : null}
+      {overflow.end ? (
+        <button
+          type="button"
+          className="rail-tabs-scroll end"
+          tabIndex={-1}
+          aria-hidden="true"
+          aria-label={i18n.tn("railScrollEnd")}
+          onClick={() => scrollPage(1)}
+          data-testid="rail-tabs-scroll-end"
+        >
+          <Icon name="scrollEnd" />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -57,16 +112,7 @@ export function Rail() {
       }}
       render={<aside className="rail" aria-label={i18n.tn("railLabel")} data-testid="rail" />}
     >
-      <Tabs.List
-        className="rail-tabs"
-        aria-label={i18n.tn("railLabel")}
-        activateOnFocus
-        data-testid="rail-tabs"
-      >
-        {RAIL_TAB_ORDER.map((registration) => (
-          <RailTabButton key={registration.id} registration={registration} />
-        ))}
-      </Tabs.List>
+      <RailTabList selected={tab} />
       {RAIL_TAB_ORDER.map(({ id, Panel }) => (
         <Tabs.Panel key={id} value={id} className="rail-panel" data-testid={`panel-${id}`}>
           <PanelBoundary resetKeys={[archive]}>

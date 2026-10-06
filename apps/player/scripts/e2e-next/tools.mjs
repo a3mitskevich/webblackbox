@@ -192,13 +192,113 @@ async function aboutRecording(ctx) {
   return statuses;
 }
 
+const RAIL_LAYOUT_KEY = "react-resizable-panels:webblackbox.player.layout.body";
+
+/** A real left click at viewport coordinates (pointer events, not `element.click()`). */
+async function mouseClick(ctx, x, y) {
+  for (const type of ["mousePressed", "mouseReleased"]) {
+    await ctx.client.send("Input.dispatchMouseEvent", {
+      type,
+      x,
+      y,
+      button: "left",
+      clickCount: 1
+    });
+  }
+}
+
+/** A tab's centre, and whether it lies whole inside the row, clear of the scroll buttons. */
+function tabPlacement(ctx, testid) {
+  return ctx.evaluate(`(() => {
+    const rect = (id) => document.querySelector('[data-testid="' + id + '"]')?.getBoundingClientRect() ?? null;
+    const row = rect("rail-tabs");
+    const tab = rect(${JSON.stringify(testid)});
+    const x = tab.left + tab.width / 2;
+    const y = tab.top + tab.height / 2;
+    const covered = ["rail-tabs-scroll-start", "rail-tabs-scroll-end"]
+      .map(rect)
+      .some((button) => button && x >= button.left && x <= button.right);
+    return {
+      x,
+      y,
+      before: x < row.left + row.width / 2,
+      clear: tab.left >= row.left - 0.5 && tab.right <= row.right + 0.5 && !covered
+    };
+  })()`);
+}
+
+/**
+ * At the narrowest rail the tab row hides tabs; each one is still reached with the pointer — the
+ * scroll buttons bring it into view and a click activates it.
+ */
+async function railTabsReachable(ctx) {
+  await ctx.setViewport(1440, 900);
+  await ctx.evaluate(`localStorage.removeItem(${JSON.stringify(RAIL_LAYOUT_KEY)})`);
+  await ctx.openSynthetic();
+  await ctx.dragBy(ctx.testId("split-body"), 600, 0);
+  const railWidth = await waitFor(
+    ctx,
+    () =>
+      ctx.evaluate(`document.querySelector('${ctx.testId("rail")}').getBoundingClientRect().width`),
+    (width) => width <= 330,
+    "The splitter did not narrow the rail to its minimum"
+  );
+  const ids = await ctx.evaluate(
+    `[...document.querySelectorAll('${ctx.testId("rail-tabs")} [role="tab"]')].map((tab) => tab.dataset.testid)`
+  );
+  const hidden = [];
+
+  for (const id of ids) {
+    if (!(await tabPlacement(ctx, id)).clear) {
+      hidden.push(id);
+    }
+  }
+
+  ctx.assert(hidden.length > 0, "The narrowest rail shows every tab: nothing to scroll", {
+    railWidth
+  });
+  ctx.assert(
+    (await count(ctx, "rail-tabs-scroll-end")) === 1,
+    "No scroll button at the end hiding tabs"
+  );
+
+  // Last to first and back, so both scroll buttons are used.
+  for (const id of [...ids.slice().reverse(), ...ids]) {
+    let placement = await tabPlacement(ctx, id);
+
+    for (let step = 0; !placement.clear && step < ids.length; step += 1) {
+      const button = await ctx.evaluate(`(() => {
+        const box = document.querySelector('${ctx.testId(placement.before ? "rail-tabs-scroll-start" : "rail-tabs-scroll-end")}')?.getBoundingClientRect();
+        return box ? { x: box.left + box.width / 2, y: box.top + box.height / 2 } : null;
+      })()`);
+      ctx.assert(button !== null, "A hidden tab has no scroll button on its side", { id });
+      await mouseClick(ctx, button.x, button.y);
+      await ctx.sleep(450);
+      placement = await tabPlacement(ctx, id);
+    }
+
+    ctx.assert(placement.clear, "The scroll buttons did not bring a tab into view", { id });
+    await mouseClick(ctx, placement.x, placement.y);
+    await waitFor(
+      ctx,
+      async () => (await ctx.snapshot()).tab,
+      (tab) => tab === id,
+      `Clicking ${id} did not activate it`
+    );
+  }
+
+  await ctx.evaluate(`localStorage.removeItem(${JSON.stringify(RAIL_LAYOUT_KEY)})`);
+  return { railWidth: Math.round(railWidth), tabs: ids.length, hiddenAtStart: hidden };
+}
+
 export const TOOL_SCENARIOS = {
   feature: "shell",
   scenarios: [
     { name: "timeline range filters the lists", run: timelineRange },
     { name: "expand lanes and the filmstrip", run: expandLanes },
     { name: "command palette finds a request", run: commandPalette },
-    { name: "about this recording", run: aboutRecording }
+    { name: "about this recording", run: aboutRecording },
+    { name: "every rail tab is reachable at the narrowest rail", run: railTabsReachable }
   ]
 };
 

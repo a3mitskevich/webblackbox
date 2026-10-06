@@ -252,6 +252,8 @@
     "stageScreenshot": "截图",
     "stageImageAlt": "{time} 时的页面",
     "railLabel": "检查器",
+    "railScrollStart": "向左滚动标签",
+    "railScrollEnd": "向右滚动标签",
     "toastClose": "关闭通知",
     "shortcutsTitle": "键盘快捷键",
     "shortcutKeysLabel": "按键",
