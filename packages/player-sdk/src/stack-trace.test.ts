@@ -86,11 +86,13 @@ describe("parseStackTrace", () => {
 
   it("stays fast on adversarial input", () => {
     const hostile = `at ${"(".repeat(20_000)}${")".repeat(20_000)}\n${"a@".repeat(20_000)}`;
-    const startedAt = performance.now();
+    // Process CPU time: other load on the machine (every package's tests run at once) does not count.
+    const startedAt = process.cpuUsage();
 
     parseStackTrace(hostile);
 
-    expect(performance.now() - startedAt).toBeLessThan(500);
+    const used = process.cpuUsage(startedAt);
+    expect((used.user + used.system) / 1_000).toBeLessThan(500);
   });
 });
 
