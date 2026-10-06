@@ -97,9 +97,10 @@ pnpm --filter @webblackbox/extension package:chrome
 ## Working on the Player
 
 ```bash
-pnpm --filter @webblackbox/player dev     # Vite dev server with HMR (add ?ui=next for the React player)
+pnpm --filter @webblackbox/player dev     # Vite dev server with HMR
 pnpm --filter @webblackbox/player build   # vite build → apps/player/build
 pnpm --filter @webblackbox/player serve   # serve the build on port 4177
+pnpm --filter @webblackbox/player e2e:player  # build + Chrome e2e (set WB_E2E_CHROME_BIN)
 ```
 
 GitHub Pages helpers:

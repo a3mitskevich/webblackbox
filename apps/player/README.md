@@ -20,20 +20,20 @@ The Player provides an interactive UI for exploring recorded web sessions with m
 - **React 19** — UI framework
 - **@webblackbox/player-sdk** — Session analysis engine
 - **@webblackbox/protocol** — Type definitions and validation
-- **Custom CSS** — classic Player styling in `src/styles.css`; the React player (`?ui=next`) uses the token sheet `src/next/styles/next.css` with self-hosted Onest and JetBrains Mono
-- **class-variance-authority** — Component variants
+- **Custom CSS** — the token sheet `src/next/styles/next.css` (light and dark themes) with self-hosted Onest and JetBrains Mono; each feature ships its own stylesheet file
+- **Vetted libraries** — Base UI, TanStack Virtual, react-resizable-panels, lucide-react, react-hotkeys-hook, Shiki (JavaScript regex engine), uPlot, jsdiff, microdiff, uFuzzy (see `LIBRARIES.md` in the rewrite notes and the PR #20 summary)
 - **Vite** — build, dev server with HMR and code splitting (the rest of the monorepo builds with tsup)
 
-The React player (`?ui=next`, the rewrite in progress) is documented in [`src/next/README.md`](src/next/README.md): feature folders, rail-tab registry, per-feature i18n, store slices and e2e scenarios.
+The UI is React only (function components, hooks, one external store read with `useSyncExternalStore`); `src/main.ts` just mounts it. Its layout, feature folders, rail-tab registry, per-feature i18n, store slices and e2e scenarios are documented in [`src/next/README.md`](src/next/README.md). Nothing in `src/` renders HTML strings or builds DOM by hand: `src/no-dom-rendering.test.ts` fails on `innerHTML`, `dangerouslySetInnerHTML`, `document.createElement` and the like.
 
 ## Development
 
 ```bash
 cd apps/player
-pnpm dev        # Vite dev server with HMR on http://localhost:4177 (?ui=next for the React player)
+pnpm dev        # Vite dev server with HMR on http://localhost:4177
 ```
 
-The dev server relaxes the page CSP for React refresh (its inline preamble script) and the HMR websocket only; production builds keep `index.html` as written.
+The dev server relaxes the page CSP for React refresh (its inline preamble script), the HMR websocket and the CSS Vite injects as `<style>` in development only; production builds keep `index.html` as written.
 
 ## Build
 
@@ -45,13 +45,21 @@ pnpm serve      # serve build/ on http://localhost:4177
 
 `build/` is what GitHub Pages and the extension e2e serve:
 
-- `index.html` (from `apps/player/index.html`, the Vite entry; its CSP meta is the Player CSP) and `main.js`, a small entry with a stable name that picks the UI;
-- lazily loaded chunks, CSS files and fonts under `assets/` with content hashes: the classic UI, the React UI, React, Zod and the archive SDK are separate chunks, so each UI loads only what it uses and heavy panels can `React.lazy` their own chunk;
+- `index.html` (from `apps/player/index.html`, the Vite entry; its CSP meta is the Player CSP) and `main.js`, the entry with a stable name (the app shell);
+- chunks, CSS files and fonts under `assets/` with content hashes: React, Zod and the archive SDK are named chunks, and heavy panels (`React.lazy`) and libraries such as Shiki and uPlot load their own chunk on first use;
 - everything in `public/` copied as is (logo, iframe examples, font licences);
 - `__PLAYER_VERSION__` from `package.json`, source maps next to every chunk;
-- no `eval`/`Function`/WebAssembly and no runtime-injected `<style>`: CSS ships as files and fonts are never inlined as `data:` URIs (`e2e:player-next` scans the build and fails on any CSP violation, also under a policy without `style-src 'unsafe-inline'`).
+- no `eval`/`Function`/WebAssembly and no runtime-injected `<style>`: the CSP is `script-src 'self'; style-src 'self'` (no `'unsafe-inline'`), CSS ships as files and fonts are never inlined as `data:` URIs (`e2e:player` scans the build and fails on any CSP violation).
 
 `pnpm bundle:size` (repo root) checks the entry chunk and the total of all JS and CSS files against `bundle-size/budgets.json`.
+
+## E2E
+
+```bash
+WB_E2E_CHROME_BIN=/path/to/chrome pnpm --filter @webblackbox/player e2e:player
+```
+
+`e2e:player` builds the Player, opens a synthetic encrypted archive in Chrome over CDP and runs the shell scenarios (`scripts/e2e-next/shell.mjs`) and every feature's scenarios (`src/next/features/<feature>/<feature>.e2e.mjs`) through `data-testid` hooks only. `WB_E2E_PLAYER_FEATURES=network` runs one feature's scenarios; `WB_E2E_SCREENSHOTS_DIR` captures 1440/1920, light/dark, EN/RU screenshots; `WB_E2E_REAL_ARCHIVE` (+ `WB_E2E_REAL_PASSPHRASE`) also opens a real archive (keep its screenshots local).
 
 ## GitHub Pages
 
