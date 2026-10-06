@@ -12,6 +12,7 @@ import {
   WEBBLACKBOX_PROTOCOL_VERSION
 } from "./constants.js";
 import { compileValuePattern } from "./redaction-rules.js";
+import { scriptSourceMapDataSchema } from "./script-schemas.js";
 import {
   pointerCaptureOptionsSchema,
   userClickReactionDataSchema,
@@ -657,6 +658,7 @@ const specializedDataSchemas = {
   "storage.local.snapshot": storageSnapshotDataSchema,
   "storage.idb.snapshot": storageSnapshotDataSchema,
   "perf.vitals": perfVitalsDataSchema,
+  "sys.script": scriptSourceMapDataSchema,
   "user.pointerdown": userPointerPressDataSchema,
   "user.pointerup": userPointerPressDataSchema,
   "user.click.reaction": userClickReactionDataSchema,

@@ -23,6 +23,7 @@ import {
   summarizeSession
 } from "./session-tools.js";
 import { createArchivePathGuard } from "./path-guard.js";
+import { symbolicateArchiveStacks, symbolicateStackInput } from "./symbolicate-tools.js";
 
 export const SERVER_NAME = "webblackbox-mcp-server";
 export const SERVER_VERSION =
@@ -306,6 +307,26 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
           topActionDiffs,
           topPerfDiffs,
           includeStorageHashes
+        })
+      );
+    }
+  );
+
+  server.tool(
+    "symbolicate_stack",
+    "Map minified stack traces from an archive (an event, its error events, or a pasted stack) " +
+      "to original sources using source maps embedded in the archive and an optional maps directory.",
+    symbolicateStackInput,
+    async ({ path, passphrase, eventId, stack, mapsDir, limit }) => {
+      // Both filesystem paths go through the --allow-dir guard, like every other tool.
+      return toTextPayload(
+        await symbolicateArchiveStacks({
+          path: await guardPath(path),
+          passphrase,
+          eventId,
+          stack,
+          mapsDir: mapsDir === undefined ? undefined : await guardPath(mapsDir),
+          limit
         })
       );
     }

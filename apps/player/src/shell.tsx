@@ -495,6 +495,7 @@ export function PlayerShell({ locale = "en" }: PlayerShellProps = {}): React.JSX
 
           <Card className="details-card" data-log-panel-target="details">
             <h2>{messages.eventDetailsHeading}</h2>
+            <section id="event-stack" className="stack-view" hidden></section>
             <pre id="event-details" className="code"></pre>
           </Card>
 

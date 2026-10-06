@@ -175,12 +175,16 @@ describe("detectProfileChange", () => {
       ...mine,
       network: { ...mine.network, excludeUrls: [...mine.network.excludeUrls, "*/health*"] }
     };
+    const editedSourceMaps = { ...mine, sourceMaps: { mode: "off" as const } };
     const renamed = { ...mine, name: "Mine (renamed)", description: "Other words" };
     const next = (profile: typeof mine) =>
       snapshot(select(state({ profiles: [createDefaultProfile(), profile] }), "mine"));
 
     expect(
       detectProfileChange({ started, next: next(editedNetwork), startedProfileExists: true })
+    ).toBe("profile-edited");
+    expect(
+      detectProfileChange({ started, next: next(editedSourceMaps), startedProfileExists: true })
     ).toBe("profile-edited");
     expect(
       detectProfileChange({ started, next: next(renamed), startedProfileExists: true })

@@ -138,6 +138,7 @@ const QA_PRESET = createBaseProfile({
     includeUrls: [],
     excludeUrls: []
   },
+  sourceMaps: { mode: "embed" },
   export: {
     encryption: "required",
     privacyScanner: "block"
@@ -187,6 +188,7 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
     drag: true,
     wheel: true
   },
+  sourceMaps: { mode: "embed" },
   export: {
     encryption: "required",
     privacyScanner: "block"

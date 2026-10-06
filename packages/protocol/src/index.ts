@@ -15,5 +15,7 @@ export * from "./pointer-schemas.js";
 export * from "./privacy.js";
 export * from "./redaction-rules.js";
 export * from "./schemas.js";
+export * from "./script.js";
+export * from "./script-schemas.js";
 export * from "./secret-detection.js";
 export * from "./types.js";

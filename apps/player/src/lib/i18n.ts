@@ -1,5 +1,6 @@
 import type { NetworkCacheSource, PrivacyViolationSubject } from "@webblackbox/player-sdk";
 
+import type { StackViewMessages } from "./stack-view.js";
 import type { PointerLaneKind } from "./pointer-overlay.js";
 
 import { readStoredText, writeStoredText } from "./storage.js";
@@ -332,6 +333,7 @@ type PlayerMessages = {
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;
+  stackView: StackViewMessages;
 };
 
 export const PLAYER_LOCALE_STORAGE_KEY = "webblackbox.player.locale";
@@ -714,6 +716,21 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       stable: "stable",
       new: "new",
       missing: "missing"
+    },
+    stackView: {
+      heading: "Stack trace",
+      showOriginal: "Show original",
+      showRaw: "Show raw",
+      loadMapFiles: "Load .map files",
+      loadMapFolder: "Load maps folder",
+      symbolServerPlaceholder: "Symbol server URL (maps by file name)",
+      symbolServerApply: "Use",
+      mapsLoaded: "{count} source map file(s) loaded.",
+      resolving: "Resolving original sources…",
+      noMap: "no source map",
+      noMapping: "no mapping at this position",
+      mapError: "source map error",
+      invalidSymbolServer: "Symbol server URL must be http(s)."
     },
     panels: {
       timeline: "Timeline",
@@ -1100,6 +1117,21 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       stable: "稳定",
       new: "新增",
       missing: "缺失"
+    },
+    stackView: {
+      heading: "堆栈",
+      showOriginal: "显示源码位置",
+      showRaw: "显示原始堆栈",
+      loadMapFiles: "加载 .map 文件",
+      loadMapFolder: "加载 map 文件夹",
+      symbolServerPlaceholder: "符号服务器 URL（按文件名获取 map）",
+      symbolServerApply: "使用",
+      mapsLoaded: "已加载 {count} 个 source map 文件。",
+      resolving: "正在解析源码位置…",
+      noMap: "无 source map",
+      noMapping: "该位置无映射",
+      mapError: "source map 错误",
+      invalidSymbolServer: "符号服务器 URL 必须是 http(s)。"
     },
     panels: {
       timeline: "时间线",

@@ -36,7 +36,9 @@ const FORM: ProfileFormValues = {
   mousemoveHz: "",
   visual: "screenshots",
   deleteAfterExport: true,
-  unexportedRetentionMinutes: "10"
+  unexportedRetentionMinutes: "10",
+  sourceMaps: "embed",
+  sourceMapMaxBytes: "1048576"
 };
 
 describe("profile form model", () => {
@@ -96,6 +98,32 @@ describe("profile form model", () => {
     expect(next.redaction.redactHeaders).toEqual(["authorization", "x-token"]);
     expect(next.pointer.mousemoveHz).toBeUndefined();
     expect(applyProfileFormValues(base, { ...FORM, visual: "" }).visual).toBeUndefined();
+  });
+
+  it("sets, clamps and clears the source map option", () => {
+    const base = createDefaultProfile();
+
+    expect(applyProfileFormValues(base, FORM).sourceMaps).toEqual({
+      mode: "embed",
+      maxMapBytes: 1_048_576
+    });
+    expect(
+      applyProfileFormValues(base, { ...FORM, sourceMaps: "metadata", sourceMapMaxBytes: "" })
+        .sourceMaps
+    ).toEqual({ mode: "metadata" });
+    expect(
+      applyProfileFormValues(base, { ...FORM, sourceMapMaxBytes: "999999999999" }).sourceMaps
+        ?.maxMapBytes
+    ).toBe(32 * 1024 * 1024);
+
+    const withMaps = { ...base, sourceMaps: { mode: "off" as const } };
+
+    expect(
+      applyProfileFormValues(withMaps, { ...FORM, sourceMaps: "" }).sourceMaps
+    ).toBeUndefined();
+    expect(
+      applyProfileFormValues(withMaps, { ...FORM, sourceMaps: "bogus" }).sourceMaps
+    ).toBeUndefined();
   });
 
   it("builds rules with only the conditions that were filled in", () => {

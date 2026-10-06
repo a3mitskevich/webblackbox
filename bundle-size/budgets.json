@@ -9,10 +9,10 @@
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 65700,
-      "maxGzipBytes": 18700,
+      "maxBytes": 67000,
+      "maxGzipBytes": 19200,
       "forbidSources": ["node_modules/zod/"],
-      "note": "Content script in every recorded frame. 22,431 B / 7,420 B gzip at introduction. 38,144 B / 11,643 B with #10: the shared UI dictionary it bundles for the keyboard-marker label grew with the profile strings, plus the typed-value policy for password fields; #14 loads the dictionary with the content agent instead. 63,804 B / 18,135 B with #12: the redesigned UI grew that dictionary."
+      "note": "Content script in every recorded frame. 22,431 B / 7,420 B gzip at introduction. 38,144 B / 11,643 B with #10: the shared UI dictionary it bundles for the keyboard-marker label grew with the profile strings, plus the typed-value policy for password fields; #14 loads the dictionary with the content agent instead. 63,804 B / 18,135 B with #12: the redesigned UI grew that dictionary. 65,699 B / 18,794 B with #11: its source-map profile strings."
     },
     {
       "path": "apps/extension/build/content-agent.js",

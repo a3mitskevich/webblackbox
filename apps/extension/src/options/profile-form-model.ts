@@ -17,12 +17,14 @@ import {
 import {
   MAX_BODY_CAPTURE_BYTES,
   MAX_MOUSEMOVE_HZ,
+  MAX_SOURCE_MAP_BYTES,
   MAX_RULE_PRIORITY,
   MAX_UNEXPORTED_RETENTION_MINUTES,
   MIN_RULE_PRIORITY,
   MIN_UNEXPORTED_RETENTION_MINUTES,
   type ProfileLocalDataSettings,
   type ProfileRule,
+  type ProfileSourceMapMode,
   type ProfileVisualCapture,
   type RecordingProfile,
   type RecordingProfilesStore
@@ -53,6 +55,9 @@ export type ProfileFormValues = {
   excludeUrls: string;
   mousemoveHz: string;
   visual: string;
+  /** `""` = automatic (metadata in Full mode, off in Lite). */
+  sourceMaps: string;
+  sourceMapMaxBytes: string;
   deleteAfterExport: boolean;
   unexportedRetentionMinutes: string;
 };
@@ -75,6 +80,8 @@ export type RuleFormValues = {
 };
 
 const VISUAL_VALUES: readonly ProfileVisualCapture[] = ["none", "screenshots", "recording", "both"];
+const SOURCE_MAP_MODES: readonly ProfileSourceMapMode[] = ["off", "metadata", "embed"];
+
 const VALUE_PATTERN_LINE = /^\[([^\]]*)\]\s*(.*)$/;
 
 /**
@@ -168,9 +175,13 @@ export function applyProfileFormValues(
   const bodyMaxBytes = parseOptionalInt(values.bodyMaxBytes, 0, MAX_BODY_CAPTURE_BYTES);
   const mousemoveHz = parseOptionalInt(values.mousemoveHz, 1, MAX_MOUSEMOVE_HZ);
   const visual = VISUAL_VALUES.find((entry) => entry === values.visual);
+  const sourceMapMode = SOURCE_MAP_MODES.find((entry) => entry === values.sourceMaps);
+  const sourceMapMaxBytes = parseOptionalInt(values.sourceMapMaxBytes, 1, MAX_SOURCE_MAP_BYTES);
   const localData = localDataFromFormValues(profile, values);
   const withoutVisual = Object.fromEntries(
-    Object.entries(profile).filter(([key]) => key !== "visual" && key !== "localData")
+    Object.entries(profile).filter(
+      ([key]) => key !== "visual" && key !== "localData" && key !== "sourceMaps"
+    )
   ) as RecordingProfile;
 
   return {
@@ -204,7 +215,15 @@ export function applyProfileFormValues(
       ...(mousemoveHz !== undefined ? { mousemoveHz } : {})
     },
     ...(visual ? { visual } : {}),
-    ...(localData ? { localData } : {})
+    ...(localData ? { localData } : {}),
+    ...(sourceMapMode
+      ? {
+          sourceMaps: {
+            mode: sourceMapMode,
+            ...(sourceMapMaxBytes !== undefined ? { maxMapBytes: sourceMapMaxBytes } : {})
+          }
+        }
+      : {})
   };
 }
 

@@ -21,6 +21,7 @@ import {
   sanitizeOptionalUrl,
   stripUndefined
 } from "./normalizer-utils.js";
+import { normalizeScriptSourceMapPayload } from "./script-source-map.js";
 import { recordedUrl } from "./url-recording.js";
 import type { EventNormalizer, RawRecorderEvent } from "./types.js";
 
@@ -83,6 +84,8 @@ const CONTENT_EVENT_MAP: Record<string, WebBlackboxEventType> = {
   cookieSnapshot: "storage.cookie.snapshot",
   sse: "network.sse.message"
 };
+/** Raw type of script → source map records from the debugger (system) or the lite scanner. */
+const SCRIPT_RAW_TYPE = "script";
 /** Host-side raw type of a body the policy asked for but the host could not keep. */
 export const BODY_SKIPPED_RAW_TYPE = "cdp.network.body.skipped";
 const MAX_BODY_SKIP_DETAIL_CHARS = 200;
@@ -105,6 +108,12 @@ export class DefaultEventNormalizer implements EventNormalizer {
   public normalize(
     input: RawRecorderEvent
   ): { eventType: WebBlackboxEventType; payload: unknown } | null {
+    if (input.rawType === SCRIPT_RAW_TYPE && input.source !== "cdp") {
+      const payload = normalizeScriptSourceMapPayload(input.payload);
+
+      return payload ? { eventType: "sys.script", payload } : null;
+    }
+
     if (input.source === "cdp") {
       return this.normalizeCdp(input);
     }

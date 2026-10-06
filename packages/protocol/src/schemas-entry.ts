@@ -4,3 +4,4 @@
 export * from "./messages.js";
 export * from "./pointer-schemas.js";
 export * from "./schemas.js";
+export * from "./script-schemas.js";

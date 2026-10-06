@@ -133,6 +133,12 @@ export const EN_MESSAGES = {
   optionsProfileExcludeUrls: "Never capture bodies for these URL globs",
   optionsProfileMousemoveHz: "Pointer rate",
   optionsProfileVisual: "Visual capture",
+  optionsProfileSourceMaps: "Source maps (stack symbolication)",
+  optionsProfileSourceMapsAuto: "Automatic: references in Full mode, none in Lite",
+  optionsProfileSourceMapsOff: "Off",
+  optionsProfileSourceMapsMetadata: "Record script → source map references",
+  optionsProfileSourceMapsEmbed: "Embed source maps in the archive",
+  optionsProfileSourceMapMaxBytes: "Largest embedded source map (bytes, default 8 MiB)",
   optionsProfileVisualPopup: "Chosen in the popup",
   optionsRedactionDisclaimer:
     "Masking applies your rules on a best-effort basis; WebBlackbox does not guarantee that all sensitive data is removed. Archives are always encrypted.",

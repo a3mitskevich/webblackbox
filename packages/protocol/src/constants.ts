@@ -23,6 +23,7 @@ export const WEBBLACKBOX_EVENT_TYPES = [
   "sys.debugger.attach",
   "sys.debugger.detach",
   "sys.notice",
+  "sys.script", // script URL -> source map reference (and optional embedded map blob)
   "nav.commit",
   "nav.history.push",
   "nav.history.replace",

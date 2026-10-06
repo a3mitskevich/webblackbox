@@ -10,6 +10,7 @@ import {
   MAX_LIST_ENTRIES,
   MAX_MOUSEMOVE_HZ,
   MAX_PATTERN_LENGTH,
+  MAX_SOURCE_MAP_BYTES,
   MAX_UNEXPORTED_RETENTION_MINUTES,
   MIN_UNEXPORTED_RETENTION_MINUTES,
   type RecordingProfile
@@ -231,6 +232,28 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
             { value: "both", label: t("popupFullVisualBoth") },
             { value: "none", label: t("popupFullVisualNone") }
           ]
+        }),
+        selectField({
+          id: "pf-sourceMaps",
+          name: "sourceMaps",
+          label: t("optionsProfileSourceMaps"),
+          value: profile.sourceMaps?.mode ?? "",
+          options: [
+            { value: "", label: t("optionsProfileSourceMapsAuto") },
+            { value: "off", label: t("optionsProfileSourceMapsOff") },
+            { value: "metadata", label: t("optionsProfileSourceMapsMetadata") },
+            { value: "embed", label: t("optionsProfileSourceMapsEmbed") }
+          ]
+        }),
+        numberField({
+          id: "pf-sourceMapMaxBytes",
+          name: "sourceMapMaxBytes",
+          label: t("optionsProfileSourceMapMaxBytes"),
+          value: profile.sourceMaps?.maxMapBytes?.toString() ?? "",
+          min: 1,
+          max: MAX_SOURCE_MAP_BYTES,
+          step: 1024,
+          unit: "B"
         })
       ]),
       createCategoryMatrix(profile, t),
