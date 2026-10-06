@@ -310,7 +310,9 @@ describe("buildChromeArgs", () => {
         ...devtoolsAutomationSwitches,
         ...commonTail
       ]
-    ]
+    ],
+    // Not a former inline launcher: without the sandbox prefix Chrome never came up on CI.
+    ["profileHarness", [...linuxSandboxPrefix, "--headless=new", ...commonHead, ...commonTail]]
   ])("keeps the %s launch profile's Linux switch set", (profileName, expected) => {
     const args = buildChromeArgs({
       ...base,

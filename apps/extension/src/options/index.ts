@@ -19,6 +19,10 @@ import {
   migrateStoredRecorderConfig
 } from "../shared/options-storage.js";
 import { normalizePerformanceBudget } from "../shared/performance-budget.js";
+import {
+  normalizeStartReloadOffer,
+  START_RELOAD_OFFER_STORAGE_KEY
+} from "../shared/start-reload-offer.js";
 import { PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
 import {
   applyDefaultProfileToGeneralForm,
@@ -40,6 +44,7 @@ import {
   findField,
   isArchiveChanged,
   isInjectionChanged,
+  isStartReloadOfferChanged,
   isStoredOptionsChanged,
   normalizeOptionsConfig,
   resetGeneralSection,
@@ -265,6 +270,7 @@ function isDirty(page: PageState): boolean {
     isStoredOptionsChanged(page.draft, page.baseline) ||
     isArchiveChanged(page.draft, page.baseline) ||
     isInjectionChanged(page.draft, page.baseline) ||
+    isStartReloadOfferChanged(page.draft, page.baseline) ||
     (page.editor?.isDirty() ?? false)
   );
 }
@@ -331,6 +337,7 @@ async function saveAll(page: PageState): Promise<void> {
     const generalChanged = isStoredOptionsChanged(page.draft, page.baseline);
     const archiveChanged = isArchiveChanged(page.draft, page.baseline);
     const injectionChanged = isInjectionChanged(page.draft, page.baseline);
+    const startReloadOfferChanged = isStartReloadOfferChanged(page.draft, page.baseline);
     const profilesChanged = editor.isDirty();
     // Nothing is written when the profiles draft cannot be saved, so a failed Save never leaves
     // the general options ahead of the Default profile they are folded into.
@@ -348,7 +355,8 @@ async function saveAll(page: PageState): Promise<void> {
       page.baseline = {
         ...page.draft,
         archive: page.baseline.archive,
-        injection: page.baseline.injection
+        injection: page.baseline.injection,
+        startReloadOffer: page.baseline.startReloadOffer
       };
 
       if (profilesChanged) {
@@ -377,6 +385,13 @@ async function saveAll(page: PageState): Promise<void> {
       // The service worker watches this key and re-registers (or drops) the content script.
       await chromeApi?.storage?.local.set({
         [CONTENT_INJECTION_STORAGE_KEY]: page.draft.injection
+      });
+    }
+
+    if (startReloadOfferChanged) {
+      // The popup reads this key on every Start.
+      await chromeApi?.storage?.local.set({
+        [START_RELOAD_OFFER_STORAGE_KEY]: page.draft.startReloadOffer
       });
     }
 
@@ -416,7 +431,8 @@ async function loadGeneralDraft(): Promise<GeneralDraft> {
   const values = await chromeApi?.storage?.local.get([
     STORAGE_KEY,
     PROFILES_STORAGE_KEY,
-    CONTENT_INJECTION_STORAGE_KEY
+    CONTENT_INJECTION_STORAGE_KEY,
+    START_RELOAD_OFFER_STORAGE_KEY
   ]);
   const legacy = toLegacyGeneralFields(values?.[STORAGE_KEY]);
   const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
@@ -427,11 +443,14 @@ async function loadGeneralDraft(): Promise<GeneralDraft> {
       ? applyDefaultProfileToGeneralForm(legacy.recorderConfig, parsed.store)
       : legacy.recorderConfig,
     archive: loadExportPolicyPrefs(),
-    injection: normalizeContentInjectionMode(values?.[CONTENT_INJECTION_STORAGE_KEY])
+    injection: normalizeContentInjectionMode(values?.[CONTENT_INJECTION_STORAGE_KEY]),
+    startReloadOffer: normalizeStartReloadOffer(values?.[START_RELOAD_OFFER_STORAGE_KEY])
   };
 }
 
-function toLegacyGeneralFields(stored: unknown): Omit<GeneralDraft, "archive" | "injection"> {
+function toLegacyGeneralFields(
+  stored: unknown
+): Omit<GeneralDraft, "archive" | "injection" | "startReloadOffer"> {
   if (!stored || typeof stored !== "object") {
     const defaults = createDefaultGeneralDraft();
     return {

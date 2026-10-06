@@ -17,6 +17,7 @@ import {
 } from "./popup-test-harness.js";
 
 const POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY = "webblackbox.popup.full-visual-capture";
+const START_RELOAD_OFFER_STORAGE_KEY = "webblackbox.startReloadOffer";
 
 const PREVIEW = {
   kind: "sw.profile-preview",
@@ -75,6 +76,14 @@ async function emitSessions(port: FakePort, sessions: unknown[]): Promise<void> 
 
 async function chooseFullEngine(): Promise<void> {
   chooseRadio("capture-mode", "full");
+  await flushPopup();
+}
+
+/** Start, then "Start without reload" in the question Start asks by default. */
+async function startWithoutReload(): Promise<void> {
+  getButton("start").click();
+  await flushPopup();
+  getButton("start-direct").click();
   await flushPopup();
 }
 
@@ -313,12 +322,12 @@ describe("popup start", () => {
     await flushPopup();
 
     expect(has(".wb-confirm-overlay")).toBe(true);
-    expect(getButton("start-lite-reload").textContent).toBe("Reload and Start Lite");
+    expect(getButton("start-reload").textContent).toBe("Reload and Start");
     expect(port.postMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ kind: "ui.start" })
     );
 
-    getButton("start-lite-reload").click();
+    getButton("start-reload").click();
     await flushPopup();
 
     expect(port.postMessage).toHaveBeenCalledWith({
@@ -330,27 +339,50 @@ describe("popup start", () => {
     expect(has(".wb-confirm-overlay")).toBe(false);
   });
 
-  it("can start lite without reloading", async () => {
+  it("asks in Full too and starts Full with a page reload", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
+    await chooseFullEngine();
     getButton("start").click();
     await flushPopup();
-    getButton("start-lite-direct").click();
+
+    expect(has(".wb-confirm-overlay")).toBe(true);
+    expect(port.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "ui.start" })
+    );
+
+    getButton("start-reload").click();
     await flushPopup();
+
+    expect(port.postMessage).toHaveBeenCalledWith({
+      kind: "ui.start",
+      tabId: 17,
+      mode: "full",
+      reloadPage: true,
+      visualCapture: "screenshots"
+    });
+  });
+
+  it("can start without reloading", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    await startWithoutReload();
 
     expect(port.postMessage).toHaveBeenCalledWith({ kind: "ui.start", tabId: 17, mode: "lite" });
   });
 
-  it("does not start lite when the reload confirmation is cancelled", async () => {
+  it("does not start when the reload question is cancelled", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
     getButton("start").click();
     await flushPopup();
-    getButton("start-lite-cancel").click();
+    getButton("start-cancel").click();
     await flushPopup();
 
     expect(port.postMessage).not.toHaveBeenCalledWith(
@@ -359,14 +391,44 @@ describe("popup start", () => {
     expect(has(".wb-confirm-overlay")).toBe(false);
   });
 
+  it.each([
+    ["lite", { kind: "ui.start", tabId: 17, mode: "lite" }],
+    ["full", { kind: "ui.start", tabId: 17, mode: "full", visualCapture: "screenshots" }]
+  ] as const)(
+    "starts %s at once without a reload when the offer is turned off",
+    async (engine, expected) => {
+      const port = new FakePort();
+      installChromeStub(port, { storage: { [START_RELOAD_OFFER_STORAGE_KEY]: false } });
+
+      await importPopupModule();
+      chooseRadio("capture-mode", engine);
+      await flushPopup();
+      getButton("start").click();
+      await flushPopup();
+
+      expect(has(".wb-confirm-overlay")).toBe(false);
+      expect(port.postMessage).toHaveBeenCalledWith(expected);
+    }
+  );
+
+  it("asks when the stored offer is on", async () => {
+    const port = new FakePort();
+    installChromeStub(port, { storage: { [START_RELOAD_OFFER_STORAGE_KEY]: true } });
+
+    await importPopupModule();
+    getButton("start").click();
+    await flushPopup();
+
+    expect(has(".wb-confirm-overlay")).toBe(true);
+  });
+
   it("keeps Start disabled while a full start request is pending", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
     await importPopupModule();
     await chooseFullEngine();
-    getButton("start").click();
-    await flushPopup();
+    await startWithoutReload();
 
     expect(port.postMessage).toHaveBeenCalledWith({
       kind: "ui.start",
@@ -400,8 +462,7 @@ describe("popup start", () => {
     expect(radio("full-visual-capture", "screenshots").checked).toBe(true);
 
     chooseRadio("full-visual-capture", choice);
-    getButton("start").click();
-    await flushPopup();
+    await startWithoutReload();
 
     expect(port.postMessage).toHaveBeenCalledWith({
       kind: "ui.start",
@@ -437,8 +498,7 @@ describe("popup start", () => {
 
     await importPopupModule();
     await chooseFullEngine();
-    getButton("start").click();
-    await flushPopup();
+    await startWithoutReload();
 
     expect(getStatusLine().textContent).toBe("Start failed: Debugger is already attached");
     expect(getButton("start").disabled).toBe(false);
@@ -544,10 +604,8 @@ describe("popup recording profiles", () => {
     port.emit(PREVIEW);
     await flushPopup();
 
-    getButton("start").click();
-    await flushPopup();
+    await startWithoutReload();
 
-    expect(has("[role='dialog']")).toBe(false);
     expect(port.postMessage).toHaveBeenCalledWith({
       kind: "ui.start",
       tabId: 17,
@@ -590,8 +648,7 @@ describe("popup recording profiles", () => {
 
     port.emit(PREVIEW);
     await flushPopup();
-    getButton("start").click();
-    await flushPopup();
+    await startWithoutReload();
 
     expect(port.postMessage).toHaveBeenCalledWith({
       kind: "ui.start",

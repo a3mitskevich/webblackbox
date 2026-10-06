@@ -173,6 +173,7 @@ import {
   upsertStoppedSessionRecord,
   type StoppedSessionRecord
 } from "./stopped-sessions.js";
+import { startWithOptionalReload } from "./start-with-reload.js";
 import {
   FULL_MODE_STORAGE_SNAPSHOT_MAX_ITEMS,
   buildLocalStorageSnapshotExpression,
@@ -902,18 +903,16 @@ async function handleInboundMessage(
       return;
     }
 
-    const mode = await startSession(tabId, message.mode, {
-      visualCapture: resolveFullModeVisualCapture(message),
-      profileId: typeof message.profileId === "string" ? message.profileId : undefined
+    // Both engines: the reload follows the start, so the capture (Full: CDP) sees the page load.
+    await startWithOptionalReload(tabId, message.reloadPage === true, {
+      start: () =>
+        startSession(tabId, message.mode, {
+          visualCapture: resolveFullModeVisualCapture(message),
+          profileId: typeof message.profileId === "string" ? message.profileId : undefined
+        }),
+      reload: reloadRecordingTab,
+      stop: stopSession
     });
-    if (mode === "lite" && message.reloadPage) {
-      try {
-        await reloadRecordingTab(tabId);
-      } catch (error) {
-        await stopSession(tabId);
-        throw error;
-      }
-    }
     return;
   }
 

@@ -173,6 +173,9 @@ const SESSIONS_PAGE_FIXTURE = [
 /** Candidate selectors so the same script captures the previous and the redesigned UI. */
 const START_SELECTORS = ["[data-action='start']", "[data-action='start-lite']"];
 const LITE_ENGINE_SELECTORS = ["input[name='capture-mode'][value='lite']"];
+const FULL_ENGINE_SELECTORS = ["input[name='capture-mode'][value='full']"];
+/** Start asks whether to reload the page first (both engines) unless Options turned that off. */
+const START_WITHOUT_RELOAD_SELECTORS = ["[data-action='start-direct']"];
 
 const POPUP_STATES = [
   { name: "popup-idle", sessions: [], preview: PREVIEW_DEFAULT },
@@ -206,13 +209,19 @@ const POPUP_STATES = [
     sessions: [ACTIVE_OTHER_TAB_SESSION, STOPPED_SESSION],
     preview: PREVIEW_RULE,
     sendMessageResponse: START_REJECTED,
-    steps: [{ click: START_SELECTORS }]
+    steps: [{ click: START_SELECTORS }, { click: START_WITHOUT_RELOAD_SELECTORS, optional: true }]
   },
   {
     name: "popup-lite-reload",
     sessions: [],
     preview: PREVIEW_DEFAULT,
     steps: [{ click: LITE_ENGINE_SELECTORS, optional: true }, { click: START_SELECTORS }]
+  },
+  {
+    name: "popup-full-reload",
+    sessions: [],
+    preview: PREVIEW_DEFAULT,
+    steps: [{ click: FULL_ENGINE_SELECTORS }, { click: START_SELECTORS }]
   }
 ];
 
