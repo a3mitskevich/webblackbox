@@ -771,6 +771,7 @@ async function main() {
   const portTraffic = state.swClient
     ? summarizePortTraffic(await readPortTrafficStats(state.swClient).catch(() => null))
     : null;
+  assert(!state.swClient || portTraffic, "Service worker reported no offscreen port traffic");
   assert(
     findBloatedBinaryTraffic(portTraffic).length === 0,
     "Binary payloads crossed the offscreen port in a bloated form",

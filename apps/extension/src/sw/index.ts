@@ -546,10 +546,11 @@ const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
     pollMs: OFFSCREEN_PORT_READY_WAIT_MS
   }
 );
+const offscreenPortTraffic = createPortTrafficMeter();
 const offscreenClient = createOffscreenClient({
   ensurePort: ensureOffscreenPortReady,
   recoverSession: recoverOffscreenSession,
-  traffic: createPortTrafficMeter(),
+  traffic: offscreenPortTraffic,
   shouldLogPerf
 });
 const readEnterprisePolicy = createBoundedManagedPolicyReader(
@@ -4514,7 +4515,7 @@ function isTrustedOffscreenPort(port: PortLike): boolean {
 /** Hands the key to the offscreen document; the port was checked on connect. */
 async function sendAtRestKeyToOffscreen(port: PortLike): Promise<void> {
   try {
-    port.postMessage(toStorageKeyMessage(await getAtRestKey()));
+    offscreenClient.post(port, toStorageKeyMessage(await getAtRestKey()));
   } catch (error) {
     console.warn("[WebBlackbox] failed to send the at-rest key to the offscreen document", error);
   }
@@ -5408,6 +5409,10 @@ function broadcast(message: ExtensionOutboundMessage): void {
 
 function sendPortMessage(port: PortLike, message: ExtensionOutboundMessage): void {
   try {
+    if (port === offscreenPort) {
+      offscreenPortTraffic.recordSent(message.kind, message);
+    }
+
     port.postMessage(message);
   } catch (error) {
     connectedPorts.delete(port);
