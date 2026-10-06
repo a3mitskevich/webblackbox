@@ -130,7 +130,7 @@ export async function readSnapshot(client) {
       lang: document.documentElement.lang,
       theme: document.documentElement.dataset.theme ?? "",
       shortcuts: Boolean(q("shortcuts-dialog")),
-      details: q("details-json")?.textContent ?? "",
+      details: q("inspector-raw-json")?.textContent ?? "",
       unloads: window.__unloads,
       marker: window.__e2eMarker ?? null
     };

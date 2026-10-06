@@ -3,9 +3,6 @@
   "filterEvents": "Filter activity",
   "listEmpty": "No activity matches.",
   "now": "now",
-  "eventDetails": "Event details",
-  "closeDetails": "Close details",
-  "detailsEmpty": "Select an event and press Enter to see its details.",
   "feedFilters": "Activity filters",
   "errorsOnly": "Errors only",
   "hideThirdParty": "Hide third-party",
@@ -82,5 +79,6 @@
   "exception": "Exception",
   "consoleError": "Console error",
   "durationMs": "{value} ms",
-  "resourceFailed": "Failed to load {tag}"
+  "resourceFailed": "Failed to load {tag}",
+  "inspect": "Inspect (Enter)"
 }

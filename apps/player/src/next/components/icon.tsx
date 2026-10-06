@@ -10,11 +10,14 @@ import {
   ChevronRight,
   CircleAlert,
   Clapperboard,
+  Code,
   Copy,
   Database,
   File,
+  FileText,
   Flag,
   Funnel,
+  Info,
   Keyboard,
   Lock,
   LockOpen,
@@ -27,6 +30,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Rows3,
   Search,
   SkipBack,
   SkipForward,
@@ -77,7 +81,11 @@ const ICONS = {
   collapse: ChevronDown,
   sent: ArrowUp,
   received: ArrowDown,
-  slowest: Timer
+  slowest: Timer,
+  code: Code,
+  report: FileText,
+  info: Info,
+  lanes: Rows3
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

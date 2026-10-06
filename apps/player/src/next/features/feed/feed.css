@@ -330,3 +330,14 @@
   display: flex;
   gap: 4px;
 }
+/* "Inspect" on the selected row: the pointer's way into the event inspector (Enter for keys). */
+.feed .fi.cur {
+  grid-template-columns: 52px 22px minmax(0, 1fr) auto;
+}
+.feed .fi .inspect {
+  align-self: center;
+}
+/* The list mode of the Activity tab; a plain wrapper for focus handling, not a layout box. */
+.activity-pane {
+  display: contents;
+}

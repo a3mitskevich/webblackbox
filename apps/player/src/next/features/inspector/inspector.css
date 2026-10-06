@@ -1,0 +1,209 @@
+/* Event inspector (R5): replaces the Activity list while open (mockups/replay/inspector.html). */
+.inspector {
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.insp-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.insp-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.insp-spacer {
+  flex: 1;
+}
+.insp-body {
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+.insp-head {
+  padding: 12px 16px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.insp-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+.insp-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.insp-summary {
+  margin: 8px 0 0;
+  color: var(--ink-2);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.insp-sec {
+  padding: 12px 16px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.insp-sec h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.insp-note {
+  margin: 0;
+  padding: 0 16px;
+  color: var(--ink-3);
+}
+.insp-sec .insp-note {
+  padding: 0;
+}
+.insp-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  margin-bottom: 10px;
+}
+.insp-selector code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.insp-kv {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) 1fr;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+.insp-kv dt {
+  color: var(--ink-3);
+}
+.insp-kv dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.insp-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 0 0 10px;
+}
+.insp-stat {
+  display: flex;
+  flex-direction: column-reverse;
+}
+.insp-stat dd {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.insp-stat dd.bad {
+  color: var(--bad);
+}
+.insp-stat dt {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.insp-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.insp-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.insp-item:hover {
+  background: var(--surface-2);
+}
+.insp-item.bad {
+  color: var(--bad);
+}
+.insp-item .ic {
+  flex: none;
+}
+.insp-off {
+  flex: none;
+  min-width: 64px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.insp-code {
+  font-weight: 600;
+}
+.insp-code.bad {
+  color: var(--bad);
+}
+.insp-count {
+  color: var(--ink-3);
+}
+.insp-method {
+  color: var(--ink-2);
+}
+.insp-path,
+.insp-msg {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.insp-more {
+  padding: 3px 4px 0 76px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.insp-request {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.insp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+.insp-sec .insp-actions:first-child {
+  margin: 0 0 10px;
+}

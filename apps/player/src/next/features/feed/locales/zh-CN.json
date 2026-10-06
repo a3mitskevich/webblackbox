@@ -3,9 +3,6 @@
   "filterEvents": "筛选活动",
   "listEmpty": "没有匹配的活动。",
   "now": "当前",
-  "eventDetails": "事件详情",
-  "closeDetails": "关闭详情",
-  "detailsEmpty": "选择一个事件并按 Enter 查看详情。",
   "feedFilters": "活动筛选",
   "errorsOnly": "仅错误",
   "hideThirdParty": "隐藏第三方",
@@ -82,5 +79,6 @@
   "exception": "异常",
   "consoleError": "控制台错误",
   "durationMs": "{value} 毫秒",
-  "resourceFailed": "{tag} 加载失败"
+  "resourceFailed": "{tag} 加载失败",
+  "inspect": "检查 (Enter)"
 }

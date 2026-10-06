@@ -297,69 +297,6 @@ async function languageKeepsFilters(ctx) {
   return { hidden: russian.hidden, problems: russian.problemsCount };
 }
 
-/**
- * Enter opens the details pane under the list with its own splitter; Esc closes it. The list stays
- * mounted (focus, scroll) while the pane opens and closes, and the pane comes back at its size.
- */
-async function detailsPaneSplits(ctx) {
-  const list = ctx.testId("event-list");
-  await ctx.openSynthetic();
-  await ctx.evaluate(`document.querySelector('${list}').focus()`);
-  await ctx.press("l");
-  await ctx.waitForSnapshot((value) => value.selectedRow !== null, "L selected nothing");
-  // Marks this list node: a remount would drop the mark and the focus.
-  await ctx.evaluate(`document.querySelector('${list}').dataset.mark = "kept"`);
-  await ctx.press("Enter", { code: "Enter", keyCode: 13 });
-  await ctx.waitForSelector(ctx.testId("split-details"), "The details pane has no splitter");
-
-  const listKept = () =>
-    ctx.evaluate(`(() => {
-      const element = document.querySelector('${list}');
-      return element?.dataset.mark === "kept" && document.activeElement === element;
-    })()`);
-  ctx.assert(await listKept(), "Opening the details remounted the list or lost its focus");
-
-  const height = () =>
-    ctx.evaluate(
-      `document.querySelector('${ctx.testId("details-panel")}').getBoundingClientRect().height`
-    );
-  const initial = await height();
-  await ctx.dragBy(ctx.testId("split-details"), 0, -80);
-  const dragged = await height();
-  ctx.assert(dragged > initial + 40, "Dragging the details splitter did not grow the pane", {
-    initial,
-    dragged
-  });
-
-  await ctx.evaluate(`document.querySelector('${list}').focus()`);
-  await ctx.press("Escape", { code: "Escape", keyCode: 27 });
-  await ctx.waitForSnapshot((value) => value.details === "", "Esc did not close the details");
-  ctx.assert(await listKept(), "Closing the details remounted the list or lost its focus");
-
-  await ctx.press("Enter", { code: "Enter", keyCode: 13 });
-  await ctx.waitForSelector(ctx.testId("details-panel"), "Enter did not reopen the details");
-  const reopened = await height();
-  ctx.assert(Math.abs(reopened - dragged) <= 4, "The details pane did not keep its size", {
-    dragged,
-    reopened
-  });
-
-  // "Reset layout" while the pane is closed: it reopens at the default size, not the dragged one.
-  await ctx.press("Escape", { code: "Escape", keyCode: 27 });
-  await ctx.waitForSnapshot((value) => value.details === "", "Esc did not close the details");
-  await ctx.click("reset-layout");
-  await ctx.evaluate(`document.querySelector('${list}').focus()`);
-  await ctx.press("Enter", { code: "Enter", keyCode: 13 });
-  await ctx.waitForSelector(ctx.testId("details-panel"), "Enter did not reopen the details");
-  const afterReset = await height();
-  ctx.assert(Math.abs(afterReset - initial) <= 4, "Reset layout did not reset the closed pane", {
-    initial,
-    afterReset
-  });
-  await ctx.press("Escape", { code: "Escape", keyCode: 27 });
-  return { initial, dragged, reopened, afterReset };
-}
-
 export default {
   feature: "feed",
   scenarios: [
@@ -368,7 +305,6 @@ export default {
     { name: "hide third-party and errors only", run: feedFilters },
     { name: "repeat groups and follow playhead", run: repeatsAndFollow },
     { name: "timeline hover card", run: timelineHoverCard },
-    { name: "language switch keeps the feed filters", run: languageKeepsFilters },
-    { name: "details pane with a splitter", run: detailsPaneSplits }
+    { name: "language switch keeps the feed filters", run: languageKeepsFilters }
   ]
 };

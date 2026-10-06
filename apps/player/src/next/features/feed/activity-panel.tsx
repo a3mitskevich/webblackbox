@@ -1,17 +1,17 @@
 import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
 import { Toolbar } from "@base-ui/react/toolbar";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import "./feed.css";
 
 import type { ScopeFilter } from "../../../lib/scope.js";
 import { Hint } from "../../components/hint.js";
 import { Icon } from "../../components/icon.js";
-import { ListDetailsSplit } from "../../components/split-layout.js";
 import { toastManager } from "../../components/toasts.js";
 import { useController, usePlayerState } from "../../context.js";
 import { resolveSelectedEventId } from "../../controller.js";
+import { InspectorPanel } from "../inspector/index.js";
 import { useFeatureI18n } from "../messages.js";
 import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
 import { ActivityFeed } from "./activity-feed.js";
@@ -58,43 +58,6 @@ function ScopeToggle() {
         {t("scopeIframe", { count: counts.iframe })}
       </Toggle>
     </ToggleGroup>
-  );
-}
-
-function DetailsPanel() {
-  const controller = useController();
-  const t = useFeatureI18n(feedMessages);
-  const archive = usePlayerState((state) => state.archive);
-  const selection = usePlayerState((state) => state.selection);
-
-  if (!archive || !selection) {
-    return null;
-  }
-
-  const payload =
-    selection.kind === "event"
-      ? archive.model.eventById.get(selection.id)
-      : selection.kind === "request"
-        ? archive.model.waterfallByReqId.get(selection.id)
-        : archive.model.actionTimeline.find((action) => action.actId === selection.id);
-
-  return (
-    <section className="details" aria-label={t("eventDetails")} data-testid="details-panel">
-      <header className="details-head">
-        <h2>{t("eventDetails")}</h2>
-        <button
-          type="button"
-          className="btn icon-only small"
-          aria-label={t("closeDetails")}
-          onClick={() => controller.close()}
-        >
-          <Icon name="close" />
-        </button>
-      </header>
-      <pre className="code" data-testid="details-json">
-        {payload ? JSON.stringify(payload, null, 2) : t("detailsEmpty")}
-      </pre>
-    </section>
   );
 }
 
@@ -175,19 +138,38 @@ function FeedFilters() {
 }
 
 /**
- * The Activity tab: the text filter (shared with the header search; uFuzzy), the feed filters,
- * the action → consequences feed, and the raw details of the selection in a resizable pane.
+ * The Activity tab: the text filter (shared with the header search; uFuzzy), the feed filters and
+ * the action → consequences feed; Enter (or "Inspect") swaps the list for the event inspector.
  */
 export function ActivityPanel() {
   const controller = useController();
   const t = useFeatureI18n(feedMessages);
   const query = usePlayerState((state) => state.query);
-  const showDetails = usePlayerState(
+  const showInspector = usePlayerState(
     (state) => state.detailsOpen && state.archive !== null && state.selection !== null
   );
+  const paneRef = useRef<HTMLDivElement>(null);
+  const wasInspecting = useRef(showInspector);
+
+  // Closing the inspector (Esc, "Activity") unmounts it: focus returns to the list.
+  useEffect(() => {
+    const focusLost = !document.activeElement || document.activeElement === document.body;
+
+    if (wasInspecting.current && !showInspector && focusLost) {
+      paneRef.current
+        ?.querySelector<HTMLElement>("[role='listbox']")
+        ?.focus({ preventScroll: true });
+    }
+
+    wasInspecting.current = showInspector;
+  }, [showInspector]);
+
+  if (showInspector) {
+    return <InspectorPanel />;
+  }
 
   return (
-    <>
+    <div ref={paneRef} className="activity-pane">
       <div className="rail-tools feed-tools">
         <label className="field">
           <Icon name="filter" />
@@ -203,11 +185,7 @@ export function ActivityPanel() {
         <FeedFilters />
         <ScopeToggle />
       </div>
-      <ListDetailsSplit
-        name="details"
-        list={<ActivityFeed />}
-        details={showDetails ? <DetailsPanel /> : null}
-      />
-    </>
+      <ActivityFeed />
+    </div>
   );
 }

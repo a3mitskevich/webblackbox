@@ -3,9 +3,6 @@
   "filterEvents": "Фильтр событий",
   "listEmpty": "Ничего не найдено.",
   "now": "сейчас",
-  "eventDetails": "Подробности события",
-  "closeDetails": "Закрыть подробности",
-  "detailsEmpty": "Выберите событие и нажмите Enter, чтобы увидеть подробности.",
   "feedFilters": "Фильтры хронологии",
   "errorsOnly": "Только ошибки",
   "hideThirdParty": "Скрыть сторонние",
@@ -82,5 +79,6 @@
   "exception": "Исключение",
   "consoleError": "Ошибка в консоли",
   "durationMs": "{value} мс",
-  "resourceFailed": "Ошибка загрузки {tag}"
+  "resourceFailed": "Ошибка загрузки {tag}",
+  "inspect": "Инспектор (Enter)"
 }

@@ -722,6 +722,26 @@ h2 {
 .pointer-layer .ripple-middle {
   stroke-dasharray: 4 3;
 }
+.pointer-layer .target-frame {
+  fill: rgb(43 89 224 / 0.08);
+  stroke: #5b8cff;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+.ripple-label {
+  position: absolute;
+  transform: translate(14px, -50%);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--fx-click);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  pointer-events: none;
+  white-space: nowrap;
+}
 .pointer-layer .cursor-dot {
   fill: var(--fx-click);
   opacity: 0.85;

@@ -18,6 +18,7 @@ import {
   RIPPLE_MIN_RADIUS
 } from "../../lib/pointer-overlay.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
+import { useInspectedTarget, type InspectedTargetFrame } from "../features/inspector/index.js";
 import type { LoadedArchive } from "../state.js";
 
 /** Video drift tolerated while playing / when paused before the element is re-seeked. */
@@ -148,62 +149,107 @@ type PointerLayerProps = {
   playheadMono: number;
   shot: ScreenshotRecord | null;
   size: MediaSize;
+  /** The event inspector's target, outlined on the frame. */
+  target: InspectedTargetFrame | null;
 };
 
-/** Cursor, trail and click ripples in recorded viewport coordinates (SVG viewBox = viewport). */
-function PointerLayer({ model, playheadMono, shot, size }: PointerLayerProps) {
+/**
+ * Cursor, trail, click ripples (with their kind: double, right, hold…) and the inspected target,
+ * in recorded viewport coordinates (SVG viewBox = viewport).
+ */
+function PointerLayer({ model, playheadMono, shot, size, target }: PointerLayerProps) {
+  const i18n = useI18n();
   const trail = buildScreenshotTrail(model.pointers, playheadMono);
   const marker = resolveScreenshotMarker(model.pointers, playheadMono, shot?.marker ?? null);
   const ripples = buildRippleMarks(model.pointerActions, playheadMono);
-  const sourceWidth = marker?.viewportWidth ?? shot?.context?.viewportWidth ?? size.width;
-  const sourceHeight = marker?.viewportHeight ?? shot?.context?.viewportHeight ?? size.height;
+  const sourceWidth =
+    marker?.viewportWidth ?? shot?.context?.viewportWidth ?? target?.viewportWidth ?? size.width;
+  const sourceHeight =
+    marker?.viewportHeight ??
+    shot?.context?.viewportHeight ??
+    target?.viewportHeight ??
+    size.height;
 
   if (
     sourceWidth <= 0 ||
     sourceHeight <= 0 ||
-    (!marker && trail.length === 0 && ripples.length === 0)
+    (!marker && trail.length === 0 && ripples.length === 0 && !target)
   ) {
     return null;
   }
 
+  const labels = ripples.flatMap((mark) => {
+    const label = i18n.formatPointerRipple(mark.kind);
+    return label ? [{ mark, label }] : [];
+  });
+
   return (
-    <svg
-      className="pointer-layer"
-      viewBox={`0 0 ${sourceWidth} ${sourceHeight}`}
-      preserveAspectRatio="none"
-      aria-hidden="true"
-      data-testid="pointer-layer"
-    >
-      {trail.length > 1 ? (
-        <polyline
-          className="trail"
-          points={trail.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ")}
-        />
-      ) : null}
-      {ripples.map((mark) => {
-        const radius = RIPPLE_MIN_RADIUS + (RIPPLE_MAX_RADIUS - RIPPLE_MIN_RADIUS) * mark.progress;
-        return (
-          <circle
-            key={`${mark.mono}-${mark.kind}`}
-            className={`ripple ripple-${mark.kind}`}
-            cx={mark.x}
-            cy={mark.y}
-            r={radius}
-            opacity={1 - mark.progress}
+    <>
+      <svg
+        className="pointer-layer"
+        viewBox={`0 0 ${sourceWidth} ${sourceHeight}`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+        data-testid="pointer-layer"
+      >
+        {trail.length > 1 ? (
+          <polyline
+            className="trail"
+            points={trail.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ")}
           />
-        );
-      })}
-      {marker ? (
-        <g
-          className="cursor"
-          transform={`translate(${marker.x} ${marker.y})`}
-          data-testid="pointer-cursor"
+        ) : null}
+        {ripples.map((mark) => {
+          const radius =
+            RIPPLE_MIN_RADIUS + (RIPPLE_MAX_RADIUS - RIPPLE_MIN_RADIUS) * mark.progress;
+          return (
+            <circle
+              key={`${mark.mono}-${mark.kind}`}
+              className={`ripple ripple-${mark.kind}`}
+              cx={mark.x}
+              cy={mark.y}
+              r={radius}
+              opacity={1 - mark.progress}
+            />
+          );
+        })}
+        {target ? (
+          <rect
+            className="target-frame"
+            x={target.x}
+            y={target.y}
+            width={target.width}
+            height={target.height}
+            data-testid="target-frame"
+          />
+        ) : null}
+        {marker ? (
+          <g
+            className="cursor"
+            transform={`translate(${marker.x} ${marker.y})`}
+            data-testid="pointer-cursor"
+          >
+            <circle r="7" className="cursor-dot" />
+            <path d="M 2 1 l 0 18 l 5 -5 l 4 9 l 4 -2 l -4 -8 l 7 0 z" className="cursor-arrow" />
+          </g>
+        ) : null}
+      </svg>
+      {labels.map(({ mark, label }) => (
+        // HTML, not SVG text: the frame scales the viewBox, a label keeps its size.
+        <span
+          key={`${mark.mono}-${mark.kind}`}
+          className="ripple-label"
+          style={{
+            left: `${((mark.x / sourceWidth) * 100).toFixed(3)}%`,
+            top: `${((mark.y / sourceHeight) * 100).toFixed(3)}%`,
+            opacity: 1 - mark.progress
+          }}
+          aria-hidden="true"
+          data-testid="ripple-label"
         >
-          <circle r="7" className="cursor-dot" />
-          <path d="M 2 1 l 0 18 l 5 -5 l 4 9 l 4 -2 l -4 -8 l 7 0 z" className="cursor-arrow" />
-        </g>
-      ) : null}
-    </svg>
+          {label}
+        </span>
+      ))}
+    </>
   );
 }
 
@@ -222,6 +268,7 @@ export function Stage() {
   const isPlaying = usePlayerState((state) => state.isPlaying);
   const rate = usePlayerState((state) => state.rate);
   const locale = usePlayerState((state) => state.locale);
+  const target = useInspectedTarget();
   const [size, setSize] = useState<MediaSize>({ width: 0, height: 0 });
   const model = archive?.model ?? null;
   const recording = model
@@ -311,7 +358,13 @@ export function Stage() {
               data-testid="stage-image"
             />
           )}
-          <PointerLayer model={model} playheadMono={playheadMono} shot={shot} size={size} />
+          <PointerLayer
+            model={model}
+            playheadMono={playheadMono}
+            shot={shot}
+            size={size}
+            target={target}
+          />
         </div>
       ) : (
         <p className="stage-placeholder" data-testid="stage-placeholder">

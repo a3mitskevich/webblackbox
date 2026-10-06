@@ -1,9 +1,14 @@
 import type { PlayerFeature } from "../types.js";
+import { inspectorMessages } from "./messages.js";
 
 /**
- * Event inspector (R5). Registers nothing yet; R5 adds its UI here (target + frame on the video, what it caused, raw event), its
- * strings in `locales/` (see src/next/README.md) and its e2e scenarios in `inspector.e2e.mjs`.
+ * Event inspector (R5): the Activity tab shows `InspectorPanel` while the details are open
+ * (Enter), and the stage outlines the inspected target (`useInspectedTarget`).
  */
 export const inspectorFeature: PlayerFeature = {
-  id: "inspector"
+  id: "inspector",
+  messages: inspectorMessages
 };
+
+export { InspectorPanel } from "./inspector-panel.js";
+export { useInspectedTarget, type InspectedTargetFrame } from "./target-frame.js";

@@ -41,6 +41,8 @@ type FeedRowProps = {
   measure: (node: Element | null) => void;
   start: number;
   onSelect: (eventId: string) => void;
+  /** Opens the event inspector on the row (double-click, or the row's "Inspect" button). */
+  onOpen: (eventId: string) => void;
   onToggle: (eventId: string) => void;
 };
 
@@ -54,6 +56,7 @@ const FeedRow = memo(function FeedRow({
   measure,
   start,
   onSelect,
+  onOpen,
   onToggle
 }: FeedRowProps) {
   const { item } = entry;
@@ -80,6 +83,7 @@ const FeedRow = memo(function FeedRow({
       className={classes}
       style={{ transform: `translateY(${start}px)` }}
       onClick={() => onSelect(item.eventId)}
+      onDoubleClick={() => onOpen(item.eventId)}
       data-index={index}
       data-testid="event-row"
       data-event-id={item.eventId}
@@ -131,6 +135,23 @@ const FeedRow = memo(function FeedRow({
           </div>
         ) : null}
       </div>
+      {selected ? (
+        // Enter opens the inspector from the keyboard; this is the pointer's way in.
+        <button
+          type="button"
+          tabIndex={-1}
+          className="btn small icon-only inspect"
+          aria-label={context.t("inspect")}
+          title={context.t("inspect")}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen(item.eventId);
+          }}
+          data-testid="row-inspect"
+        >
+          <Icon name="info" />
+        </button>
+      ) : null}
     </div>
   );
 });
@@ -252,6 +273,13 @@ export function ActivityFeed() {
     },
     [archive, controller]
   );
+  const onOpen = useCallback(
+    (eventId: string) => {
+      onSelect(eventId);
+      controller.openDetails();
+    },
+    [controller, onSelect]
+  );
   const onToggle = useCallback(
     (eventId: string) => updateSlice((current) => toggleExpanded(current, eventId)),
     [updateSlice]
@@ -326,6 +354,7 @@ export function ActivityFeed() {
               measure={virtualizer.measureElement}
               start={row.start}
               onSelect={onSelect}
+              onOpen={onOpen}
               onToggle={onToggle}
             />
           ) : null;

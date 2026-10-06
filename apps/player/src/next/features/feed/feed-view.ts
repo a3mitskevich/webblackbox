@@ -498,6 +498,34 @@ export function describeFeedItem(item: ActivityItem, context: DescribeContext): 
   };
 }
 
+const itemByEventCache = new WeakMap<LoadedArchive, Map<string, ActivityItem>>();
+
+/**
+ * How the feed words one event (the event inspector's title): the curated item when the feed
+ * lists the event, else its item in the "all" scope; `null` for events the feed never shows.
+ */
+export function describeFeedEvent(
+  archive: LoadedArchive,
+  eventId: string,
+  locale: PlayerLocale
+): FeedRowText | null {
+  let items = itemByEventCache.get(archive);
+
+  if (!items) {
+    const data = feedDataOf(archive);
+    items = new Map(data.all().map((item) => [item.eventId, item]));
+
+    for (const item of data.curated) {
+      items.set(item.eventId, item);
+    }
+
+    itemByEventCache.set(archive, items);
+  }
+
+  const item = items.get(eventId);
+  return item ? describeFeedItem(item, describeContext(archive, locale)) : null;
+}
+
 export function describeContext(archive: LoadedArchive, locale: PlayerLocale): DescribeContext {
   return {
     archive,
