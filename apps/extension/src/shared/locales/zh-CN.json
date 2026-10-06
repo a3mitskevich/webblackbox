@@ -269,7 +269,7 @@
   "optionsPointerHint": "指针和滚动的采样频率。",
   "optionsSamplingHint": "缓冲区时长与采集节奏；数值越低越省 CPU。",
   "optionsBudgetsHint": "页面超出这些性能阈值时发出提醒。",
-  "optionsExportHint": "导出归档的限制。",
+  "optionsExportHint": "导出归档的限制，以及用于打开归档的播放器。",
   "optionsLanguageHint": "界面语言。",
   "optionsTransferHint": "以一个 JSON 文件与团队共享配置和规则。",
   "optionsGroupMasking": "遮盖",

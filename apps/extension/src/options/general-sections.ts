@@ -120,6 +120,7 @@ function renderField(
         value: managedValue ?? spec.get(draft),
         placeholder: t(spec.placeholder),
         mono: true,
+        wide: true,
         ...(managedValue !== undefined ? { hint: t(spec.managedHint), readOnly: true } : {})
       });
     }

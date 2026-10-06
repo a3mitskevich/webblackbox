@@ -269,7 +269,7 @@
   "optionsPointerHint": "How often pointer and scroll movement is sampled.",
   "optionsSamplingHint": "Buffer length and capture cadence; lower values cost less CPU.",
   "optionsBudgetsHint": "Warn when a page breaks these performance limits.",
-  "optionsExportHint": "Limits for exported archives.",
+  "optionsExportHint": "Limits for exported archives and the Player they are opened in.",
   "optionsLanguageHint": "Interface language.",
   "optionsTransferHint": "Share profiles and rules with your team as one JSON file.",
   "optionsGroupMasking": "Masking",
