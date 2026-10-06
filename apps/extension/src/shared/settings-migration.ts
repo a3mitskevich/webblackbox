@@ -32,8 +32,7 @@ export type SettingsMigrationPlan = {
 };
 
 export type SettingsMigrationResult =
-  | { status: "current" | "migrated" }
-  | { status: "failed"; error: string };
+  { status: "current" | "migrated" } | { status: "failed"; error: string };
 
 type SettingsStorageArea = {
   get(keys: string[]): Promise<Record<string, unknown>>;
