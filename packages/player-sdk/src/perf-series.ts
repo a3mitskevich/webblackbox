@@ -123,11 +123,17 @@ export function buildPerformanceSeries(input: PerformanceSeriesInput): Performan
   const longTaskMs = new Array<number>(count).fill(0);
 
   for (const request of input.requests) {
+    if (!Number.isFinite(request.startMono)) {
+      continue;
+    }
+
+    const endMono = Number.isFinite(request.endMono) ? request.endMono : request.startMono;
     const start = indexOf(request.startMono);
-    const end = indexOf(Math.max(request.startMono, request.endMono));
+    const end = indexOf(Math.max(request.startMono, endMono));
+    const bytes = request.encodedDataLength ?? 0;
     opened[start] = (opened[start] ?? 0) + 1;
     opened[end + 1] = (opened[end + 1] ?? 0) - 1;
-    transferBytes[end] = (transferBytes[end] ?? 0) + (request.encodedDataLength ?? 0);
+    transferBytes[end] = (transferBytes[end] ?? 0) + (Number.isFinite(bytes) ? bytes : 0);
 
     if (request.failed || (request.status ?? 0) >= 400) {
       failedRequests[end] = (failedRequests[end] ?? 0) + 1;
@@ -165,7 +171,10 @@ function mergeVitals(vitals: WebVitals, data: Record<string, unknown> | null): W
     const value = asNumber(data[key]);
     return value === null ? next : { ...next, [key]: value };
   }, vitals);
-  const metric = typeof data.metric === "string" ? METRIC_KEYS[data.metric] : undefined;
+  const metric =
+    typeof data.metric === "string" && Object.hasOwn(METRIC_KEYS, data.metric)
+      ? METRIC_KEYS[data.metric]
+      : undefined;
 
   if (!metric) {
     return summary;

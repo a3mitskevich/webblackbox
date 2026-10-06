@@ -10,7 +10,7 @@ export type CompareRequest = {
   responseBodyHash?: string;
 };
 
-/** One endpoint (`METHOD host/path`) in one session. */
+/** One endpoint (`METHOD /path`) in one session. */
 export type EndpointSummary = {
   key: string;
   method: string;
@@ -42,7 +42,10 @@ export type EndpointAlignment = {
 export const SLOWER_P95_FACTOR = 1.5;
 export const SLOWER_MIN_DELTA_MS = 100;
 
-/** Requests grouped by `METHOD host/path` (the query string is ignored: it often carries ids). */
+/**
+ * Requests grouped by `METHOD /path`. The host is ignored so that recordings of the same app on
+ * different hosts (staging vs production) align; the query string is ignored as it often carries ids.
+ */
 export function summarizeEndpoints(
   requests: readonly CompareRequest[]
 ): Map<string, EndpointSummary> {
@@ -50,7 +53,13 @@ export function summarizeEndpoints(
 
   for (const request of requests) {
     const key = endpointKey(request);
-    groups.set(key, [...(groups.get(key) ?? []), request]);
+    const bucket = groups.get(key);
+
+    if (bucket) {
+      bucket.push(request);
+    } else {
+      groups.set(key, [request]);
+    }
   }
 
   return new Map(
@@ -90,7 +99,7 @@ export function alignEndpoints(
     .map((row) => row.alignment);
 }
 
-/** `GET host/path` of a request. */
+/** `GET /path` of a request. */
 export function endpointKey(request: Pick<CompareRequest, "method" | "url">): string {
   return `${request.method.toUpperCase()} ${endpointPath(request.url)}`;
 }
@@ -151,9 +160,7 @@ function percentile95(values: readonly number[]): number {
 
 function endpointPath(raw: string): string {
   try {
-    const url = new URL(raw);
-    const host = url.protocol === "http:" || url.protocol === "https:" ? url.host : "";
-    return `${host}${url.pathname}`;
+    return new URL(raw).pathname || raw;
   } catch {
     const cut = raw.search(/[?#]/u);
     return cut >= 0 ? raw.slice(0, cut) : raw;

@@ -20,7 +20,7 @@ function request(
 const API = "https://app.example.test/api";
 
 describe("summarizeEndpoints", () => {
-  it("groups by method, host and path and reads count, failures and p95", () => {
+  it("groups by method and path and reads count, failures and p95", () => {
     const summary = summarizeEndpoints([
       request("1", `${API}/users?id=1`, 30, 100),
       request("2", `${API}/users?id=2`, 10, 300, { status: 401, responseBodyHash: "h2" }),
@@ -28,10 +28,10 @@ describe("summarizeEndpoints", () => {
       request("4", "relative/path?x=1", 40, 5, { method: "POST", failed: true })
     ]);
 
-    expect(summary.get("GET app.example.test/api/users")).toEqual({
-      key: "GET app.example.test/api/users",
+    expect(summary.get("GET /api/users")).toEqual({
+      key: "GET /api/users",
       method: "GET",
-      path: "app.example.test/api/users",
+      path: "/api/users",
       count: 3,
       failureCount: 1,
       p95Ms: 300,
@@ -45,6 +45,28 @@ describe("summarizeEndpoints", () => {
 });
 
 describe("alignEndpoints", () => {
+  it("aligns the same path recorded on different hosts (staging vs production)", () => {
+    const alignment = alignEndpoints(
+      [request("a", "https://staging.example.test/api/users?id=1", 10, 100)],
+      [request("b", "https://www.example.test/api/users?id=2", 20, 110)]
+    );
+
+    expect(alignment).toEqual([
+      expect.objectContaining({ key: "GET /api/users", signal: "stable" })
+    ]);
+  });
+
+  it("groups many requests of one endpoint in linear time", () => {
+    const many = Array.from({ length: 50_000 }, (_, index) =>
+      request(String(index), `${API}/poll?n=${index}`, index, 10)
+    );
+    const startedAt = performance.now();
+    const summary = summarizeEndpoints(many);
+
+    expect(summary.get("GET /api/poll")?.count).toBe(50_000);
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
+  });
+
   it("pairs endpoints and labels new, missing, regressed, slower and stable ones", () => {
     const left = [
       request("a1", `${API}/config`, 1_000, 50),

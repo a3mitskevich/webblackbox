@@ -74,6 +74,26 @@ describe("buildPerformanceSeries", () => {
     expect(series.longTaskMs).toEqual([0, 70, 0, 0]);
   });
 
+  it("skips requests without a finite start and ignores non-finite sizes", () => {
+    const series = buildPerformanceSeries({
+      events: [event("perf.vitals", 1, { metric: "constructor", value: 1 })],
+      requests: [
+        { startMono: Number.NaN, endMono: 10, failed: false },
+        { startMono: 10, endMono: Number.NaN, failed: false, encodedDataLength: Number.NaN }
+      ],
+      minMono: 0,
+      maxMono: 100,
+      buckets: 2,
+      minBucketMs: 10
+    });
+
+    expect(series.requestsInFlight).toEqual([1, 0]);
+    expect(series.transferKib).toEqual([0, 0]);
+    expect(readWebVitals([event("perf.vitals", 1, { metric: "constructor", value: 1 })])).toEqual(
+      {}
+    );
+  });
+
   it("keeps at least one bucket for an empty session", () => {
     const series = buildPerformanceSeries({ events: [], requests: [], minMono: 5, maxMono: 5 });
 

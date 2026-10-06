@@ -166,27 +166,10 @@ function SideCell({
   );
 }
 
-/** `GET /path` when the endpoint is on the recorded site, else `GET host/path`. */
-function displayKey(key: string, siteHost: string): string {
-  const space = key.indexOf(" ");
-  const target = key.slice(space + 1);
-  return siteHost && target.startsWith(`${siteHost}/`)
-    ? `${key.slice(0, space)} ${target.slice(siteHost.length)}`
-    : key;
-}
-
 /** An endpoint URL without the recorded site's origin. */
 function stripOrigin(endpoint: string, origin: string): string {
   const base = origin.replace(/\/+$/u, "");
   return base && endpoint.startsWith(`${base}/`) ? endpoint.slice(base.length) : endpoint;
-}
-
-function hostOf(origin: string): string {
-  try {
-    return new URL(origin).host;
-  } catch {
-    return "";
-  }
 }
 
 type ReportProps = {
@@ -227,7 +210,6 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
   const byReqId = (entries: readonly NetworkWaterfallEntry[], reqId: string | undefined) =>
     reqId ? entries.find((entry) => entry.reqId === reqId) : undefined;
   const ms = (value: number) => i18n.formatMilliseconds(value, { fractionDigits: 0 });
-  const siteHost = hostOf(archive.view.meta.origin);
   const signed = (value: number) => i18n.formatNumber(value, { signed: true });
   const regressions = comparison.endpointRegressions
     .filter(
@@ -322,7 +304,7 @@ function CompareReport({ archive, other, selectedKey }: ReportProps) {
                         selectRow(row);
                       }}
                     >
-                      {displayKey(row.key, siteHost)}
+                      {row.key}
                     </button>
                   </td>
                   <td className="mono">

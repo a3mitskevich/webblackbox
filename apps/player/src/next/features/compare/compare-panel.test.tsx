@@ -79,7 +79,7 @@ describe("Compare panel", () => {
     const regressed = rows.find((row) => row.textContent?.includes("games/api/v1.0/game/64"));
     fireEvent.click(regressed as HTMLElement);
     expect(compareSlice.select(store.getState()).selectedKey).toBe(
-      "GET app.example.test/gw/bff/games/api/v1.0/game/64"
+      "GET /gw/bff/games/api/v1.0/game/64"
     );
     const diff = await screen.findByTestId("compare-body-diff");
     expect(diff).toHaveTextContent('"status": "open"');

@@ -115,6 +115,21 @@ describe("buildConsoleEntries", () => {
         ?.isThirdParty
     ).toBe(false);
   });
+
+  it("judges third-party by the location the row shows (the top stack frame)", () => {
+    const entry = toConsoleEntry(
+      event("console.entry", 1, {
+        level: "warn",
+        text: "deprecated call",
+        url: "https://app.example.test/lobby",
+        stackTop: "track @ https://tracker.example.net/tag.js:1:20"
+      }),
+      { siteOrigin: SITE }
+    );
+
+    expect(entry?.location?.url).toBe("https://tracker.example.net/tag.js");
+    expect(entry?.isThirdParty).toBe(true);
+  });
 });
 
 describe("groupConsoleEntries", () => {
@@ -131,5 +146,20 @@ describe("groupConsoleEntries", () => {
     expect(groups[0]?.memberIds).toEqual([entries[0]?.eventId, entries[2]?.eventId]);
     expect(groups[0]?.lastMono).toBe(3);
     expect(countConsoleLevels(entries)).toEqual({ error: 2, warn: 1, info: 0, log: 1, debug: 0 });
+  });
+
+  it("folds tens of thousands of identical rows in linear time", () => {
+    const entries = buildConsoleEntries(
+      Array.from({ length: 50_000 }, (_, index) =>
+        event("console.entry", index, { level: "error", text: "render loop" })
+      )
+    );
+    const startedAt = performance.now();
+    const groups = groupConsoleEntries(entries);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.count).toBe(50_000);
+    expect(groups[0]?.lastMono).toBe(49_999);
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
   });
 });

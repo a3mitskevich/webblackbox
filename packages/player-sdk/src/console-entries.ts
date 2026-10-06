@@ -103,7 +103,8 @@ export function toConsoleEntry(
       : null;
   const reqId = asString(data?.networkRequestId) ?? asString(data?.requestId);
   const source = asString(data?.source);
-  const thirdPartyUrl = loggedUrl ?? top?.url;
+  // Judged by the location the row shows, so "Hide third-party" hides what reads as third-party.
+  const thirdPartyUrl = location?.url;
 
   return {
     eventId: event.id,
@@ -127,28 +128,25 @@ export function toConsoleEntry(
  * their first row.
  */
 export function groupConsoleEntries(entries: readonly ConsoleEntry[]): ConsoleEntryGroup[] {
-  const groups: ConsoleEntryGroup[] = [];
-  const indexByKey = new Map<string, number>();
+  const groups: { entry: ConsoleEntry; memberIds: string[]; lastMono: number }[] = [];
+  const groupByKey = new Map<string, (typeof groups)[number]>();
 
   for (const entry of entries) {
-    const index = indexByKey.get(entry.groupKey);
-    const group = index === undefined ? undefined : groups[index];
+    const group = groupByKey.get(entry.groupKey);
 
-    if (index === undefined || !group) {
-      indexByKey.set(entry.groupKey, groups.length);
-      groups.push({ entry, memberIds: [entry.eventId], count: 1, lastMono: entry.mono });
+    if (!group) {
+      const created = { entry, memberIds: [entry.eventId], lastMono: entry.mono };
+      groupByKey.set(entry.groupKey, created);
+      groups.push(created);
       continue;
     }
 
-    groups[index] = {
-      ...group,
-      memberIds: [...group.memberIds, entry.eventId],
-      count: group.count + 1,
-      lastMono: Math.max(group.lastMono, entry.mono)
-    };
+    // The accumulators are private to this call; the returned groups are fresh objects.
+    group.memberIds.push(entry.eventId);
+    group.lastMono = Math.max(group.lastMono, entry.mono);
   }
 
-  return groups;
+  return groups.map((group) => ({ ...group, count: group.memberIds.length }));
 }
 
 /** Rows per level (the filter chip counts). */

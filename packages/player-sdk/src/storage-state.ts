@@ -105,9 +105,12 @@ const AREA_BY_TYPE: Readonly<Record<string, StorageChangeArea>> = {
 
 type SnapshotInfo = { eventId: string; mono: number; count?: number; truncated: boolean };
 
-/** Replay accumulator of one key/value area (localStorage or sessionStorage). */
+/**
+ * Replay accumulator of one key/value area (localStorage or sessionStorage). Its map is private to
+ * one replay and updated in place, so a long op log stays linear; results copy it out.
+ */
 type KeyValueArea = {
-  items: ReadonlyMap<string, StorageItem>;
+  items: Map<string, StorageItem>;
   /** The last snapshot of the area (the item set is complete after it). */
   snapshot: SnapshotInfo | null;
   hasValues: boolean;
@@ -121,23 +124,26 @@ type Replay = {
   idb: StorageAreaState<IdbDatabaseItem>;
 };
 
-const EMPTY_KEY_VALUE_AREA: KeyValueArea = {
-  items: new Map(),
-  snapshot: null,
-  hasValues: false,
-  hasNames: false
-};
+function createKeyValueArea(): KeyValueArea {
+  return { items: new Map(), snapshot: null, hasValues: false, hasNames: false };
+}
 
-const EMPTY_REPLAY: Replay = {
-  local: EMPTY_KEY_VALUE_AREA,
-  session: EMPTY_KEY_VALUE_AREA,
-  cookie: { items: [], coverage: "none", truncated: false },
-  idb: { items: [], coverage: "none", truncated: false }
-};
+function createReplay(): Replay {
+  return {
+    local: createKeyValueArea(),
+    session: createKeyValueArea(),
+    cookie: { items: [], coverage: "none", truncated: false },
+    idb: { items: [], coverage: "none", truncated: false }
+  };
+}
 
 /** Whether an event belongs to the storage log. */
 export function isStorageEvent(event: WebBlackboxEvent): boolean {
-  return Object.hasOwn(AREA_BY_TYPE, event.type);
+  return readArea(event) !== null;
+}
+
+function readArea(event: WebBlackboxEvent): StorageChangeArea | null {
+  return Object.hasOwn(AREA_BY_TYPE, event.type) ? (AREA_BY_TYPE[event.type] ?? null) : null;
 }
 
 /**
@@ -149,7 +155,7 @@ export function buildStorageStateAt(
   events: readonly WebBlackboxEvent[],
   mono: number
 ): StorageStateAt {
-  let replay = EMPTY_REPLAY;
+  let replay = createReplay();
 
   for (const event of events) {
     if (event.mono > mono) {
@@ -170,11 +176,11 @@ export function buildStorageStateAt(
 
 /** The storage log in time order, each operation with the key's previous value when known. */
 export function buildStorageChanges(events: readonly WebBlackboxEvent[]): StorageChange[] {
-  let replay = EMPTY_REPLAY;
+  let replay = createReplay();
   const changes: StorageChange[] = [];
 
   for (const event of events) {
-    const area = AREA_BY_TYPE[event.type];
+    const area = readArea(event);
 
     if (!area) {
       continue;
@@ -297,17 +303,15 @@ function applyKeyValueOp(
     return area;
   }
 
-  const items = new Map(area.items);
-
+  // In place: the map belongs to this replay only (see `KeyValueArea`).
   if (op === "removeItem") {
-    items.delete(key);
+    area.items.delete(key);
   } else {
-    items.set(key, toItem(key, data, event));
+    area.items.set(key, toItem(key, data, event));
   }
 
   return {
     ...area,
-    items,
     hasNames: true,
     hasValues: area.hasValues || (op === "setItem" && typeof data.value === "string")
   };

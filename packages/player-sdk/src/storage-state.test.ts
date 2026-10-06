@@ -162,4 +162,37 @@ describe("buildStorageChanges", () => {
     expect(isStorageEvent(EVENTS[0] as WebBlackboxEvent)).toBe(true);
     expect(isStorageEvent(EVENTS[3] as WebBlackboxEvent)).toBe(false);
   });
+
+  it("ignores event types that only match inherited object properties", () => {
+    const odd = [event("constructor", 1, {}), event("toString", 2, { key: "x" })];
+
+    expect(odd.some(isStorageEvent)).toBe(false);
+    expect(buildStorageChanges(odd)).toEqual([]);
+  });
+
+  it("keeps sessionStorage apart and replays a long op log in linear time", () => {
+    const ops = Array.from({ length: 50_000 }, (_, index) =>
+      event("storage.session.op", index, {
+        op: "setItem",
+        key: `k${index % 1_000}`,
+        value: String(index)
+      })
+    );
+    const startedAt = performance.now();
+    const changes = buildStorageChanges(ops);
+    const state = buildStorageStateAt(ops, 49_999);
+
+    expect(changes).toHaveLength(50_000);
+    expect(changes[1_000]).toMatchObject({ area: "session", key: "k0", previousValue: "0" });
+    expect(state.session.items).toHaveLength(1_000);
+    expect(state.local.items).toEqual([]);
+    expect(performance.now() - startedAt).toBeLessThan(3_000);
+  });
+
+  it("does not leak operations of one build into the next", () => {
+    const ops = [event("storage.local.op", 1, { op: "setItem", key: "a", value: "1" })];
+
+    expect(buildStorageStateAt(ops, 1).local.items).toHaveLength(1);
+    expect(buildStorageStateAt([], 1).local.items).toEqual([]);
+  });
 });
