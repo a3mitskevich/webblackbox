@@ -3,6 +3,12 @@
 const LINEAR_INPUT_FACTOR = 8;
 /** Well above linear growth (8-11x) plus shared-runner noise, well below quadratic (>= 56x). */
 export const LINEAR_GROWTH_LIMIT = 32;
+
+/**
+ * Hang-only bound for a growth-ratio test. Several timed runs, repeated over the limit, take
+ * seconds on a loaded runner, past vitest's 5 s default; no assertion depends on this value.
+ */
+export const GROWTH_TEST_TIMEOUT_MS = 60_000;
 /** Inputs are doubled so each run takes long enough for timer noise not to matter. */
 const BASE_SCALE = 2;
 /**
@@ -47,4 +53,13 @@ export function growthRatio(prepare: (scale: number) => () => unknown): number {
   }
 
   return best;
+}
+
+/** Process CPU time of one run: time spent descheduled by other load is not counted. */
+export function cpuTimeMs(run: () => unknown): number {
+  const startedAt = process.cpuUsage();
+  run();
+  const used = process.cpuUsage(startedAt);
+
+  return (used.user + used.system) / 1_000;
 }
