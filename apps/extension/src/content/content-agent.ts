@@ -1,16 +1,24 @@
 import { LiteCaptureAgent } from "webblackbox/lite-capture-agent";
 import type { LiteCaptureAgentOptions } from "webblackbox/types";
 
-import { loadExtensionLocale, translateExtensionMessage } from "../shared/i18n.js";
+import { loadExtensionLocale, type ExtensionLocale } from "../shared/i18n.js";
 
 export function createContentCaptureAgent(options: LiteCaptureAgentOptions): LiteCaptureAgent {
   return new LiteCaptureAgent(options);
 }
 
 /**
- * Lives here, not in the content script: the UI dictionaries then load only with the capture
- * agent, instead of being parsed on every page the content script is injected into.
+ * `contentKeyboardMarker` of each UI dictionary (a test keeps them equal). The agent runs in every
+ * recorded frame, and importing the dictionaries themselves would bundle all three of them into
+ * content-agent.js for this one label.
  */
+export const KEYBOARD_MARKER_LABELS: Readonly<Record<ExtensionLocale, string>> = {
+  en: "Keyboard marker",
+  ru: "Маркер с клавиатуры",
+  "zh-CN": "键盘标记"
+};
+
+/** In the language chosen in Options (Chrome's language on Auto). */
 export async function loadKeyboardMarkerLabel(): Promise<string> {
-  return translateExtensionMessage(await loadExtensionLocale(), "contentKeyboardMarker");
+  return KEYBOARD_MARKER_LABELS[await loadExtensionLocale()];
 }
