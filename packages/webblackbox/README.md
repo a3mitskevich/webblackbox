@@ -98,7 +98,7 @@ with the capture agent.
 
 ## Optional IndexedDB Cache Encryption
 
-When using `storage: "indexeddb"`, you can provide `pipelineStorageEncryptionKey` to encrypt the cache at rest: chunks, blobs, indexes, integrity records and session metadata.
+When using `storage: "indexeddb"`, you can provide `pipelineStorageEncryptionKey` to encrypt the cache at rest: chunk and blob bytes, indexes, integrity records and the full session records (lookup fields such as session id, tab id, start time and mode stay readable).
 
 ```ts
 import { derivePipelineStorageKey } from "@webblackbox/pipeline";

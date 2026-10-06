@@ -333,7 +333,7 @@ Each context is its own tsup entry (`sw`, `content`, `content-agent`, `offscreen
 - Sensitive headers are redacted before entering the pipeline
 - Content masking follows each profile's redaction rules (best effort, no guarantee): body keys and value patterns, blocked selectors, header/cookie/query/storage rules, and the optional built-in heuristics; `contentRedaction: false` records content as captured
 - Every archive is encrypted with AES-GCM
-- In the extension, everything in the pipeline IndexedDB (chunks, blobs, indexes, integrity, session metadata) is encrypted with AES-GCM under a per-browser-session key held only in `chrome.storage.session`; the offscreen document imports it non-extractable. A new key (browser or extension restart) makes older sessions unreadable, and the offscreen document deletes them before it uses the storage. Stopped recordings survive service worker restarts: a snapshot in `chrome.storage.session` lets a new worker rebuild them, and a `chrome.alarms` alarm deletes them when their retention ends. See [PRIVACY.md](PRIVACY.md#local-storage).
+- In the extension, the contents of the pipeline IndexedDB (chunk and blob bytes, indexes, integrity, full session records) are encrypted with AES-GCM under a per-browser-session key held only in `chrome.storage.session`; the offscreen document imports it non-extractable. A new key (browser or extension restart) makes older sessions unreadable, and the offscreen document deletes them before it uses the storage. Stopped recordings survive service worker restarts: a snapshot in `chrome.storage.session` lets a new worker rebuild them, and a `chrome.alarms` alarm deletes them when their retention ends. See [PRIVACY.md](PRIVACY.md#local-storage).
 
 ### Encryption Details
 
@@ -345,6 +345,6 @@ Each context is its own tsup entry (`sw`, `content`, `content-agent`, `offscreen
 
 ### Permission Model
 
-- The default (`dev`) build requests `debugger` for CDP access and `<all_urls>` host access, which `webRequest`, `scripting.executeScript`, the dynamic content script registration and `captureVisibleTab` need
+- The default (`dev`) build requests `debugger` for CDP access and `<all_urls>` host access, which `webRequest`, `scripting.executeScript`, and the dynamic content script registration need
 - The `store-safe` build profile drops `debugger`, `tabs`, `webRequest`, `webNavigation` and persistent host access and uses `activeTab`, so the content script is injected only on Start, and that build has no Full CDP capture and no Lite `webRequest` network baseline, and the other-tabs context cannot read other tabs' addresses and titles
 - Users must explicitly grant permissions during installation

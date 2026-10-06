@@ -57,7 +57,7 @@ The extension consists of multiple main components:
 #### Offscreen Document
 
 - Runs the `FlightRecorderPipeline` for event processing
-- Handles chunking, compression, indexing, and blob storage
+- Handles chunking, indexing, and blob storage (chunks are not compressed: the extension keeps the default `none` codec)
 - Keeps recordings in IndexedDB, encrypted at rest with a per-browser-session key; unexported recordings do not survive a browser restart (see [Local Storage](../../docs/PRIVACY.md#local-storage))
 - Generates `.webblackbox` ZIP archives on export
 - Isolated from the main page for performance
@@ -78,9 +78,9 @@ The extension consists of multiple main components:
 - Full recorder configuration UI (these general fields edit the `Default` profile)
 - Recording profiles: presets (read-only, duplicate to edit), capture level matrix, redaction / unmask lists, body filters, source maps, local retention of unexported recordings
 - Delete any profile (presets and `Default` included; not policy profiles) and "Restore recommended profiles"; recording needs at least one profile
-- Site rules that pick a profile (rules to a deleted profile are flagged and skipped), redaction sandbox
+- Site rules that pick a profile (rules to a deleted profile are flagged and skipped)
+- Sensitivity: masking rules (blocked selectors, header names, body keys) and the redaction sandbox
 - Pointer & input: pointer and scroll sampling
-- Sensitivity: masking rules (blocked selectors, header names, body keys)
 - Performance & sampling: page injection mode (see [Page injection](#page-injection)), the reload offer on Start, ring buffer and freeze-on-error, sampling cadence, screenshot cadence and the network body capture byte cap
 - Budgets: performance budget warnings and auto-freeze on breach
 - Export & encryption: archive size cap and recent window, and the [Player URL](../../docs/ENTERPRISE_ADMIN.md#player-url) used by "Export and open in Player" (empty by default, which hides that action)
@@ -111,7 +111,7 @@ How it works:
 - On Start, `content.js` is injected into every frame of the tab. While a tab is recorded, each frame it commits (reload, navigation, an iframe added later) gets the script as soon as `webNavigation.onCommitted` reports it (`injectImmediately`). That is early, but unlike `document_start` it is not guaranteed to run before the page's own scripts.
 - `content.js` runs once per frame: a second copy (registered plus injected) exits without touching the first, and the bundle is wrapped in its own scope so the second run cannot reset the running copy's state.
 - Tab and navigation listeners are attached only while something records, so idle navigations do not wake the service worker in either mode.
-- The store-safe build has no persistent host access, so it always injects on Start. It also has no `webNavigation`, so frames a recorded tab commits later (reload, navigation, a new iframe) do not get the script there.
+- The store-safe build has no persistent host access, so it always injects on Start. It also has no `webNavigation`, so a recorded tab's frames are not re-injected as they commit: after a reload or navigation the script comes back only once the page finishes loading (while `activeTab` still covers it), and iframes added after load do not get it.
 - `<all_urls>` stays in both modes: `webRequest` (lite network baseline), `scripting.executeScript` and `registerContentScripts` need host access.
 
 Idle cost, measured with `pnpm e2e:injection:idle` (50 tabs, each a page with one iframe, headless Chrome 153):
