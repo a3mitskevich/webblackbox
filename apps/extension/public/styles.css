@@ -753,3 +753,77 @@ main {
   font-size: 12px;
   line-height: 1.35;
 }
+
+/* Recording profiles (minimal UI; restyled by the settings redesign). */
+.wb-popup__profile select,
+.wb-profiles select {
+  width: 100%;
+  min-height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--wb-border);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--wb-ink);
+  font-size: 12px;
+}
+
+.wb-profiles {
+  margin-top: 16px;
+}
+
+.wb-profiles__list {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.wb-profiles__row {
+  padding: 8px 10px;
+  border: 1px solid var(--wb-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.wb-profiles__badges {
+  font-size: 12px;
+  color: var(--wb-muted-ink);
+}
+
+.wb-profiles__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wb-profiles__matrix {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px 12px;
+  border: 1px solid var(--wb-border);
+  border-radius: 8px;
+}
+
+.wb-profiles__rule {
+  border: 1px solid var(--wb-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.wb-profiles__sandbox-output {
+  margin: 0;
+  padding: 8px;
+  min-height: 2em;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 8px;
+  background: rgba(20, 33, 61, 0.05);
+  font-size: 12px;
+}
+
+.wb-options-status--error {
+  color: #a22626;
+}

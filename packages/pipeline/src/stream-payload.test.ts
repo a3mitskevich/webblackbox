@@ -17,7 +17,9 @@ const SESSION: SessionMetadata = {
   url: "https://app.example.com",
   tags: []
 };
+const PASSPHRASE = "stream-payload-passphrase";
 const EXPORT_OPTIONS = {
+  passphrase: PASSPHRASE,
   includeScreenshots: false,
   includeScreenRecordings: false,
   maxArchiveBytes: null,
@@ -64,15 +66,18 @@ async function exportEvents(events: WebBlackboxEvent[]) {
   await pipeline.ingestBatch(events.slice(1));
   const exported = await pipeline.exportBundle(EXPORT_OPTIONS);
   const zip = await JSZip.loadAsync(exported.bytes);
-  const parsed = await readWebBlackboxArchive(exported.bytes);
+  const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: PASSPHRASE });
   const byId = new Map(parsed.events.map((event) => [event.id, event]));
 
   return {
     byId,
+    // Archive blobs are encrypted: check the archive holds the blob, read it from the store.
     readBlobText: async (hash: string): Promise<string | null> => {
-      const path = Object.keys(zip.files).find((name) => name.startsWith(`blobs/sha256-${hash}.`));
-      const file = path ? zip.file(path) : null;
-      return file ? file.async("string") : null;
+      const inArchive = Object.keys(zip.files).some((name) =>
+        name.startsWith(`blobs/sha256-${hash}.`)
+      );
+      const blob = inArchive ? await storage.getBlob(hash) : undefined;
+      return blob ? new TextDecoder().decode(blob.bytes) : null;
     }
   };
 }

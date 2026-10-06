@@ -9,6 +9,10 @@
       "@webblackbox/pipeline": ["../pipeline/src/index.ts"],
       "@webblackbox/protocol/schemas": ["../protocol/src/schemas-entry.ts"],
       "@webblackbox/protocol": ["../protocol/src/index.ts"],
+      "@webblackbox/protocol/archive-encryption": ["../protocol/src/archive-encryption.ts"],
+      "@webblackbox/protocol/linear-regex": ["../protocol/src/linear-regex.ts"],
+      "@webblackbox/protocol/redaction-rules": ["../protocol/src/redaction-rules.ts"],
+      "@webblackbox/protocol/secret-detection": ["../protocol/src/secret-detection.ts"],
       "@webblackbox/recorder": ["../recorder/src/index.ts"]
     }
   },

@@ -1,12 +1,19 @@
 import {
+  DEFAULT_CAPTURE_POLICY,
+  maskBodyBytes,
+  maskBodyText,
   normalizeMimeType,
-  redactBodyBytes,
-  redactBodyText,
   type RecorderConfig
 } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
 import { decodeScreenshotDataUrl } from "./screenshot-data-url.js";
+import { capStorageValue, STORAGE_SNAPSHOT_MAX_ITEMS } from "./capture-scope.js";
+import {
+  IDB_SNAPSHOT_MAX_DATABASES,
+  IDB_SNAPSHOT_MAX_RECORDS,
+  IDB_SNAPSHOT_MAX_STORES
+} from "./indexeddb-snapshot.js";
 import type { LiteMaterializerContext } from "./types.js";
 
 export {
@@ -28,6 +35,12 @@ const DEFAULT_BODY_MIME_ALLOWLIST = [
 const DEFAULT_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const DEFAULT_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
 const DEFAULT_DOM_SNAPSHOT_MAX_BYTES = 1_500 * 1024;
+const COUNTS_ONLY_SNAPSHOT_KEYS = new Set(["reason", "count", "truncated", "mode", "redacted"]);
+const STORAGE_SNAPSHOT_RAW_TYPES = new Set([
+  "localStorageSnapshot",
+  "indexedDbSnapshot",
+  "cookieSnapshot"
+]);
 
 type LiteBodyCaptureRule = {
   enabled: boolean;
@@ -55,16 +68,9 @@ export function shouldMaterializeLiteRawEvent(rawEvent: RawRecorderEvent): boole
     return typeof payload.html === "string" && payload.html.length > 0;
   }
 
-  if (rawEvent.rawType === "localStorageSnapshot") {
-    return asRecord(payload.entries) !== null;
-  }
-
-  if (rawEvent.rawType === "indexedDbSnapshot") {
-    return Array.isArray(payload.databaseNames);
-  }
-
-  if (rawEvent.rawType === "cookieSnapshot") {
-    return Array.isArray(payload.names);
+  // Storage snapshots are always normalized to what the capture policy allows.
+  if (STORAGE_SNAPSHOT_RAW_TYPES.has(rawEvent.rawType)) {
+    return true;
   }
 
   if (rawEvent.rawType === "networkBody") {
@@ -98,7 +104,7 @@ export async function materializeLiteRawEvent(
     rawEvent.rawType === "indexedDbSnapshot" ||
     rawEvent.rawType === "cookieSnapshot"
   ) {
-    return materializeLiteStorageSnapshot(rawEvent);
+    return materializeLiteStorageSnapshot(rawEvent, context);
   }
 
   if (rawEvent.rawType === "networkBody") {
@@ -187,8 +193,15 @@ async function materializeLiteDomSnapshot(
   };
 }
 
+/**
+ * Keeps what the session's capture policy allows (the policy decides, not the page-side
+ * payload): counts only by default; key names, value lengths or capped values for
+ * `storage: names-only / lengths-only / allow`; cookie and database names for `names-only`.
+ * Values stay inline so the recorder's redactor and policy checks see them.
+ */
 async function materializeLiteStorageSnapshot(
-  rawEvent: RawRecorderEvent
+  rawEvent: RawRecorderEvent,
+  context: LiteMaterializerContext
 ): Promise<RawRecorderEvent | null> {
   const payload = asRecord(rawEvent.payload);
 
@@ -196,57 +209,219 @@ async function materializeLiteStorageSnapshot(
     return null;
   }
 
+  const categories = (context.config.capturePolicy ?? DEFAULT_CAPTURE_POLICY).categories;
   const reason = asString(payload.reason) ?? undefined;
+  // Same fields as the agent sent (no `truncated` added), so default output does not change.
+  const base = {
+    reason,
+    ...("truncated" in payload ? { truncated: payload.truncated === true } : {})
+  };
 
   if (rawEvent.rawType === "localStorageSnapshot") {
-    const entries = asRecord(payload.entries) ?? {};
-    const count = normalizeNonNegativeInt(payload.count) ?? Object.keys(entries).length;
+    const level = categories.storage;
+    const count = normalizeNonNegativeInt(payload.count) ?? 0;
 
-    return {
-      ...rawEvent,
-      payload: {
-        count,
-        mode: "counts-only",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true
-      }
-    };
+    if (level === "allow") {
+      const entries = asStorageEntries(payload.entries, STORAGE_SNAPSHOT_MAX_ITEMS);
+      return storageSnapshot(rawEvent, { ...base, count, mode: level, redacted: false, entries });
+    }
+
+    if (level === "names-only") {
+      const keys = asStringArray(payload.keys, STORAGE_SNAPSHOT_MAX_ITEMS);
+      return storageSnapshot(rawEvent, { ...base, count, mode: level, redacted: true, keys });
+    }
+
+    if (level === "lengths-only") {
+      const lengths = asLengthArray(payload.lengths, STORAGE_SNAPSHOT_MAX_ITEMS);
+      return storageSnapshot(rawEvent, { ...base, count, mode: level, redacted: true, lengths });
+    }
+
+    return countsOnlySnapshot(rawEvent, payload, count);
   }
 
-  if (rawEvent.rawType === "indexedDbSnapshot") {
-    const names = asStringArray(payload.databaseNames, 400);
-    const count = normalizeNonNegativeInt(payload.count) ?? names.length;
+  const names = asStringArray(
+    rawEvent.rawType === "indexedDbSnapshot" ? payload.databaseNames : payload.names,
+    STORAGE_SNAPSHOT_MAX_ITEMS
+  );
+  const valuesAllowed =
+    rawEvent.rawType === "indexedDbSnapshot"
+      ? categories.indexedDb === "allow"
+      : categories.cookies === "allow";
 
-    return {
-      ...rawEvent,
-      payload: {
-        count,
-        mode: "counts-only",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true
-      }
-    };
+  if (valuesAllowed) {
+    const count = normalizeNonNegativeInt(payload.count) ?? 0;
+    const details =
+      rawEvent.rawType === "indexedDbSnapshot"
+        ? { databaseNames: names, databases: asIdbDatabases(payload.databases) }
+        : { cookies: asCookieEntries(payload.cookies, STORAGE_SNAPSHOT_MAX_ITEMS) };
+    return storageSnapshot(rawEvent, {
+      ...base,
+      count,
+      mode: "allow",
+      redacted: false,
+      ...details
+    });
   }
 
-  if (rawEvent.rawType === "cookieSnapshot") {
-    const names = asStringArray(payload.names, 400);
-    const count = normalizeNonNegativeInt(payload.count) ?? names.length;
+  const count = normalizeNonNegativeInt(payload.count) ?? names.length;
+  const showsNames =
+    rawEvent.rawType === "indexedDbSnapshot"
+      ? categories.indexedDb === "names-only"
+      : categories.cookies === "names-only";
 
-    return {
-      ...rawEvent,
-      payload: {
-        count,
-        mode: "counts-only",
-        redacted: true,
-        reason,
-        truncated: payload.truncated === true
-      }
-    };
+  if (!showsNames) {
+    return countsOnlySnapshot(rawEvent, payload, count);
   }
 
-  return rawEvent;
+  return storageSnapshot(rawEvent, {
+    ...base,
+    count,
+    mode: "names-only",
+    redacted: true,
+    ...(rawEvent.rawType === "indexedDbSnapshot" ? { databaseNames: names } : { names })
+  });
+}
+
+/** Counts only, in the agent's own field order so default output stays byte-identical. */
+function countsOnlySnapshot(
+  rawEvent: RawRecorderEvent,
+  payload: Record<string, unknown>,
+  count: number
+): RawRecorderEvent {
+  const kept = Object.fromEntries(
+    Object.entries(payload).filter(
+      ([key, value]) =>
+        COUNTS_ONLY_SNAPSHOT_KEYS.has(key) && (key !== "reason" || typeof value === "string")
+    )
+  );
+
+  return storageSnapshot(rawEvent, {
+    ...kept,
+    count,
+    ...("truncated" in kept ? { truncated: kept.truncated === true } : {}),
+    mode: "counts-only",
+    redacted: true
+  });
+}
+
+function storageSnapshot(
+  rawEvent: RawRecorderEvent,
+  payload: Record<string, unknown>
+): RawRecorderEvent {
+  return { ...rawEvent, payload };
+}
+
+function asStorageEntries(value: unknown, limit: number): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.slice(0, limit).flatMap((entry) => {
+    const row = asRecord(entry);
+    const key = asString(row?.key);
+
+    if (!row || !key) {
+      return [];
+    }
+
+    const value = typeof row.value === "string" ? capStorageValue(row.value) : {};
+    const valueLength = normalizeNonNegativeInt(row.valueLength);
+
+    return [
+      {
+        key,
+        ...(valueLength !== undefined ? { valueLength } : {}),
+        ...value,
+        ...(row.valueTruncated === true ? { valueTruncated: true } : {})
+      }
+    ];
+  });
+}
+
+/** Cookie `{ name, value }` records (`cookies: allow`), values capped like other storage values. */
+function asCookieEntries(value: unknown, limit: number): Array<Record<string, unknown>> {
+  return asArray(value)
+    .slice(0, limit)
+    .flatMap((entry) => {
+      const row = asRecord(entry);
+      const name = asString(row?.name);
+
+      if (!row || name === null || name === undefined || typeof row.value !== "string") {
+        return [];
+      }
+
+      return [{ name, ...capStorageValue(row.value) }];
+    });
+}
+
+/** IndexedDB contents (`indexedDb: allow`), re-bounded to the agent's limits. */
+function asIdbDatabases(value: unknown): Array<Record<string, unknown>> {
+  return asArray(value)
+    .slice(0, IDB_SNAPSHOT_MAX_DATABASES)
+    .flatMap((entry) => {
+      const database = asRecord(entry);
+      const name = asString(database?.name);
+
+      if (!database || !name) {
+        return [];
+      }
+
+      const stores = asArray(database.stores)
+        .slice(0, IDB_SNAPSHOT_MAX_STORES)
+        .flatMap((storeEntry) => {
+          const store = asRecord(storeEntry);
+          const storeName = asString(store?.name);
+
+          if (!store || !storeName) {
+            return [];
+          }
+
+          const records = asArray(store.records)
+            .slice(0, IDB_SNAPSHOT_MAX_RECORDS)
+            .flatMap((recordEntry) => {
+              const record = asRecord(recordEntry);
+              return record && typeof record.key === "string" && typeof record.value === "string"
+                ? [{ key: capStorageValue(record.key).value, ...capStorageValue(record.value) }]
+                : [];
+            });
+
+          return [
+            {
+              name: storeName,
+              count: normalizeNonNegativeInt(store.count) ?? records.length,
+              records,
+              ...(store.truncated === true ? { truncated: true } : {})
+            }
+          ];
+        });
+
+      return [
+        {
+          name,
+          ...(normalizeNonNegativeInt(database.version) !== undefined
+            ? { version: normalizeNonNegativeInt(database.version) }
+            : {}),
+          stores,
+          ...(database.truncated === true ? { truncated: true } : {}),
+          ...(typeof database.error === "string" ? { error: database.error.slice(0, 200) } : {})
+        }
+      ];
+    });
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asLengthArray(value: unknown, limit: number): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .slice(0, limit)
+    .map((entry) => normalizeNonNegativeInt(entry))
+    .filter((entry): entry is number => entry !== undefined);
 }
 
 async function materializeLiteNetworkBody(
@@ -275,16 +450,16 @@ async function materializeLiteNetworkBody(
     return null;
   }
 
-  const patterns = context.config.redaction.redactBodyPatterns;
+  const rules = context.config.redaction;
   let bytes: Uint8Array;
   let redacted = payload.redacted === true;
 
   if (encoding === "utf8") {
-    const redaction = redactBodyText(body, patterns);
+    const redaction = maskBodyText(body, rules);
     redacted = redacted || redaction.redacted;
     bytes = new TextEncoder().encode(redaction.value);
   } else {
-    const redaction = redactBodyBytes(decodeBase64(body), patterns, { mimeType });
+    const redaction = maskBodyBytes(decodeBase64(body), rules, { mimeType });
     redacted = redacted || redaction.redacted;
     bytes = redaction.bytes;
   }

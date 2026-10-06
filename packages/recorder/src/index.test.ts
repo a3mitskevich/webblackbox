@@ -964,6 +964,40 @@ describe("recorder", () => {
       },
       {
         raw: createRawEvent({
+          rawType: "indexedDbOp",
+          payload: {
+            op: "open",
+            name: "app-db"
+          }
+        }),
+        policy: createPolicy({
+          categories: {
+            ...TEST_CAPTURE_POLICY.categories,
+            indexedDb: "counts-only"
+          }
+        }),
+        reason: "storage-detail-disabled",
+        blockedType: "storage.idb.op"
+      },
+      {
+        raw: createRawEvent({
+          rawType: "localStorageSnapshot",
+          payload: {
+            count: 1,
+            entries: [{ key: "theme", value: "dark" }]
+          }
+        }),
+        policy: createPolicy({
+          categories: {
+            ...TEST_CAPTURE_POLICY.categories,
+            storage: "counts-only"
+          }
+        }),
+        reason: "storage-detail-disabled",
+        blockedType: "storage.local.snapshot"
+      },
+      {
+        raw: createRawEvent({
           rawType: "indexedDbSnapshot",
           payload: {
             databaseNames: ["app-db"]
@@ -1376,5 +1410,84 @@ describe("recorder", () => {
     expect(warnSpy).toHaveBeenCalledTimes(2);
 
     warnSpy.mockRestore();
+  });
+});
+
+describe("cookie and IndexedDB values", () => {
+  function ingestSnapshot(
+    categories: Partial<CapturePolicy["categories"]>,
+    contentRedaction: boolean
+  ): Record<string, unknown> | undefined {
+    const recorder = new WebBlackboxRecorder({
+      ...TEST_CONFIG,
+      redaction: { ...TEST_CONFIG.redaction, contentRedaction },
+      capturePolicy: {
+        ...TEST_CAPTURE_POLICY,
+        categories: { ...TEST_CAPTURE_POLICY.categories, ...categories },
+        redaction: { ...TEST_CAPTURE_POLICY.redaction, contentRedaction }
+      }
+    });
+    const result = recorder.ingest({
+      source: "system",
+      rawType: "cdp.storage.cookie.snapshot",
+      sid: "S-cookies",
+      tabId: 1,
+      t: 1,
+      mono: 1,
+      payload: {
+        mode: "allow",
+        redacted: false,
+        count: 2,
+        cookies: [
+          { name: "session", value: "s3cr3t-session", httpOnly: true, domain: "app.example" },
+          { name: "theme", value: "dark", httpOnly: false, domain: "app.example" }
+        ]
+      }
+    });
+
+    return result.event?.type === "storage.cookie.snapshot"
+      ? (result.event.data as Record<string, unknown>)
+      : undefined;
+  }
+
+  it("keeps cookie values under cookies: allow and masks secret cookie names when masking is on", () => {
+    const masked = ingestSnapshot({ cookies: "allow" }, true);
+    const raw = ingestSnapshot({ cookies: "allow" }, false);
+
+    expect(JSON.stringify(masked)).not.toContain("s3cr3t-session");
+    expect(masked?.cookies).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "theme", value: "dark" })])
+    );
+    expect(raw?.cookies).toEqual([
+      expect.objectContaining({ name: "session", value: "s3cr3t-session", httpOnly: true }),
+      expect.objectContaining({ name: "theme", value: "dark" })
+    ]);
+  });
+});
+
+describe("recorder reconfigure", () => {
+  it("applies a new capture policy to later events and keeps the buffer", () => {
+    const metadataPolicy: CapturePolicy = {
+      ...TEST_CAPTURE_POLICY,
+      categories: { ...TEST_CAPTURE_POLICY.categories, console: "metadata" }
+    };
+    const recorder = new WebBlackboxRecorder({ ...TEST_CONFIG, capturePolicy: metadataPolicy });
+    const consoleEvent = (t: number): RawRecorderEvent => ({
+      source: "content",
+      rawType: "console",
+      tabId: 1,
+      sid: "S-1",
+      t,
+      mono: t,
+      payload: { level: "log", text: "checkout failed" }
+    });
+
+    expect(recorder.ingest(consoleEvent(1)).event?.type).toBe("privacy.violation");
+
+    recorder.reconfigure({ ...TEST_CONFIG, capturePolicy: TEST_CAPTURE_POLICY });
+
+    expect(recorder.getConfig().capturePolicy?.categories.console).toBe("allow");
+    expect(recorder.ingest(consoleEvent(2)).event?.type).toBe("console.entry");
+    expect(recorder.getBufferedEventCount()).toBe(2);
   });
 });

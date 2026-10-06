@@ -11,6 +11,14 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./capture-scope": {
+      "types": "./dist/capture-scope.d.ts",
+      "import": "./dist/capture-scope.js"
+    },
+    "./input-value-policy": {
+      "types": "./dist/input-value-policy.d.ts",
+      "import": "./dist/input-value-policy.js"
+    },
     "./injected-hooks": {
       "types": "./dist/injected-hooks.d.ts",
       "import": "./dist/injected-hooks.js"
@@ -59,14 +67,15 @@
   "author": "unadlib",
   "license": "MIT",
   "scripts": {
-    "dev": "tsup src/index.ts src/injected-hooks.ts src/lite-capture-agent.ts src/lite-materializer.ts src/lite-sdk.ts src/types.ts --format esm --dts --watch --clean",
-    "build": "tsup src/index.ts src/injected-hooks.ts src/lite-capture-agent.ts src/lite-materializer.ts src/lite-sdk.ts src/types.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts src/capture-scope.ts src/injected-hooks.ts src/input-value-policy.ts src/lite-capture-agent.ts src/lite-materializer.ts src/lite-sdk.ts src/types.ts --format esm --dts --watch --clean",
+    "build": "tsup src/index.ts src/capture-scope.ts src/injected-hooks.ts src/input-value-policy.ts src/lite-capture-agent.ts src/lite-materializer.ts src/lite-sdk.ts src/types.ts --format esm --dts --clean",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^26.1.0"
   },
   "dependencies": {

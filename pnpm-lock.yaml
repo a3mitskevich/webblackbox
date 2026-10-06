@@ -83,6 +83,9 @@ importers:
       webblackbox:
         specifier: workspace:*
         version: link:../../packages/webblackbox
+      zod:
+        specifier: ^4.1.12
+        version: 4.3.6
     devDependencies:
       jszip:
         specifier: ^3.10.1
@@ -213,6 +216,9 @@ importers:
         specifier: ^2.0.2
         version: 2.0.2
     devDependencies:
+      fake-indexeddb:
+        specifier: ^6.2.5
+        version: 6.2.5
       jsdom:
         specifier: ^26.1.0
         version: 26.1.0

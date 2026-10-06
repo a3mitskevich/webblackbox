@@ -1,19 +1,36 @@
 import {
   DEFAULT_CAPTURE_POLICY,
+  isContentRedactionEnabled,
+  recordUrl,
   redactKeystrokePayload,
-  sanitizeUrlForPrivacy,
   shouldRedactKeystroke,
-  type CapturePolicy
+  type CapturePolicy,
+  type RedactionRules
 } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 import { snapdom } from "@zumer/snapdom";
 
 import type { LiteCaptureAgentOptions, LiteCaptureSampling, LiteCaptureState } from "./types.js";
 import {
+  capStorageValue,
+  capturesPageStorageInFullMode,
+  capturesRawDom,
+  isPageEventKeptInFullMode,
+  STORAGE_SNAPSHOT_MAX_ITEMS,
+  STORAGE_SNAPSHOT_MAX_VALUE_CHARS
+} from "./capture-scope.js";
+import { readIndexedDbSnapshot } from "./indexeddb-snapshot.js";
+import { serializeRawDom } from "./raw-dom-snapshot.js";
+import {
   INJECTED_MESSAGE_SOURCE,
   INJECTED_RAW_EVENT_TYPES,
   type InjectedCaptureWindowMessage
 } from "./injected-hooks.js";
+import {
+  notePasswordField,
+  readCapturableInputValue,
+  watchPasswordFieldReveals
+} from "./input-value-policy.js";
 
 const PRE_RECORDING_BUFFER_MAX = 400;
 const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
@@ -41,6 +58,8 @@ const FULL_MODE_POINTER_TRACK_INTERVAL_MS = 250;
 const QUIET_MODE_MUTATION_RECORD_LIMIT = 360;
 const QUIET_MODE_EVENT_BUFFER_LIMIT = 560;
 const QUIET_MODE_COOLDOWN_MS = 3_000;
+/** Shortest gap between raw DOM snapshots taken because the page changed (`dom: allow`). */
+const DOM_CHANGE_SNAPSHOT_INTERVAL_MS = 2_500;
 const QUIET_MODE_SCROLL_COOLDOWN_MS = 2_000;
 const QUIET_MODE_EDITOR_COOLDOWN_MS = 4_200;
 const SCREENSHOT_MAX_DIMENSION_PX = 1_200;
@@ -186,6 +205,12 @@ export class LiteCaptureAgent {
   private pendingTargetEnrichmentTimers = new Set<number>();
   private trailingScrollTimer = 0;
   private mutationFlushTimer = 0;
+
+  private domChangeSnapshotTimer = 0;
+
+  private indexedDbSnapshotInFlight = false;
+
+  private lastDomSnapshotMono = Number.NEGATIVE_INFINITY;
   private flushTimer = 0;
   private lastScrollTime = 0;
   private lastPointerTime = Number.NEGATIVE_INFINITY;
@@ -217,9 +242,10 @@ export class LiteCaptureAgent {
   private mutationSummary: MutationBatchSummary = createEmptyMutationSummary();
   private selectorCache = new WeakMap<Element, string>();
   private selectorCacheSize = 0;
-  private readonly selectorSalt = createSelectorSalt();
+  private readonly hashingSalt = createSelectorSalt();
   private droppedLowPriorityEvents = 0;
   private disposed = false;
+  private readonly stopWatchingPasswordReveals: () => void;
   private pendingQuietRecoverySummary = false;
 
   /** Creates and installs capture hooks for the current page context. */
@@ -227,9 +253,17 @@ export class LiteCaptureAgent {
     const frameContext = resolveContentFrameContext(options.frameScope);
     this.frameMarker = frameContext.marker;
     this.isTopLevelFrame = frameContext.isTopLevel;
+    // Runs while idle too: a password revealed before Start must stay a password.
+    this.stopWatchingPasswordReveals =
+      typeof document === "undefined" ? () => undefined : watchPasswordFieldReveals(document);
   }
 
   /** Updates recording state and sampling profile from the host SDK. */
+  /** The salt that hashes selector tokens, or null to record them as-is (masking off). */
+  private selectorSalt(): SelectorSalt {
+    return isContentRedactionEnabled(this.capturePolicy.redaction) ? this.hashingSalt : null;
+  }
+
   public setRecordingStatus(state: LiteCaptureState): void {
     if (this.disposed) {
       return;
@@ -358,6 +392,7 @@ export class LiteCaptureAgent {
     }
 
     this.disposed = true;
+    this.stopWatchingPasswordReveals();
     this.stopMutationAndSnapshots();
     this.removeIndicator();
 
@@ -485,6 +520,7 @@ export class LiteCaptureAgent {
       (event: KeyboardEvent) => {
         this.markUserActivity();
         this.recordEditableInteraction(event.target);
+        notePasswordField(event.target);
         if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "m") {
           this.emitMarker("Keyboard marker");
         }
@@ -507,10 +543,12 @@ export class LiteCaptureAgent {
 
         this.recordEditableInteraction(target);
 
+        const value = readCapturableInputValue(target, this.capturePolicy);
+
         this.queueEvent("input", {
           inputType: target.type,
           length: target.value.length,
-          valueRedacted: true,
+          ...(value === undefined ? { valueRedacted: true } : { value }),
           target: this.resolveTargetPayload(target, "input")
         });
       },
@@ -536,6 +574,7 @@ export class LiteCaptureAgent {
       "focus",
       (event: FocusEvent) => {
         this.markUserActivity();
+        notePasswordField(event.target);
         this.queueEvent("focus", {
           target: this.resolveTargetPayload(event.target, "fast")
         });
@@ -591,7 +630,7 @@ export class LiteCaptureAgent {
           monotonicTime() + Math.max(POINTERMOVE_SUPPRESS_AFTER_SCROLL_MS, scrollGapMs);
 
         const payload = {
-          target: toFastTargetPayload(event.target, this.selectorSalt),
+          target: toFastTargetPayload(event.target, this.selectorSalt()),
           scrollX: window.scrollX,
           scrollY: window.scrollY
         };
@@ -642,7 +681,7 @@ export class LiteCaptureAgent {
         this.queueEvent("mousemove", {
           x: event.clientX,
           y: event.clientY,
-          target: toFastTargetPayload(event.target, this.selectorSalt)
+          target: toFastTargetPayload(event.target, this.selectorSalt())
         });
       },
       PASSIVE_INPUT_OPTIONS_TRUE
@@ -833,7 +872,7 @@ export class LiteCaptureAgent {
       this.selectorCacheSize = 0;
     }
 
-    const selector = safeSelector(target, this.selectorSalt);
+    const selector = safeSelector(target, this.selectorSalt());
     this.selectorCache.set(target, selector);
     this.selectorCacheSize += 1;
 
@@ -849,21 +888,27 @@ export class LiteCaptureAgent {
     );
   }
 
+  /** Full mode leaves DOM changes to CDP unless the profile records the raw DOM. */
   private shouldCaptureMutationSignals(): boolean {
     return (
-      this.mode !== "full" && this.isTopLevelFrame && this.capturePolicy.categories.dom !== "off"
+      (this.mode !== "full" || capturesRawDom(this.capturePolicy.categories)) &&
+      this.isTopLevelFrame &&
+      this.capturePolicy.categories.dom !== "off"
     );
   }
 
+  /** Full mode leaves the DOM to CDP unless the profile records the raw DOM. */
   private shouldCaptureDomSnapshots(): boolean {
     return (
-      this.mode !== "full" && this.isTopLevelFrame && this.capturePolicy.categories.dom !== "off"
+      (this.mode !== "full" || capturesRawDom(this.capturePolicy.categories)) &&
+      this.isTopLevelFrame &&
+      this.capturePolicy.categories.dom !== "off"
     );
   }
 
   private shouldCaptureStorageSnapshots(): boolean {
     return (
-      this.mode !== "full" &&
+      (this.mode !== "full" || capturesPageStorageInFullMode(this.capturePolicy.categories)) &&
       this.isTopLevelFrame &&
       (this.capturePolicy.categories.storage !== "off" ||
         this.capturePolicy.categories.indexedDb !== "off" ||
@@ -965,6 +1010,11 @@ export class LiteCaptureAgent {
       this.flushMutationBuffer();
     }
 
+    if (this.domChangeSnapshotTimer > 0) {
+      clearTimeout(this.domChangeSnapshotTimer);
+      this.domChangeSnapshotTimer = 0;
+    }
+
     this.flushPendingScrollEvent();
   }
 
@@ -1027,6 +1077,45 @@ export class LiteCaptureAgent {
     }, flushDelayMs);
   }
 
+  /**
+   * Sessions that record the raw DOM snapshot the page again after it changes, at most every
+   * {@link DOM_CHANGE_SNAPSHOT_INTERVAL_MS}, so a replayed DOM follows the session instead of
+   * freezing at the start snapshot. Under capture pressure the snapshot waits (checked again
+   * every interval) and is taken once the pressure ends.
+   */
+  private scheduleDomChangeSnapshot(): void {
+    if (
+      this.domChangeSnapshotTimer > 0 ||
+      !this.recordingActive ||
+      !capturesRawDom(this.capturePolicy.categories) ||
+      !this.shouldCaptureDomSnapshots()
+    ) {
+      return;
+    }
+
+    const delayMs = Math.max(
+      0,
+      this.lastDomSnapshotMono + DOM_CHANGE_SNAPSHOT_INTERVAL_MS - monotonicTime()
+    );
+
+    this.domChangeSnapshotTimer = window.setTimeout(() => {
+      this.domChangeSnapshotTimer = 0;
+
+      if (!this.recordingActive) {
+        return;
+      }
+
+      if (this.shouldDeferBackgroundCapture()) {
+        // Retried one interval later (the last snapshot time is unchanged).
+        this.lastDomSnapshotMono = monotonicTime();
+        this.scheduleDomChangeSnapshot();
+        return;
+      }
+
+      this.emitDomSnapshot("mutation");
+    }, delayMs);
+  }
+
   private flushMutationBuffer(): void {
     if (this.mutationSummary.count === 0) {
       return;
@@ -1040,6 +1129,7 @@ export class LiteCaptureAgent {
       summary
     });
     this.emitRrwebMutationSummary(summary);
+    this.scheduleDomChangeSnapshot();
   }
 
   private emitRrwebMutationSummary(summary: MutationBatchSummary): void {
@@ -1062,16 +1152,22 @@ export class LiteCaptureAgent {
           attributeNames: [...summary.attributeNames]
         }
       },
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title
     });
   }
 
   private emitDomSnapshot(reason: string): void {
+    this.lastDomSnapshotMono = monotonicTime();
     const nodeCount = document.getElementsByTagName("*").length;
     const summaryMode = this.resolveDomSnapshotSummaryMode(nodeCount);
+
+    if (summaryMode !== "pressure" && this.emitRawDomSnapshot(reason, nodeCount)) {
+      return;
+    }
+
     const html = buildDomSnapshotSummaryHtml({
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title,
       reason,
       nodeCount,
@@ -1085,7 +1181,7 @@ export class LiteCaptureAgent {
 
     this.queueEvent("snapshot", {
       reason,
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title,
       nodeCount,
       htmlLength: html.length,
@@ -1096,8 +1192,44 @@ export class LiteCaptureAgent {
     });
   }
 
+  /** `dom: allow`: the page itself, masked by blocked selectors. False when not recorded. */
+  private emitRawDomSnapshot(reason: string, nodeCount: number): boolean {
+    const { categories, redaction } = this.capturePolicy;
+
+    if (!capturesRawDom(categories)) {
+      return false;
+    }
+
+    const snapshot = serializeRawDom(document, {
+      blockedSelectors: redaction.blockedSelectors,
+      keepInputValues: categories.inputs === "allow",
+      sensitiveNamePatterns: redaction.redactBodyPatterns,
+      redaction
+    });
+
+    if (!snapshot) {
+      return false;
+    }
+
+    this.hasDomSnapshot = true;
+    this.queueEvent("snapshot", {
+      reason,
+      href: readPageUrl(this.capturePolicy.redaction),
+      title: document.title,
+      nodeCount,
+      htmlLength: snapshot.htmlLength,
+      truncated: snapshot.truncated,
+      html: snapshot.html,
+      summaryOnly: false
+    });
+    return true;
+  }
+
   private emitStorageSnapshots(reason: string): void {
-    if (this.capturePolicy.categories.cookies !== "off") {
+    const cookies = this.capturePolicy.categories.cookies;
+
+    // Full mode reads cookie values through CDP, HttpOnly ones included.
+    if (cookies !== "off" && !(this.mode === "full" && cookies === "allow")) {
       this.emitCookieSnapshot(reason);
     }
 
@@ -1111,50 +1243,158 @@ export class LiteCaptureAgent {
   }
 
   private emitCookieSnapshot(reason: string): void {
-    const count = document.cookie
+    const cookies = document.cookie
       .split(";")
       .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0).length;
+      .filter((entry) => entry.length > 0);
+    // A cookie without `=` is a bare value, not a name: it is counted but never listed.
+    const names = cookies
+      .filter((entry) => entry.includes("="))
+      .map((entry) => entry.split("=")[0]?.trim() ?? "");
+    const level = this.capturePolicy.categories.cookies;
+
+    if (level === "allow") {
+      // `cookies` (name/value records) so the recorder's cookie-name rules can mask values.
+      const listed = cookies
+        .filter((entry) => entry.includes("="))
+        .slice(0, STORAGE_SNAPSHOT_MAX_ITEMS);
+      this.queueEvent("cookieSnapshot", {
+        reason,
+        count: cookies.length,
+        mode: "allow",
+        redacted: false,
+        truncated: cookies.length > listed.length,
+        cookies: listed.map((entry) => {
+          const separator = entry.indexOf("=");
+          return {
+            name: entry.slice(0, separator).trim(),
+            ...capStorageValue(entry.slice(separator + 1))
+          };
+        })
+      });
+      return;
+    }
+
+    const showsNames = level === "names-only";
 
     this.queueEvent("cookieSnapshot", {
       reason,
-      count,
-      mode: "counts-only",
-      redacted: true
+      count: cookies.length,
+      mode: showsNames ? "names-only" : "counts-only",
+      redacted: true,
+      ...(showsNames
+        ? {
+            names: names.slice(0, STORAGE_SNAPSHOT_MAX_ITEMS),
+            truncated: names.length > STORAGE_SNAPSHOT_MAX_ITEMS
+          }
+        : {})
     });
   }
 
   private emitLocalStorageSnapshot(reason: string): void {
     const count = localStorage.length;
+    const level = this.capturePolicy.categories.storage;
 
     this.hasLocalStorageSnapshot = true;
 
+    if (level !== "names-only" && level !== "lengths-only" && level !== "allow") {
+      this.queueEvent("localStorageSnapshot", {
+        reason,
+        count,
+        truncated: false,
+        mode: "counts-only",
+        redacted: true
+      });
+      return;
+    }
+
+    const keys = readStorageKeys(localStorage, STORAGE_SNAPSHOT_MAX_ITEMS);
+    let truncated = count > keys.length;
+    let budget = STORAGE_SNAPSHOT_MAX_VALUE_CHARS;
+    const details: Record<string, unknown> = {};
+
+    if (level === "names-only") {
+      details.keys = keys;
+    } else if (level === "lengths-only") {
+      details.lengths = keys.map((key) => (localStorage.getItem(key) ?? "").length);
+    } else {
+      details.entries = keys.flatMap((key) => {
+        const value = localStorage.getItem(key) ?? "";
+
+        if (budget <= 0) {
+          truncated = true;
+          return [];
+        }
+
+        const entry = { key, valueLength: value.length, ...capStorageValue(value) };
+        budget -= entry.value.length;
+        return [entry];
+      });
+    }
+
+    // Values go through the recorder's redactor (sensitive key names mask their values).
     this.queueEvent("localStorageSnapshot", {
       reason,
       count,
-      truncated: false,
-      mode: "counts-only",
-      redacted: true
+      truncated,
+      mode: level,
+      redacted: level !== "allow",
+      ...details
     });
   }
 
   private async emitIndexedDbSnapshot(reason: string): Promise<void> {
-    if (!("indexedDB" in window) || typeof indexedDB.databases !== "function") {
+    // One read at a time: start, interval and stop snapshots must not stack up on the page.
+    if (
+      this.indexedDbSnapshotInFlight ||
+      !("indexedDB" in window) ||
+      typeof indexedDB.databases !== "function"
+    ) {
       return;
     }
+
+    this.indexedDbSnapshotInFlight = true;
 
     try {
       const rows = await indexedDB.databases();
 
+      if (this.capturePolicy.categories.indexedDb === "allow") {
+        const snapshot = await readIndexedDbSnapshot(indexedDB, rows);
+
+        if (!this.recordingActive) {
+          return;
+        }
+
+        this.queueEvent("indexedDbSnapshot", {
+          reason,
+          count: rows.length,
+          mode: "allow",
+          redacted: false,
+          truncated: snapshot.truncated,
+          databaseNames: snapshot.databases.map((database) => database.name),
+          databases: snapshot.databases
+        });
+        return;
+      }
+
+      const showsNames = this.capturePolicy.categories.indexedDb === "names-only";
+      const names = rows
+        .map((row) => row.name)
+        .filter((name): name is string => typeof name === "string")
+        .slice(0, STORAGE_SNAPSHOT_MAX_ITEMS);
+
       this.queueEvent("indexedDbSnapshot", {
         reason,
         count: rows.length,
-        mode: "counts-only",
+        mode: showsNames ? "names-only" : "counts-only",
         redacted: true,
-        truncated: false
+        truncated: showsNames && rows.length > names.length,
+        ...(showsNames ? { databaseNames: names } : {})
       });
     } catch {
       void 0;
+    } finally {
+      this.indexedDbSnapshotInFlight = false;
     }
   }
 
@@ -1378,10 +1618,10 @@ export class LiteCaptureAgent {
   private createKeydownPayload(event: KeyboardEvent): Record<string, unknown> {
     const focusTarget = resolveComposedTarget(event);
     const editable = isKeystrokeEditableTarget(focusTarget);
-    const sensitive = isSensitiveKeystrokeTarget(
-      focusTarget,
-      this.capturePolicy.redaction.blockedSelectors
-    );
+    // Masking off (`contentRedaction: false`): keys are recorded as typed, passwords included.
+    const sensitive =
+      isContentRedactionEnabled(this.capturePolicy.redaction) &&
+      isSensitiveKeystrokeTarget(focusTarget, this.capturePolicy.redaction.blockedSelectors);
     const payload = stripUndefinedRecord({
       key: event.key,
       code: event.code,
@@ -1441,7 +1681,7 @@ export class LiteCaptureAgent {
 
   private queueTrailingScrollEvent(event: Event): void {
     this.pendingScrollPayload = {
-      target: toFastTargetPayload(event.target, this.selectorSalt),
+      target: toFastTargetPayload(event.target, this.selectorSalt()),
       scrollX: window.scrollX,
       scrollY: window.scrollY
     };
@@ -1774,6 +2014,7 @@ export class LiteCaptureAgent {
     this.mutationObserver?.disconnect();
     this.mutationObserver = null;
     this.scheduleQuietModeRecovery();
+    this.scheduleDomChangeSnapshot();
   }
 
   private scheduleQuietModeRecovery(): void {
@@ -1810,7 +2051,7 @@ export class LiteCaptureAgent {
   private emitPressureRecoverySnapshot(): void {
     const nodeCount = document.getElementsByTagName("*").length;
     const html = buildDomSnapshotSummaryHtml({
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title,
       reason: "pressure-recovery",
       nodeCount,
@@ -1821,7 +2062,7 @@ export class LiteCaptureAgent {
     this.hasDomSnapshot = true;
     this.queueEvent("snapshot", {
       reason: "pressure-recovery",
-      href: readCurrentPageUrl(),
+      href: readPageUrl(this.capturePolicy.redaction),
       title: document.title,
       nodeCount,
       htmlLength: html.length,
@@ -1863,7 +2104,11 @@ export class LiteCaptureAgent {
   }
 
   private queueRawEvent(event: RawRecorderEvent): void {
-    if (this.mode === "full" && FULL_MODE_SKIPPED_RAW_TYPES.has(event.rawType)) {
+    if (
+      this.mode === "full" &&
+      FULL_MODE_SKIPPED_RAW_TYPES.has(event.rawType) &&
+      !isPageEventKeptInFullMode(event.rawType, this.capturePolicy.categories)
+    ) {
       return;
     }
 
@@ -1914,7 +2159,7 @@ export class LiteCaptureAgent {
     detail: TargetPayloadDetail
   ): Record<string, unknown> {
     if (this.mode === "full" || detail === "fast") {
-      return toFastTargetPayload(target, this.selectorSalt);
+      return toFastTargetPayload(target, this.selectorSalt());
     }
 
     if (detail === "navigation") {
@@ -1929,7 +2174,7 @@ export class LiteCaptureAgent {
       return {};
     }
 
-    const payload = toDeferredTargetPayload(target, this.selectorSalt);
+    const payload = toDeferredTargetPayload(target, this.selectorSalt());
     const cachedSelector = this.selectorCache.get(target);
 
     if (cachedSelector) {
@@ -1955,13 +2200,14 @@ export class LiteCaptureAgent {
     const navigationTarget = resolveNavigationTarget(target);
 
     if (!navigationTarget) {
-      return toFastTargetPayload(target, this.selectorSalt);
+      return toFastTargetPayload(target, this.selectorSalt());
     }
 
     const href = sanitizeOptionalUrl(
-      navigationTarget.getAttribute("href") ?? navigationTarget.href
+      navigationTarget.getAttribute("href") ?? navigationTarget.href,
+      this.capturePolicy.redaction
     );
-    const payload = toFastTargetPayload(navigationTarget, this.selectorSalt);
+    const payload = toFastTargetPayload(navigationTarget, this.selectorSalt());
     payload.selector = this.readCachedSelector(navigationTarget);
 
     if (href) {
@@ -2238,14 +2484,17 @@ function resolveContentFrameContext(scope: LiteCaptureAgentOptions["frameScope"]
   };
 }
 
-function toDeferredTargetPayload(target: Element, salt: string): Record<string, unknown> {
+function toDeferredTargetPayload(target: Element, salt: SelectorSalt): Record<string, unknown> {
   return {
     ...toFastTargetPayload(target, salt),
     dataTestIdToken: tokenForValue(readDataTestId(target), salt)
   };
 }
 
-function toFastTargetPayload(target: EventTarget | null, salt: string): Record<string, unknown> {
+function toFastTargetPayload(
+  target: EventTarget | null,
+  salt: SelectorSalt
+): Record<string, unknown> {
   if (!(target instanceof Element)) {
     return {};
   }
@@ -2391,7 +2640,7 @@ function isRichTextEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
-function safeSelector(target: EventTarget | null, salt: string): string {
+function safeSelector(target: EventTarget | null, salt: SelectorSalt): string {
   if (!(target instanceof Element)) {
     return "unknown";
   }
@@ -2456,13 +2705,17 @@ function readClassTokens(target: Element): string[] {
     : [];
 }
 
-function tokenForValue(value: string | undefined | null, salt: string): string | undefined {
+function tokenForValue(value: string | undefined | null, salt: SelectorSalt): string | undefined {
   return value && value.length > 0 ? hashToken(value, salt) : undefined;
 }
 
-function hashToken(value: string, salt: string): string {
-  return `t_${hashString(`${salt}:${value}`)}`;
+/** `salt` null: masking is off and tokens are recorded as they are. */
+function hashToken(value: string, salt: SelectorSalt): string {
+  return salt === null ? value : `t_${hashString(`${salt}:${value}`)}`;
 }
+
+/** Per-agent salt of selector token hashes; null records tokens as-is. */
+type SelectorSalt = string | null;
 
 function createSelectorSalt(): string {
   const bytes = new Uint32Array(2);
@@ -2492,18 +2745,21 @@ function stripUndefinedRecord(value: Record<string, unknown>): Record<string, un
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
-function readCurrentPageUrl(): string {
+function readPageUrl(rules: RedactionRules): string {
   return typeof location !== "undefined" && typeof location.href === "string"
-    ? sanitizeUrlForPrivacy(location.href)
+    ? recordUrl(location.href, rules)
     : "";
 }
 
-function sanitizeOptionalUrl(value: string | null | undefined): string | undefined {
+function sanitizeOptionalUrl(
+  value: string | null | undefined,
+  rules: RedactionRules
+): string | undefined {
   if (typeof value !== "string" || value.length === 0) {
     return undefined;
   }
 
-  const sanitized = sanitizeUrlForPrivacy(value);
+  const sanitized = recordUrl(value, rules);
   return sanitized.length > 0 ? sanitized : undefined;
 }
 
@@ -2745,3 +3001,17 @@ function shouldBufferBeforeRecording(event: RawRecorderEvent): boolean {
 
 /** Default sanitized sampling profile used by `LiteCaptureAgent`. */
 export { DEFAULT_SAMPLING as DEFAULT_LITE_CAPTURE_SAMPLING };
+
+function readStorageKeys(storage: Storage, maxItems: number): string[] {
+  const keys: string[] = [];
+
+  for (let index = 0; index < storage.length && keys.length < maxItems; index += 1) {
+    const key = storage.key(index);
+
+    if (key !== null) {
+      keys.push(key);
+    }
+  }
+
+  return keys;
+}

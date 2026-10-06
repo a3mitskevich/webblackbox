@@ -1,3 +1,4 @@
+import { isValidExportPassphrase } from "@webblackbox/protocol/archive-encryption";
 import {
   DEFAULT_EXPORT_POLICY,
   type CaptureMode,
@@ -9,12 +10,24 @@ import { getChromeApi } from "../shared/chrome-api.js";
 import { createExtensionI18n } from "../shared/i18n.js";
 import {
   PORT_NAMES,
+  PROFILES_SECTION_ID,
   type ExportPrivacyWarning,
   type ExtensionInboundMessage,
   type ExtensionOutboundMessage,
   type FullModeVisualCapture,
+  type ProfilePreviewResponse,
   type SessionListItem
 } from "../shared/messages.js";
+import {
+  createProfileCancelSection,
+  createProfilePickerSection,
+  createProfileRequirementSection,
+  hasNoRecordingProfiles,
+  loadProfileChoice,
+  PROFILE_CHOICE_AUTO,
+  saveProfileChoice,
+  toStartProfileId
+} from "./profile-picker.js";
 
 const chromeApi = getChromeApi();
 const port = chromeApi?.runtime?.connect({ name: PORT_NAMES.popup });
@@ -37,7 +50,6 @@ const START_PENDING_TIMEOUT_MS = 45_000;
 const EXPORT_ACK_TIMEOUT_MS = 120_000;
 
 type PopupExportPolicyForm = {
-  alertSensitiveFindings: boolean;
   maxArchiveMb: string;
   recentMinutes: string;
 };
@@ -47,26 +59,28 @@ const state: {
   sessions: SessionListItem[];
   recording: { active: boolean; sid?: string; mode?: string };
   fullModeVisualCapture: FullModeVisualCapture;
+  profileChoice: string;
+  profilePreview?: ProfilePreviewResponse;
   pendingStart?: { tabId: number; mode: CaptureMode; requestedAt: number };
   pendingExportSid?: string;
   exportPrivacyWarning?: ExportPrivacyWarning;
   exportPolicyForm: PopupExportPolicyForm;
   exportStatus?: string;
   exportStatusIsError?: boolean;
-  lastPrivacyAlertKey?: string;
   lastFreeze?: { sid: string; reason: FreezeReason; at: number };
 } = {
   tabId: null,
   sessions: [],
   recording: { active: false },
   fullModeVisualCapture: "screenshots",
+  profileChoice: PROFILE_CHOICE_AUTO,
+  profilePreview: undefined,
   pendingStart: undefined,
   pendingExportSid: undefined,
   exportPrivacyWarning: undefined,
   exportPolicyForm: toPopupExportPolicyForm(DEFAULT_EXPORT_POLICY),
   exportStatus: undefined,
   exportStatusIsError: false,
-  lastPrivacyAlertKey: undefined,
   lastFreeze: undefined
 };
 
@@ -82,14 +96,32 @@ async function bootstrap(container: HTMLElement): Promise<void> {
   state.tabId = await getActiveTabId();
   state.exportPolicyForm = loadPopupExportPolicyForm();
   state.fullModeVisualCapture = loadPopupFullVisualCapture();
+  state.profileChoice = loadProfileChoice();
 
   port?.onMessage.addListener((message) => {
     applyMessage(message as ExtensionOutboundMessage);
     render(container);
   });
   postUiMessage({ kind: "ui.request-session-list" });
+  requestProfilePreview();
 
   render(container);
+}
+
+/** The service worker answers on the popup port with `sw.profile-preview`. */
+function requestProfilePreview(): void {
+  postUiMessage({
+    kind: "ui.resolve-profile",
+    ...(typeof state.tabId === "number" ? { tabId: state.tabId } : {}),
+    profileId: state.profileChoice
+  });
+}
+
+/** A runtime response with `ok: false`, kept whole so callers can read extra flags. */
+class UiMessageRejectedError extends Error {
+  public constructor(public readonly response: { ok: false; error: string }) {
+    super(response.error);
+  }
 }
 
 function postUiMessage(message: ExtensionInboundMessage): void {
@@ -105,7 +137,7 @@ async function sendUiMessage(message: ExtensionInboundMessage): Promise<unknown>
     const response = await chromeApi.runtime.sendMessage(message);
 
     if (isRejectedRuntimeResponse(response)) {
-      throw new Error(response.error);
+      throw new UiMessageRejectedError(response);
     }
 
     return response;
@@ -202,7 +234,11 @@ function render(container: HTMLElement): void {
   const exportStatusClass = state.exportStatusIsError
     ? "wb-popup__status wb-popup__status--error"
     : "wb-popup__status";
-  const startDisabled = Boolean(activeOnCurrentTab || pendingOnCurrentTab);
+  const noProfiles = hasNoRecordingProfiles(state.profilePreview);
+  const startDisabled = Boolean(activeOnCurrentTab || pendingOnCurrentTab || noProfiles);
+  const cancelledSession =
+    tabSessions.find((item) => item.profileCancel) ??
+    sortedSessions.find((item) => item.profileCancel);
   const section = document.createElement("section");
   section.className = "card wb-popup";
 
@@ -229,6 +265,27 @@ function render(container: HTMLElement): void {
   if (ringUsage) {
     section.append(createRingUsageSection(ringUsage));
   }
+
+  if (cancelledSession?.profileCancel) {
+    section.append(
+      createProfileCancelSection(
+        { sid: cancelledSession.sid, profileCancel: cancelledSession.profileCancel },
+        t
+      )
+    );
+  }
+
+  section.append(
+    noProfiles
+      ? createProfileRequirementSection(t)
+      : createProfilePickerSection({
+          preview: state.profilePreview,
+          choice: state.profileChoice,
+          disabled: startDisabled,
+          t,
+          formatMode
+        })
+  );
 
   const actions = document.createElement("div");
   actions.className = "wb-popup__actions";
@@ -325,6 +382,15 @@ function bindActions(
     });
   });
 
+  container
+    .querySelector<HTMLSelectElement>("[data-profile-select]")
+    ?.addEventListener("change", (event) => {
+      const select = event.currentTarget as HTMLSelectElement;
+      state.profileChoice = select.value || PROFILE_CHOICE_AUTO;
+      saveProfileChoice(state.profileChoice);
+      requestProfilePreview();
+    });
+
   container.querySelector("[data-action='stop']")?.addEventListener("click", () => {
     if (!activeSession) {
       return;
@@ -359,6 +425,22 @@ function bindActions(
   container.querySelector("[data-action='open-options']")?.addEventListener("click", () => {
     void openExtensionPage("options.html");
   });
+
+  for (const button of container.querySelectorAll("[data-action='open-profiles']")) {
+    button.addEventListener("click", () => {
+      void openExtensionPage(`options.html#${PROFILES_SECTION_ID}`);
+    });
+  }
+
+  container
+    .querySelector<HTMLElement>("[data-action='ack-profile-cancel']")
+    ?.addEventListener("click", (event) => {
+      const sid = (event.currentTarget as HTMLElement).dataset.sid;
+
+      if (sid) {
+        postUiMessage({ kind: "ui.ack-profile-cancel", sid });
+      }
+    });
 }
 
 async function openExtensionPage(path: string): Promise<void> {
@@ -377,19 +459,7 @@ function bindExportPolicyForm(container: HTMLElement): void {
     state.exportPolicyForm = readPopupExportPolicyFormFromContainer(container);
     savePopupExportPolicyForm(state.exportPolicyForm);
   };
-  const persistAlertDraft = (): void => {
-    persistDraft();
 
-    if (!state.exportPolicyForm.alertSensitiveFindings) {
-      state.exportPrivacyWarning = undefined;
-      state.lastPrivacyAlertKey = undefined;
-      render(container);
-    }
-  };
-
-  container
-    .querySelector<HTMLInputElement>("#export-alert-sensitive-findings")
-    ?.addEventListener("change", persistAlertDraft);
   container
     .querySelector<HTMLInputElement>("#export-max-size-mb")
     ?.addEventListener("input", persistDraft);
@@ -551,9 +621,14 @@ function openPassphraseDialog(): Promise<string | null> {
     };
 
     const submitPassphrase = (): void => {
-      const passphrase = input.value;
+      // Archives are always encrypted: no export without a passphrase of the minimum length.
+      if (!isValidExportPassphrase(input.value)) {
+        input.setCustomValidity(t("popupPassphraseRequired"));
+        input.reportValidity();
+        return;
+      }
 
-      finish(passphrase.trim().length > 0 ? passphrase : "");
+      finish(input.value);
     };
 
     const onKeydown = (event: KeyboardEvent): void => {
@@ -597,12 +672,14 @@ async function startRecordingFromPopup(
   options: { reloadPage?: boolean; visualCapture?: FullModeVisualCapture } = {}
 ): Promise<void> {
   setPendingStart(container, tabId, mode);
+  const profileId = toStartProfileId(state.profileChoice);
 
   try {
     await sendUiMessage({
       kind: "ui.start",
       tabId,
       mode,
+      ...(profileId ? { profileId } : {}),
       ...(options.reloadPage ? { reloadPage: true } : {}),
       ...(mode === "full" && options.visualCapture ? { visualCapture: options.visualCapture } : {})
     });
@@ -690,7 +767,6 @@ async function exportSessionFromPopup(
 ): Promise<void> {
   state.pendingExportSid = sid;
   state.exportPrivacyWarning = undefined;
-  state.lastPrivacyAlertKey = undefined;
   state.exportStatusIsError = false;
   state.exportStatus = t("popupExporting");
   render(container);
@@ -700,7 +776,7 @@ async function exportSessionFromPopup(
       sendUiMessage({
         kind: "ui.export",
         sid,
-        ...(hasDialogPassphrase(passphrase) ? { passphrase } : {}),
+        passphrase,
         saveAs: false,
         policy
       })
@@ -712,7 +788,8 @@ async function exportSessionFromPopup(
       state.exportStatus = t("popupExported", {
         name: response.fileName ?? sid
       });
-      applyExportPrivacyWarning(response.privacyWarning);
+      // Findings are reported, never blocking: the archive is encrypted either way.
+      state.exportPrivacyWarning = response.privacyWarning;
       render(container);
       return;
     }
@@ -728,33 +805,12 @@ async function exportSessionFromPopup(
   }
 }
 
-function hasDialogPassphrase(passphrase: string): boolean {
-  return passphrase.length > 0;
-}
-
 function isSuccessfulExportResponse(value: unknown): value is {
   ok: true;
   fileName?: string;
   privacyWarning?: ExportPrivacyWarning;
 } {
   return value !== null && typeof value === "object" && (value as { ok?: unknown }).ok === true;
-}
-
-function applyExportPrivacyWarning(warning: ExportPrivacyWarning | undefined): void {
-  if (!warning || !state.exportPolicyForm.alertSensitiveFindings) {
-    state.exportPrivacyWarning = undefined;
-    return;
-  }
-
-  state.exportPrivacyWarning = warning;
-  const alertKey = `${warning.findingCount}:${warning.summary}`;
-
-  if (state.lastPrivacyAlertKey === alertKey) {
-    return;
-  }
-
-  state.lastPrivacyAlertKey = alertKey;
-  window.alert(formatExportPrivacyWarning(warning));
 }
 
 function formatExportPrivacyWarning(warning: ExportPrivacyWarning): string {
@@ -791,7 +847,7 @@ function applyMessage(message: ExtensionOutboundMessage): void {
     }
 
     state.exportStatusIsError = !message.ok;
-    state.exportPrivacyWarning = undefined;
+    state.exportPrivacyWarning = message.ok ? message.privacyWarning : undefined;
     state.exportStatus = message.ok
       ? t("popupExported", {
           name: message.fileName ?? message.sid
@@ -800,10 +856,11 @@ function applyMessage(message: ExtensionOutboundMessage): void {
           error: message.error ?? t("unknownError")
         });
 
-    if (message.ok) {
-      applyExportPrivacyWarning(message.privacyWarning);
-    }
+    return;
+  }
 
+  if (message.kind === "sw.profile-preview") {
+    state.profilePreview = message;
     return;
   }
 
@@ -819,7 +876,7 @@ function applyMessage(message: ExtensionOutboundMessage): void {
 function createPrivacyWarningSection(warning: ExportPrivacyWarning): HTMLElement {
   const section = document.createElement("section");
   section.className = "wb-popup__privacy-warning";
-  section.setAttribute("role", "alert");
+  section.setAttribute("role", "status");
 
   const title = document.createElement("strong");
   title.textContent = t("popupExportPrivacyWarningTitle");
@@ -902,7 +959,6 @@ function readExportPolicyFromForm(
 
 function toPopupExportPolicyForm(policy: ExportPolicy): PopupExportPolicyForm {
   return {
-    alertSensitiveFindings: true,
     maxArchiveMb: String(Math.max(1, Math.round(policy.maxArchiveBytes / (1024 * 1024)))),
     recentMinutes: String(Math.max(1, Math.round(policy.recentWindowMs / (60 * 1000))))
   };
@@ -923,8 +979,6 @@ function loadPopupExportPolicyForm(): PopupExportPolicyForm {
     const parsed = JSON.parse(raw) as Partial<PopupExportPolicyForm>;
 
     return {
-      alertSensitiveFindings:
-        typeof parsed.alertSensitiveFindings === "boolean" ? parsed.alertSensitiveFindings : true,
       maxArchiveMb: normalizeStoredBoundedIntText(
         parsed.maxArchiveMb,
         Math.round(DEFAULT_EXPORT_POLICY.maxArchiveBytes / (1024 * 1024)),
@@ -984,15 +1038,8 @@ function writeExportPolicyFormToContainer(
   container: HTMLElement,
   form: PopupExportPolicyForm
 ): void {
-  const alertSensitiveFindings = container.querySelector<HTMLInputElement>(
-    "#export-alert-sensitive-findings"
-  );
   const maxArchiveMb = container.querySelector<HTMLInputElement>("#export-max-size-mb");
   const recentMinutes = container.querySelector<HTMLInputElement>("#export-recent-minutes");
-
-  if (alertSensitiveFindings) {
-    alertSensitiveFindings.checked = form.alertSensitiveFindings;
-  }
 
   if (maxArchiveMb) {
     maxArchiveMb.value = form.maxArchiveMb;
@@ -1005,9 +1052,6 @@ function writeExportPolicyFormToContainer(
 
 function readPopupExportPolicyFormFromContainer(container: HTMLElement): PopupExportPolicyForm {
   return {
-    alertSensitiveFindings:
-      container.querySelector<HTMLInputElement>("#export-alert-sensitive-findings")?.checked ??
-      state.exportPolicyForm.alertSensitiveFindings,
     maxArchiveMb:
       container.querySelector<HTMLInputElement>("#export-max-size-mb")?.value ??
       state.exportPolicyForm.maxArchiveMb,
@@ -1253,17 +1297,6 @@ function createArchivePolicySection(): HTMLElement {
   title.className = "wb-popup__policy-title";
   title.textContent = t("popupArchivePolicyTitle");
 
-  const sensitiveToggleLabel = document.createElement("label");
-  sensitiveToggleLabel.className = "wb-toggle";
-
-  const alertSensitiveFindings = document.createElement("input");
-  alertSensitiveFindings.id = "export-alert-sensitive-findings";
-  alertSensitiveFindings.type = "checkbox";
-
-  const sensitiveToggleText = document.createElement("span");
-  sensitiveToggleText.textContent = t("popupAlertSensitiveFindings");
-  sensitiveToggleLabel.append(alertSensitiveFindings, sensitiveToggleText);
-
   const sizeLabel = document.createElement("label");
   sizeLabel.className = "wb-field-label";
   sizeLabel.htmlFor = "export-max-size-mb";
@@ -1290,6 +1323,6 @@ function createArchivePolicySection(): HTMLElement {
   recentInput.step = "1";
   recentInput.className = "wb-input";
 
-  section.append(title, sensitiveToggleLabel, sizeLabel, sizeInput, recentLabel, recentInput);
+  section.append(title, sizeLabel, sizeInput, recentLabel, recentInput);
   return section;
 }

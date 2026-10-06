@@ -114,7 +114,7 @@ describe("sessions page rendering", () => {
     expect(document.getElementById("pwned")).toBeNull();
   });
 
-  it("exports without encryption when the passphrase prompt is left empty", async () => {
+  it("exports only with a passphrase of at least 8 characters", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
@@ -137,23 +137,22 @@ describe("sessions page rendering", () => {
     document.querySelector<HTMLButtonElement>("button[data-export]")?.click();
     await flushSessions();
 
-    document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
-    await flushSessions();
-
-    expect(port.postMessage).toHaveBeenCalledWith({
-      kind: "ui.export",
-      sid: "sid-export",
-      saveAs: false
-    });
-
-    port.postMessage.mockClear();
-    document.querySelector<HTMLButtonElement>("button[data-export]")?.click();
-    await flushSessions();
-
     const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
 
     if (!passphraseInput) {
       throw new Error("missing passphrase input");
+    }
+
+    for (const value of ["", "       ", "short12"]) {
+      passphraseInput.value = value;
+      passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
+      document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
+      await flushSessions();
+
+      expect(port.postMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "ui.export" })
+      );
+      expect(passphraseInput.validationMessage).toContain("at least 8 characters");
     }
 
     passphraseInput.value = " session-secret ";
@@ -169,7 +168,45 @@ describe("sessions page rendering", () => {
     });
   });
 
-  it("alerts when an exported session has privacy findings", async () => {
+  it("reports failures of its own exports without asking to confirm anything", async () => {
+    const port = new FakePort();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => undefined);
+    installChromeStub(port);
+
+    await importSessionsModule();
+
+    port.emit({
+      kind: "sw.session-list",
+      sessions: [{ sid: "sid-qa", tabId: 7, mode: "full", startedAt: Date.now(), active: false }]
+    });
+    await flushSessions();
+
+    document.querySelector<HTMLButtonElement>("button[data-export]")?.click();
+    await flushSessions();
+    const passphraseInput = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
+    if (!passphraseInput) {
+      throw new Error("missing passphrase input");
+    }
+    passphraseInput.value = "secret-passphrase";
+    passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
+    await flushSessions();
+
+    port.emit({ kind: "sw.export-status", sid: "sid-qa", ok: false, error: "disk full" });
+    await flushSessions();
+
+    expect(alertSpy).toHaveBeenCalledWith("Export failed: disk full");
+
+    alertSpy.mockClear();
+    port.emit({ kind: "sw.export-status", sid: "other", ok: false, error: "popup export" });
+    await flushSessions();
+
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it("shows privacy findings on the page instead of an alert", async () => {
     const port = new FakePort();
     const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => undefined);
     installChromeStub(port);
@@ -185,7 +222,8 @@ describe("sessions page rendering", () => {
     });
     await flushSessions();
 
-    expect(alertSpy).toHaveBeenCalledWith(
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(document.querySelector(".wb-sessions-notice[role='status']")?.textContent).toBe(
       "Export completed, but the privacy scanner found 1 possible sensitive item(s): jwt in event:E-2. Review the archive before sharing."
     );
   });

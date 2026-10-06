@@ -79,9 +79,6 @@ const ENFORCE_HOST_ALLOWLIST =
   SHARE_API_CREDENTIALS.length === 0 ||
   (process.env.WEBBLACKBOX_SHARE_ALLOWED_HOSTS ?? "").trim().length > 0;
 const ALLOW_QUERY_API_KEY = parseBooleanFlag(process.env.WEBBLACKBOX_SHARE_ALLOW_QUERY_API_KEY);
-const ALLOW_PLAINTEXT_SHARE_UPLOADS = parseBooleanFlag(
-  process.env.WEBBLACKBOX_SHARE_ALLOW_PLAINTEXT_UPLOADS
-);
 const SHARE_DEFAULT_TTL_MS = parseDurationMs(
   process.env.WEBBLACKBOX_SHARE_DEFAULT_TTL_MS,
   7 * 24 * 60 * 60 * 1000
@@ -362,7 +359,22 @@ async function handleUpload(
     ? applyArchiveEnvelopeToClientSummary(clientSummary, archiveEnvelopeSummary)
     : archiveEnvelopeSummary;
 
-  if (archiveEnvelope.encrypted && !archiveEnvelope.encryptedPrivatePathsComplete) {
+  // Every shared archive is encrypted: there is no plaintext upload, whatever the configuration.
+  if (!archiveEnvelope.encrypted) {
+    await writeShareAuditEvent(request, {
+      action: "upload",
+      shareId: id,
+      outcome: "blocked"
+    });
+    respondJson(response, summary.analyzed ? 422 : 400, {
+      error: summary.analyzed
+        ? "Public share uploads require encrypted WebBlackbox archives."
+        : "Upload is not a valid encrypted WebBlackbox archive."
+    });
+    return;
+  }
+
+  if (!archiveEnvelope.encryptedPrivatePathsComplete) {
     await writeShareAuditEvent(request, {
       action: "upload",
       shareId: id,
@@ -375,7 +387,7 @@ async function handleUpload(
     return;
   }
 
-  if (archiveEnvelope.encrypted && !archiveEnvelope.encryptedPrivatePathsConfidential) {
+  if (!archiveEnvelope.encryptedPrivatePathsConfidential) {
     await writeShareAuditEvent(request, {
       action: "upload",
       shareId: id,
@@ -388,58 +400,28 @@ async function handleUpload(
     return;
   }
 
-  if (summary.analyzed && summary.privacy?.scanner.status === "blocked") {
+  // Scanner findings are reported in the summary, never blocking: the archive is encrypted.
+  if (!clientSummary) {
     await writeShareAuditEvent(request, {
       action: "upload",
       shareId: id,
       outcome: "blocked"
     });
     respondJson(response, 422, {
-      error: "Share upload blocked by privacy scanner.",
-      scanner: summary.privacy.scanner
+      error: "Encrypted public share uploads require a client privacy preflight summary."
     });
     return;
   }
 
-  if (archiveEnvelope.encrypted && !clientSummary) {
+  if (!hasClientPrivacyPreflight(clientSummary)) {
     await writeShareAuditEvent(request, {
       action: "upload",
       shareId: id,
       outcome: "blocked"
     });
     respondJson(response, 422, {
-      error: "Encrypted public share uploads require a passed client privacy preflight summary."
-    });
-    return;
-  }
-
-  if (
-    archiveEnvelope.encrypted &&
-    clientSummary &&
-    !hasPassedClientPrivacyPreflight(clientSummary)
-  ) {
-    await writeShareAuditEvent(request, {
-      action: "upload",
-      shareId: id,
-      outcome: "blocked"
-    });
-    respondJson(response, 422, {
-      error: "Encrypted public share uploads require a passed client privacy preflight summary.",
+      error: "Encrypted public share uploads require a client privacy preflight summary.",
       scanner: clientSummary.privacy?.scanner
-    });
-    return;
-  }
-
-  if (!summary.encrypted && !ALLOW_PLAINTEXT_SHARE_UPLOADS) {
-    await writeShareAuditEvent(request, {
-      action: "upload",
-      shareId: id,
-      outcome: "blocked"
-    });
-    respondJson(response, summary.analyzed ? 422 : 400, {
-      error: summary.analyzed
-        ? "Public share uploads require encrypted WebBlackbox archives."
-        : "Upload is not a valid encrypted WebBlackbox archive."
     });
     return;
   }
@@ -790,9 +772,9 @@ function applyArchiveEnvelopeToClientSummary(
   };
 }
 
-function hasPassedClientPrivacyPreflight(summary: ShareSummary): boolean {
-  const scanner = summary.privacy?.scanner;
-  return summary.analyzed && scanner?.preEncryption === true && scanner.status === "passed";
+/** The client ran the privacy scanner before encryption; its findings are reported, not blocking. */
+function hasClientPrivacyPreflight(summary: ShareSummary): boolean {
+  return summary.analyzed && summary.privacy?.scanner.preEncryption === true;
 }
 
 function normalizeSharePrivacySummary(value: Record<string, unknown>): ShareSummary["privacy"] {

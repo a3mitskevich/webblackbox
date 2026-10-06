@@ -1,0 +1,415 @@
+/* @vitest-environment jsdom */
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { notePasswordField } from "./input-value-policy.js";
+import { RAW_DOM_SNAPSHOT_MAX_CHARS, serializeRawDom } from "./raw-dom-snapshot.js";
+import {
+  growthRatio,
+  LINEAR_GROWTH_LIMIT,
+  GROWTH_TEST_TIMEOUT_MS
+} from "./test-support/linear-growth.js";
+
+const OPTIONS = { blockedSelectors: [".secret", "[data-sensitive]"], keepInputValues: false };
+
+/** Puts `css` into a fresh page's only stylesheet. */
+function placeStylesheet(css: string): void {
+  document.body.innerHTML = "";
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.body.append(style);
+}
+
+afterEach(() => {
+  document.body.innerHTML = "";
+});
+
+describe("serializeRawDom", () => {
+  it("records the visible page and masks blocked elements, scripts and the indicator", () => {
+    document.body.innerHTML = `
+      <h1>Order 42 shipped</h1>
+      <p class="secret">card 4111 1111 1111 1111</p>
+      <div data-sensitive data-id="7"><span>ssn 123-45-6789</span></div>
+      <script>window.token = "abc123"</script>
+      <div data-webblackbox-indicator="true">REC</div>`;
+
+    const snapshot = serializeRawDom(document, OPTIONS);
+
+    expect(snapshot?.html).toContain("Order 42 shipped");
+    expect(snapshot?.html).not.toContain("4111");
+    expect(snapshot?.html).not.toContain("123-45-6789");
+    expect(snapshot?.html).not.toContain('data-id="7"');
+    expect(snapshot?.html).toContain('class="secret" data-webblackbox-masked="true">[REDACTED]');
+    expect(snapshot?.html).not.toContain("abc123");
+    expect(snapshot?.html).not.toContain("REC");
+    expect(snapshot?.truncated).toBe(false);
+    expect(document.body.innerHTML).toContain("4111");
+  });
+
+  it("drops field values unless inputs are allowed, and never keeps password or hidden values", () => {
+    document.body.innerHTML = `
+      <input name="city" value="Berlin">
+      <input type="password" value="hunter2">
+      <input type="text" name="user_password" value="revealed">
+      <input type="hidden" name="csrf" value="tok-1">
+      <textarea>notes</textarea>`;
+
+    const strict = serializeRawDom(document, OPTIONS)?.html ?? "";
+    const allowed = serializeRawDom(document, { ...OPTIONS, keepInputValues: true })?.html ?? "";
+
+    expect(strict).not.toContain("Berlin");
+    expect(strict).not.toContain("notes");
+    expect(allowed).toContain("Berlin");
+    expect(allowed).toContain("notes");
+
+    for (const html of [strict, allowed]) {
+      expect(html).not.toContain("hunter2");
+      expect(html).not.toContain("revealed");
+      expect(html).not.toContain("tok-1");
+    }
+  });
+
+  it("never keeps the value of a password the page revealed, even with inputs allowed", () => {
+    document.body.innerHTML = '<input id="pw1" type="password" value="REVEALEDPW">';
+    const field = document.getElementById("pw1") as HTMLInputElement;
+
+    notePasswordField(field);
+    field.setAttribute("type", "text");
+
+    expect(serializeRawDom(document, { ...OPTIONS, keepInputValues: true })?.html).not.toContain(
+      "REVEALEDPW"
+    );
+  });
+
+  it("removes secrets carried by attributes, comments, templates and inline documents", () => {
+    document.head.innerHTML = `
+      <meta name="csrf-token" content="CSRF-SECRET">
+      <meta name="viewport" content="width=device-width">`;
+    document.body.innerHTML = `
+      <a href="https://app.test/reset?token=RESET-SECRET#frag">reset</a>
+      <form action="/login?code=OAUTH-SECRET"><button name="otp" value="OTP-SECRET">go</button></form>
+      <img src="/img.png?sig=IMG-SECRET" srcset="/a.png?k=SRCSET-SECRET 2x">
+      <div data-api-key="DATA-SECRET" data-color="blue" onclick="leak('HANDLER-SECRET')">box</div>
+      <!-- COMMENT-SECRET -->
+      <iframe srcdoc="&lt;p class='secret'&gt;SRCDOC-SECRET&lt;/p&gt;"></iframe>
+      <noscript>NOSCRIPT-SECRET</noscript>
+      <template><div class="secret">TEMPLATE-SECRET</div><input type="hidden" value="TPL-HIDDEN"></template>`;
+
+    const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+
+    for (const secret of [
+      "CSRF-SECRET",
+      "RESET-SECRET",
+      "OAUTH-SECRET",
+      "OTP-SECRET",
+      "IMG-SECRET",
+      "SRCSET-SECRET",
+      "DATA-SECRET",
+      "HANDLER-SECRET",
+      "COMMENT-SECRET",
+      "SRCDOC-SECRET",
+      "NOSCRIPT-SECRET",
+      "TEMPLATE-SECRET",
+      "TPL-HIDDEN"
+    ]) {
+      expect(html, secret).not.toContain(secret);
+    }
+
+    expect(html).toContain('content="width=device-width"');
+    expect(html).toContain('data-color="blue"');
+    expect(html).toContain("https://app.test/reset");
+    document.head.innerHTML = "";
+  });
+
+  it("masks blocked elements even when the page forges the masked marker", () => {
+    document.body.innerHTML =
+      '<div class="secret" data-webblackbox-masked="x">card 4111111111111111</div>';
+
+    expect(serializeRawDom(document, OPTIONS)?.html).not.toContain("4111111111111111");
+  });
+
+  it("strips queries from namespaced and CSS URLs, keeping ordinary attributes", () => {
+    document.body.innerHTML = `
+      <svg><a xlink:href="https://h.test/p?token=XLINK-SECRET"><text>x</text></a></svg>
+      <div class="secret" style="background:url(/a.png?token=MASKED-STYLE-SECRET)">x</div>
+      <div style="background:url('/b.png?sig=STYLE-SECRET')" one="keep-one" data-hotpath="keep-hot">y</div>
+      <style>.hero { background: url("/c.png?X-Amz-Signature=CSS-SECRET"); }</style>
+      <textarea name="otp">TEXTAREA-OTP</textarea>`;
+
+    const html = serializeRawDom(document, { ...OPTIONS, keepInputValues: true })?.html ?? "";
+
+    for (const secret of [
+      "XLINK-SECRET",
+      "MASKED-STYLE-SECRET",
+      "STYLE-SECRET",
+      "CSS-SECRET",
+      "TEXTAREA-OTP"
+    ]) {
+      expect(html, secret).not.toContain(secret);
+    }
+
+    expect(html).toContain('one="keep-one"');
+    expect(html).toContain('data-hotpath="keep-hot"');
+    expect(html).toContain("/b.png");
+  });
+
+  it(
+    "strips CSS URL queries in linear time and catches every CSS URL form",
+    { timeout: GROWTH_TEST_TIMEOUT_MS },
+    () => {
+      document.body.innerHTML = `
+      <style>@import "/x.css?token=IMPORT-SECRET"; .a { background: image-set("/i.png?token=SET-SECRET" 1x); }</style>
+      <div style="background:url(/a(1).png?token=PAREN-SECRET)">a</div>
+      <svg><rect fill="url(https://h.test/p?token=FILL-SECRET#g)"></rect></svg>
+      <div data-csrftoken="RUN-TOGETHER-SECRET" data-sessionid="SESSION-SECRET">b</div>`;
+
+      const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+
+      for (const secret of [
+        "IMPORT-SECRET",
+        "SET-SECRET",
+        "PAREN-SECRET",
+        "FILL-SECRET",
+        "RUN-TOGETHER-SECRET",
+        "SESSION-SECRET"
+      ]) {
+        expect(html, secret).not.toContain(secret);
+      }
+
+      for (const build of [
+        (scale: number) => `url(${" ".repeat(25_000 * scale)}`,
+        (scale: number) => "url(".repeat(6_000 * scale)
+      ]) {
+        const ratio = growthRatio((scale) => {
+          placeStylesheet(build(scale));
+          return () => serializeRawDom(document, OPTIONS);
+        });
+
+        expect(ratio, build(1).slice(0, 8)).toBeLessThan(LINEAR_GROWTH_LIMIT);
+      }
+    }
+  );
+
+  it(
+    "sanitizes every CSS URL like recorded URLs, data URLs included, and leaves other CSS alone",
+    { timeout: GROWTH_TEST_TIMEOUT_MS },
+    () => {
+      document.body.innerHTML = `
+      <div style="background:url('https://x.imgix.net/a.jpg?rect=0,0,10,10&s=IMGIX-SIG')">a</div>
+      <div style="background:url(/b.png?q=(1)&token=PAREN-TOKEN)">b</div>
+      <div style="background:url(/c.png#access_token=FRAGMENT-TOKEN)">c</div>
+      <svg><rect fill="URL(https://h.test/p?token=UPPER-TOKEN)"></rect></svg>
+      <div style="background:url(data:image/svg+xml;utf8,<svg><text>keep?</text></svg>)">d</div>
+      <p title="really? yes">e</p>`;
+
+      const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+
+      for (const secret of ["IMGIX-SIG", "PAREN-TOKEN", "FRAGMENT-TOKEN", "UPPER-TOKEN"]) {
+        expect(html, secret).not.toContain(secret);
+      }
+
+      expect(html).not.toContain("keep?");
+      expect(html).toContain("url(data:[redacted])");
+      expect(html).toContain('title="really? yes"');
+
+      for (const [unit, count] of [
+        [`url("`, 5_000],
+        [`url('x'`, 3_500],
+        ["'", 25_000]
+      ] as const) {
+        const ratio = growthRatio((scale) => {
+          placeStylesheet(unit.repeat(count * scale));
+          return () => serializeRawDom(document, OPTIONS);
+        });
+
+        expect(ratio, unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
+      }
+    }
+  );
+
+  it("checks attribute values, not only names, and masks editors without input values", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2lnbmF0dXJlLXZhbHVlLTE";
+    document.body.innerHTML = `
+      <img data-src="https://cdn.test/a.png?X-Amz-Signature=LAZY-SIG">
+      <div data-authorization="Bearer ${"b".repeat(24)}" data-auth="AUTH-VALUE" data-jwt="JWT-VALUE"
+        data-x="${jwt}" data-page='{"props":{"auth":{"sid":"PAGE-SID"}}}' data-color="red">x</div>
+      <div contenteditable="true">TYPED-MESSAGE</div>
+      <div contenteditable="false">STATIC-TEXT</div>`;
+
+    const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+
+    for (const secret of [
+      "LAZY-SIG",
+      "AUTH-VALUE",
+      "JWT-VALUE",
+      jwt,
+      "PAGE-SID",
+      "TYPED-MESSAGE"
+    ]) {
+      expect(html, secret).not.toContain(secret);
+    }
+
+    expect(html).not.toContain("b".repeat(24));
+    expect(html).toContain('data-color="red"');
+    expect(html).toContain("STATIC-TEXT");
+    expect(serializeRawDom(document, { ...OPTIONS, keepInputValues: true })?.html).toContain(
+      "TYPED-MESSAGE"
+    );
+  });
+
+  it("keeps sanitizing after comments, odd characters and unterminated CSS", () => {
+    const sanitizeStyle = (css: string): string => {
+      document.body.innerHTML = "";
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.body.append(style);
+      return serializeRawDom(document, OPTIONS)?.html ?? "";
+    };
+
+    expect(
+      sanitizeStyle("/* don't */ .a{background:url(x.png?token=COMMENT-QUOTE)}")
+    ).not.toContain("COMMENT-QUOTE");
+    expect(
+      sanitizeStyle(`.t{content:"${"İ".repeat(40)}"} .b{background:url(/x.png?token=WIDE-CHAR)}`)
+    ).not.toContain("WIDE-CHAR");
+    expect(sanitizeStyle("url(a\\)b.png?t=ESCAPED-PAREN)")).not.toContain("ESCAPED-PAREN");
+    expect(sanitizeStyle(".x{background:url(/open.png?t=UNCLOSED")).not.toContain("UNCLOSED");
+
+    const kept = sanitizeStyle('/* url( */ #hdr{color:red} .c{background:url("a.png?q=1" x) red}');
+    expect(kept).toContain("#hdr{color:red}");
+    expect(kept).toContain('url("a.png" x) red');
+  });
+
+  it("survives escapes outside strings and sanitizes relative and unterminated URLs", () => {
+    const sanitizeStyle = (css: string): string => {
+      document.body.innerHTML = "";
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.body.append(style);
+      return serializeRawDom(document, OPTIONS)?.html ?? "";
+    };
+
+    const tailwind = sanitizeStyle(
+      ".content-\\[\\'\\'\\]{--tw-content:''}" +
+        ".hero{background:url(https://cdn.x.com/u/12345/a.png?sig=TAILWIND-SIG)}.x{content:'y'}"
+    );
+    expect(tailwind).not.toContain("TAILWIND-SIG");
+    expect(tailwind).toContain(".x{content:'y'}");
+
+    expect(sanitizeStyle('@import "css/site.css?token=RELATIVE-IMPORT";')).not.toContain(
+      "RELATIVE-IMPORT"
+    );
+    expect(sanitizeStyle('.a{background:image-set("x?token=BARE-QUERY" 1x)}')).not.toContain(
+      "BARE-QUERY"
+    );
+    expect(sanitizeStyle('.a{background:url("/u/x.png#access_token=OPEN-FRAGMENT')).not.toContain(
+      "OPEN-FRAGMENT"
+    );
+    expect(sanitizeStyle('.a{background:url("/a\\?t=1")} .b{color:red}')).toContain(
+      'url("/a")} .b{color:red}'
+    );
+
+    const svg = sanitizeStyle(".g{fill:url(#gradient)} .h{color:#fff}");
+    expect(svg).toContain("url(#gradient)");
+    expect(svg).toContain("#fff");
+  });
+
+  it("does not mistake ordinary text for credentials and masks whole-page editors", () => {
+    document.body.innerHTML =
+      '<div class="ui basic inverted segment" title="Basic settings panel">PAGE-TEXT</div>';
+
+    const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+
+    expect(html).toContain('class="ui basic inverted segment"');
+    expect(html).toContain('title="Basic settings panel"');
+
+    document.designMode = "on";
+
+    try {
+      expect(serializeRawDom(document, OPTIONS)?.html).not.toContain("PAGE-TEXT");
+    } finally {
+      document.designMode = "off";
+    }
+  });
+
+  it("records the page as captured when content masking is off", () => {
+    document.body.innerHTML = `
+      <script>window.token = "SCRIPT-RAW"</script>
+      <!-- COMMENT-RAW -->
+      <a href="https://h.test/reset?token=URL-RAW">reset</a>
+      <div data-api-key="ATTR-RAW" style="background:url(/a.png?sig=CSS-RAW)">x</div>
+      <input type="password" value="PASSWORD-RAW">
+      <p class="secret">BLOCKED-KEPT</p>
+      <div data-webblackbox-indicator="true">REC</div>`;
+
+    const html =
+      serializeRawDom(document, {
+        ...OPTIONS,
+        keepInputValues: true,
+        blockedSelectors: [],
+        redaction: { contentRedaction: false }
+      })?.html ?? "";
+
+    for (const raw of [
+      "SCRIPT-RAW",
+      "COMMENT-RAW",
+      "token=URL-RAW",
+      "ATTR-RAW",
+      "sig=CSS-RAW",
+      "PASSWORD-RAW",
+      "BLOCKED-KEPT"
+    ]) {
+      expect(html, raw).toContain(raw);
+    }
+
+    expect(html).not.toContain("REC");
+    // The inputs category still decides field values: masking off never widens it.
+    expect(
+      serializeRawDom(document, {
+        ...OPTIONS,
+        blockedSelectors: [],
+        redaction: { contentRedaction: false }
+      })?.html
+    ).not.toContain("PASSWORD-RAW");
+    // Blocked selectors still apply when the profile keeps them.
+    expect(
+      serializeRawDom(document, { ...OPTIONS, redaction: { contentRedaction: false } })?.html
+    ).not.toContain("BLOCKED-KEPT");
+  });
+
+  it("applies only the user's rules when the built-in heuristics are off", () => {
+    document.body.innerHTML = `
+      <a href="https://h.test/p?token=PARAM-SECRET&page=2">p</a>
+      <p data-note="acct-123">Account acct-456 for jwt-free text</p>
+      <input type="password" value="PASSWORD-SECRET">`;
+
+    const html =
+      serializeRawDom(document, {
+        ...OPTIONS,
+        keepInputValues: true,
+        redaction: {
+          builtInHeuristics: false,
+          redactQueryParams: ["token"],
+          valuePatterns: [{ pattern: "acct-\\d+", targets: ["dom"] }]
+        }
+      })?.html ?? "";
+
+    expect(html).toContain("token=[REDACTED]&amp;page=2");
+    expect(html).not.toContain("PARAM-SECRET");
+    expect(html).not.toContain("acct-");
+    // Password fields stay out whenever masking is on.
+    expect(html).not.toContain("PASSWORD-SECRET");
+  });
+
+  it("fails closed on an invalid blocked selector and caps the size", () => {
+    document.body.innerHTML = `<p>${"x".repeat(RAW_DOM_SNAPSHOT_MAX_CHARS)}</p>`;
+
+    expect(serializeRawDom(document, { ...OPTIONS, blockedSelectors: ["[[bad"] })).toBeNull();
+
+    const snapshot = serializeRawDom(document, OPTIONS);
+
+    expect(snapshot?.truncated).toBe(true);
+    expect(snapshot?.html).toHaveLength(RAW_DOM_SNAPSHOT_MAX_CHARS);
+    expect(snapshot?.htmlLength).toBeGreaterThan(RAW_DOM_SNAPSHOT_MAX_CHARS);
+  });
+});

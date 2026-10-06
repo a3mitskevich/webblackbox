@@ -237,7 +237,7 @@ describe("share-server", () => {
     expect(response.status).toBe(422);
   });
 
-  it("rejects encrypted public share uploads without a passed client privacy preflight", async () => {
+  it("rejects encrypted public share uploads without a client privacy preflight", async () => {
     const server = await startShareServer();
 
     const response = await fetch(`${server.baseUrl}/api/share/upload`, {
@@ -251,9 +251,30 @@ describe("share-server", () => {
     });
 
     await expect(response.json()).resolves.toEqual({
-      error: "Encrypted public share uploads require a passed client privacy preflight summary."
+      error: "Encrypted public share uploads require a client privacy preflight summary."
     });
     expect(response.status).toBe(422);
+  });
+
+  it("accepts encrypted uploads whose preflight reported scanner findings (warn-only)", async () => {
+    const server = await startShareServer();
+    const summary = buildPassedShareSummary() as {
+      privacy: { scanner: Record<string, unknown> };
+    };
+    summary.privacy.scanner = { preEncryption: true, status: "blocked", findingCount: 2 };
+
+    const response = await fetch(`${server.baseUrl}/api/share/upload`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-webblackbox-api-key": apiKey,
+        "x-webblackbox-filename": "encrypted.webblackbox",
+        "x-webblackbox-share-summary": encodeURIComponent(JSON.stringify(summary))
+      },
+      body: Buffer.from(await createEncryptedEnvelopeArchive())
+    });
+
+    expect(response.status).toBe(201);
   });
 
   it("rejects encrypted public share uploads with incomplete encrypted file metadata", async () => {

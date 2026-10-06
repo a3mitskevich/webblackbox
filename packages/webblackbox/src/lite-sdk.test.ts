@@ -109,6 +109,7 @@ function createNoisyPayload(size: number, seed: number): string {
 }
 
 const TRUSTED_LOCAL_DEBUG_EVIDENCE_REF = "local-attestation:test-fixture-0001";
+const TEST_PASSPHRASE = "sdk-test-passphrase";
 const LOCAL_DEBUG_TEST_POLICY: CapturePolicy = {
   ...DEFAULT_CAPTURE_POLICY,
   captureContext: "local-debug",
@@ -197,11 +198,12 @@ describe("WebBlackboxLiteSdk", () => {
       | undefined;
     const blockedSelectors = policy?.redaction.blockedSelectors ?? [];
 
-    expect(blockedSelectors).toEqual(
-      expect.arrayContaining([...DEFAULT_CAPTURE_POLICY.redaction.blockedSelectors, ".pin-pad"])
+    // The rule lists are the caller's own: `config.redaction` replaces the default selectors,
+    // and the agent and the recorder apply the same set.
+    expect(blockedSelectors).toEqual([".pin-pad", "input[type='password']"]);
+    expect(sdk.getRecorderConfig().capturePolicy?.redaction.blockedSelectors).toEqual(
+      blockedSelectors
     );
-    expect(new Set(blockedSelectors).size).toBe(blockedSelectors.length);
-    expect(sdk.getRecorderConfig().capturePolicy).toEqual(DEFAULT_CAPTURE_POLICY);
 
     await sdk.dispose();
   });
@@ -211,7 +213,6 @@ describe("WebBlackboxLiteSdk", () => {
       sid: "S-sdk-export",
       injectHooks: false,
       useDefaultPlugins: false,
-      trustedPlaintextExemptionEvidenceRefs: [TRUSTED_LOCAL_DEBUG_EVIDENCE_REF],
       config: {
         capturePolicy: HIGH_FIDELITY_TEST_POLICY
       }
@@ -238,8 +239,8 @@ describe("WebBlackboxLiteSdk", () => {
       })
     );
 
-    const exported = await sdk.export({ includeScreenshots: true });
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const exported = await sdk.export({ passphrase: TEST_PASSPHRASE, includeScreenshots: true });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     const clickEvent = parsed.events.find((event) => event.type === "user.click");
     const screenshotEvent = parsed.events.find((event) => event.type === "screen.screenshot");
@@ -265,7 +266,6 @@ describe("WebBlackboxLiteSdk", () => {
       sid: "S-sdk-rrweb",
       injectHooks: false,
       useDefaultPlugins: false,
-      trustedPlaintextExemptionEvidenceRefs: [TRUSTED_LOCAL_DEBUG_EVIDENCE_REF],
       config: {
         capturePolicy: LOCAL_DEBUG_TEST_POLICY
       }
@@ -286,8 +286,8 @@ describe("WebBlackboxLiteSdk", () => {
       })
     );
 
-    const exported = await sdk.export();
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const exported = await sdk.export({ passphrase: TEST_PASSPHRASE });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
     const rrwebEvent = parsed.events.find((event) => event.type === "dom.rrweb.event");
 
     expect(rrwebEvent).toBeDefined();
@@ -296,7 +296,27 @@ describe("WebBlackboxLiteSdk", () => {
     await sdk.dispose();
   });
 
-  it("requires encryption for default real-user exports", async () => {
+  it("gives the page agents and the recorder the same redaction rules", () => {
+    const sdk = new WebBlackboxLiteSdk({
+      sid: "S-sdk-rules",
+      injectHooks: false,
+      useDefaultPlugins: false,
+      config: {
+        capturePolicy: {
+          ...DEFAULT_CAPTURE_POLICY,
+          redaction: { ...DEFAULT_CAPTURE_POLICY.redaction, blockedSelectors: [".from-policy"] }
+        },
+        redaction: { contentRedaction: false }
+      }
+    });
+    const config = sdk.getRecorderConfig();
+
+    expect(config.redaction.contentRedaction).toBe(false);
+    expect(config.capturePolicy?.redaction).toEqual(config.redaction);
+    expect(config.redaction.blockedSelectors).toEqual([".from-policy"]);
+  });
+
+  it("refuses every export without a passphrase of at least 8 characters", async () => {
     const sdk = new WebBlackboxLiteSdk({
       sid: "S-sdk-real-user-export",
       injectHooks: false,
@@ -312,7 +332,8 @@ describe("WebBlackboxLiteSdk", () => {
       })
     );
 
-    await expect(sdk.export()).rejects.toThrow(/must be encrypted|required by the active/i);
+    await expect(sdk.export()).rejects.toThrow(/always encrypted/i);
+    await expect(sdk.export({ passphrase: "short" })).rejects.toThrow(/at least 8 characters/i);
     await sdk.dispose();
   });
 
@@ -321,7 +342,6 @@ describe("WebBlackboxLiteSdk", () => {
       sid: "S-sdk-dom-html",
       injectHooks: false,
       useDefaultPlugins: false,
-      trustedPlaintextExemptionEvidenceRefs: [TRUSTED_LOCAL_DEBUG_EVIDENCE_REF],
       config: {
         capturePolicy: HIGH_FIDELITY_TEST_POLICY
       }
@@ -337,8 +357,8 @@ describe("WebBlackboxLiteSdk", () => {
       })
     );
 
-    const exported = await sdk.export();
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const exported = await sdk.export({ passphrase: TEST_PASSPHRASE });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
     const snapshotEvent = parsed.events.find((event) => event.type === "dom.snapshot");
     const contentHash = (snapshotEvent?.data as { contentHash?: unknown })?.contentHash;
 
@@ -355,7 +375,6 @@ describe("WebBlackboxLiteSdk", () => {
       tabId: -42,
       injectHooks: false,
       useDefaultPlugins: false,
-      trustedPlaintextExemptionEvidenceRefs: [TRUSTED_LOCAL_DEBUG_EVIDENCE_REF],
       config: {
         capturePolicy: LOCAL_DEBUG_TEST_POLICY
       }
@@ -374,8 +393,8 @@ describe("WebBlackboxLiteSdk", () => {
       })
     );
 
-    const exported = await sdk.export();
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const exported = await sdk.export({ passphrase: TEST_PASSPHRASE });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
     const click = parsed.events.find((event) => event.type === "user.click");
     expect(click?.tab).toBe(0);
 
@@ -387,7 +406,6 @@ describe("WebBlackboxLiteSdk", () => {
       sid: "S-sdk-agent-batch",
       injectHooks: false,
       useDefaultPlugins: false,
-      trustedPlaintextExemptionEvidenceRefs: [TRUSTED_LOCAL_DEBUG_EVIDENCE_REF],
       config: {
         capturePolicy: LOCAL_DEBUG_TEST_POLICY
       }
@@ -405,8 +423,8 @@ describe("WebBlackboxLiteSdk", () => {
       })
     ]);
 
-    const exported = await sdk.export({ stopCapture: false });
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const exported = await sdk.export({ passphrase: TEST_PASSPHRASE, stopCapture: false });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(parsed.events.some((event) => event.type === "user.keydown")).toBe(true);
 
@@ -478,7 +496,6 @@ describe("WebBlackboxLiteSdk", () => {
       sid: "S-sdk-export-policy",
       injectHooks: false,
       useDefaultPlugins: false,
-      trustedPlaintextExemptionEvidenceRefs: [TRUSTED_LOCAL_DEBUG_EVIDENCE_REF],
       config: {
         capturePolicy: HIGH_FIDELITY_TEST_POLICY
       }
@@ -537,28 +554,36 @@ describe("WebBlackboxLiteSdk", () => {
       )
     );
 
-    const exportedDefault = await sdk.export({ stopCapture: false });
-    const parsedDefault = await readWebBlackboxArchive(exportedDefault.bytes);
+    const exportedDefault = await sdk.export({ passphrase: TEST_PASSPHRASE, stopCapture: false });
+    const parsedDefault = await readWebBlackboxArchive(exportedDefault.bytes, {
+      passphrase: TEST_PASSPHRASE
+    });
     expect(parsedDefault.events.some((event) => event.t < now - 20 * 60 * 1000)).toBe(false);
     expect(parsedDefault.events.some((event) => event.type === "screen.screenshot")).toBe(false);
 
     const exportedWithScreenshots = await sdk.export({
+      passphrase: TEST_PASSPHRASE,
       stopCapture: false,
       includeScreenshots: true,
       recentWindowMs: 60 * 60 * 1000
     });
-    const parsedWithScreenshots = await readWebBlackboxArchive(exportedWithScreenshots.bytes);
+    const parsedWithScreenshots = await readWebBlackboxArchive(exportedWithScreenshots.bytes, {
+      passphrase: TEST_PASSPHRASE
+    });
     expect(parsedWithScreenshots.events.some((event) => event.type === "screen.screenshot")).toBe(
       true
     );
     expect(parsedWithScreenshots.events.some((event) => event.t < now - 20 * 60 * 1000)).toBe(true);
 
     const exportedNoScreenshot = await sdk.export({
+      passphrase: TEST_PASSPHRASE,
       stopCapture: false,
       includeScreenshots: false,
       recentWindowMs: 60 * 60 * 1000
     });
-    const parsedNoScreenshot = await readWebBlackboxArchive(exportedNoScreenshot.bytes);
+    const parsedNoScreenshot = await readWebBlackboxArchive(exportedNoScreenshot.bytes, {
+      passphrase: TEST_PASSPHRASE
+    });
     expect(parsedNoScreenshot.events.some((event) => event.type === "screen.screenshot")).toBe(
       false
     );
@@ -571,7 +596,6 @@ describe("WebBlackboxLiteSdk", () => {
       sid: "S-sdk-export-size-cap",
       injectHooks: false,
       useDefaultPlugins: false,
-      trustedPlaintextExemptionEvidenceRefs: [TRUSTED_LOCAL_DEBUG_EVIDENCE_REF],
       config: {
         capturePolicy: LOCAL_DEBUG_TEST_POLICY
       }
@@ -598,12 +622,13 @@ describe("WebBlackboxLiteSdk", () => {
     }
 
     const exported = await sdk.export({
+      passphrase: TEST_PASSPHRASE,
       stopCapture: false,
       maxArchiveBytes: 64 * 1024,
       recentWindowMs: 60 * 60 * 1000,
       includeScreenshots: true
     });
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(exported.bytes.byteLength).toBeLessThanOrEqual(64 * 1024);
     expect(parsed.events.length).toBeLessThan(50);

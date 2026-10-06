@@ -4,6 +4,8 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 
+import { createManagedStorageSchema, MANAGED_SCHEMA_FILE } from "./managed-schema.mjs";
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 
 export const appRoot = resolve(scriptDir, "..", "..");
@@ -33,6 +35,7 @@ const STATIC_PUBLIC_FILES = [
 ];
 const REQUIRED_BUILD_FILES = [
   "manifest.json",
+  MANAGED_SCHEMA_FILE,
   "_locales/en/messages.json",
   "_locales/zh_CN/messages.json",
   "content.js",
@@ -129,6 +132,9 @@ export function createExtensionManifest({ version, release = false, profile = "d
       }
     },
     options_page: "options.html",
+    storage: {
+      managed_schema: MANAGED_SCHEMA_FILE
+    },
     web_accessible_resources: [
       {
         resources: ["content-agent.js", "injected.js"],
@@ -213,6 +219,10 @@ export function validateExtensionManifest(
     issues.push("Manifest must only expose content-agent.js and injected.js as web resources.");
   }
 
+  if (manifest?.storage?.managed_schema !== MANAGED_SCHEMA_FILE) {
+    issues.push(`Manifest must declare storage.managed_schema = ${MANAGED_SCHEMA_FILE}.`);
+  }
+
   validateUniqueStringArray(manifest?.permissions, "permissions", issues);
 
   if (storeSafe) {
@@ -254,6 +264,7 @@ export async function writeGeneratedManifest(outputDir, { release = false, profi
   }
 
   await writeJson(resolve(outputDir, "manifest.json"), manifest);
+  await writeJson(resolve(outputDir, MANAGED_SCHEMA_FILE), createManagedStorageSchema());
   return manifest;
 }
 

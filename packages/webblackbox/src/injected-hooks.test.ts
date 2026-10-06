@@ -457,4 +457,130 @@ describe("injected-hooks", () => {
       "demo-pass"
     ]);
   });
+
+  function configureCapture(detail: InjectedCaptureConfig): void {
+    window.dispatchEvent(
+      new CustomEvent<InjectedCaptureConfig>(INJECTED_CAPTURE_CONFIG_EVENT, { detail })
+    );
+  }
+
+  function storagePolicy(categories: Partial<CapturePolicy["categories"]>): CapturePolicy {
+    return {
+      ...DEFAULT_CAPTURE_POLICY,
+      categories: { ...DEFAULT_CAPTURE_POLICY.categories, ...categories }
+    };
+  }
+
+  /**
+   * jsdom stores `localStorage.setItem = fn` as an item instead of replacing the method (Chrome
+   * replaces it), so storage hooks are exercised on plain Storage-like objects.
+   */
+  function withFakeWebStorage(run: () => Promise<void>): Promise<void> {
+    const create = () => {
+      const items = new Map<string, string>();
+      return {
+        get length() {
+          return items.size;
+        },
+        key: (index: number) => [...items.keys()][index] ?? null,
+        getItem: (key: string) => items.get(key) ?? null,
+        setItem: (key: string, value: string) => void items.set(key, String(value)),
+        removeItem: (key: string) => void items.delete(key),
+        clear: () => items.clear()
+      };
+    };
+    const originals = ["localStorage", "sessionStorage"].map((name) => [
+      name,
+      Object.getOwnPropertyDescriptor(window, name)
+    ]);
+
+    Object.defineProperty(window, "localStorage", { configurable: true, value: create() });
+    Object.defineProperty(window, "sessionStorage", { configurable: true, value: create() });
+
+    return run().finally(() => {
+      for (const [name, descriptor] of originals) {
+        if (descriptor) {
+          Object.defineProperty(window, name as string, descriptor as PropertyDescriptor);
+        }
+      }
+    });
+  }
+
+  function storageOps(key: string): Array<Record<string, unknown>> {
+    return captured
+      .filter((message) => message.rawType === "localStorageOp" && message.payload.key === key)
+      .map((message) => message.payload);
+  }
+
+  it("records storage values, capped, only under storage: allow", () =>
+    withFakeWebStorage(async () => {
+      installInjectedLiteCaptureHooks({ flag: "__WB_TEST_INJECTED_STORAGE_VALUES__" });
+      configureCapture({ active: true, capturePolicy: storagePolicy({ storage: "allow" }) });
+
+      localStorage.setItem("theme", "dark");
+      localStorage.setItem("big", "x".repeat(3_000));
+      configureCapture({ active: true, capturePolicy: storagePolicy({ storage: "names-only" }) });
+      localStorage.setItem("named", "light");
+      await settle();
+
+      expect(storageOps("theme")[0]).toMatchObject({
+        op: "setItem",
+        value: "dark",
+        valueLength: 4
+      });
+      expect(storageOps("big")[0]).toMatchObject({ valueLength: 3_000, valueTruncated: true });
+      expect((storageOps("big")[0]?.value as string).length).toBe(2_048);
+      expect(storageOps("named")[0]).toMatchObject({ op: "setItem", valueLengthRedacted: true });
+      expect(storageOps("named")[0]).not.toHaveProperty("value");
+    }));
+
+  it("hides the IndexedDB database name below names-only", async () => {
+    const open = vi.fn();
+    Object.defineProperty(window, "indexedDB", {
+      configurable: true,
+      value: { open }
+    });
+
+    try {
+      installInjectedLiteCaptureHooks({ flag: "__WB_TEST_INJECTED_IDB_NAMES__" });
+      configureCapture({ active: true, capturePolicy: storagePolicy({}) });
+      indexedDB.open("stand-db", 2);
+      configureCapture({
+        active: true,
+        capturePolicy: storagePolicy({ indexedDb: "names-only" })
+      });
+      indexedDB.open("named-db");
+      await settle();
+
+      const ops = captured
+        .filter((message) => message.rawType === "indexedDbOp")
+        .map((message) => message.payload);
+
+      expect(ops[0]).toEqual({ op: "open", nameRedacted: true, version: 2 });
+      expect(ops.some((op) => op.name === "stand-db")).toBe(false);
+      expect(ops.some((op) => op.name === "named-db")).toBe(true);
+      expect(open).toHaveBeenCalledWith("stand-db", 2);
+    } finally {
+      Reflect.deleteProperty(window, "indexedDB");
+    }
+  });
+
+  it("emits only storage events when capture is limited to storage", () =>
+    withFakeWebStorage(async () => {
+      installInjectedLiteCaptureHooks({ flag: "__WB_TEST_INJECTED_STORAGE_ONLY__" });
+      configureCapture({
+        active: true,
+        storageOnly: true,
+        capturePolicy: storagePolicy({ storage: "allow", console: "allow" })
+      });
+
+      console.info("storage-only-console");
+      localStorage.setItem("only", "storage");
+      await settle();
+
+      expect(captured.some((message) => message.rawType === "console")).toBe(false);
+      expect(storageOps("only")[0]).toMatchObject({ value: "storage" });
+
+      configureCapture({ active: true, storageOnly: false });
+    }));
 });

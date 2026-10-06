@@ -10,6 +10,42 @@ import {
   createExtensionManifest,
   validateExtensionManifest
 } from "../../scripts/lib/extension-build.mjs";
+import {
+  createManagedStorageSchema,
+  MANAGED_CATEGORY_LEVELS,
+  MANAGED_SCHEMA_FILE
+} from "../../scripts/lib/managed-schema.mjs";
+import { CAPTURE_CATEGORY_LEVELS } from "./profiles/categories.ts";
+
+describe("managed storage schema", () => {
+  it("is declared by every manifest profile", () => {
+    for (const profile of ["dev", "store-safe"]) {
+      const manifest = createExtensionManifest({ version: "1.0.0", profile });
+
+      expect(manifest.storage).toEqual({ managed_schema: MANAGED_SCHEMA_FILE });
+    }
+
+    const manifest = createExtensionManifest({ version: "1.0.0" });
+    delete manifest.storage;
+    expect(validateExtensionManifest(manifest, { version: "1.0.0" })).toContain(
+      `Manifest must declare storage.managed_schema = ${MANAGED_SCHEMA_FILE}.`
+    );
+  });
+
+  it("keeps category enums in sync with the extension", () => {
+    expect(MANAGED_CATEGORY_LEVELS).toEqual(CAPTURE_CATEGORY_LEVELS);
+  });
+
+  it("accepts profiles and rules in the scoped and flat layouts", () => {
+    const schema = createManagedStorageSchema();
+
+    for (const scope of [schema.properties, schema.properties.enterprisePolicy.properties]) {
+      expect(scope.profiles.items.properties.categories.properties.console.enum).toContain("allow");
+      expect(scope.rules.items.properties.match.properties.hosts.type).toBe("array");
+      expect(scope.dataCategoryCaps.type).toBe("object");
+    }
+  });
+});
 
 describe("extension build manifest", () => {
   it("creates a development manifest with explicit CSP", () => {
@@ -141,6 +177,7 @@ describe("extension build manifest", () => {
 async function writeBuildFixture(outputDir, manifest) {
   const fixtureFiles = {
     "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
+    [MANAGED_SCHEMA_FILE]: `${JSON.stringify(createManagedStorageSchema())}\n`,
     "_locales/en/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
     "_locales/zh_CN/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
     "content-agent.js": "export {};\n",
@@ -171,3 +208,41 @@ async function writeBuildFixture(outputDir, manifest) {
     })
   );
 }
+
+const CHROME_SCHEMA_KEYWORDS = new Set([
+  "type",
+  "properties",
+  "items",
+  "enum",
+  "minimum",
+  "maximum",
+  "additionalProperties",
+  "title",
+  "description"
+]);
+
+describe("managed storage schema dialect", () => {
+  it("only uses keywords and single types Chrome policy schemas support", () => {
+    const visit = (node, path) => {
+      for (const [key, value] of Object.entries(node)) {
+        expect(CHROME_SCHEMA_KEYWORDS.has(key), `${path}.${key}`).toBe(true);
+
+        if (key === "type") {
+          expect(typeof value, `${path}.type`).toBe("string");
+        }
+
+        if (key === "properties") {
+          for (const [name, child] of Object.entries(value)) {
+            visit(child, `${path}.${name}`);
+          }
+        }
+
+        if (key === "items" || key === "additionalProperties") {
+          visit(value, `${path}.${key}`);
+        }
+      }
+    };
+
+    visit(createManagedStorageSchema(), "$");
+  });
+});

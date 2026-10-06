@@ -1,8 +1,9 @@
 import {
+  maskBodyText as maskCapturedBodyText,
   normalizeMimeType,
-  redactBodyText,
   type BodySkipReason,
   type CapturePolicy,
+  type RedactionRules,
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
@@ -41,7 +42,8 @@ export type DetachNetworkBodyResult = {
 
 export type AttachNetworkBodyOptions = {
   capturePolicy: CapturePolicy | undefined;
-  redactBodyPatterns: readonly string[];
+  /** The profile's redaction rules: body key patterns and value patterns (none when off). */
+  redaction: RedactionRules;
   /** Profile body size (`sampling.bodyCaptureMaxBytes`); caps WebSocket frames and SSE messages. */
   maxBodyBytes?: number;
   /**
@@ -242,7 +244,7 @@ function maskBodyText(
 ): { value: string; truncated: boolean } {
   // A byte budget never keeps more chars than bytes, so scanning `limit` chars covers it.
   const scanned = text.slice(0, Math.max(MAX_INLINE_BODY_SCAN_CHARS, cap.limit));
-  const masked = redactBodyText(scanned, options.redactBodyPatterns).value;
+  const masked = maskCapturedBodyText(scanned, options.redaction).value;
   const value = cap.unit === "bytes" ? truncateUtf8(masked, cap.limit) : masked.slice(0, cap.limit);
 
   return {

@@ -19,6 +19,8 @@
     "e2e:completeness:full": "WB_E2E_MODE=full WB_E2E_COMPLETENESS=1 node scripts/e2e-fullchain-demo.mjs",
     "e2e:completeness:full:reload": "WB_E2E_MODE=full WB_E2E_COMPLETENESS=1 WB_E2E_RELOAD_AFTER_START=1 node scripts/e2e-fullchain-demo.mjs",
     "e2e:sw-restart": "node scripts/e2e-sw-restart.mjs",
+    "e2e:profile:qa": "node scripts/e2e-profile-qa.mjs",
+    "e2e:profile:full-capture": "node scripts/e2e-profile-full-capture.mjs",
     "e2e:realworld": "node scripts/e2e-realworld-stability.mjs",
     "e2e:realworld:quick": "WB_E2E_REALWORLD_QUICK=1 node scripts/e2e-realworld-stability.mjs",
     "e2e:realworld:ci": "node scripts/e2e-realworld-stability.mjs",
@@ -37,7 +39,8 @@
     "@webblackbox/protocol": "workspace:*",
     "@webblackbox/recorder": "workspace:*",
     "@zumer/snapdom": "^2.0.2",
-    "webblackbox": "workspace:*"
+    "webblackbox": "workspace:*",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "jszip": "^3.10.1"

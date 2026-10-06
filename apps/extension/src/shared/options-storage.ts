@@ -7,6 +7,80 @@ import {
 export const OPTIONS_STORAGE_VERSION = 1;
 export const ENTERPRISE_POLICY_STORAGE_KEY = "enterprisePolicy";
 
+type ManagedStorageArea = {
+  get(keys?: string[] | string | Record<string, unknown> | null): Promise<Record<string, unknown>>;
+};
+
+/**
+ * Enterprise policy from `chrome.storage.managed`: the `enterprisePolicy` object, the flat
+ * top-level layout the managed schema also accepts, or both (scoped keys win). Chrome returns
+ * only the keys asked for, so the whole area is read. Never throws; null when unavailable.
+ */
+export async function readManagedEnterprisePolicy(
+  managed: ManagedStorageArea | undefined,
+  key: string = ENTERPRISE_POLICY_STORAGE_KEY
+): Promise<Record<string, unknown> | null> {
+  try {
+    const values = await managed?.get(null);
+
+    if (!values || typeof values !== "object") {
+      return null;
+    }
+
+    const scoped = values[key];
+    const flat = Object.fromEntries(Object.entries(values).filter(([entry]) => entry !== key));
+
+    return scoped !== null && typeof scoped === "object" && !Array.isArray(scoped)
+      ? { ...flat, ...(scoped as Record<string, unknown>) }
+      : flat;
+  } catch {
+    return null;
+  }
+}
+
+type ManagedPolicyRead = () => Promise<Record<string, unknown> | null>;
+
+/**
+ * Bounds the wait for the managed policy. With a `managed_schema` declared, Chrome answers
+ * `storage.managed` only once it has set up the extension's policy domain, which it can postpone
+ * for as long as a page opened at browser start keeps requests in flight. Callers then go on after
+ * `timeoutMs` without a policy (as when the read fails) instead of hanging; concurrent callers share
+ * the pending read, and the first call after it settles reads again.
+ */
+export function createBoundedManagedPolicyReader(
+  read: ManagedPolicyRead,
+  options: { timeoutMs: number; onTimeout?: () => void }
+): ManagedPolicyRead {
+  let pending: Promise<Record<string, unknown> | null> | null = null;
+
+  return () => {
+    if (!pending) {
+      const current = read().finally(() => {
+        if (pending === current) {
+          pending = null;
+        }
+      });
+      pending = current;
+    }
+
+    const shared = pending;
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        options.onTimeout?.();
+        resolve(null);
+      }, options.timeoutMs);
+
+      const settle = (value: Record<string, unknown> | null) => {
+        clearTimeout(timer);
+        resolve(value);
+      };
+
+      shared.then(settle, () => settle(null));
+    });
+  };
+}
+
 export type EnterpriseRecorderPolicy = {
   siteAllowlist: string[];
   siteDenylist: string[];
@@ -196,8 +270,8 @@ function normalizeDataCategoryCaps(value: unknown): EnterpriseRecorderPolicy["da
     "lengths-only",
     "allow"
   ]);
-  setEnumCap(output, "indexedDb", record.indexedDb, ["off", "counts-only", "names-only"]);
-  setEnumCap(output, "cookies", record.cookies, ["off", "count-only", "names-only"]);
+  setEnumCap(output, "indexedDb", record.indexedDb, ["off", "counts-only", "names-only", "allow"]);
+  setEnumCap(output, "cookies", record.cookies, ["off", "count-only", "names-only", "allow"]);
   setEnumCap(output, "cdp", record.cdp, ["off", "safe-subset", "full"]);
   setEnumCap(output, "heapProfiles", record.heapProfiles, ["off", "lab-only"]);
 
@@ -257,8 +331,18 @@ function applyDataCategoryCaps(
       "body-allowlist"
     ]),
     storage: capStorageCategory(categories.storage, caps.storage),
-    indexedDb: capEnum(categories.indexedDb, caps.indexedDb, ["off", "counts-only", "names-only"]),
-    cookies: capEnum(categories.cookies, caps.cookies, ["off", "count-only", "names-only"]),
+    indexedDb: capEnum(categories.indexedDb, caps.indexedDb, [
+      "off",
+      "counts-only",
+      "names-only",
+      "allow"
+    ]),
+    cookies: capEnum(categories.cookies, caps.cookies, [
+      "off",
+      "count-only",
+      "names-only",
+      "allow"
+    ]),
     cdp: capEnum(categories.cdp, caps.cdp, ["off", "safe-subset", "full"]),
     heapProfiles: capEnum(categories.heapProfiles, caps.heapProfiles, ["off", "lab-only"])
   };

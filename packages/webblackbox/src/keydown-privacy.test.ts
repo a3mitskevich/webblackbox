@@ -225,6 +225,26 @@ describe("keydown privacy (lite agent -> recorder)", () => {
     agent.dispose();
   });
 
+  it("records keys as typed, passwords included, when the profile turns masking off", () => {
+    const { agent, keydowns } = createPipeline({
+      ...ALLOW_INPUTS_POLICY,
+      redaction: { ...ALLOW_INPUTS_POLICY.redaction, contentRedaction: false }
+    });
+
+    typeText(byId("password"), "p");
+    typeText(byId("api-token"), "t");
+    const payloads = keydowns();
+
+    expect(payloads).toHaveLength(2);
+    expect(payloads[0]).toMatchObject({ key: "p", code: "KeyP", sensitiveTarget: false });
+    expect(payloads[1]).toMatchObject({ key: "t", code: "KeyT", sensitiveTarget: false });
+    for (const payload of payloads) {
+      expect(payload).not.toHaveProperty("keyRedacted");
+    }
+
+    agent.dispose();
+  });
+
   it("classifies password fields inside open shadow roots", () => {
     const { agent, keydowns } = createPipeline(ALLOW_INPUTS_POLICY);
     const host = byId<HTMLDivElement>("shadow-host");

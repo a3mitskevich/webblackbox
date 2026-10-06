@@ -11,9 +11,17 @@
       "@webblackbox/pipeline/storage": ["../../packages/pipeline/src/storage-entry.ts"],
       "@webblackbox/protocol/schemas": ["../../packages/protocol/src/schemas-entry.ts"],
       "@webblackbox/protocol": ["../../packages/protocol/src/index.ts"],
+      "@webblackbox/protocol/archive-encryption": [
+        "../../packages/protocol/src/archive-encryption.ts"
+      ],
+      "@webblackbox/protocol/linear-regex": ["../../packages/protocol/src/linear-regex.ts"],
+      "@webblackbox/protocol/redaction-rules": ["../../packages/protocol/src/redaction-rules.ts"],
+      "@webblackbox/protocol/secret-detection": ["../../packages/protocol/src/secret-detection.ts"],
       "@webblackbox/recorder": ["../../packages/recorder/src/index.ts"],
       "webblackbox": ["../../packages/webblackbox/src/index.ts"],
+      "webblackbox/capture-scope": ["../../packages/webblackbox/src/capture-scope.ts"],
       "webblackbox/injected-hooks": ["../../packages/webblackbox/src/injected-hooks.ts"],
+      "webblackbox/input-value-policy": ["../../packages/webblackbox/src/input-value-policy.ts"],
       "webblackbox/lite-capture-agent": ["../../packages/webblackbox/src/lite-capture-agent.ts"],
       "webblackbox/lite-materializer": ["../../packages/webblackbox/src/lite-materializer.ts"],
       "webblackbox/lite-sdk": ["../../packages/webblackbox/src/lite-sdk.ts"],

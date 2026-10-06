@@ -1,5 +1,7 @@
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 import type { LiteCaptureAgent } from "webblackbox/lite-capture-agent";
+import { capturesPageStorageInFullMode } from "webblackbox/capture-scope";
+import { watchPasswordFieldReveals } from "webblackbox/input-value-policy";
 import type { LiteCaptureAgentOptions } from "webblackbox/types";
 
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
@@ -29,6 +31,10 @@ const PENDING_EVENT_MAX = 1_200;
 const DEFAULT_TAB_ID = -1;
 const PORT_DEBUG_LOG_FLAG = "__WEBBLACKBOX_DEBUG_PORT__";
 const INJECTED_CAPTURE_CONFIG_EVENT = "webblackbox:injected-config";
+
+// The capture agent loads only on Start; a password the page reveals before then must still be
+// known as one when a profile records input values (the registry is shared with the agent).
+watchPasswordFieldReveals(document);
 
 void requestRecordingStatusOnce();
 
@@ -453,10 +459,18 @@ function syncInjectedCaptureConfig(
       ? normalizeBodyCaptureBudget(message.sampling?.bodyCaptureMaxBytes)
       : 0;
 
+  // Full mode records the page through CDP; the page hooks only add storage, and only when the
+  // profile asks for more than counts (CDP has no storage event stream).
+  const storageOnly =
+    message.mode === "full" &&
+    !!message.capturePolicy &&
+    capturesPageStorageInFullMode(message.capturePolicy.categories);
+
   window.dispatchEvent(
     new CustomEvent(INJECTED_CAPTURE_CONFIG_EVENT, {
       detail: {
-        active: message.active && message.mode === "lite",
+        active: message.active && (message.mode === "lite" || storageOnly),
+        storageOnly,
         bodyCaptureMaxBytes,
         capturePolicy: message.capturePolicy
       }

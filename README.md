@@ -66,7 +66,7 @@ https://github.com/user-attachments/assets/46273fc0-36f2-4aeb-9dfa-9c60cfcba98c
 3. Open `chrome://extensions/`.
 4. Enable `Developer mode`.
 5. Click `Load unpacked` and select the extracted extension directory.
-6. Click the WebBlackbox toolbar icon and choose `Start Lite` or `Start Full`.
+6. Click the WebBlackbox toolbar icon, pick a recording profile (or leave `Auto` so site rules choose one), and choose `Start Lite` or `Start Full`.
 7. Reproduce the issue, then export a `.webblackbox` archive.
 8. Open the archive in the hosted Player.
 
@@ -97,19 +97,22 @@ WebBlackbox currently records 57 event types across 13 categories, including:
 - Cookies, localStorage, sessionStorage, IndexedDB, Cache, and service worker lifecycle
 - Web Vitals, long tasks, traces, CPU profiles, and heap snapshots
 
+How much of each category is kept depends on the recording profile. The default profile records metadata only (no console text, bodies or input values); the `QA` and `Full capture` presets record console text, bodies and more, and `Full capture` records content raw (no masking), the raw DOM included. A recording stops if its profile changes after Start. See [Privacy Model](docs/PRIVACY.md).
+
 For the full event schema, defaults, and message types, see [packages/protocol/README.md](packages/protocol/README.md).
 
 ## Archive Format
 
 Sessions are exported as `.webblackbox` ZIP archives containing:
 
-- `manifest.json` with export metadata and encryption info
+- `manifest.json` with only the format version and encryption parameters (plaintext)
+- `meta/manifest.json` with the export metadata (encrypted)
 - chunked NDJSON event streams
 - time/request/text indexes
 - content-addressed blobs for screenshots, DOM snapshots, and captured bodies
 - integrity hashes for verification
 
-Archives can be encrypted with AES-GCM and PBKDF2-derived keys while keeping the manifest readable.
+Every archive is encrypted with AES-GCM and a PBKDF2-derived key from a passphrase of at least 8 characters; there is no plaintext export. Masking captured content follows each profile's redaction rules on a best-effort basis, with no guarantee that all sensitive data is removed. See [Privacy Model](docs/PRIVACY.md).
 
 ## Documentation
 

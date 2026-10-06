@@ -11,6 +11,7 @@ import {
   WEBBLACKBOX_EVENT_TYPES,
   WEBBLACKBOX_PROTOCOL_VERSION
 } from "./constants.js";
+import { compileValuePattern } from "./redaction-rules.js";
 
 const recordStringUnknown = z.record(z.string(), z.unknown());
 
@@ -92,13 +93,42 @@ export const samplingProfileSchema = z
   })
   .strict();
 
+export const redactionTargetSchema = z.enum([
+  "bodies",
+  "dom",
+  "storage",
+  "inputs",
+  "console",
+  "urls"
+]);
+
+export const redactionValuePatternSchema = z
+  .object({
+    pattern: z
+      .string()
+      .min(1)
+      .max(1_000)
+      .refine((pattern) => compileValuePattern(pattern) !== null, {
+        message:
+          "Unsupported, invalid or too large pattern (backreferences and lookarounds are not allowed)"
+      }),
+    targets: z.array(redactionTargetSchema).min(1)
+  })
+  .strict();
+
 export const redactionProfileSchema = z
   .object({
+    contentRedaction: z.boolean().optional(),
+    builtInHeuristics: z.boolean().optional(),
+    redactQueryParams: stringArray.optional(),
+    redactStorageKeys: stringArray.optional(),
+    valuePatterns: z.array(redactionValuePatternSchema).optional(),
     redactHeaders: stringArray,
     redactCookieNames: stringArray,
     redactBodyPatterns: stringArray,
     blockedSelectors: stringArray,
-    hashSensitiveValues: z.boolean()
+    hashSensitiveValues: z.boolean(),
+    unmaskSelectors: stringArray.optional()
   })
   .strict();
 
@@ -158,8 +188,9 @@ export const capturePolicySchema = z
         console: z.enum(["off", "metadata", "sanitized", "allow"]),
         network: z.enum(["metadata", "headers-allowlist", "body-allowlist"]),
         storage: z.enum(["off", "counts-only", "names-only", "lengths-only", "allow"]),
-        indexedDb: z.enum(["off", "counts-only", "names-only"]),
-        cookies: z.enum(["off", "count-only", "names-only"]),
+        // `allow` (values: cookie values, database records, bounded) added for Full capture.
+        indexedDb: z.enum(["off", "counts-only", "names-only", "allow"]),
+        cookies: z.enum(["off", "count-only", "names-only", "allow"]),
         cdp: z.enum(["off", "safe-subset", "full"]),
         heapProfiles: z.enum(["off", "lab-only"])
       })
@@ -380,7 +411,7 @@ export const privacyManifestSchema = z
 
 export const exportManifestSchema = z
   .object({
-    protocolVersion: z.literal(WEBBLACKBOX_PROTOCOL_VERSION),
+    protocolVersion: z.union([z.literal(WEBBLACKBOX_PROTOCOL_VERSION), z.literal(2)]),
     createdAt: z.string().datetime(),
     mode: captureModeSchema,
     site: z

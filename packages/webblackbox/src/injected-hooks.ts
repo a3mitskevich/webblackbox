@@ -1,10 +1,12 @@
 import {
   DEFAULT_CAPTURE_POLICY,
+  isContentRedactionEnabled,
   normalizeMimeType,
-  sanitizeUrlForPrivacy,
+  recordUrl,
   type CapturePolicy
 } from "@webblackbox/protocol";
 
+import { capStorageValue } from "./capture-scope.js";
 import {
   captureCallerStack,
   type ConsoleTextBudget,
@@ -16,6 +18,8 @@ import {
 type CapturePayload = Record<string, unknown>;
 
 const DEFAULT_FLAG = "__WEBBLACKBOX_INJECTED__";
+/** Raw types `storageOnly` capture keeps, with privacy violations about them. */
+const STORAGE_RAW_TYPES = new Set(["localStorageOp", "sessionStorageOp", "indexedDbOp"]);
 const NETWORK_BODY_CAPTURE_DEFAULT_MAX_BYTES = 128 * 1024;
 const NETWORK_BODY_CAPTURE_MAX_PER_MINUTE = 45;
 const NETWORK_BODY_CAPTURE_MAX_BYTES_PER_MINUTE = 4 * 1024 * 1024;
@@ -81,6 +85,8 @@ export type InjectedRawEventType = (typeof INJECTED_RAW_EVENT_TYPES)[number];
 
 export type InjectedCaptureConfig = {
   active?: boolean;
+  /** Emit storage events only (full mode: CDP records everything else). */
+  storageOnly?: boolean;
   bodyCaptureMaxBytes?: number;
   capturePolicy?: CapturePolicy;
 };
@@ -153,6 +159,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
   let isFlushScheduled = false;
   let captureActive = options.active !== false;
   let bridgeNonce: string | null = null;
+  let storageOnly = false;
   let capturePolicy = options.capturePolicy ?? DEFAULT_CAPTURE_POLICY;
   const pendingCaptureEvents: Array<{
     rawType: string;
@@ -205,6 +212,10 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
       captureActive = detail.active;
     }
 
+    if (typeof detail?.storageOnly === "boolean") {
+      storageOnly = detail.storageOnly;
+    }
+
     if (detail?.capturePolicy) {
       capturePolicy = detail.capturePolicy;
     }
@@ -232,7 +243,10 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
   });
 
   function emit(rawType: string, payload: CapturePayload): void {
-    if (!captureActive) {
+    if (
+      !captureActive ||
+      (storageOnly && !STORAGE_RAW_TYPES.has(rawType) && rawType !== "privacyViolation")
+    ) {
       return;
     }
 
@@ -276,6 +290,10 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
   }
 
   function emitPrivacyViolation(blockedRawType: string, reason: string): void {
+    if (storageOnly && !STORAGE_RAW_TYPES.has(blockedRawType)) {
+      return;
+    }
+
     emit("privacyViolation", {
       blockedRawType,
       reason,
@@ -647,7 +665,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
 
       localStorage.setItem = (key: string, value: string) => {
         if (captureActive) {
-          emitStorageOperation("localStorageOp", "setItem", key, value.length);
+          emitStorageOperation("localStorageOp", "setItem", key, String(value));
         }
 
         localSetItem(key, value);
@@ -679,7 +697,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
 
       sessionStorage.setItem = (key: string, value: string) => {
         if (captureActive) {
-          emitStorageOperation("sessionStorageOp", "setItem", key, value.length);
+          emitStorageOperation("sessionStorageOp", "setItem", key, String(value));
         }
 
         sessionSetItem(key, value);
@@ -709,7 +727,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
     rawType: "localStorageOp" | "sessionStorageOp",
     op: string,
     key?: string,
-    valueLength?: number
+    value?: string
   ): void {
     const mode = capturePolicy.categories.storage;
 
@@ -729,10 +747,15 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
       payload.keyRedacted = true;
     }
 
-    if (typeof valueLength === "number" && (mode === "allow" || mode === "lengths-only")) {
-      payload.valueLength = valueLength;
-    } else if (typeof valueLength === "number") {
+    if (typeof value === "string" && (mode === "allow" || mode === "lengths-only")) {
+      payload.valueLength = value.length;
+    } else if (typeof value === "string") {
       payload.valueLengthRedacted = true;
+    }
+
+    // The recorder's redactor masks values of sensitive keys and sensitive-looking values.
+    if (typeof value === "string" && mode === "allow") {
+      Object.assign(payload, capStorageValue(value));
     }
 
     emit(rawType, payload);
@@ -982,8 +1005,9 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
             return;
           }
 
-          const url = sanitizeUrlForPrivacy(
-            typeof args[0] === "string" ? args[0] : String(args[0])
+          const url = recordUrl(
+            typeof args[0] === "string" ? args[0] : String(args[0]),
+            capturePolicy.redaction
           );
           const streamId = nextRequestId("sse");
 
@@ -1418,7 +1442,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
         return;
       }
 
-      if (!NETWORK_HEADER_ALLOWLIST.has(key.toLowerCase())) {
+      if (!isHeaderRecorded(key)) {
         return;
       }
 
@@ -1459,7 +1483,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
         continue;
       }
 
-      if (!NETWORK_HEADER_ALLOWLIST.has(key)) {
+      if (!isHeaderRecorded(key)) {
         continue;
       }
 
@@ -1527,9 +1551,13 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
 
     indexedDB.open = (name: string, version?: number) => {
       if (captureActive) {
+        const showsName =
+          capturePolicy.categories.indexedDb === "names-only" ||
+          capturePolicy.categories.indexedDb === "allow";
+
         emit("indexedDbOp", {
           op: "open",
-          name,
+          ...(showsName ? { name } : { nameRedacted: true }),
           version
         });
       }
@@ -1550,9 +1578,17 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
     return undefined;
   }
 
+  /** Headers outside the allowlist are left out unless masking is off. */
+  function isHeaderRecorded(name: string): boolean {
+    return (
+      !isContentRedactionEnabled(capturePolicy.redaction) ||
+      NETWORK_HEADER_ALLOWLIST.has(name.toLowerCase())
+    );
+  }
+
   function readCurrentPageUrl(): string {
     return typeof location !== "undefined" && typeof location.href === "string"
-      ? sanitizeUrlForPrivacy(location.href)
+      ? recordUrl(location.href, capturePolicy.redaction)
       : "";
   }
 
@@ -1561,7 +1597,7 @@ export function installInjectedLiteCaptureHooks(options: InjectedHooksOptions = 
       return undefined;
     }
 
-    const sanitized = sanitizeUrlForPrivacy(value);
+    const sanitized = recordUrl(value, capturePolicy.redaction);
     return sanitized.length > 0 ? sanitized : undefined;
   }
 

@@ -11,6 +11,22 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./secret-detection": {
+      "types": "./dist/secret-detection.d.ts",
+      "import": "./dist/secret-detection.js"
+    },
+    "./linear-regex": {
+      "types": "./dist/linear-regex.d.ts",
+      "import": "./dist/linear-regex.js"
+    },
+    "./redaction-rules": {
+      "types": "./dist/redaction-rules.d.ts",
+      "import": "./dist/redaction-rules.js"
+    },
+    "./archive-encryption": {
+      "types": "./dist/archive-encryption.d.ts",
+      "import": "./dist/archive-encryption.js"
+    },
     "./schemas": {
       "types": "./dist/schemas-entry.d.ts",
       "import": "./dist/schemas-entry.js"

@@ -3,12 +3,25 @@ import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 import { getChromeApi } from "../shared/chrome-api.js";
 import { MODE_PRODUCT_PROFILES } from "../shared/mode-profile.js";
 import { createExtensionI18n } from "../shared/i18n.js";
-import { migrateStoredRecorderConfig, OPTIONS_STORAGE_VERSION } from "../shared/options-storage.js";
+import {
+  ENTERPRISE_POLICY_STORAGE_KEY,
+  migrateStoredRecorderConfig,
+  OPTIONS_STORAGE_VERSION
+} from "../shared/options-storage.js";
 import {
   DEFAULT_PERFORMANCE_BUDGET,
   normalizePerformanceBudget,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
+import { PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
+import {
+  applyDefaultProfileToGeneralForm,
+  parseProfilesStore,
+  serializeProfilesStore,
+  syncDefaultProfileWithLegacyOptions
+} from "../shared/profiles/storage.js";
+import { PROFILES_SECTION_ID } from "../shared/messages.js";
+import { mountProfilesEditor, type ProfilesEditorHandle } from "./profiles-editor.js";
 
 const STORAGE_KEY = "webblackbox.options";
 
@@ -24,6 +37,8 @@ type OptionsState = {
   performanceBudget: PerformanceBudgetConfig;
 };
 
+let profilesEditor: ProfilesEditorHandle | undefined;
+
 if (root) {
   bootstrap(root).catch((error) => {
     renderError(root, error);
@@ -32,7 +47,23 @@ if (root) {
 
 async function bootstrap(container: HTMLElement): Promise<void> {
   const options = await loadOptionsState();
-  render(container, options);
+  const generalContainer = document.createElement("div");
+  const profilesContainer = document.createElement("div");
+
+  container.replaceChildren(generalContainer, profilesContainer);
+  render(generalContainer, options);
+  profilesEditor = await mountProfilesEditor(profilesContainer, {
+    chromeApi,
+    t,
+    locale,
+    legacyOptionsKey: STORAGE_KEY,
+    enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
+  });
+
+  // The popup links here when no profile exists; the card renders after the hash was resolved.
+  if (window.location.hash === `#${PROFILES_SECTION_ID}`) {
+    document.getElementById(PROFILES_SECTION_ID)?.scrollIntoView();
+  }
 }
 
 function render(container: HTMLElement, options: OptionsState): void {
@@ -181,14 +212,17 @@ function render(container: HTMLElement, options: OptionsState): void {
 
   const saveButton = container.querySelector<HTMLButtonElement>("#saveConfig");
   const resetButton = container.querySelector<HTMLButtonElement>("#resetConfig");
+  // What the form shows: a save copies only the fields that differ from it into Default.
+  let shownConfig = options.recorderConfig;
 
   saveButton?.addEventListener("click", async () => {
     const nextRecorderConfig = readConfigFromForm(container);
     const nextPerformanceBudget = readPerformanceBudgetFromForm(container);
-    await saveOptionsState({
-      recorderConfig: nextRecorderConfig,
-      performanceBudget: nextPerformanceBudget
-    });
+    await saveOptionsState(
+      { recorderConfig: nextRecorderConfig, performanceBudget: nextPerformanceBudget },
+      shownConfig
+    );
+    shownConfig = nextRecorderConfig;
 
     const status = container.querySelector<HTMLElement>("#statusText");
     if (status) {
@@ -199,10 +233,10 @@ function render(container: HTMLElement, options: OptionsState): void {
   });
 
   resetButton?.addEventListener("click", async () => {
-    await saveOptionsState({
-      recorderConfig: DEFAULT_RECORDER_CONFIG,
-      performanceBudget: DEFAULT_PERFORMANCE_BUDGET
-    });
+    await saveOptionsState(
+      { recorderConfig: DEFAULT_RECORDER_CONFIG, performanceBudget: DEFAULT_PERFORMANCE_BUDGET },
+      shownConfig
+    );
     render(container, {
       recorderConfig: normalizeOptionsConfig(DEFAULT_RECORDER_CONFIG),
       performanceBudget: { ...DEFAULT_PERFORMANCE_BUDGET }
@@ -210,7 +244,21 @@ function render(container: HTMLElement, options: OptionsState): void {
   });
 }
 
+/** Once profiles are saved, the general form shows the Default profile's matching fields. */
 async function loadOptionsState(): Promise<OptionsState> {
+  const state = await loadLegacyOptionsState();
+  const values = await chromeApi?.storage?.local.get(PROFILES_STORAGE_KEY);
+  const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
+
+  return parsed
+    ? {
+        ...state,
+        recorderConfig: applyDefaultProfileToGeneralForm(state.recorderConfig, parsed.store)
+      }
+    : state;
+}
+
+async function loadLegacyOptionsState(): Promise<OptionsState> {
   const values = await chromeApi?.storage?.local.get(STORAGE_KEY);
   const stored = values?.[STORAGE_KEY];
 
@@ -245,7 +293,10 @@ async function loadOptionsState(): Promise<OptionsState> {
   };
 }
 
-async function saveOptionsState(options: OptionsState): Promise<void> {
+async function saveOptionsState(
+  options: OptionsState,
+  shownConfig?: OptionsState["recorderConfig"]
+): Promise<void> {
   const normalizedConfig = normalizeOptionsConfig(options.recorderConfig);
   const normalizedBudget = normalizePerformanceBudget(options.performanceBudget);
   const payload = {
@@ -256,6 +307,32 @@ async function saveOptionsState(options: OptionsState): Promise<void> {
 
   await chromeApi?.storage?.local.set({
     [STORAGE_KEY]: payload
+  });
+  const shown = shownConfig ? normalizeOptionsConfig(shownConfig) : undefined;
+
+  await syncSavedProfilesWithGeneralOptions(payload, shown).catch((error) => {
+    console.warn("[WebBlackbox] failed to sync the Default profile with general options", error);
+  });
+  // The editor's unsaved draft must not write the old Default values back on its next save.
+  profilesEditor?.applyGeneralOptions(payload, shown);
+}
+
+/** Once profiles are saved, the general form edits the Default profile's matching fields. */
+async function syncSavedProfilesWithGeneralOptions(
+  payload: unknown,
+  shown: unknown
+): Promise<void> {
+  const values = await chromeApi?.storage?.local.get(PROFILES_STORAGE_KEY);
+  const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
+
+  if (!parsed) {
+    return;
+  }
+
+  await chromeApi?.storage?.local.set({
+    [PROFILES_STORAGE_KEY]: serializeProfilesStore(
+      syncDefaultProfileWithLegacyOptions(parsed.store, payload, shown)
+    )
   });
 }
 

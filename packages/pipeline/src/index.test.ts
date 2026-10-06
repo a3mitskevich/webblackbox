@@ -10,11 +10,14 @@ import {
   privacyManifestSchema,
   requestIndexSchema,
   timeIndexSchema,
+  DEFAULT_REDACTION_PROFILE,
   type SessionMetadata,
   type WebBlackboxEvent
 } from "@webblackbox/protocol";
 
+import { encodeEventsNdjson } from "./codec.js";
 import { readWebBlackboxArchive } from "./exporter.js";
+import { sha256Hex } from "./hash.js";
 import { FlightRecorderPipeline } from "./pipeline.js";
 import {
   derivePipelineStorageKey,
@@ -30,14 +33,14 @@ const SESSION: SessionMetadata = {
   url: "https://example.com",
   tags: []
 };
+const TEST_PASSPHRASE = "pipeline-test-passphrase";
 const FULL_EXPORT_OPTIONS = {
+  passphrase: TEST_PASSPHRASE,
   includeScreenshots: true,
   includeScreenRecordings: true,
   maxArchiveBytes: null,
   recentWindowMs: null
 } as const;
-const TRUSTED_SYNTHETIC_EVIDENCE_REF = "synthetic-fixture:pipeline-export-0001";
-const TRUSTED_LOCAL_DEBUG_EVIDENCE_REF = "local-attestation:low-risk-override-0001";
 
 function createEvent(
   id: string,
@@ -136,6 +139,33 @@ describe("pipeline", () => {
     expect(indexes.request.some((entry) => entry.reqId === "R-1")).toBe(true);
   });
 
+  it("keeps everything derived from the page out of the plaintext manifest", async () => {
+    const title = "Inbox (3) - alice@example.com";
+    const pipeline = new FlightRecorderPipeline({
+      session: { ...SESSION, sid: "S-title", title },
+      storage: new MemoryPipelineStorage()
+    });
+
+    await pipeline.start();
+    await pipeline.ingest(createEvent("E-title-1", "network.request", 1, { reqId: "R-1" }));
+    await pipeline.flush();
+
+    const exported = await pipeline.exportBundle(FULL_EXPORT_OPTIONS);
+    const zip = await JSZip.loadAsync(exported.bytes);
+    const envelope = JSON.parse((await zip.file("manifest.json")?.async("string")) ?? "{}");
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
+
+    // Plaintext: only what decryption needs.
+    expect(Object.keys(envelope).sort()).toEqual(["encryption", "protocolVersion"]);
+    expect(envelope.protocolVersion).toBe(2);
+    expect(Object.keys(envelope.encryption.files)).toContain("meta/manifest.json");
+    expect(JSON.stringify(envelope)).not.toContain("example.com");
+    // Encrypted: the full manifest, still without the title.
+    expect(parsed.manifest.site).toEqual({ origin: "https://example.com/" });
+    expect(parsed.manifest.mode).toBe("lite");
+    expect(JSON.stringify(parsed.manifest)).not.toContain("alice@example.com");
+  });
+
   it("records min/max chunk time bounds when events arrive out of order", async () => {
     const storage = new MemoryPipelineStorage();
     const pipeline = new FlightRecorderPipeline({
@@ -159,7 +189,7 @@ describe("pipeline", () => {
       ...FULL_EXPORT_OPTIONS,
       includeScreenshots: false
     });
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(parsed.events.map((event) => event.id)).not.toContain("E-250");
     expect(parsed.timeIndex).toEqual([
@@ -223,7 +253,7 @@ describe("pipeline", () => {
 
       const chunks = await storage.listChunks(`S-codec-${codec}`);
       const exported = await pipeline.exportBundle(FULL_EXPORT_OPTIONS);
-      const parsed = await readWebBlackboxArchive(exported.bytes);
+      const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
       const runtimeCodec = chunks[0]?.meta.codec ?? "none";
 
       expect(parsed.events.some((event) => event.id === `E-codec-${codec}`)).toBe(true);
@@ -250,8 +280,8 @@ describe("pipeline", () => {
 
     await pipeline.start();
     await pipeline.ingest(createEvent("E-url-privacy", "user.marker", Date.now()));
-    const exported = await pipeline.exportBundle();
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const exported = await pipeline.exportBundle({ passphrase: TEST_PASSPHRASE });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(parsed.manifest.site.origin).toBe("https://app.example.test/users/:id/orders/:id");
     expect(JSON.stringify(parsed.manifest)).not.toContain("alice@example.test");
@@ -260,12 +290,12 @@ describe("pipeline", () => {
     expect(parsed.privacyManifest?.scanner.status).toBe("passed");
     expect(parsed.privacyManifest?.transfer).toMatchObject({
       destination: "local-download",
-      archiveKeyEnvelope: "none",
-      encrypted: false,
+      archiveKeyEnvelope: "passphrase",
+      encrypted: true,
       includeScreenshots: false,
       maxArchiveBytes: 100 * 1024 * 1024,
       recentWindowMs: 20 * 60 * 1000,
-      shareEligible: false
+      shareEligible: true
     });
     expect(parsed.privacyManifest?.totals.events).toBe(1);
     expect(parsed.integrity?.files["privacy/manifest.json"]).toMatch(/[a-f0-9]{64}/);
@@ -296,8 +326,8 @@ describe("pipeline", () => {
     );
     await pipeline.ingest(createEvent("E-default-marker", "user.marker", now, { message: "m" }));
 
-    const exported = await pipeline.exportBundle();
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const exported = await pipeline.exportBundle({ passphrase: TEST_PASSPHRASE });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(parsed.events.map((event) => event.id)).toEqual(["E-default-marker"]);
     expect(parsed.privacyManifest?.transfer).toMatchObject({
@@ -325,8 +355,8 @@ describe("pipeline", () => {
       })
     );
 
-    const exported = await pipeline.exportBundle();
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const exported = await pipeline.exportBundle({ passphrase: TEST_PASSPHRASE });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(exported.privacyManifest.scanner.status).toBe("blocked");
     expect(parsed.privacyManifest?.scanner.status).toBe("blocked");
@@ -340,175 +370,65 @@ describe("pipeline", () => {
     );
   });
 
-  it("blocks scanner findings when strict privacy scanning is requested", async () => {
-    const storage = new MemoryPipelineStorage();
-    const pipeline = new FlightRecorderPipeline({
-      session: {
-        ...SESSION,
-        sid: "S-scanner-strict"
-      },
-      storage,
-      maxChunkBytes: 512
-    });
-
-    await pipeline.start();
-    await pipeline.ingest(
-      createEvent("E-secret-strict", "console.entry", Date.now(), {
-        text: "Authorization: Bearer wbb_test_provider_token_000000000000"
-      })
-    );
-
-    await expect(pipeline.exportBundle({ strictPrivacyScanner: true })).rejects.toThrow(
-      /Privacy scanner blocked export/i
-    );
-  });
-
-  it("requires encryption for real-user capture policies", async () => {
-    const storage = new MemoryPipelineStorage();
-    const pipeline = new FlightRecorderPipeline({
-      session: {
-        ...SESSION,
-        sid: "S-real-user-encryption"
-      },
-      storage,
-      maxChunkBytes: 512,
-      capturePolicy: DEFAULT_CAPTURE_POLICY
-    });
-
-    await pipeline.start();
-    await pipeline.ingest(createEvent("E-real-user", "user.click", Date.now()));
-
-    await expect(pipeline.exportBundle()).rejects.toThrow(/encryption is required/i);
-  });
-
-  it("allows explicit plaintext local exports for real-user capture policies", async () => {
-    const storage = new MemoryPipelineStorage();
-    const pipeline = new FlightRecorderPipeline({
-      session: {
-        ...SESSION,
-        sid: "S-real-user-plaintext-local"
-      },
-      storage,
-      maxChunkBytes: 512,
-      capturePolicy: DEFAULT_CAPTURE_POLICY
-    });
-
-    await pipeline.start();
-    await pipeline.ingest(createEvent("E-real-user-plaintext", "user.click", Date.now()));
-
-    const exported = await pipeline.exportBundle({
-      allowPlaintextLocalExport: true
-    });
-    const parsed = await readWebBlackboxArchive(exported.bytes);
-
-    expect(parsed.manifest.encryption).toBeUndefined();
-    expect(parsed.privacyManifest?.encryption.archive).toBe("plaintext");
-    expect(parsed.privacyManifest?.transfer).toMatchObject({
-      destination: "local-download",
-      archiveKeyEnvelope: "none",
-      encrypted: false,
-      shareEligible: false
-    });
-  });
-
-  it("rejects plaintext capture-context exemptions without trusted evidence", async () => {
-    for (const evidenceRef of [
+  it("refuses every export without a passphrase of at least 8 characters, whatever the policy", async () => {
+    const policies = [
       undefined,
-      "local-attestation-1",
-      "local-attestation:forged-local-debug-0001"
-    ]) {
-      const storage = new MemoryPipelineStorage();
-      const pipeline = new FlightRecorderPipeline({
-        session: {
-          ...SESSION,
-          sid: `S-plaintext-evidence-${evidenceRef ?? "missing"}`
-        },
-        storage,
-        maxChunkBytes: 512,
-        capturePolicy: {
-          ...DEFAULT_CAPTURE_POLICY,
-          captureContext: "local-debug",
-          ...(evidenceRef ? { captureContextEvidenceRef: evidenceRef } : {}),
-          encryption: {
-            localAtRest: "required",
-            archive: "synthetic-local-debug-exempt",
-            archiveKeyEnvelope: "none"
-          }
+      DEFAULT_CAPTURE_POLICY,
+      {
+        ...DEFAULT_CAPTURE_POLICY,
+        captureContext: "synthetic" as const,
+        captureContextEvidenceRef: "synthetic-fixture:pipeline-export-0001",
+        encryption: {
+          localAtRest: "required" as const,
+          archive: "synthetic-local-debug-exempt" as const,
+          archiveKeyEnvelope: "none" as const
         }
+      }
+    ];
+
+    for (const [index, capturePolicy] of policies.entries()) {
+      const pipeline = new FlightRecorderPipeline({
+        session: { ...SESSION, sid: `S-no-plaintext-${index}` },
+        storage: new MemoryPipelineStorage(),
+        maxChunkBytes: 512,
+        capturePolicy
       });
 
       await pipeline.start();
-      await pipeline.ingest(createEvent(`E-${evidenceRef ?? "missing"}`, "user.click", Date.now()));
+      await pipeline.ingest(createEvent(`E-no-plaintext-${index}`, "user.click", Date.now()));
 
-      await expect(pipeline.exportBundle()).rejects.toThrow(/trusted capture context evidence/i);
+      for (const passphrase of [undefined, "", "       ", "short12"]) {
+        await expect(pipeline.exportBundle({ passphrase })).rejects.toThrow(
+          /always encrypted.*at least 8 characters/i
+        );
+      }
     }
   });
 
-  it("allows plaintext synthetic exemptions with trusted evidence", async () => {
-    const storage = new MemoryPipelineStorage();
+  it("records the archive as encrypted and passphrase-wrapped in the privacy manifest", async () => {
     const pipeline = new FlightRecorderPipeline({
-      session: {
-        ...SESSION,
-        sid: "S-trusted-synthetic-exemption"
-      },
-      storage,
+      session: { ...SESSION, sid: "S-encrypted-transfer" },
+      storage: new MemoryPipelineStorage(),
       maxChunkBytes: 512,
-      trustedPlaintextExemptionEvidenceRefs: [TRUSTED_SYNTHETIC_EVIDENCE_REF],
-      capturePolicy: {
-        ...DEFAULT_CAPTURE_POLICY,
-        captureContext: "synthetic",
-        captureContextEvidenceRef: TRUSTED_SYNTHETIC_EVIDENCE_REF,
-        encryption: {
-          localAtRest: "required",
-          archive: "synthetic-local-debug-exempt",
-          archiveKeyEnvelope: "none"
-        }
-      }
+      capturePolicy: DEFAULT_CAPTURE_POLICY
     });
 
     await pipeline.start();
-    await pipeline.ingest(createEvent("E-trusted-synthetic", "user.click", Date.now()));
+    await pipeline.ingest(createEvent("E-encrypted-transfer", "user.click", Date.now()));
 
-    const exported = await pipeline.exportBundle();
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const exported = await pipeline.exportBundle({ passphrase: `  ${TEST_PASSPHRASE}  ` });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
-    expect(parsed.manifest.encryption).toBeUndefined();
-    expect(parsed.privacyManifest?.transfer?.archiveKeyEnvelope).toBe("none");
-  });
-
-  it("rejects explicit low-risk overrides when high-risk artifacts are present", async () => {
-    const storage = new MemoryPipelineStorage();
-    const pipeline = new FlightRecorderPipeline({
-      session: {
-        ...SESSION,
-        sid: "S-low-risk-override-high-risk"
-      },
-      storage,
-      maxChunkBytes: 512,
-      trustedPlaintextExemptionEvidenceRefs: [TRUSTED_LOCAL_DEBUG_EVIDENCE_REF],
-      capturePolicy: {
-        ...DEFAULT_CAPTURE_POLICY,
-        captureContext: "local-debug",
-        captureContextEvidenceRef: TRUSTED_LOCAL_DEBUG_EVIDENCE_REF,
-        encryption: {
-          localAtRest: "required",
-          archive: "explicit-low-risk-override",
-          archiveKeyEnvelope: "none",
-          overrideReasonRef: "audit-override-1"
-        }
-      }
+    expect(parsed.privacyManifest?.encryption.archive).toBe("encrypted");
+    // The passphrase as typed, spaces included, opens it too.
+    await expect(
+      readWebBlackboxArchive(exported.bytes, { passphrase: `  ${TEST_PASSPHRASE}  ` })
+    ).resolves.toBeDefined();
+    expect(parsed.privacyManifest?.transfer).toMatchObject({
+      archiveKeyEnvelope: "passphrase",
+      encrypted: true,
+      shareEligible: true
     });
-
-    await pipeline.start();
-    await pipeline.ingest(
-      createEvent("E-high-risk-override", "screen.screenshot", Date.now(), {
-        shotId: "shot-1"
-      })
-    );
-
-    await expect(pipeline.exportBundle(FULL_EXPORT_OPTIONS)).rejects.toThrow(
-      /low-risk export override is not allowed/i
-    );
   });
 
   it("ingests batches without losing index coverage", async () => {
@@ -621,7 +541,7 @@ describe("pipeline", () => {
     await recoveredPipeline.start();
 
     const exported = await recoveredPipeline.exportBundle(FULL_EXPORT_OPTIONS);
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
     const zip = await JSZip.loadAsync(exported.bytes);
     const blobPaths = Object.keys(zip.files).filter((path) => path.startsWith("blobs/"));
 
@@ -716,31 +636,67 @@ describe("pipeline", () => {
     await pipeline.ingest(createEvent("E-3", "network.response", 30));
 
     const exported = await pipeline.exportBundle(FULL_EXPORT_OPTIONS);
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
     const zip = await JSZip.loadAsync(exported.bytes);
     const storedIntegrity = JSON.parse(
       await zip.file("integrity/hashes.json")!.async("string")
     ) as typeof exported.integrity;
 
     expect(parsed.events.length).toBeGreaterThanOrEqual(3);
-    expect(parsed.manifest.protocolVersion).toBe(1);
+    expect(parsed.manifest.protocolVersion).toBe(2);
     expect(parsed.integrity).not.toBeNull();
     expect(exported.integrity.files["integrity/hashes.json"]).toBeUndefined();
     expect(storedIntegrity).toEqual(exported.integrity);
   });
 
-  it("reads plain archives without global Web Crypto when Node crypto is available", async () => {
-    const storage = new MemoryPipelineStorage();
-    const pipeline = new FlightRecorderPipeline({
-      session: SESSION,
-      storage,
-      maxChunkBytes: 128
-    });
+  it("still reads format 1 archives (plaintext manifest, no encryption) without Web Crypto", async () => {
+    const event = createEvent("E-format-1", "user.click", 10);
+    const chunk = encodeEventsNdjson([event]);
+    const manifest = {
+      protocolVersion: 1,
+      createdAt: new Date(0).toISOString(),
+      mode: "lite",
+      site: { origin: "https://example.com/" },
+      chunkCodec: "none",
+      redactionProfile: DEFAULT_REDACTION_PROFILE,
+      stats: { eventCount: 1, chunkCount: 1, blobCount: 0, durationMs: 0 }
+    };
+    const files: Record<string, Uint8Array> = {
+      "events/C-000001.ndjson": chunk,
+      "index/time.json": new TextEncoder().encode(
+        JSON.stringify([
+          {
+            chunkId: "C-000001",
+            seq: 1,
+            tStart: 10,
+            tEnd: 10,
+            monoStart: 10,
+            monoEnd: 10,
+            eventCount: 1,
+            byteLength: chunk.byteLength,
+            codec: "none",
+            sha256: await sha256Hex(chunk)
+          }
+        ])
+      ),
+      "index/req.json": new TextEncoder().encode("[]"),
+      "index/inv.json": new TextEncoder().encode("[]"),
+      "manifest.json": new TextEncoder().encode(JSON.stringify(manifest))
+    };
+    const zip = new JSZip();
+    const hashes: Record<string, string> = {};
 
-    await pipeline.start();
-    await pipeline.ingest(createEvent("E-plain-read", "user.click", 10));
+    for (const [path, bytes] of Object.entries(files)) {
+      zip.file(path, bytes);
+      hashes[path] = await sha256Hex(bytes);
+    }
 
-    const exported = await pipeline.exportBundle(FULL_EXPORT_OPTIONS);
+    zip.file(
+      "integrity/hashes.json",
+      JSON.stringify({ manifestSha256: hashes["manifest.json"], files: hashes })
+    );
+
+    const bytes = await zip.generateAsync({ type: "uint8array" });
     const originalCrypto = (globalThis as unknown as { crypto?: Crypto }).crypto;
 
     Object.defineProperty(globalThis, "crypto", {
@@ -750,8 +706,9 @@ describe("pipeline", () => {
     });
 
     try {
-      const parsed = await readWebBlackboxArchive(exported.bytes);
-      expect(parsed.events.map((event) => event.id)).toContain("E-plain-read");
+      const parsed = await readWebBlackboxArchive(bytes);
+      expect(parsed.manifest.protocolVersion).toBe(1);
+      expect(parsed.events.map((entry) => entry.id)).toContain("E-format-1");
     } finally {
       Object.defineProperty(globalThis, "crypto", {
         configurable: true,
@@ -790,7 +747,9 @@ describe("pipeline", () => {
 
     const tampered = await zip.generateAsync({ type: "uint8array" });
 
-    await expect(readWebBlackboxArchive(tampered)).rejects.toThrow(/integrity mismatch/i);
+    await expect(readWebBlackboxArchive(tampered, { passphrase: TEST_PASSPHRASE })).rejects.toThrow(
+      /integrity mismatch/i
+    );
   });
 
   it("rejects archives with undeclared event chunks on read", async () => {
@@ -822,7 +781,7 @@ describe("pipeline", () => {
 
     const tampered = await zip.generateAsync({ type: "uint8array" });
 
-    await expect(readWebBlackboxArchive(tampered)).rejects.toThrow(
+    await expect(readWebBlackboxArchive(tampered, { passphrase: TEST_PASSPHRASE })).rejects.toThrow(
       /integrity manifest does not match archive contents/i
     );
   });
@@ -845,8 +804,8 @@ describe("pipeline", () => {
     await pipeline.start();
     await pipeline.ingest(createEvent("E-redaction-1", "user.click", Date.now()));
 
-    const exported = await pipeline.exportBundle();
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const exported = await pipeline.exportBundle({ passphrase: TEST_PASSPHRASE });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(parsed.manifest.redactionProfile).toEqual({
       redactHeaders: ["authorization"],
@@ -928,7 +887,7 @@ describe("pipeline", () => {
     );
     await pipeline.ingest(createEvent("E-schema-3", "error.exception", wallClockBase + 40.5));
 
-    for (const passphrase of [undefined, "secret-passphrase"]) {
+    for (const passphrase of ["secret-passphrase", " padded-passphrase "]) {
       const exported = await pipeline.exportBundle({ ...FULL_EXPORT_OPTIONS, passphrase });
       const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase });
 
@@ -962,7 +921,11 @@ describe("pipeline", () => {
     await pipeline.start();
     await pipeline.ingest(createEvent("E-profile-1", "user.click", 100));
 
-    const parsed = await readWebBlackboxArchive((await pipeline.exportBundle()).bytes);
+    const passphrase = "secret-passphrase";
+    const parsed = await readWebBlackboxArchive(
+      (await pipeline.exportBundle({ passphrase })).bytes,
+      { passphrase }
+    );
 
     expect(parsed.manifest.redactionProfile).toEqual({
       redactHeaders: ["authorization"],
@@ -1034,7 +997,7 @@ describe("pipeline", () => {
     expect(Array.from(rawBlob?.bytes ?? [])).not.toEqual([1, 2, 3, 4]);
 
     const exported = await pipeline.exportBundle(FULL_EXPORT_OPTIONS);
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
     expect(parsed.events.map((event) => event.id)).toEqual(
       expect.arrayContaining(["E-atrest-1", "E-atrest-2"])
     );
@@ -1066,11 +1029,12 @@ describe("pipeline", () => {
     await pipeline.ingest(createEvent("E-new", "user.marker", now, { message: "m" }));
 
     const exported = await pipeline.exportBundle({
+      passphrase: TEST_PASSPHRASE,
       includeScreenshots: false,
       recentWindowMs: 20 * 60 * 1000,
       maxArchiveBytes: 100 * 1024 * 1024
     });
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(parsed.events.some((event) => event.type === "screen.screenshot")).toBe(false);
     expect(parsed.events.some((event) => event.t < now - 20 * 60 * 1000)).toBe(false);
@@ -1117,23 +1081,29 @@ describe("pipeline", () => {
     );
 
     const withoutVideo = await pipeline.exportBundle({
+      passphrase: TEST_PASSPHRASE,
       includeScreenshots: true,
       includeScreenRecordings: false,
       recentWindowMs: null,
       maxArchiveBytes: null
     });
-    const parsedWithoutVideo = await readWebBlackboxArchive(withoutVideo.bytes);
+    const parsedWithoutVideo = await readWebBlackboxArchive(withoutVideo.bytes, {
+      passphrase: TEST_PASSPHRASE
+    });
 
     expect(parsedWithoutVideo.events.map((event) => event.id)).toEqual(["E-before"]);
 
     const withVideo = await pipeline.exportBundle({
+      passphrase: TEST_PASSPHRASE,
       includeScreenshots: true,
       includeScreenRecordings: true,
       recentWindowMs: null,
       maxArchiveBytes: null
     });
     const zip = await JSZip.loadAsync(withVideo.bytes);
-    const parsedWithVideo = await readWebBlackboxArchive(withVideo.bytes);
+    const parsedWithVideo = await readWebBlackboxArchive(withVideo.bytes, {
+      passphrase: TEST_PASSPHRASE
+    });
 
     expect(parsedWithVideo.events.some((event) => event.type === "screen.recording.chunk")).toBe(
       true
@@ -1163,10 +1133,11 @@ describe("pipeline", () => {
     );
 
     const exported = await pipeline.exportBundle({
+      passphrase: TEST_PASSPHRASE,
       includeScreenshots: true,
       recentWindowMs: 20 * 60 * 1000
     });
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(parsed.events.map((event) => event.id)).toEqual(["E-anchor-recent"]);
   });
@@ -1189,10 +1160,11 @@ describe("pipeline", () => {
     await pipeline.ingest(createEvent("E-live-old", "user.click", now - 50 * 60 * 1000));
 
     const exported = await pipeline.exportBundle({
+      passphrase: TEST_PASSPHRASE,
       includeScreenshots: true,
       recentWindowMs: 20 * 60 * 1000
     });
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(parsed.events).toEqual([]);
   });
@@ -1218,11 +1190,12 @@ describe("pipeline", () => {
     }
 
     const exported = await pipeline.exportBundle({
+      passphrase: TEST_PASSPHRASE,
       maxArchiveBytes: 150 * 1024,
       recentWindowMs: 60 * 60 * 1000,
       includeScreenshots: true
     });
-    const parsed = await readWebBlackboxArchive(exported.bytes);
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
     expect(exported.bytes.byteLength).toBeLessThanOrEqual(150 * 1024);
     expect(parsed.events.length).toBeGreaterThan(0);

@@ -1,5 +1,7 @@
 import {
+  ARCHIVE_FORMAT_VERSION,
   WEBBLACKBOX_PROTOCOL_VERSION,
+  exportEncryptionSchema,
   exportManifestSchema,
   hashesManifestSchema,
   invertedIndexSchema,
@@ -34,22 +36,57 @@ export function parseArchiveIntegrity(bytes: Uint8Array): HashesManifest {
   return parseArchiveJson("integrity/hashes.json", bytes, hashesManifestSchema);
 }
 
-/** Parses `manifest.json`, rejecting unknown protocol versions before schema validation. */
-export function parseArchiveManifest(bytes: Uint8Array): ExportManifest {
-  const value = parseJsonBytes("manifest.json", bytes);
-  const protocolVersion =
-    typeof value === "object" && value !== null
-      ? (value as { protocolVersion?: unknown }).protocolVersion
-      : undefined;
+/** Archive formats this reader understands: 1 (plain manifest) and 2 (envelope + encrypted manifest). */
+const SUPPORTED_PROTOCOL_VERSIONS: readonly unknown[] = [
+  WEBBLACKBOX_PROTOCOL_VERSION,
+  ARCHIVE_FORMAT_VERSION
+];
 
-  if (protocolVersion !== WEBBLACKBOX_PROTOCOL_VERSION) {
+/**
+ * Plaintext `manifest.json` of a format-2 archive: only the protocol version and the encryption
+ * parameters. The full manifest is the encrypted `meta/manifest.json`.
+ */
+export function parseArchiveEnvelope(
+  bytes: Uint8Array
+): Pick<ExportManifest, "protocolVersion" | "encryption"> {
+  const value = parseJsonBytes("manifest.json", bytes);
+  const record =
+    value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  assertSupportedProtocolVersion(record.protocolVersion);
+
+  return {
+    protocolVersion: record.protocolVersion as ExportManifest["protocolVersion"],
+    ...(record.encryption === undefined
+      ? {}
+      : {
+          encryption: validateArchiveJson(
+            "manifest.json encryption",
+            record.encryption,
+            exportEncryptionSchema
+          )
+        })
+  };
+}
+
+function assertSupportedProtocolVersion(protocolVersion: unknown): void {
+  if (!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
     throw new Error(
       `Unsupported archive protocolVersion ${describeValue(protocolVersion)}; ` +
-        `this player supports protocolVersion ${WEBBLACKBOX_PROTOCOL_VERSION}.`
+        `this player supports protocolVersion ${SUPPORTED_PROTOCOL_VERSIONS.join(" and ")}.`
     );
   }
+}
 
-  return validateArchiveJson("manifest.json", value, exportManifestSchema);
+/** Parses a full manifest, rejecting unknown protocol versions before schema validation. */
+export function parseArchiveManifest(bytes: Uint8Array, path = "manifest.json"): ExportManifest {
+  const value = parseJsonBytes(path, bytes);
+  assertSupportedProtocolVersion(
+    value !== null && typeof value === "object"
+      ? (value as { protocolVersion?: unknown }).protocolVersion
+      : undefined
+  );
+
+  return validateArchiveJson(path, value, exportManifestSchema);
 }
 
 /** Parses and validates `index/time.json`. */

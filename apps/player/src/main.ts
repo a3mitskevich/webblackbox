@@ -8,6 +8,8 @@ import {
   type RealtimeNetworkEntry,
   type ReplayDiagnosticEntry,
   type StorageTimelineEntry,
+  readProfileCancellation,
+  readRecordingProfiles,
   WebBlackboxPlayer
 } from "@webblackbox/player-sdk";
 import { flushSync } from "react-dom";
@@ -45,6 +47,12 @@ import {
 } from "./lib/network-view.js";
 import { readRealtimePayloadView } from "./lib/realtime-payload.js";
 import { asFiniteNumber, asRecord, asString } from "./lib/parsing.js";
+import {
+  formatPrivacyViolationText,
+  formatRecordingProfileBanner,
+  formatRecordingProfileSummary,
+  isConsolePrivacyViolation
+} from "./lib/recording-profile-view.js";
 import { markerKindToPanel } from "./lib/progress.js";
 import { normalizePlaybackEvents, type PlaybackTimeNormalization } from "./lib/playback-time.js";
 import { generatePlaywrightScriptFromEvents } from "./lib/playwright-script.js";
@@ -3162,6 +3170,19 @@ function renderSummary(): void {
   ).length;
   const visibleNetworkIframeCount = Math.max(0, visibleRequestCount - visibleNetworkMainCount);
   const triage = computeTriageStats(model.events, model.waterfall, TRIAGE_SLOW_REQUEST_MS);
+  const profileEntries = readRecordingProfiles(model.events);
+  const profileSummary = formatRecordingProfileSummary(profileEntries, i18n);
+  const profileBanner = formatRecordingProfileBanner(
+    profileEntries,
+    readProfileCancellation(model.events),
+    i18n
+  );
+  const profileBannerHtml =
+    profileBanner.length > 0
+      ? `<div class="summary-alert" role="alert" data-profile-banner>${profileBanner
+          .map((line) => `<p>${escapeHtml(line)}</p>`)
+          .join("")}</div>`
+      : "";
 
   const compareDelta = state.compareSummary
     ? `<div class="pill">${escapeHtml(
@@ -3172,6 +3193,7 @@ function renderSummary(): void {
     : "";
 
   refs.summary.innerHTML = `
+    ${profileBannerHtml}
     <div class="summary-triage">
       <span class="summary-triage__label">${escapeHtml(i18n.messages.summaryLabelTriage)}</span>
       <div class="pill">${escapeHtml(i18n.t("summaryPillErrors", { count: model.totals.errors }))}</div>
@@ -3203,6 +3225,7 @@ function renderSummary(): void {
     <div class="pill">${escapeHtml(
       i18n.t("summaryOrigin", { origin: state.player.archive.manifest.site.origin })
     )}</div>
+    ${profileSummary ? `<div class="pill">${escapeHtml(profileSummary)}</div>` : ""}
     <div class="pill">${escapeHtml(
       i18n.t("summaryPlayhead", {
         time: formatMono(state.playheadMono - model.minMono)
@@ -4834,7 +4857,7 @@ function buildArchiveModel(player: WebBlackboxPlayer): ArchiveModel {
       errorCount += 1;
       consoleSignals.push(event);
       consoleSignalSearchText.push(buildConsoleSignalSearchText(event));
-    } else if (event.type.startsWith("console.")) {
+    } else if (event.type.startsWith("console.") || isConsolePrivacyViolation(event)) {
       consoleSignals.push(event);
       consoleSignalSearchText.push(buildConsoleSignalSearchText(event));
     }
@@ -5396,7 +5419,9 @@ function renderSignalEvents(
 
   container.innerHTML = scoped
     .map((event) => {
-      const text = stringifySignalPayload(event.data);
+      const text =
+        formatPrivacyViolationText(event, i18n.formatHiddenByProfile) ??
+        stringifySignalPayload(event.data);
       const eventScope = resolveEventScope(model, event);
       const scopeLabel = i18n.formatScopeTag(eventScope);
       const scopeClass =

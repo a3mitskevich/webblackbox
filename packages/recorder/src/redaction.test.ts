@@ -102,6 +102,133 @@ describe("redactPayload headers", () => {
 });
 
 describe("redactPayload URL fields", () => {
+  it("masks storage values whose key name is sensitive and keeps neutral ones", () => {
+    const redacted = redactPayload(
+      {
+        op: "setItem",
+        key: "authToken",
+        value: "opaque-session-abc",
+        entries: [
+          { key: "theme", value: "dark" },
+          { key: "user_password", value: "hunter2" }
+        ]
+      },
+      PLAIN_PROFILE
+    ) as { value: string; entries: Array<{ value: string }> };
+
+    expect(redacted.value).toBe("[REDACTED]");
+    expect(redacted.entries.map((entry) => entry.value)).toEqual(["dark", "[REDACTED]"]);
+  });
+
+  it("masks storage values under session-like key names or that look like credentials", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2lnbmF0dXJlLXZhbHVlLTE";
+    const redacted = redactPayload(
+      {
+        entries: [
+          { key: "session", value: "s3cr3t-opaque-value" },
+          { key: "jwt", value: jwt },
+          { key: "profile", value: `Bearer ${"a".repeat(24)}` },
+          { key: "cache", value: JSON.stringify({ id: jwt }) },
+          { key: "sessionId", value: "abc-123-opaque" },
+          { key: "JSESSIONID", value: "jsession-opaque" },
+          { key: "authstate", value: "state-opaque" },
+          { key: "theme", value: "dark" },
+          { key: "authorName", value: "Ann" }
+        ]
+      },
+      PLAIN_PROFILE
+    ) as { entries: Array<{ value: string }> };
+
+    expect(redacted.entries.map((entry) => entry.value)).toEqual([
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "dark",
+      "Ann"
+    ]);
+  });
+
+  it("masks storage values with secrets nested in JSON and keeps neutral ones", () => {
+    const redacted = redactPayload(
+      {
+        entries: [
+          { key: "app_state", value: JSON.stringify({ sessionId: "S3CR3T" }) },
+          { key: "persist:root", value: JSON.stringify({ auth: '{"accessJwt":"abc"}' }) },
+          { key: "user", value: JSON.stringify({ access: "x", sid: "y" }) },
+          { key: "x", value: JSON.stringify({ Authorization: "Basic dXNlcjpwYXNz" }) },
+          { key: "creds", value: JSON.stringify({ pwd: "hunter2" }) },
+          { key: "sid", value: "SIDVALUE" },
+          { key: "authOrigin", value: "o" },
+          { key: "sidebarOpen", value: "true" },
+          { key: "prefs", value: JSON.stringify({ theme: "dark", author: "Ann" }) }
+        ]
+      },
+      PLAIN_PROFILE
+    ) as { entries: Array<{ value: string }> };
+
+    expect(redacted.entries.map((entry) => entry.value)).toEqual([
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "true",
+      JSON.stringify({ theme: "dark", author: "Ann" })
+    ]);
+  });
+
+  it("masks values under keys that contain short secret names anywhere", () => {
+    const redacted = redactPayload(
+      {
+        entries: [
+          { key: "oauth_code_verifier", value: "pkce-verifier" },
+          { key: "oauthState", value: "state" },
+          { key: "mycsrf", value: "c" },
+          { key: "xsrfval", value: "x" },
+          { key: "appauth", value: "a" },
+          { key: "myjwt", value: "j" },
+          { key: "cache", value: JSON.stringify({ oauthState: "s" }) },
+          { key: "plan", value: "basic membership" }
+        ]
+      },
+      PLAIN_PROFILE
+    ) as { entries: Array<{ value: string }> };
+
+    expect(redacted.entries.map((entry) => entry.value)).toEqual([
+      ...Array.from({ length: 7 }, () => "[REDACTED]"),
+      "basic membership"
+    ]);
+  });
+
+  it("treats authorization keys and short basic credentials as secrets", () => {
+    const redacted = redactPayload(
+      {
+        entries: [
+          { key: "authorization", value: "opaque-1" },
+          { key: "authorizationHeader", value: "opaque-2" },
+          { key: "header", value: "Basic YWRtaW46cHc=" },
+          { key: "header2", value: "BASIC dXNlcjpwYXNz" },
+          { key: "authorName", value: "Ann" }
+        ]
+      },
+      PLAIN_PROFILE
+    ) as { entries: Array<{ value: string }> };
+
+    expect(redacted.entries.map((entry) => entry.value)).toEqual([
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "[REDACTED]",
+      "Ann"
+    ]);
+  });
+
   it("sanitizes referrer and src payload fields", () => {
     const redacted = redactPayload(
       {
@@ -206,5 +333,36 @@ describe("redactPayload keyed hashing", () => {
     expect(repeat.selector).toBe(first.selector);
     expect(other.selector).not.toBe(first.selector);
     expect(JSON.stringify(config)).not.toContain("hashKey");
+  });
+});
+
+describe("redactPayload unmask selectors", () => {
+  const profile: RedactionProfile = {
+    ...PLAIN_PROFILE,
+    blockedSelectors: [".secret", "input[type='password']"],
+    unmaskSelectors: [".secret.public", "input[type='password']"]
+  };
+
+  it("keeps values readable for unmasked selectors", () => {
+    expect(redactPayload({ selector: "div.secret.public", text: "visible" }, profile)).toEqual({
+      selector: "[REDACTED_SELECTOR]",
+      text: "visible"
+    });
+  });
+
+  it("still masks blocked selectors that are not unmasked", () => {
+    expect(redactPayload({ selector: "div.secret", text: "hidden" }, profile)).toEqual({
+      selector: "[REDACTED_SELECTOR]",
+      text: "[REDACTED]"
+    });
+  });
+
+  it("never unmasks password fields", () => {
+    expect(
+      redactPayload({ selector: "form input[type='password']", value: "hunter2" }, profile)
+    ).toEqual({
+      selector: "[REDACTED_SELECTOR]",
+      value: "[REDACTED]"
+    });
   });
 });

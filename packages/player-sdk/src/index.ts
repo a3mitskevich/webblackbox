@@ -15,6 +15,7 @@ import type {
 } from "@webblackbox/protocol";
 import {
   assertArchiveKdfIterations,
+  ENCRYPTED_MANIFEST_PATH,
   extractRequestId,
   inferBlobMime,
   isBodySkipReason
@@ -29,6 +30,7 @@ import {
   type ArchiveLoadLimits
 } from "./archive-limits.js";
 import {
+  parseArchiveEnvelope,
   parseArchiveIntegrity,
   parseArchiveInvertedIndex,
   parseArchiveManifest,
@@ -68,6 +70,8 @@ export {
 } from "./archive-limits.js";
 
 /** Player lifecycle status. */
+export * from "./recording-profile.js";
+
 export type PlayerStatus = "idle" | "loaded";
 
 /** Supported input payloads when opening an archive. */
@@ -674,10 +678,22 @@ export class WebBlackboxPlayer {
     assertArchiveFileSet(zip, integrity);
     const manifestBytes = await readZipFileBytes(zip, "manifest.json", limits);
     await assertManifestIntegrity(manifestBytes, integrity);
-    const manifest = parseArchiveManifest(manifestBytes);
-    const archiveKey = await resolveArchiveReadKey(manifest, options.passphrase);
-    const encryptedFiles = manifest.encryption?.files ?? {};
+    // Format 2 keeps the full manifest encrypted; format 1 stores it as `manifest.json` itself.
+    const hasEncryptedManifest = zip.file(ENCRYPTED_MANIFEST_PATH) !== null;
+    const envelope = hasEncryptedManifest
+      ? parseArchiveEnvelope(manifestBytes)
+      : parseArchiveManifest(manifestBytes);
+    const archiveKey = await resolveArchiveReadKey(zip, envelope, options.passphrase, limits);
+    const encryptedFiles = envelope.encryption?.files ?? {};
     const reader: IntegrityArchiveReader = { zip, integrity, archiveKey, encryptedFiles, limits };
+    const manifest: ExportManifest = hasEncryptedManifest
+      ? {
+          ...(await readIntegrityArchiveJson(reader, ENCRYPTED_MANIFEST_PATH, (bytes) =>
+            parseArchiveManifest(bytes, ENCRYPTED_MANIFEST_PATH)
+          )),
+          ...(envelope.encryption ? { encryption: envelope.encryption } : {})
+        }
+      : parseArchiveManifest(manifestBytes);
     const timeIndex = await readIntegrityArchiveJson(
       reader,
       "index/time.json",
@@ -3173,9 +3189,15 @@ function resolveReplayConfidence(
   return "low";
 }
 
+/**
+ * The archive key. Writers encrypt with the trimmed passphrase; older archives may have used it
+ * untrimmed, so both are tried against one encrypted file before the key is used.
+ */
 async function resolveArchiveReadKey(
-  manifest: ExportManifest,
-  passphrase?: string
+  zip: JSZip,
+  manifest: Pick<ExportManifest, "encryption">,
+  passphrase: string | undefined,
+  limits: ArchiveLoadLimits
 ): Promise<CryptoKey | null> {
   const encryption = manifest.encryption;
 
@@ -3189,11 +3211,34 @@ async function resolveArchiveReadKey(
 
   assertArchiveKdfIterations(encryption.kdf.iterations);
 
-  return deriveArchiveKey(
-    passphrase,
-    fromBase64(encryption.kdf.saltBase64),
-    encryption.kdf.iterations
+  const candidates = [...new Set([passphrase.trim(), passphrase])].filter(
+    (candidate) => candidate.length > 0
   );
+  const probe = Object.entries(encryption.files).find(([path]) => zip.file(path));
+  let key: CryptoKey | null = null;
+
+  for (const candidate of candidates) {
+    key = await deriveArchiveKey(
+      candidate,
+      fromBase64(encryption.kdf.saltBase64),
+      encryption.kdf.iterations
+    );
+
+    if (!probe || candidates.length === 1) {
+      return key;
+    }
+
+    try {
+      // Bounded read, like every other entry: the probe is still an untrusted file.
+      const bytes = await readZipFileBytes(zip, probe[0], limits);
+      await decryptBytes(bytes, key, fromBase64(probe[1].ivBase64));
+      return key;
+    } catch {
+      // Wrong candidate: try the next one.
+    }
+  }
+
+  return key;
 }
 
 async function readEventChunkSources(

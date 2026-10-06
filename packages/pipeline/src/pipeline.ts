@@ -10,14 +10,20 @@ import type {
   WebBlackboxEvent
 } from "@webblackbox/protocol";
 
-import { CHUNK_CODECS, DEFAULT_EXPORT_POLICY, sanitizeUrlForPrivacy } from "@webblackbox/protocol";
+import {
+  ARCHIVE_FORMAT_VERSION,
+  assertExportPassphrase,
+  CHUNK_CODECS,
+  DEFAULT_EXPORT_POLICY,
+  sanitizeUrlForPrivacy
+} from "@webblackbox/protocol";
 
 import { decodeChunkEvents, encodeChunkEvents } from "./codec.js";
 import { computeChunkTimeBounds, EventChunker } from "./chunker.js";
 import { createWebBlackboxArchive } from "./exporter.js";
 import { sha256Hex } from "./hash.js";
 import { EventIndexer } from "./indexer.js";
-import { assertPrivacyScannerPassed, buildPrivacyManifest } from "./privacy.js";
+import { buildPrivacyManifest } from "./privacy.js";
 import type { PipelineStorage, StoredBlob, StoredChunk } from "./storage.js";
 import { externalizeStreamPayload } from "./stream-payload.js";
 
@@ -28,7 +34,6 @@ export type FlightRecorderPipelineOptions = {
   chunkCodec?: (typeof CHUNK_CODECS)[number];
   redactionProfile?: RedactionProfile;
   capturePolicy?: CapturePolicy;
-  trustedPlaintextExemptionEvidenceRefs?: readonly string[];
 };
 
 export type ExportResult = {
@@ -39,13 +44,12 @@ export type ExportResult = {
 };
 
 export type ExportBundleOptions = {
+  /** Required: every archive is encrypted (at least 8 characters, trimmed). */
   passphrase?: string;
   includeScreenshots?: boolean;
   includeScreenRecordings?: boolean;
   maxArchiveBytes?: number | null;
   recentWindowMs?: number | null;
-  strictPrivacyScanner?: boolean;
-  allowPlaintextLocalExport?: boolean;
 };
 
 type PreparedExportChunk = {
@@ -66,7 +70,6 @@ type ResolvedExportPolicy = {
   maxArchiveBytes: number | null;
   recentWindowMs: number | null;
   cutoffTimestamp: number;
-  strictPrivacyScanner: boolean;
 };
 
 type PreparedArchive = Awaited<ReturnType<typeof createWebBlackboxArchive>> & {
@@ -77,16 +80,6 @@ const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const SCREENSHOT_EVENT_TYPE: WebBlackboxEvent["type"] = "screen.screenshot";
 const SCREEN_RECORDING_EVENT_PREFIX = "screen.recording.";
 const EXPORT_OVERHEAD_RESERVE_BYTES = 2 * 1024 * 1024;
-const LOW_RISK_OVERRIDE_BLOCKED_CATEGORIES = new Set([
-  "dom",
-  "screenshots",
-  "screenRecordings",
-  "console",
-  "network",
-  "storage"
-]);
-const LOCAL_DEBUG_EVIDENCE_PATTERN = /^local-attestation:[A-Za-z0-9][A-Za-z0-9._:-]{7,}$/;
-const SYNTHETIC_EVIDENCE_PATTERN = /^(?:synthetic-fixture|ci-run):[A-Za-z0-9][A-Za-z0-9._:-]{7,}$/;
 
 export class FlightRecorderPipeline {
   private readonly chunker: EventChunker;
@@ -207,7 +200,8 @@ export class FlightRecorderPipeline {
   }
 
   public async exportBundle(options: ExportBundleOptions = {}): Promise<ExportResult> {
-    this.assertExportEncryptionPolicy(options);
+    // The scanner only reports findings; encryption is mandatory for every archive.
+    assertExportPassphrase(options.passphrase);
     await this.flush();
     const rawChunks = await this.options.storage.listChunks(this.options.session.sid);
     const exportPolicy = resolveExportPolicy(options, {
@@ -228,7 +222,7 @@ export class FlightRecorderPipeline {
       const blobs = await this.listReferencedSessionBlobsFromChunks(chunks);
       const manifest = this.buildManifest(chunks, blobs.length);
       const events = await this.decodeEventsFromChunks(chunks);
-      const encrypted = typeof options.passphrase === "string" && options.passphrase.length > 0;
+      const encrypted = true;
       const privacyManifest = await buildPrivacyManifest({
         events,
         blobs,
@@ -243,11 +237,6 @@ export class FlightRecorderPipeline {
           recentWindowMs: exportPolicy.recentWindowMs
         })
       });
-      if (options.strictPrivacyScanner === true) {
-        assertPrivacyScannerPassed(privacyManifest.scanner);
-      }
-
-      assertLowRiskOverrideAllowed(privacyManifest, this.options.capturePolicy);
 
       const { bytes, integrity } = await createWebBlackboxArchive(
         {
@@ -311,43 +300,6 @@ export class FlightRecorderPipeline {
       integrity,
       privacyManifest
     };
-  }
-
-  private assertExportEncryptionPolicy(options: ExportBundleOptions): void {
-    const policy = this.options.capturePolicy;
-
-    if (!policy) {
-      return;
-    }
-
-    const hasPassphrase = typeof options.passphrase === "string" && options.passphrase.length > 0;
-
-    if (!hasPassphrase && options.allowPlaintextLocalExport === true) {
-      return;
-    }
-
-    if (policy.encryption.archive === "required" && !hasPassphrase) {
-      throw new Error("Export encryption is required by the active capture policy.");
-    }
-
-    if (
-      !hasPassphrase &&
-      (policy.encryption.archive === "synthetic-local-debug-exempt" ||
-        policy.encryption.archive === "explicit-low-risk-override")
-    ) {
-      assertTrustedPlaintextExemptionEvidence(
-        policy,
-        this.options.trustedPlaintextExemptionEvidenceRefs
-      );
-    }
-
-    if (
-      policy.captureContext === "real-user" &&
-      policy.encryption.archive !== "synthetic-local-debug-exempt" &&
-      !hasPassphrase
-    ) {
-      throw new Error("Real-user archives must be encrypted before export or share.");
-    }
   }
 
   private async listSessionBlobs(): Promise<StoredBlob[]> {
@@ -556,7 +508,7 @@ export class FlightRecorderPipeline {
     const exportData = this.buildExportSnapshot(selectedChunks, blobsByHash);
     const manifest = this.buildManifest(exportData.chunks, exportData.blobs.length);
     const events = selectedChunks.flatMap((chunk) => chunk.events);
-    const encrypted = typeof passphrase === "string" && passphrase.length > 0;
+    const encrypted = true;
     const privacyManifest = await buildPrivacyManifest({
       events,
       blobs: exportData.blobs,
@@ -571,11 +523,6 @@ export class FlightRecorderPipeline {
         recentWindowMs: exportPolicy.recentWindowMs
       })
     });
-    if (exportPolicy.strictPrivacyScanner) {
-      assertPrivacyScannerPassed(privacyManifest.scanner);
-    }
-
-    assertLowRiskOverrideAllowed(privacyManifest, this.options.capturePolicy);
 
     const archive = await createWebBlackboxArchive(
       {
@@ -706,12 +653,13 @@ export class FlightRecorderPipeline {
     const chunkCodec = chunks[0]?.meta.codec ?? this.chunkCodec;
 
     return {
-      protocolVersion: 1,
+      protocolVersion: ARCHIVE_FORMAT_VERSION,
       createdAt: new Date().toISOString(),
       mode: this.options.session.mode,
+      // The manifest stays readable even in encrypted archives, so the page title (which can
+      // carry names, emails or document titles) is never written here.
       site: {
-        origin: sanitizeUrlForPrivacy(this.options.session.url),
-        title: this.options.session.title
+        origin: sanitizeUrlForPrivacy(this.options.session.url)
       },
       chunkCodec,
       redactionProfile: toManifestRedactionProfile(this.options.redactionProfile),
@@ -787,8 +735,7 @@ function resolveExportPolicy(
     includeScreenRecordings,
     maxArchiveBytes,
     recentWindowMs,
-    cutoffTimestamp,
-    strictPrivacyScanner: options.strictPrivacyScanner === true
+    cutoffTimestamp
   };
 }
 
@@ -806,65 +753,6 @@ function shouldIncludeEvent(event: WebBlackboxEvent, exportPolicy: ResolvedExpor
   }
 
   return true;
-}
-
-function assertLowRiskOverrideAllowed(
-  privacyManifest: PrivacyManifest,
-  policy: CapturePolicy | undefined
-): void {
-  if (policy?.encryption.archive !== "explicit-low-risk-override") {
-    return;
-  }
-
-  if (!policy.encryption.overrideReasonRef) {
-    throw new Error("Explicit low-risk export override requires an audit reason reference.");
-  }
-
-  const highRiskSummary = privacyManifest.categories.find(
-    (summary) =>
-      summary.high > 0 ||
-      (LOW_RISK_OVERRIDE_BLOCKED_CATEGORIES.has(summary.category) && summary.unredacted > 0)
-  );
-
-  if (highRiskSummary) {
-    throw new Error(
-      `Explicit low-risk export override is not allowed for high-risk ${highRiskSummary.category} artifacts.`
-    );
-  }
-}
-
-function assertTrustedPlaintextExemptionEvidence(
-  policy: CapturePolicy,
-  trustedEvidenceRefs: readonly string[] | undefined
-): void {
-  if (policy.captureContext === "real-user") {
-    throw new Error("Plaintext export exemptions are not allowed for real-user capture context.");
-  }
-
-  const evidenceRef = policy.captureContextEvidenceRef?.trim();
-
-  if (
-    !evidenceRef ||
-    !isWellFormedCaptureContextEvidenceRef(policy.captureContext, evidenceRef) ||
-    !trustedEvidenceRefs?.includes(evidenceRef)
-  ) {
-    throw new Error("Plaintext export exemption requires trusted capture context evidence.");
-  }
-}
-
-function isWellFormedCaptureContextEvidenceRef(
-  context: CapturePolicy["captureContext"],
-  evidenceRef: string
-): boolean {
-  if (context === "local-debug") {
-    return LOCAL_DEBUG_EVIDENCE_PATTERN.test(evidenceRef);
-  }
-
-  if (context === "synthetic") {
-    return SYNTHETIC_EVIDENCE_PATTERN.test(evidenceRef);
-  }
-
-  return false;
 }
 
 function buildExportTransferPolicy(input: {
