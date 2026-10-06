@@ -1483,10 +1483,14 @@ async function buildSessionRecorderConfig(
 }
 
 function loadSessionProfilesState(): Promise<ProfilesState> {
-  return loadProfilesState(chromeApi, {
-    legacyOptionsKey: OPTIONS_STORAGE_KEY,
-    enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
-  });
+  return loadProfilesState(
+    chromeApi,
+    {
+      legacyOptionsKey: OPTIONS_STORAGE_KEY,
+      enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
+    },
+    readEnterprisePolicy
+  );
 }
 
 async function resolveProfilePreview(
