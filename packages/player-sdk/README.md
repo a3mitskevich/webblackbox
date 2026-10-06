@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/webllm/webblackbox"><img src="https://raw.githubusercontent.com/webllm/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://raw.githubusercontent.com/a3mitskevich/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
 </p>
 
 <h1 align="center">@webblackbox/player-sdk</h1>
@@ -9,9 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@webblackbox/player-sdk"><img src="https://img.shields.io/npm/v/@webblackbox/player-sdk.svg?color=f97316" alt="npm version" /></a>
-  <a href="https://github.com/webllm/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@webblackbox/player-sdk?color=374151" alt="License" /></a>
-  <a href="https://github.com/webllm/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-374151" alt="License" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
 </p>
 
 ---
@@ -27,14 +26,21 @@ The session playback and analysis SDK for WebBlackbox. Opens `.webblackbox` arch
 - **Storage Analysis** — Timeline of cookie, localStorage, IndexedDB, and cache operations
 - **DOM Analysis** — Snapshot diffing to track added, removed, and changed elements
 - **Performance Analysis** — Web Vitals, long tasks, CPU profiles, heap snapshots, traces
+- **Stack Symbolication** — Map minified stack traces to original sources with source maps embedded in the archive, `.map` files, or a symbol server
+- **Tabs Context** — The other tabs of the recorded site that were open in parallel
 - **Session Comparison** — Compare two sessions by event counts, error rates, and request patterns
 - **Code Generation** — Generate curl, fetch, HAR, Playwright scripts, bug reports, and issue templates
 
 ## Installation
 
+This fork does not publish to npm: `@webblackbox/player-sdk` on npm is the upstream package, without this fork's changes (it cannot read format-2 archives). Use it from the workspace and build it from source:
+
 ```bash
-pnpm add @webblackbox/player-sdk
+pnpm install
+pnpm --filter @webblackbox/player-sdk build   # → packages/player-sdk/dist
 ```
+
+Inside the monorepo, depend on it with `"@webblackbox/player-sdk": "workspace:*"`.
 
 ## Usage
 
@@ -61,12 +67,28 @@ console.log(player.archive.manifest); // ExportManifest
 console.log(player.events.length); // Total event count
 ```
 
+### Archive Formats
+
+`open()` reads both archive formats:
+
+- **Format 2** (every current export; `protocolVersion: 2`): `manifest.json` is a plaintext envelope with only the
+  protocol version and the encryption parameters. The full manifest is the encrypted `meta/manifest.json`, so
+  nothing but the envelope opens without the passphrase.
+- **Format 1** (`protocolVersion: 1`, older archives): the full manifest is `manifest.json` itself, and the
+  archive may be plaintext.
+
+Encrypted files use AES-GCM with a PBKDF2-SHA-256 key derived from the passphrase. The passphrase is used trimmed
+(an untrimmed one is tried too, for older archives). Integrity hashes and decryption use the Web Crypto API, so in a
+browser the page must be a secure context (`https://` or `localhost`); on Node the SDK falls back to `node:crypto`
+for hashing.
+
 ### Opening Untrusted Archives
 
 `open()` treats every archive as untrusted input:
 
 - `manifest.json`, `integrity/hashes.json`, the indexes and the privacy manifest are validated against the
-  `@webblackbox/protocol` Zod schemas, and an unknown `protocolVersion` is rejected.
+  `@webblackbox/protocol` Zod schemas, `manifest.json` is checked against its integrity hash, and a
+  `protocolVersion` other than 1 or 2 is rejected.
 - The ZIP central directory is checked before anything is inflated, and every entry is inflated with a
   byte counter that stops at its declared size, so zip bombs fail fast with an `ArchiveLimitError`.
 - Event chunks are decoded (gzip / br / zst) with per-chunk and total output caps.
@@ -190,6 +212,27 @@ for (const entry of timeline) {
 }
 ```
 
+### Stack Symbolication
+
+```typescript
+import { createArchiveSymbolicator, createSourceMapFileProvider } from "@webblackbox/player-sdk";
+
+// Maps embedded in the archive first, then any extra providers (.map files, a symbol server)
+const symbolicator = createArchiveSymbolicator(player, [createSourceMapFileProvider(files)]);
+const frames = await symbolicator.symbolicateStack(error.stack);
+// [{ frame, status: "mapped" | "no-map" | "no-mapping" | "map-error", original?: { source, line, column } }]
+```
+
+### Tabs Context
+
+```typescript
+import { getRelatedTabsAt, readTabsContext } from "@webblackbox/player-sdk";
+
+const tabs = readTabsContext(player.query());
+console.log(tabs.summary.openAtStart, tabs.summary.maxConcurrent, tabs.summary.distinctTabs);
+const openNow = getRelatedTabsAt(tabs, mono); // other tabs of the site open at `mono`
+```
+
 ### Request Detail
 
 ```typescript
@@ -276,11 +319,18 @@ const timeline = player.getActionTimeline({
 
 ```typescript
 const curl = player.generateCurl("R-12345");
-// curl -X POST 'https://api.example.com/data' -H 'Content-Type: application/json' ...
+// curl 'https://api.example.com/data' \
+//   -X 'POST' \
+//   -H 'content-type: application/json' \
+//   --data-raw '...' \
+//   --compressed
 
 const fetch = player.generateFetch("R-12345");
-// fetch('https://api.example.com/data', { method: 'POST', headers: {...}, body: '...' })
+// await fetch("https://api.example.com/data", { "method": "POST", "headers": {...}, "body": "..." });
 ```
+
+Recorded values are untrusted, so generated code quotes them: every curl argument is shell-quoted, and fetch and
+Playwright code embeds URLs, names and selectors as JSON string literals.
 
 ### HAR Export
 
@@ -391,6 +441,7 @@ type PlayerOpenInput = ArrayBuffer | Uint8Array | Blob;
 type PlayerOpenOptions = {
   passphrase?: string;
   range?: PlayerRange;
+  limits?: Partial<ArchiveLoadLimits>; // defaults: DEFAULT_ARCHIVE_LOAD_LIMITS
 };
 
 type PlayerQuery = {
@@ -420,9 +471,10 @@ type PlayerArchive = {
   requestIndex: RequestIndexEntry[];
   invertedIndex: InvertedIndexEntry[];
   integrity: HashesManifest;
+  privacyManifest: PrivacyManifest | null;
 };
 ```
 
 ## License
 
-[MIT](https://github.com/webllm/webblackbox/blob/main/LICENSE)
+[MIT](https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE)
