@@ -82,6 +82,8 @@ export type ActionConsequenceInput = {
   endMono: number;
   /** Events of the action span (its trigger and everything with `ref.act`), any order. */
   events: readonly WebBlackboxEvent[];
+  /** The event that started the action: never listed as its own consequence. */
+  triggerEventId?: string;
   /** Requests made during the action. */
   requests: readonly ActionConsequenceRequest[];
   /** Notable items to keep (default 8). */
@@ -277,6 +279,10 @@ export function summarizeActionConsequences(input: ActionConsequenceInput): Acti
   notable.push(...failureByKey.values());
 
   for (const event of input.events) {
+    if (event.id === input.triggerEventId) {
+      continue;
+    }
+
     const item = notableEvent(event, startMono, requestEventIds);
 
     if (!item) {

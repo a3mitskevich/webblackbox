@@ -199,6 +199,20 @@ describe("summarizeActionConsequences", () => {
     expect(summary.hiddenItems).toBe(1);
   });
 
+  it("never lists the action's trigger as its own consequence", () => {
+    const reload = event("E-nav", "nav.reload", 0, { url: "https://a.test/" });
+    const summary = summarizeActionConsequences({
+      startMono: 0,
+      endMono: 10,
+      events: [reload, event("E-route", "nav.hash", 5, { url: "https://a.test/#/x" })],
+      requests: [],
+      triggerEventId: "E-nav"
+    });
+
+    expect(summary.items.map((item) => item.eventId)).toEqual(["E-route"]);
+    expect(summary.navigations).toBe(1);
+  });
+
   it("has no failing moment when nothing failed", () => {
     const summary = summarizeActionConsequences({
       startMono: 0,

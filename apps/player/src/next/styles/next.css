@@ -408,6 +408,11 @@ button.sess {
 button.sess:hover .sess-title {
   text-decoration: underline;
 }
+.profile-label {
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .chip.warn {
   color: var(--warn);
   background: var(--warn-soft);

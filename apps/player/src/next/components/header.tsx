@@ -254,8 +254,8 @@ function ProfileChip() {
         data-testid="profile-chip"
         data-warn={profile.warn}
       >
-        {profile.warn ? <Icon name="flag" /> : null}
-        <span className="lbl">{profile.label}</span>
+        <Icon name={profile.warn ? "flag" : "info"} />
+        <span className="profile-label">{profile.label}</span>
       </button>
     </Hint>
   );

@@ -133,6 +133,7 @@ function buildInspection(archive: LoadedArchive, event: WebBlackboxEvent): Inspe
   const consequences = triggered
     ? summarizeActionConsequences({
         startMono: triggered.startMono,
+        triggerEventId: event.id,
         endMono: triggered.endMono,
         events: index.eventsByAct.get(triggered.actId) ?? [],
         requests: triggered.requests.map((request) => {
