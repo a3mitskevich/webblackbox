@@ -1,30 +1,40 @@
 {
-  "entries": [
+  "absolute": [
     {
-      "path": "packages/recorder/dist/index.js",
-      "maxBytes": 76000,
-      "maxGzipBytes": 17600
+      "path": "apps/extension/build/injected.js",
+      "maxBytes": 32000,
+      "maxGzipBytes": 11000,
+      "forbidSources": ["node_modules/zod/"],
+      "note": "MAIN-world page hook, executed on every recorded navigation. 20,549 B / 7,346 B gzip at introduction."
     },
     {
-      "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 80000,
-      "maxGzipBytes": 18000
+      "path": "apps/extension/build/content.js",
+      "maxBytes": 30000,
+      "maxGzipBytes": 10000,
+      "forbidSources": ["node_modules/zod/"],
+      "note": "Content script in every recorded frame. 22,431 B / 7,420 B gzip at introduction."
     },
     {
-      "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 95000,
-      "maxGzipBytes": 23000
-    },
-    {
-      "path": "apps/player/build/main.js",
-      "maxBytes": 1800000,
-      "maxGzipBytes": 330000
-    },
-    {
-      "path": "apps/extension/build/sw.js",
-      "maxBytes": 825000,
-      "maxGzipBytes": 150000,
-      "note": "808,875 B raw with the CDP Network allowlist and inline body gate (#9) on top of the service worker recovery (#8); original budget 800,000."
+      "path": "apps/extension/build/content-agent.js",
+      "maxBytes": 190000,
+      "maxGzipBytes": 60000,
+      "forbidSources": ["node_modules/zod/"],
+      "note": "Lite capture agent imported by content.js in every recorded frame; snapdom is ~96 KB of it. 138,139 B / 43,110 B gzip at introduction."
     }
-  ]
+  ],
+  "delta": {
+    "maxGrowthPercent": 8,
+    "minGrowthBytes": 2048,
+    "entries": [
+      "apps/extension/build/sw.js",
+      "apps/extension/build/offscreen.js",
+      "apps/extension/build/popup.js",
+      "apps/extension/build/options.js",
+      "apps/extension/build/sessions.js",
+      "apps/player/build/main.js",
+      "packages/recorder/dist/index.js",
+      "packages/pipeline/dist/index.js",
+      "packages/player-sdk/dist/index.js"
+    ]
+  }
 }

@@ -14,6 +14,11 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      # Bundle-size gate: download the base branch's size report, read the PR's size-increase notes.
+      actions: read
+      pull-requests: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,6 +47,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Script Tests
+        run: pnpm test:scripts
+
       - name: Benchmark Regression Gate
         run: pnpm bench:ci
 
@@ -56,8 +64,54 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Fetch Bundle Size Baseline
+        id: bundle-baseline
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          dir="$RUNNER_TEMP/bundle-size"
+          mkdir -p "$dir"
+          # `size-increase:` notes come from the PR body (read live, so an edited body counts on
+          # re-run) and from the PR's commit messages.
+          {
+            gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""'
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits" --jq '.[].commit.message'
+          } > "$dir/notes.txt" || echo "::warning::Could not read the PR body or commits for size-increase notes"
+          # Baseline: the size report of the base commit's CI run, else the newest base-branch run
+          # that uploaded one. Push CI only runs on main, so stacked PRs get no delta check.
+          runs=$({
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$BASE_REF" --event push --commit "$BASE_SHA" --json databaseId --jq '.[].databaseId'
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$BASE_REF" --event push --limit 20 --json databaseId --jq '.[].databaseId'
+          } || true)
+          for run in $runs; do
+            if gh run download "$run" --repo "$GITHUB_REPOSITORY" --name bundle-size-report --dir "$dir/baseline-$run" 2>/dev/null; then
+              echo "Bundle-size baseline: CI run $run on $BASE_REF"
+              echo "report=$dir/baseline-$run/latest-report.json" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::notice::No bundle-size baseline for $BASE_REF; only absolute page-bundle budgets are checked"
+
       - name: Bundle Size Gate
-        run: pnpm bundle:size
+        env:
+          BASELINE_REPORT: ${{ steps.bundle-baseline.outputs.report }}
+        run: |
+          args=()
+          if [ -n "$BASELINE_REPORT" ]; then args+=(--baseline "$BASELINE_REPORT"); fi
+          if [ -f "$RUNNER_TEMP/bundle-size/notes.txt" ]; then args+=(--notes-file "$RUNNER_TEMP/bundle-size/notes.txt"); fi
+          node scripts/check-bundle-size.mjs "${args[@]}"
+
+      - name: Upload Bundle Size Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bundle-size-report
+          path: bundle-size/latest-report.json
+          if-no-files-found: ignore
 
   product-matrix:
     name: ${{ matrix.surface }} gate
