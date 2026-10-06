@@ -5,6 +5,7 @@ import {
   fieldGroup,
   numberField,
   setFieldError,
+  textField,
   toggleField,
   type FieldText
 } from "./fields.js";
@@ -60,7 +61,8 @@ const SECTION_LAYOUT: Record<
     {
       title: "optionsGroupArchive",
       fields: ["archiveMaxSizeMb", "archiveRecentMinutes"]
-    }
+    },
+    { title: "optionsGroupPlayer", fields: ["playerUrl"] }
   ]
 };
 
@@ -85,7 +87,15 @@ function listValidator(spec: ListFieldSpec, t: Translate): (value: string) => st
   }
 }
 
-function renderField(spec: GeneralFieldSpec, draft: GeneralDraft, t: Translate): HTMLElement {
+/** Values the organization's policy sets, by field id: shown read-only instead of the draft's. */
+export type ManagedGeneralValues = Readonly<Record<string, string>>;
+
+function renderField(
+  spec: GeneralFieldSpec,
+  draft: GeneralDraft,
+  managed: ManagedGeneralValues,
+  t: Translate
+): HTMLElement {
   const text = fieldText(spec, t);
 
   switch (spec.kind) {
@@ -102,6 +112,17 @@ function renderField(spec: GeneralFieldSpec, draft: GeneralDraft, t: Translate):
       });
     case "toggle":
       return toggleField({ ...text, id: spec.id, checked: spec.get(draft) });
+    case "text": {
+      const managedValue = managed[spec.id];
+      return textField({
+        ...text,
+        id: spec.id,
+        value: managedValue ?? spec.get(draft),
+        placeholder: t(spec.placeholder),
+        mono: true,
+        ...(managedValue !== undefined ? { hint: t(spec.managedHint), readOnly: true } : {})
+      });
+    }
     case "list":
       return chipListField({
         ...text,
@@ -119,7 +140,8 @@ function renderField(spec: GeneralFieldSpec, draft: GeneralDraft, t: Translate):
 export function renderGeneralSection(
   section: GeneralSectionId,
   draft: GeneralDraft,
-  t: Translate
+  t: Translate,
+  managed: ManagedGeneralValues = {}
 ): HTMLElement {
   return el(
     "div",
@@ -129,7 +151,7 @@ export function renderGeneralSection(
         group.title ? t(group.title) : null,
         group.fields.flatMap((id) => {
           const spec = findField(id);
-          return spec ? [renderField(spec, draft, t)] : [];
+          return spec ? [renderField(spec, draft, managed, t)] : [];
         })
       )
     )
@@ -176,6 +198,16 @@ export function applyGeneralFieldInput(
     }
     case "toggle":
       return { draft: spec.set(draft, control.checked), fieldId: spec.id, error: null };
+    case "text": {
+      const result = spec.validate(control.value);
+      const error = result.ok ? null : t(result.key);
+      setFieldError(control, error);
+      return {
+        draft: result.ok ? spec.set(draft, result.value) : draft,
+        fieldId: spec.id,
+        error
+      };
+    }
     case "list":
       return {
         draft: spec.set(

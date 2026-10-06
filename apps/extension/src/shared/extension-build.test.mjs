@@ -43,6 +43,7 @@ describe("managed storage schema", () => {
       expect(scope.profiles.items.properties.categories.properties.console.enum).toContain("allow");
       expect(scope.rules.items.properties.match.properties.hosts.type).toBe("array");
       expect(scope.dataCategoryCaps.type).toBe("object");
+      expect(scope.playerUrl.type).toBe("string");
     }
   });
 });
