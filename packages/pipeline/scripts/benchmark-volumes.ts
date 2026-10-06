@@ -1,15 +1,16 @@
 /**
  * Pipeline benchmark at real volumes: a long Full-mode session (100k events, 2k blobs of
  * 100–500 KB) written through the extension's storage stack (at-rest encryption over
- * IndexedDB, here fake-indexeddb), then exported with the default export policy the way the
- * offscreen document does it (archive → Blob). Reports ingest throughput, blob write latency
- * and the export's duration and peak memory.
+ * IndexedDB, here fake-indexeddb, gzip chunks), then exported with the default export policy
+ * the way the offscreen document does it (archive streamed into a Blob). Reports ingest
+ * throughput, blob write latency and the export's duration and peak memory.
  */
 import "fake-indexeddb/auto";
 
 import { performance } from "node:perf_hooks";
 
 import type {
+  ChunkCodec,
   PrivacyClassification,
   PrivacyDataCategory,
   SessionMetadata,
@@ -17,6 +18,7 @@ import type {
 } from "@webblackbox/protocol";
 
 import {
+  createArchiveBlobSink,
   EncryptedPipelineStorage,
   FlightRecorderPipeline,
   generatePipelineStorageKeyBytes,
@@ -37,6 +39,7 @@ const MEMORY_SAMPLE_INTERVAL_MS = 5;
 const BLOB_LATENCY_WINDOW = 100;
 const RANDOM_FILL_LIMIT = 65_536;
 const BENCHMARK_PASSPHRASE = "benchmark-passphrase";
+const CHUNK_CODECS: ChunkCodec[] = ["none", "gzip", "br", "zst"];
 const MB = 1024 * 1024;
 
 type MemorySample = {
@@ -57,6 +60,7 @@ type ExportMeasurement = {
 type ExportOptions = Parameters<FlightRecorderPipeline["exportBundle"]>[0];
 
 export type PipelineVolumeBenchmarkReport = {
+  chunkCodec: ChunkCodec;
   eventCount: number;
   blobCount: number;
   bodyBlobCount: number;
@@ -309,13 +313,19 @@ async function createStorage(): Promise<EncryptedPipelineStorage> {
   );
 }
 
-/** The offscreen document hands the archive to the download as a Blob. */
+/** The offscreen document streams the archive into a Blob and downloads that. */
 async function exportToBlob(
   pipeline: FlightRecorderPipeline,
   options: ExportOptions
 ): Promise<Blob> {
-  const exported = await pipeline.exportBundle(options);
-  return new Blob([exported.bytes as BlobPart], { type: "application/zip" });
+  const archive = createArchiveBlobSink();
+  await pipeline.exportArchive(archive.sink, options);
+  return archive.toBlob("application/zip");
+}
+
+function readChunkCodec(): ChunkCodec {
+  const raw = process.env.BENCH_VOLUME_CODEC;
+  return CHUNK_CODECS.find((codec) => codec === raw) ?? "gzip";
 }
 
 async function measureExport(
@@ -348,6 +358,7 @@ async function run(): Promise<void> {
   const blobMinKb = readPositiveInt("BENCH_VOLUME_BLOB_MIN_KB", DEFAULT_BLOB_MIN_KB);
   const blobMaxKb = readPositiveInt("BENCH_VOLUME_BLOB_MAX_KB", DEFAULT_BLOB_MAX_KB);
   const includeFullExport = process.env.BENCH_VOLUME_FULL_EXPORT === "1";
+  const chunkCodec = readChunkCodec();
   const blobs = planBlobs(blobCount, blobMinKb, blobMaxKb);
   const blobEvery = Math.max(1, Math.floor(eventCount / Math.max(1, blobCount)));
   const storage = await createStorage();
@@ -362,7 +373,12 @@ async function run(): Promise<void> {
     title: "Pipeline Volume Benchmark",
     tags: ["benchmark"]
   };
-  const pipeline = new FlightRecorderPipeline({ session, storage, maxChunkBytes: 512 * 1024 });
+  const pipeline = new FlightRecorderPipeline({
+    session,
+    storage,
+    maxChunkBytes: 512 * 1024,
+    chunkCodec
+  });
 
   await pipeline.start();
 
@@ -407,6 +423,7 @@ async function run(): Promise<void> {
     : null;
 
   const report: PipelineVolumeBenchmarkReport = {
+    chunkCodec,
     eventCount,
     blobCount: written.length,
     bodyBlobCount: written.filter((blob) => blob.kind === "body").length,

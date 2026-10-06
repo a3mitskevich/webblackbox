@@ -11,9 +11,9 @@
     "archiveDropRatioMin": 0.2
   },
   "pipelineVolumes": {
-    "ingestMinOpsPerSec": 3000,
-    "blobPutLastMaxMs": 40,
-    "defaultExportMaxMs": 60000,
-    "defaultExportPeakRssMaxMb": 2500
+    "ingestMinOpsPerSec": 6000,
+    "blobPutLatencyGrowthMax": 2,
+    "defaultExportMaxMs": 12000,
+    "defaultExportPeakRssMaxMb": 600
   }
 }

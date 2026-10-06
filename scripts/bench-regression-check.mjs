@@ -195,10 +195,11 @@ function runVolumeChecks(volumes, thresholds) {
         volumes.ingestThroughputOpsPerSec
       )}`
     ),
+    // Machine-independent: blob writes must not slow down as the session tracks more blobs.
     assertCheck(
-      "pipelineVolumes.blobPutAvgMsLast",
-      volumes.blobPutAvgMsLast <= thresholds.blobPutLastMaxMs,
-      `expected <= ${thresholds.blobPutLastMaxMs}, got ${volumes.blobPutAvgMsLast.toFixed(2)}`
+      "pipelineVolumes.blobPutLatencyGrowth",
+      volumes.blobPutAvgMsLast <= volumes.blobPutAvgMsFirst * thresholds.blobPutLatencyGrowthMax,
+      `expected the last blob writes within ${thresholds.blobPutLatencyGrowthMax}x the first, got ${volumes.blobPutAvgMsFirst.toFixed(2)} -> ${volumes.blobPutAvgMsLast.toFixed(2)} ms`
     ),
     assertCheck(
       "pipelineVolumes.defaultExport.durationMs",
