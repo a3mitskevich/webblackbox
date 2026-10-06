@@ -96,6 +96,15 @@ export function isInboundKindAllowed(kind: string, context: InboundSenderContext
   return false;
 }
 
+/**
+ * Broadcasts reach every connected port except recording status for content scripts: each content
+ * script follows only its own tab's recording, which the service worker sends to that tab. Another
+ * tab's status would make it record under that tab's session, or stop while its tab records.
+ */
+export function isBroadcastDeliveredToPort(kind: string, portName: string): boolean {
+  return !(kind === "sw.recording-status" && portName === PORT_NAMES.content);
+}
+
 function isOwnExtensionSender(sender: RuntimeSenderLike, context: SenderTrustContext): boolean {
   // `onConnect`/`onMessage` only fire for this extension's own contexts; an explicit
   // foreign id means the event came through an unexpected channel.
