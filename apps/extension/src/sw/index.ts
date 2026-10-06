@@ -65,10 +65,7 @@ import {
 import { SCRIPT_RAW_TYPE } from "./source-maps.js";
 import { resolveStartEngine } from "../shared/profiles/engine.js";
 import type { ProfilesState } from "../shared/profiles/storage.js";
-import {
-  resolveLocalDataSettings,
-  resolveUnexportedRetentionMs
-} from "../shared/profiles/local-data.js";
+import { resolveLocalDataSettings } from "../shared/profiles/local-data.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
   createBoundedManagedPolicyReader,
@@ -114,15 +111,11 @@ import {
   readContentScriptRecord,
   toScriptScanStatus
 } from "./full-cdp.js";
+import { sidFromRetentionAlarm } from "./stopped-session-store.js";
 import {
-  clearRetentionAlarm,
-  createStoppedSessionStore,
-  MAX_STOPPED_SESSION_PURGE_ATTEMPTS,
-  planStoppedSessionRestore,
-  scheduleRetentionAlarm,
-  sidFromRetentionAlarm,
-  type StoppedSessionSnapshot
-} from "./stopped-session-store.js";
+  createStoppedSessionLifecycle,
+  type StoppedSessionLifecycleController
+} from "./stopped-session-lifecycle.js";
 import {
   materializeLiteContentEvent,
   resolveLiteBodyCaptureRule,
@@ -177,16 +170,6 @@ import {
   type SessionRuntime
 } from "./session-registry.js";
 import { resolveRawEventSession } from "./session-routing.js";
-import {
-  parseStoppedSessionRecords,
-  pruneStoppedSessionRecords,
-  removeStoppedSessionRecord,
-  resolveStoppedSessionTtlMs,
-  shouldSweepStoredSession,
-  STOPPED_SESSIONS_STORAGE_KEY,
-  upsertStoppedSessionRecord,
-  type StoppedSessionRecord
-} from "./stopped-sessions.js";
 import { startWithOptionalReload } from "./start-with-reload.js";
 import { createThrottledPush } from "./throttled-push.js";
 import {
@@ -240,7 +223,6 @@ const pendingStopDrainAcks = new Map<
 const inFlightContentMessagesByTab = new Map<number, number>();
 const offscreenSessionRecovery = new Map<string, Promise<void>>();
 let freezeBadgeTimer: ReturnType<typeof setTimeout> | null = null;
-let stoppedSessionRecordsQueue: Promise<unknown> = Promise.resolve();
 
 const OFFSCREEN_PATH = "offscreen.html";
 const SERVICE_WORKER_BOOTED_AT = Date.now();
@@ -381,16 +363,33 @@ const orphanedOffscreenCleanup = closeOrphanedOffscreenDocument().catch((error) 
 let atRestKeyReady: Promise<AtRestKeyRecord> | null = null;
 /** This worker minted the key: a new browser session, nothing stored before is readable. */
 let atRestKeyMinted = false;
-const stoppedSessionStore = createStoppedSessionStore(chromeApi?.storage?.session);
-/** Stopped sessions whose pipeline the current offscreen document does not hold (yet). */
-const detachedPipelineSids = new Set<string>();
-const pipelineAttachments = new Map<string, Promise<void>>();
-/** Bumped when the offscreen document goes away: attachments started before it are void. */
-let offscreenGeneration = 0;
-const disposingSids = new Set<string>();
+const stoppedSessionLifecycle: StoppedSessionLifecycleController = createStoppedSessionLifecycle({
+  sessionRegistry,
+  alarms: chromeApi?.alarms,
+  sessionStorageArea: chromeApi?.storage?.session,
+  localStorageArea: chromeApi?.storage?.local,
+  closeOffscreenDocument: async () => {
+    await chromeApi?.offscreen?.closeDocument?.();
+  },
+  getAtRestKey,
+  isAtRestKeyFresh: () => atRestKeyMinted,
+  waitForRuntimeState: () => runtimeStateRestored,
+  loadPerformanceBudgetConfig,
+  getSessionAnnotation,
+  createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
+  createFullBodyCapture: fullCdp.createFullBodyCapture,
+  toSessionMetadata,
+  flushBufferedPipelineEvents,
+  refreshActionBadge,
+  pushSessionList,
+  persistRuntimeState,
+  notifyOffscreenPipelineStatus,
+  indexedDB: globalThis.indexedDB,
+  sweepStoredSessions: (shouldDelete) =>
+    sweepPipelineSessions(new IndexedDbPipelineStorage(PIPELINE_DB_NAME), shouldDelete),
+  bootedAt: SERVICE_WORKER_BOOTED_AT
+});
 let offscreenDocumentReady: Promise<void> | null = null;
-/** A failed purge of a stopped recording is retried this much later. */
-const STOPPED_SESSION_PURGE_RETRY_MS = 5 * 60_000;
 
 void getAtRestKey().catch((error) => {
   console.warn("[WebBlackbox] at-rest encryption key unavailable", error);
@@ -413,7 +412,7 @@ chromeApi?.alarms?.onAlarm.addListener((alarm) => {
   const sid = sidFromRetentionAlarm(alarm.name);
 
   if (sid) {
-    void expireStoppedSession(sid).catch((error) => {
+    void stoppedSessionLifecycle.expireStoppedSession(sid).catch((error) => {
       console.warn("[WebBlackbox] failed to delete an expired recording", error);
     });
   }
@@ -506,7 +505,7 @@ chromeApi?.runtime?.onConnect.addListener((port) => {
     if (offscreenPort === port) {
       offscreenPort = null;
       offscreenClient.rejectPending(OFFSCREEN_DISCONNECTED_ERROR);
-      markStoppedPipelinesDetached();
+      stoppedSessionLifecycle.markStoppedPipelinesDetached();
 
       if (sessionRegistry.tabCount() > 0) {
         void recoverAllActiveOffscreenPipelines().catch((error) => {
@@ -901,7 +900,7 @@ async function deleteSessionBySid(sid: string): Promise<void> {
     await stopSession(runtime.tabId);
   }
 
-  await disposeStoppedSession(runtime);
+  await stoppedSessionLifecycle.disposeStoppedSession(runtime);
 
   if (sessionAnnotations.delete(sid)) {
     await persistSessionAnnotations().catch(() => undefined);
@@ -1218,12 +1217,12 @@ async function stopSession(tabId: number): Promise<void> {
   recordedTabWatch.sync(sessionRegistry.tabCount() > 0);
   liteNetworkBaseline.uninstallIfUnused();
   runtime.stoppedAt = Date.now();
-  scheduleStoppedRuntimeCleanup(runtime);
-  await rememberStoppedSessionRecord(runtime).catch((error) => {
+  stoppedSessionLifecycle.scheduleStoppedRuntimeCleanup(runtime);
+  await stoppedSessionLifecycle.rememberStoppedSessionRecord(runtime).catch((error) => {
     console.warn("[WebBlackbox] failed to persist stopped session record", error);
   });
   // Written now and again after the final flush: the worker may die while the page drains.
-  await rememberStoppedSession(runtime);
+  await stoppedSessionLifecycle.rememberStoppedSession(runtime);
 
   await refreshActionBadge();
 
@@ -1253,7 +1252,7 @@ async function stopSession(tabId: number): Promise<void> {
   await enqueueWithResult(runtime, () => runtime.pipeline.flush()).catch((error) => {
     console.warn("[WebBlackbox] failed to flush the stopped recording", error);
   });
-  await rememberStoppedSession(runtime);
+  await stoppedSessionLifecycle.rememberStoppedSession(runtime);
 }
 
 async function exportSession(
@@ -1295,7 +1294,7 @@ async function exportSession(
     }
 
     await flushBufferedPipelineEvents(runtime);
-    await attachStoppedPipeline(runtime);
+    await stoppedSessionLifecycle.attachStoppedPipeline(runtime);
 
     const exported = await enqueueWithResult(runtime, async () => {
       return runtime.pipeline.exportAndDownload({
@@ -1336,7 +1335,7 @@ async function exportSession(
       runtime.stoppedAt &&
       resolveLocalDataSettings(runtime.profile.selection.profile).deleteAfterExport
     ) {
-      await disposeStoppedSession(runtime);
+      await stoppedSessionLifecycle.disposeStoppedSession(runtime);
     }
 
     return {
@@ -1621,7 +1620,7 @@ async function acknowledgeProfileCancel(sid: string): Promise<void> {
   pushSessionList();
   await refreshActionBadge();
   // A later worker restores the acknowledged notice, not the unread one.
-  await rememberStoppedSession(runtime);
+  await stoppedSessionLifecycle.rememberStoppedSession(runtime);
 }
 
 function resolveSessionExportPolicy(runtime: SessionRuntime, policy: ExportPolicy): ExportPolicy {
@@ -2355,235 +2354,6 @@ async function sendAtRestKeyToOffscreen(port: PortLike): Promise<void> {
   }
 }
 
-/** Snapshot of a stopped recording, so a later worker can list, export or expire it. */
-async function rememberStoppedSession(runtime: SessionRuntime): Promise<void> {
-  if (!runtime.stoppedAt || !sessionRegistry.hasSid(runtime.sid)) {
-    return;
-  }
-
-  await stoppedSessionStore.remember(toStoppedSessionSnapshot(runtime)).catch((error) => {
-    console.warn("[WebBlackbox] failed to keep the stopped recording restorable", error);
-  });
-}
-
-async function forgetStoppedSession(sid: string): Promise<void> {
-  detachedPipelineSids.delete(sid);
-  await stoppedSessionStore.forget(sid).catch((error) => {
-    console.warn("[WebBlackbox] failed to drop a stopped recording's snapshot", error);
-  });
-  await clearRetentionAlarm(chromeApi?.alarms, sid).catch(() => undefined);
-}
-
-function toStoppedSessionSnapshot(runtime: SessionRuntime): StoppedSessionSnapshot {
-  const stoppedAt = runtime.stoppedAt ?? Date.now();
-
-  return {
-    sid: runtime.sid,
-    tabId: runtime.tabId,
-    mode: runtime.mode,
-    startedAt: runtime.startedAt,
-    stoppedAt,
-    expiresAt: resolveStoppedSessionExpiresAt(runtime),
-    url: runtime.url,
-    title: runtime.title,
-    profile: {
-      request: runtime.profile.request,
-      visualCapture: runtime.profile.visualCapture,
-      selection: runtime.profile.selection,
-      profileConfig: runtime.profile.profileConfig,
-      visualsCaptured: runtime.profile.visualsCaptured,
-      ...(runtime.profile.cancellation
-        ? {
-            cancellation: runtime.profile.cancellation,
-            cancellationAcknowledged: runtime.profile.cancellationAcknowledged ?? false
-          }
-        : {})
-    },
-    config: runtime.config,
-    counters: {
-      eventCount: runtime.capturedEventCount,
-      errorCount: runtime.capturedErrorCount,
-      sizeBytes: runtime.capturedSizeBytes,
-      budgetAlertCount: runtime.budgetAlertCount
-    }
-  };
-}
-
-/**
- * Rebuilds the stopped recordings an earlier worker of this browser session left: they are listed
- * and exportable again, and those past their retention are deleted. Nothing is restored under a
- * freshly minted key: the database was deleted with the old one.
- */
-async function restoreStoppedSessions(): Promise<void> {
-  try {
-    await getAtRestKey();
-  } catch {
-    return;
-  }
-
-  if (atRestKeyMinted) {
-    await stoppedSessionStore.clear().catch(() => undefined);
-    return;
-  }
-
-  const plan = planStoppedSessionRestore(await stoppedSessionStore.list(), Date.now());
-
-  if (plan.kept.length + plan.purgeNow.length + plan.purgeLater.length === 0) {
-    return;
-  }
-
-  const performanceBudget = await loadPerformanceBudgetConfig();
-
-  for (const snapshot of plan.kept) {
-    scheduleStoppedRuntimeCleanup(restoreStoppedRuntime(snapshot, performanceBudget));
-  }
-
-  for (const snapshot of plan.purgeLater) {
-    await scheduleRetentionAlarm(
-      chromeApi?.alarms,
-      snapshot.sid,
-      Date.now() + STOPPED_SESSION_PURGE_RETRY_MS
-    ).catch(() => undefined);
-  }
-
-  // All registered first, so the offscreen document is closed once, after the last purge. The
-  // purges run one by one before any message is answered: in parallel they would race offscreen
-  // creation, and one finishing late could close the document of a Start that just began.
-  const expired = plan.purgeNow.map((snapshot) =>
-    restoreStoppedRuntime(snapshot, performanceBudget)
-  );
-
-  for (const runtime of expired) {
-    await disposeStoppedSession(runtime).catch((error) => {
-      console.warn("[WebBlackbox] failed to delete an expired recording", error);
-    });
-  }
-
-  console.info("[WebBlackbox] restored stopped recordings", {
-    kept: plan.kept.length,
-    purged: plan.purgeNow.length,
-    retrying: plan.purgeLater.length
-  });
-}
-
-function restoreStoppedRuntime(
-  snapshot: StoppedSessionSnapshot,
-  performanceBudget: PerformanceBudgetConfig
-): SessionRuntime {
-  const existing = sessionRegistry.getBySid(snapshot.sid);
-
-  if (existing) {
-    return existing;
-  }
-
-  const runtime = createSessionRuntime(
-    {
-      sid: snapshot.sid,
-      tabId: snapshot.tabId,
-      mode: snapshot.mode,
-      profile: snapshot.profile,
-      url: snapshot.url,
-      title: snapshot.title,
-      annotation: getSessionAnnotation(snapshot.sid),
-      config: snapshot.config,
-      startedAt: snapshot.startedAt,
-      stoppedAt: snapshot.stoppedAt,
-      pipeline: createSessionPipelineClient(offscreenClient, snapshot.sid),
-      recorderPlugins: createDefaultRecorderPlugins(),
-      performanceBudget,
-      counters: snapshot.counters
-    },
-    { createFullBodyCapture: fullCdp.createFullBodyCapture }
-  );
-
-  sessionRegistry.registerBySid(runtime);
-  detachedPipelineSids.add(runtime.sid);
-  return runtime;
-}
-
-/** Gives the offscreen document the pipeline of a stopped recording it does not hold. */
-function attachStoppedPipeline(runtime: SessionRuntime): Promise<void> {
-  const sid = runtime.sid;
-
-  if (!detachedPipelineSids.has(sid)) {
-    return Promise.resolve();
-  }
-
-  const pending = pipelineAttachments.get(sid);
-
-  if (pending) {
-    return pending;
-  }
-
-  const generation = offscreenGeneration;
-  const attachment = runtime.pipeline
-    .start(toSessionMetadata(runtime), runtime.config.redaction, runtime.config.capturePolicy)
-    .then(() => {
-      // An offscreen document that went away meanwhile took the pipeline with it.
-      if (generation === offscreenGeneration) {
-        detachedPipelineSids.delete(sid);
-      }
-    })
-    .finally(() => {
-      pipelineAttachments.delete(sid);
-    });
-
-  pipelineAttachments.set(sid, attachment);
-  return attachment;
-}
-
-/** A new offscreen document holds no pipeline of the stopped recordings. */
-function markStoppedPipelinesDetached(): void {
-  offscreenGeneration += 1;
-
-  for (const runtime of sessionRegistry.sidRuntimes()) {
-    if (runtime.stoppedAt) {
-      detachedPipelineSids.add(runtime.sid);
-    }
-  }
-}
-
-async function expireStoppedSession(sid: string): Promise<void> {
-  await runtimeStateRestored;
-  const runtime = sessionRegistry.getBySid(sid) ?? (await restoreStoppedSnapshot(sid));
-
-  if (!runtime) {
-    await forgetStoppedSession(sid);
-    return;
-  }
-
-  if (runtime.stoppedAt) {
-    await disposeStoppedSession(runtime);
-  }
-}
-
-/** Rebuilds a recording whose earlier purge failed, so it can be deleted again. */
-async function restoreStoppedSnapshot(sid: string): Promise<SessionRuntime | undefined> {
-  const snapshot = (await stoppedSessionStore.list()).find((row) => row.sid === sid);
-  return snapshot
-    ? restoreStoppedRuntime(snapshot, await loadPerformanceBudgetConfig())
-    : undefined;
-}
-
-async function retryStoppedSessionPurge(sid: string): Promise<void> {
-  const attempts = await stoppedSessionStore.recordPurgeFailure(sid).catch(() => null);
-
-  if (attempts === null || attempts >= MAX_STOPPED_SESSION_PURGE_ATTEMPTS) {
-    console.warn("[WebBlackbox] giving up on deleting a recording; it ends with the browser", {
-      attempts
-    });
-    await forgetStoppedSession(sid);
-    return;
-  }
-
-  detachedPipelineSids.add(sid);
-  await scheduleRetentionAlarm(
-    chromeApi?.alarms,
-    sid,
-    Date.now() + STOPPED_SESSION_PURGE_RETRY_MS
-  ).catch(() => undefined);
-}
-
 /** Concurrent callers share one check-then-create: Chrome allows a single offscreen document. */
 function ensureOffscreenDocument(): Promise<void> {
   if (!offscreenDocumentReady) {
@@ -2702,174 +2472,6 @@ async function teardownCaptureInstrumentation(runtime: SessionRuntime): Promise<
   }
 
   await fullCdp.cleanupCdpInstrumentation(runtime, runtime.cdpRouter);
-}
-
-function scheduleStoppedRuntimeCleanup(runtime: SessionRuntime): void {
-  if (runtime.cleanupTimer !== null) {
-    clearTimeout(runtime.cleanupTimer);
-    runtime.cleanupTimer = null;
-  }
-
-  const expiresAt = resolveStoppedSessionExpiresAt(runtime);
-
-  if (chromeApi?.alarms) {
-    void scheduleRetentionAlarm(chromeApi.alarms, runtime.sid, expiresAt).catch((error) => {
-      console.warn("[WebBlackbox] failed to schedule the recording's retention", error);
-    });
-    return;
-  }
-
-  runtime.cleanupTimer = setTimeout(
-    () => {
-      void disposeStoppedSession(runtime);
-    },
-    Math.max(0, expiresAt - Date.now())
-  );
-}
-
-function resolveStoppedSessionExpiresAt(runtime: SessionRuntime): number {
-  return (runtime.stoppedAt ?? Date.now()) + resolveRuntimeStoppedSessionTtlMs(runtime);
-}
-
-function resolveRuntimeStoppedSessionTtlMs(runtime: SessionRuntime): number {
-  return resolveStoppedSessionTtlMs(
-    resolveUnexportedRetentionMs(runtime.profile.selection.profile),
-    runtime.config.capturePolicy?.retention.localTtlMs
-  );
-}
-
-async function rememberStoppedSessionRecord(runtime: SessionRuntime): Promise<void> {
-  const record: StoppedSessionRecord = {
-    sid: runtime.sid,
-    stoppedAt: runtime.stoppedAt ?? Date.now(),
-    expiresAt: resolveStoppedSessionExpiresAt(runtime)
-  };
-
-  await updateStoppedSessionRecords((records) => upsertStoppedSessionRecord(records, record));
-}
-
-async function forgetStoppedSessionRecord(sid: string): Promise<void> {
-  await updateStoppedSessionRecords((records) => removeStoppedSessionRecord(records, sid));
-}
-
-function updateStoppedSessionRecords(
-  update: (records: StoppedSessionRecord[]) => StoppedSessionRecord[]
-): Promise<StoppedSessionRecord[]> {
-  const task = stoppedSessionRecordsQueue.then(async () => {
-    const storage = chromeApi?.storage?.local;
-
-    if (!storage?.get || !storage.set) {
-      return [];
-    }
-
-    const values = await storage.get(STOPPED_SESSIONS_STORAGE_KEY);
-    const next = update(parseStoppedSessionRecords(values?.[STOPPED_SESSIONS_STORAGE_KEY]));
-    await storage.set({ [STOPPED_SESSIONS_STORAGE_KEY]: next });
-    return next;
-  });
-
-  stoppedSessionRecordsQueue = task.catch(() => undefined);
-  return task;
-}
-
-/**
- * Deletes pipeline data that no live runtime can reach any more: sessions orphaned by
- * a worker restart and stopped sessions past their retention. Runs on worker start,
- * because the per-session cleanup timers die with the previous worker.
- */
-async function sweepStalePipelineSessions(): Promise<void> {
-  if (!globalThis.indexedDB) {
-    return;
-  }
-
-  // Identity update: reads the records through the same queue as concurrent writers.
-  const records = await updateStoppedSessionRecords((current) => current);
-  const now = Date.now();
-  const recordsBySid = new Map(records.map((record) => [record.sid, record]));
-  const result = await sweepPipelineSessions(
-    new IndexedDbPipelineStorage(PIPELINE_DB_NAME),
-    (session) =>
-      shouldSweepStoredSession({
-        session,
-        liveSids: new Set(sessionRegistry.bySid.keys()),
-        records: recordsBySid,
-        now,
-        bootedAt: SERVICE_WORKER_BOOTED_AT
-      })
-  );
-  const deletedSids = new Set(result.deleted);
-
-  await updateStoppedSessionRecords((current) =>
-    pruneStoppedSessionRecords(current, now, deletedSids)
-  );
-
-  if (result.deleted.length > 0 || result.failed.length > 0) {
-    console.info("[WebBlackbox] swept stale pipeline sessions", {
-      deleted: result.deleted.length,
-      failed: result.failed
-    });
-  }
-}
-
-async function disposeStoppedSession(runtime: SessionRuntime): Promise<void> {
-  if (!sessionRegistry.hasSid(runtime.sid) || disposingSids.has(runtime.sid)) {
-    return;
-  }
-
-  disposingSids.add(runtime.sid);
-
-  try {
-    await purgeStoppedSession(runtime);
-  } finally {
-    disposingSids.delete(runtime.sid);
-  }
-}
-
-async function purgeStoppedSession(runtime: SessionRuntime): Promise<void> {
-  if (runtime.cleanupTimer !== null) {
-    clearTimeout(runtime.cleanupTimer);
-    runtime.cleanupTimer = null;
-  }
-
-  await attachStoppedPipeline(runtime).catch((error) => {
-    console.warn("[WebBlackbox] cannot reach a restored recording to delete it", error);
-  });
-  await flushBufferedPipelineEvents(runtime);
-  await runtime.queue;
-  await runtime.pipeline.flush().catch(() => undefined);
-  const purged = await runtime.pipeline.close({ purge: true }).then(
-    () => true,
-    (error: unknown) => {
-      console.warn("[WebBlackbox] failed to delete a stopped recording; retrying later", error);
-      return false;
-    }
-  );
-  sessionRegistry.unregisterSid(runtime.sid);
-  await forgetStoppedSessionRecord(runtime.sid).catch((error) => {
-    console.warn("[WebBlackbox] failed to drop stopped session record", error);
-  });
-
-  if (purged) {
-    await forgetStoppedSession(runtime.sid);
-  } else {
-    // The snapshot stays, so the retry (or the next worker start) can rebuild and delete it.
-    await retryStoppedSessionPurge(runtime.sid);
-  }
-
-  await refreshActionBadge();
-
-  await closeOffscreenIfUnused();
-  pushSessionList();
-  await persistRuntimeState();
-  notifyOffscreenPipelineStatus();
-}
-
-async function closeOffscreenIfUnused(): Promise<void> {
-  if (sessionRegistry.sidCount() > 0) {
-    return;
-  }
-
-  await chromeApi?.offscreen?.closeDocument?.().catch(() => undefined);
 }
 
 async function downloadExportedBundle(
@@ -3388,11 +2990,11 @@ async function restoreRuntimeState(): Promise<void> {
     }
   }
 
-  await restoreStoppedSessions();
+  await stoppedSessionLifecycle.restoreStoppedSessions();
   await setIdleBadge();
   pushSessionList();
   notifyOffscreenPipelineStatus();
-  await sweepStalePipelineSessions().catch((error) => {
+  await stoppedSessionLifecycle.sweepStalePipelineSessions().catch((error) => {
     console.warn("[WebBlackbox] failed to sweep stale pipeline sessions", error);
   });
 }
