@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/webllm/webblackbox"><img src="https://raw.githubusercontent.com/webllm/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://raw.githubusercontent.com/a3mitskevich/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
 </p>
 
 <h1 align="center">@webblackbox/pipeline</h1>
@@ -9,9 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@webblackbox/pipeline"><img src="https://img.shields.io/npm/v/@webblackbox/pipeline.svg?color=f97316" alt="npm version" /></a>
-  <a href="https://github.com/webllm/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@webblackbox/pipeline?color=374151" alt="License" /></a>
-  <a href="https://github.com/webllm/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-374151" alt="License" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
 </p>
 
 ---
@@ -23,10 +22,12 @@ The event processing pipeline for WebBlackbox. Handles chunking, indexing, blob 
 - **FlightRecorderPipeline** — Main pipeline orchestrating the full event processing lifecycle
 - **EventChunker** — Groups events into size-bounded chunks with codec support
 - **EventIndexer** — Builds time-based, request-based, and inverted text search indexes on demand from stored chunks
-- **Codec** — NDJSON chunk codec support for `none`, `gzip`, `br`, and `zst`
-- **Archive Export** — Creates `.webblackbox` ZIP archives with optional AES-GCM encryption
-- **PipelineStorage** — Abstract storage interface with in-memory implementation
+- **Codec** — NDJSON chunk codec support for `none` (the default), `gzip`, `br`, and `zst`; a codec the runtime lacks falls back to `none` with a warning
+- **Archive Export** — Creates `.webblackbox` ZIP archives, always AES-GCM encrypted (`createWebBlackboxArchive`), and reads them back (`readWebBlackboxArchive`)
+- **PipelineStorage** — Abstract storage interface with in-memory (`MemoryPipelineStorage`) and IndexedDB (`IndexedDbPipelineStorage`) implementations, plus an encrypting wrapper (`EncryptedPipelineStorage`); the storage classes are also available from the `@webblackbox/pipeline/storage` subpath
 - **IndexedDB Quota Recovery** — Indexed storage evicts oldest sessions on quota pressure (best-effort)
+
+This fork does not publish the package to npm; use it from the pnpm workspace (`"@webblackbox/pipeline": "workspace:*"`) or build it with `pnpm --filter @webblackbox/pipeline build`.
 
 ## Usage
 
@@ -55,7 +56,7 @@ const pipeline = new FlightRecorderPipeline({
 // Start the pipeline
 await pipeline.start();
 
-// Ingest events
+// Ingest recorder output: events without a `privacy` classification are rejected
 for (const event of events) {
   await pipeline.ingest(event);
 }
@@ -77,7 +78,7 @@ const result = await pipeline.exportBundle({
 console.log(`Exported: ${result.fileName} (${result.bytes.length} bytes)`);
 ```
 
-`includeScreenshots`, `maxArchiveBytes`, and `recentWindowMs` are optional export filters. If omitted, the default export policy applies (no screenshots or screen recordings, 100 MB, last 20 minutes); pass `null` for no size or time limit.
+`includeScreenshots`, `includeScreenRecordings`, `maxArchiveBytes`, and `recentWindowMs` are optional export filters. Omitted ones fall back to `DEFAULT_EXPORT_POLICY` from `@webblackbox/protocol`: no screenshots, no screen recordings, at most 100 MiB, the last 20 minutes. Pass `null` for `maxArchiveBytes` or `recentWindowMs` to drop that limit; with screenshots and recordings included and both limits `null`, the export holds the full retained session. `exportBundle` throws without a passphrase of at least 8 characters.
 
 ### Streaming Export
 
@@ -102,7 +103,7 @@ export falls back to `listChunks` and to reading each referenced blob.
 
 ### Optional At-Rest Storage Encryption
 
-`EncryptedPipelineStorage` encrypts chunk/blob cache payload bytes before persistence (for example when using IndexedDB storage).
+`EncryptedPipelineStorage` wraps another storage and encrypts what it persists with AES-GCM (for example when using IndexedDB storage).
 
 ```typescript
 import {
@@ -123,7 +124,7 @@ const storage = new EncryptedPipelineStorage(
 // Persist derived.salt + derived.iterations with your own secure key policy.
 ```
 
-Note: this protects event/blob payload bytes at rest; indexes and session metadata remain plaintext for queryability.
+Note: chunk and blob bytes, indexes, integrity manifests and session metadata are encrypted at rest. What lookups need stays plaintext: the session id, tab id, start time and mode, chunk time-index entries, and blob hash, MIME type and size. `derivePipelineStorageKey` uses 120,000 PBKDF2 iterations unless `options.iterations` says otherwise.
 
 ### Blob Storage
 
@@ -132,6 +133,8 @@ Note: this protects event/blob payload bytes at rest; indexes and session metada
 const hash = await pipeline.putBlob("image/webp", screenshotBytes);
 // Returns SHA-256 hash for content-addressable retrieval
 ```
+
+`ingest` also moves the text of WebSocket frames and SSE messages longer than 16,384 characters into a `text/plain` blob (`frame.payloadHash` / `dataHash`), leaving a 512-character head inline.
 
 ## Event Chunking
 
@@ -224,7 +227,13 @@ const hash = await sha256Hex(data); // Returns hex string
 ## Storage Interface
 
 ```typescript
-import type { PipelineStorage } from "@webblackbox/pipeline";
+import type {
+  PipelineStorage,
+  StoredBlob,
+  StoredChunk,
+  StoredIndexes
+} from "@webblackbox/pipeline";
+import type { ChunkTimeIndexEntry, HashesManifest, SessionMetadata } from "@webblackbox/protocol";
 
 // Implement custom storage backend
 class CustomStorage implements PipelineStorage {
@@ -240,6 +249,9 @@ class CustomStorage implements PipelineStorage {
   async listChunks(sid: string): Promise<StoredChunk[]> {
     /* ... */
   }
+  async getLatestChunkMeta(sid: string): Promise<ChunkTimeIndexEntry | undefined> {
+    /* ... */
+  }
   async getChunk(sid: string, chunkId: string): Promise<StoredChunk | undefined> {
     /* ... */
   }
@@ -252,10 +264,10 @@ class CustomStorage implements PipelineStorage {
   async listBlobs(): Promise<StoredBlob[]> {
     /* ... */
   }
-  async putIndexes(sid: string, indexes: object): Promise<void> {
+  async putIndexes(sid: string, indexes: StoredIndexes): Promise<void> {
     /* ... */
   }
-  async getIndexes(sid: string): Promise<object> {
+  async getIndexes(sid: string): Promise<StoredIndexes> {
     /* ... */
   }
   async putIntegrity(sid: string, manifest: HashesManifest): Promise<void> {
@@ -264,6 +276,10 @@ class CustomStorage implements PipelineStorage {
   async getIntegrity(sid: string): Promise<HashesManifest | undefined> {
     /* ... */
   }
+  async deleteSession(sid: string, blobHashes?: string[]): Promise<void> {
+    /* ... */
+  }
+  // Optional: listSessions(): Promise<SessionMetadata[]>
 }
 ```
 
@@ -281,7 +297,11 @@ In-memory implementation using Maps. Features:
 
 ```
 session.webblackbox (ZIP)
-├── manifest.json           # Export metadata
+├── manifest.json           # Plaintext envelope: protocolVersion 2 + encryption parameters
+├── meta/
+│   └── manifest.json       # Full export manifest (encrypted)
+├── privacy/
+│   └── manifest.json       # Privacy manifest (encrypted)
 ├── events/
 │   ├── C-000001.ndjson     # Event chunks (NDJSON)
 │   └── ...
@@ -293,8 +313,11 @@ session.webblackbox (ZIP)
 │   ├── sha256-<hash>.webp  # Binary blobs (screenshots, etc.)
 │   └── ...
 └── integrity/
-    └── hashes.json         # SHA-256 hashes
+    └── hashes.json         # SHA-256 hashes (plaintext)
 ```
+
+Everything except `manifest.json` and `integrity/hashes.json` is encrypted. The ZIP is written
+with `STORE` (no compression), since ciphertext does not compress.
 
 ### Encryption
 
@@ -318,23 +341,28 @@ without a passphrase of at least 8 characters (trimmed).
 ### Archive Creation
 
 ```typescript
-import { createWebBlackboxArchive } from "@webblackbox/pipeline";
+import { createWebBlackboxArchive, readWebBlackboxArchive } from "@webblackbox/pipeline";
 
 const { bytes, integrity } = await createWebBlackboxArchive(
   {
-    manifest,
+    manifest, // ExportManifest (written encrypted to meta/manifest.json)
     chunks, // StoredChunk[]
     timeIndex, // ChunkTimeIndexEntry[]
     requestIndex, // RequestIndexEntry[]
     invertedIndex, // InvertedIndexEntry[]
-    blobs // StoredBlob[]
+    blobs, // StoredBlob[]
+    privacyManifest // PrivacyManifest (see buildPrivacyManifest)
   },
   {
     passphrase: "required-passphrase"
   }
 );
+
+// Read it back: verifies integrity, decrypts, decodes the chunks
+const archive = await readWebBlackboxArchive(bytes, { passphrase: "required-passphrase" });
+console.log(archive.manifest.site.origin, archive.events.length);
 ```
 
 ## License
 
-[MIT](https://github.com/webllm/webblackbox/blob/main/LICENSE)
+[MIT](https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE)
