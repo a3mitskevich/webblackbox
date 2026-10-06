@@ -22,6 +22,7 @@
     },
     "test": {
       "dependsOn": ["^transit"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/config/workspace-sources.mjs"],
       "outputs": []
     }
   }
