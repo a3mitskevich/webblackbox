@@ -44,6 +44,8 @@ export type PointerLaneMark = {
   /** Visual group: plain clicks, other buttons/holds, gestures, problems. */
   tone: "click" | "alt" | "gesture" | "problem";
   label: string;
+  /** What was clicked (a selector or text), so the UI can relabel the mark in another locale. */
+  target?: string;
   eventId?: string;
 };
 
@@ -55,7 +57,8 @@ export type OverlayFrame = {
   sourceHeight: number;
 };
 
-const LANE_PRIORITY: Record<PointerLaneKind, number> = {
+/** Which mark a crowded slot of the pointer lane keeps (problems first, plain clicks last). */
+export const POINTER_LANE_PRIORITY: Record<PointerLaneKind, number> = {
   rage: 6,
   dead: 5,
   right: 4,
@@ -176,7 +179,7 @@ export function buildPointerLaneMarks(
     const slot = Math.min(maxMarks - 1, Math.floor(((mark.mono - first) / span) * maxMarks));
     const kept = slots.get(slot);
 
-    if (!kept || LANE_PRIORITY[mark.kind] > LANE_PRIORITY[kept.kind]) {
+    if (!kept || POINTER_LANE_PRIORITY[mark.kind] > POINTER_LANE_PRIORITY[kept.kind]) {
       slots.set(slot, mark);
     }
   }
@@ -202,6 +205,11 @@ export function projectOverlayPoint(
   };
 }
 
+/** `Click: #buy`, or the kind alone when the target is unknown. */
+export function formatPointerLaneLabel(kindLabel: string, target: string | undefined): string {
+  return target ? `${kindLabel}: ${target}` : kindLabel;
+}
+
 function toLaneMark(
   mono: number,
   kind: PointerLaneKind,
@@ -213,7 +221,8 @@ function toLaneMark(
     mono,
     kind,
     tone: LANE_TONE[kind],
-    label: target ? `${labelFor(kind)}: ${target}` : labelFor(kind),
+    label: formatPointerLaneLabel(labelFor(kind), target),
+    ...(target ? { target } : {}),
     ...(eventId ? { eventId } : {})
   };
 }

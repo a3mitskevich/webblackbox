@@ -7,7 +7,7 @@ import {
   type PointerEvent
 } from "react";
 
-import { buildExpandedLanes, type ExpandedLanes } from "../../core/expanded-lanes.js";
+import { buildExpandedLanes, thinBySlot, type ExpandedLanes } from "../../core/expanded-lanes.js";
 import {
   formatClock,
   formatOffset,
@@ -15,10 +15,12 @@ import {
   resolveRulerStepMs
 } from "../../core/format.js";
 import { ratioOf } from "../../core/timeline-lanes.js";
+import { formatPointerLaneLabel, POINTER_LANE_PRIORITY } from "../../lib/pointer-overlay.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import { useScrubHover } from "../features/feed/index.js";
 import type { LoadedArchive } from "../state.js";
 import { Icon } from "./icon.js";
+import { useLaneCapacity, useRovingLane } from "./lane-marks.js";
 
 type Lane = "errors" | "network" | "realtime" | "navigation" | "console" | "storage" | "tabs";
 
@@ -376,14 +378,31 @@ const PointerRow = memo(function PointerRow({ archive, lanes }: ExpandedLaneProp
   const i18n = useI18n();
   const locale = usePlayerState((state) => state.locale);
   const { model } = archive;
+  const trackRef = useRef<HTMLDivElement>(null);
+  const capacity = useLaneCapacity(trackRef);
+  // One mark per 24 px of track, the most telling one (rage / dead clicks first).
+  const marks = useMemo(
+    () => thinBySlot(lanes.pointer, capacity, (mark) => POINTER_LANE_PRIORITY[mark.kind]),
+    [lanes.pointer, capacity]
+  );
+  const roving = useRovingLane(marks.length);
+  const laneLabel = i18n.tn("pointerLane");
 
   return (
     <div className="tl-row">
-      <span className="tl-label">{i18n.tn("pointerLane")}</span>
-      <div className="tl-track marks" data-testid="lane-pointer">
-        {lanes.pointer.map((mark) => {
+      <span className="tl-label">{laneLabel}</span>
+      <div
+        ref={trackRef}
+        className="tl-track marks"
+        role="toolbar"
+        aria-label={laneLabel}
+        onKeyDown={roving.onKeyDown}
+        data-testid="lane-pointer"
+      >
+        {marks.map((mark, index) => {
+          // Labelled in the current locale, not the one the archive was opened in.
           const label = i18n.tn("pointerMark", {
-            label: mark.label,
+            label: formatPointerLaneLabel(i18n.formatPointerKind(mark.kind), mark.target),
             time: formatOffset(mark.mono - model.minMono, locale)
           });
           const event = mark.eventId ? model.eventById.get(mark.eventId) : undefined;
@@ -394,8 +413,10 @@ const PointerRow = memo(function PointerRow({ archive, lanes }: ExpandedLaneProp
               type="button"
               className={`pmark pmark-${mark.tone}`}
               style={{ left: percent(mark.ratio) }}
+              tabIndex={roving.tabIndexOf(index)}
               aria-label={label}
               title={label}
+              onFocus={() => roving.focusIndex(index)}
               onClick={() => (event ? controller.selectEvent(event) : controller.seek(mark.mono))}
               data-testid="pointer-mark"
               data-kind={mark.kind}
@@ -407,22 +428,34 @@ const PointerRow = memo(function PointerRow({ archive, lanes }: ExpandedLaneProp
   );
 });
 
-/** One button per screenshot (the classic filmstrip), thinned on dense recordings. */
+/** One button per screenshot (the classic filmstrip), thinned to the track's width. */
 const FilmstripRow = memo(function FilmstripRow({ archive, lanes }: ExpandedLaneProps) {
   const controller = useController();
   const i18n = useI18n();
   const locale = usePlayerState((state) => state.locale);
   const { model } = archive;
+  const trackRef = useRef<HTMLDivElement>(null);
+  const capacity = useLaneCapacity(trackRef);
+  const frames = useMemo(() => thinBySlot(lanes.filmstrip, capacity), [lanes.filmstrip, capacity]);
+  const roving = useRovingLane(frames.length);
+  const laneLabel = i18n.tn("filmstripLane");
 
-  if (lanes.filmstrip.length === 0) {
+  if (frames.length === 0) {
     return null;
   }
 
   return (
     <div className="tl-row">
-      <span className="tl-label">{i18n.tn("filmstripLane")}</span>
-      <div className="tl-track marks" data-testid="lane-filmstrip">
-        {lanes.filmstrip.map((frame) => {
+      <span className="tl-label">{laneLabel}</span>
+      <div
+        ref={trackRef}
+        className="tl-track marks"
+        role="toolbar"
+        aria-label={laneLabel}
+        onKeyDown={roving.onKeyDown}
+        data-testid="lane-filmstrip"
+      >
+        {frames.map((frame, index) => {
           const label = i18n.tn("filmstripFrame", {
             time: formatOffset(frame.mono - model.minMono, locale)
           });
@@ -434,8 +467,10 @@ const FilmstripRow = memo(function FilmstripRow({ archive, lanes }: ExpandedLane
               type="button"
               className="film"
               style={{ left: percent(frame.ratio) }}
+              tabIndex={roving.tabIndexOf(index)}
               aria-label={label}
               title={label}
+              onFocus={() => roving.focusIndex(index)}
               onClick={() => (event ? controller.selectEvent(event) : controller.seek(frame.mono))}
               data-testid="filmstrip-frame"
             />

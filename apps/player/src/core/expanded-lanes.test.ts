@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { loadSyntheticArchive } from "../next/features/test-archive.js";
 import type { LoadedArchive } from "../next/state.js";
-import { buildExpandedLanes, FILMSTRIP_MAX_FRAMES } from "./expanded-lanes.js";
+import { buildExpandedLanes, FILMSTRIP_MAX_FRAMES, thinBySlot } from "./expanded-lanes.js";
 
 let archive: LoadedArchive;
 
@@ -47,5 +47,18 @@ describe("buildExpandedLanes", () => {
 
     expect(lanes.filmstrip.length).toBeLessThanOrEqual(FILMSTRIP_MAX_FRAMES);
     expect(lanes.filmstrip[0]?.eventId).toBe("shot-0");
+  });
+
+  it("keeps one item per slot, the highest ranked when asked", () => {
+    const items = [
+      { ratio: 0.01, rank: 1 },
+      { ratio: 0.02, rank: 5 },
+      { ratio: 0.6, rank: 0 }
+    ];
+
+    expect(thinBySlot(items, 2)).toEqual([items[0], items[2]]);
+    expect(thinBySlot(items, 2, (item) => item.rank)).toEqual([items[1], items[2]]);
+    // An unmeasured track (infinite capacity) keeps everything.
+    expect(thinBySlot(items, Number.POSITIVE_INFINITY)).toEqual(items);
   });
 });

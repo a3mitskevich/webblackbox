@@ -1,12 +1,14 @@
 /* @vitest-environment jsdom */
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createPlainArchive } from "../../../scripts/lib/synthetic-session.mjs";
 import * as format from "../../core/format.js";
 import { createMediaUrlCache } from "../../core/media-cache.js";
+import { createPlayerI18n } from "../../lib/i18n.js";
+import type { PointerLaneKind } from "../../lib/pointer-overlay.js";
 import { App } from "../app.js";
 import { createPlayerController } from "../controller.js";
 import { createInitialState, type PlayerState } from "../state.js";
@@ -27,6 +29,22 @@ afterEach(() => {
   cleanup();
   window.location.hash = "";
 });
+
+async function openedApp() {
+  const store = createStore<PlayerState>(createInitialState("en", "system"));
+  const controller = createPlayerController(store, {
+    scheduler: { request: () => 0, cancel: () => undefined },
+    mediaCache: createMediaUrlCache({ createUrl: () => "blob:frame", revokeUrl: () => undefined })
+  });
+  render(<App controller={controller} />);
+  await act(async () => {
+    await controller.openFile({
+      name: "synthetic.webblackbox",
+      arrayBuffer: async () => archiveBytes.slice().buffer
+    });
+  });
+  return { store, controller };
+}
 
 describe("Timeline", () => {
   it("does not re-render the static lanes when only the playhead moves", async () => {
@@ -104,5 +122,34 @@ describe("Timeline", () => {
     expect(frame).toHaveAccessibleName(/^Screenshot at /);
     act(() => frame.click());
     expect(store.getState().selection?.kind).toBe("event");
+  });
+
+  it("gives each expanded lane one tab stop, moved by the arrow keys", async () => {
+    const { controller } = await openedApp();
+    act(() => screen.getByTestId("expand-lanes").click());
+
+    const marks = screen.getAllByTestId("pointer-mark");
+    expect(marks.length).toBeGreaterThan(1);
+    expect(marks.filter((mark) => mark.tabIndex === 0)).toEqual([marks[0]]);
+    expect(screen.getByTestId("lane-pointer")).toHaveAttribute("role", "toolbar");
+
+    act(() => (marks[0] as HTMLElement).focus());
+    act(() => {
+      fireEvent.keyDown(marks[0] as HTMLElement, { key: "ArrowRight" });
+    });
+    expect(document.activeElement).toBe(marks[1]);
+    expect((marks[1] as HTMLElement).tabIndex).toBe(0);
+    expect((marks[0] as HTMLElement).tabIndex).toBe(-1);
+    act(() => {
+      fireEvent.keyDown(marks[1] as HTMLElement, { key: "End" });
+    });
+    expect(document.activeElement).toBe(marks[marks.length - 1]);
+
+    // The marks are named in the current locale, not the one the archive was opened in.
+    const kind = (marks[0] as HTMLElement).dataset.kind as PointerLaneKind;
+    act(() => controller.setLocale("ru"));
+    expect(screen.getAllByTestId("pointer-mark")[0]).toHaveAccessibleName(
+      new RegExp(createPlayerI18n("ru").formatPointerKind(kind))
+    );
   });
 });

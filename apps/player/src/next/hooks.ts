@@ -79,7 +79,7 @@ const ACTIVATABLE = "button, a[href], [role='tab'], [role='separator'], summary"
  * Widgets that move with the arrow keys, Home and End themselves (tabs, splitters). The scrubber
  * and the lists are not among them: arrows seek there, as everywhere else.
  */
-const ARROW_WIDGETS = "[role='tablist'], [role='separator']";
+const ARROW_WIDGETS = "[role='tablist'], [role='separator'], [role='toolbar']";
 const WIDGET_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"]);
 
 function targetElement(event: KeyboardEvent): Element | null {

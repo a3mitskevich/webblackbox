@@ -51,8 +51,15 @@ function mark(window: TimelineWindow, mono: number, eventId: string): LaneEventM
   return { ratio: ratioOf(mono, window), mono, eventId };
 }
 
-/** Keeps the first item of each of `max` equal slots (items sorted by mono). */
-function thinBySlot<T extends { ratio: number }>(items: readonly T[], max: number): T[] {
+/**
+ * Splits the track into `max` equal slots and keeps one item per slot (items sorted by mono): the
+ * first one, or the highest `rank` when given.
+ */
+export function thinBySlot<T extends { ratio: number }>(
+  items: readonly T[],
+  max: number,
+  rank?: (item: T) => number
+): T[] {
   if (items.length <= max) {
     return [...items];
   }
@@ -61,8 +68,9 @@ function thinBySlot<T extends { ratio: number }>(items: readonly T[], max: numbe
 
   for (const item of items) {
     const slot = Math.min(max - 1, Math.floor(item.ratio * max));
+    const kept = slots.get(slot);
 
-    if (!slots.has(slot)) {
+    if (!kept || (rank && rank(item) > rank(kept))) {
       slots.set(slot, item);
     }
   }
