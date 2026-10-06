@@ -28,13 +28,8 @@ import {
   SCRIPT_SOURCE_MAP_RAW_TYPE,
   startScriptSourceMapScanner
 } from "./script-source-map-scanner.js";
-import {
-  notePasswordField,
-  readCapturableInputValue,
-  watchPasswordFieldReveals
-} from "./input-value-policy.js";
-import { PointerCaptureController, readGeometry } from "./pointer-capture.js";
-import { round } from "./pointer-target.js";
+import { watchPasswordFieldReveals } from "./input-value-policy.js";
+import { PointerCaptureController } from "./pointer-capture.js";
 import {
   accumulateMutationRecord,
   buildPressureRecoverySnapshotPayload,
@@ -52,6 +47,7 @@ import {
   EVENT_BUFFER_SOFT_LIMIT,
   LiteEventBuffer
 } from "./lite-event-buffer.js";
+import { LiteInputCapture } from "./lite-input-capture.js";
 import {
   installPerformanceObservers,
   LONG_TASK_PRESSURE_THRESHOLD_MS,
@@ -68,12 +64,8 @@ import {
   createSnapdomCaptureOptions,
   withTimeout
 } from "./lite-screenshots.js";
-import {
-  createKeydownPayload,
-  isEditableInteractionTarget,
-  isRichTextEditableTarget
-} from "./lite-keystrokes.js";
-import { LiteTargetPayloads, toFastTargetPayload } from "./lite-target-payload.js";
+import { isEditableInteractionTarget, isRichTextEditableTarget } from "./lite-keystrokes.js";
+import { LiteTargetPayloads } from "./lite-target-payload.js";
 
 const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
 const SCREENSHOT_POINTER_STALE_MS = 2_500;
@@ -81,10 +73,8 @@ const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
 const BACKGROUND_CAPTURE_IDLE_MS = 1_500;
 const START_CAPTURE_STORAGE_DELAY_MS = 400;
 const START_CAPTURE_SCREENSHOT_DELAY_MS = 1_000;
-const SCROLL_BURST_DEBOUNCE_MS = 140;
 const SCROLL_PRESSURE_WINDOW_MS = 700;
 const SCROLL_PRESSURE_EVENT_COUNT = 6;
-const POINTERMOVE_SUPPRESS_AFTER_SCROLL_MS = 220;
 const MUTATION_PRESSURE_RECORD_LIMIT = 220;
 const MUTATION_PRESSURE_BUFFER_LIMIT = 280;
 const MUTATION_PRESSURE_SUMMARY_LIMIT = 320;
@@ -122,15 +112,6 @@ const FULL_MODE_SKIPPED_RAW_TYPES = new Set([
   "indexedDbSnapshot",
   "cookieSnapshot"
 ]);
-
-const INPUT_OPTIONS_TRUE: AddEventListenerOptions = {
-  capture: true
-};
-
-const PASSIVE_INPUT_OPTIONS_TRUE: AddEventListenerOptions = {
-  capture: true,
-  passive: true
-};
 
 type CapturePressureStage = "none" | "soft" | "hard" | "critical";
 
@@ -171,6 +152,23 @@ export class LiteCaptureAgent {
     trackPointer: (x, y) => this.trackPointer(x, y),
     now: monotonicTime
   });
+  private readonly inputCapture = new LiteInputCapture({
+    pointerCapture: this.pointerCapture,
+    targets: this.targets,
+    mode: () => this.mode,
+    sampling: () => this.sampling,
+    capturePolicy: () => this.capturePolicy,
+    listen: (target, type, listener, options) => this.listen(target, type, listener, options),
+    emit: (rawType, payload, mono) => this.queueEvent(rawType, payload, mono),
+    markUserActivity: () => this.markUserActivity(),
+    trackPointer: (x, y) => this.trackPointer(x, y),
+    recordEditableInteraction: (target) => this.recordEditableInteraction(target),
+    recordScrollPressure: () => this.recordScrollPressure(),
+    shouldSuppressPointerMoveCapture: () => this.shouldSuppressPointerMoveCapture(),
+    emitMarker: (message) => this.emitMarker(message),
+    emitViewportSnapshot: (reason) => this.emitViewportSnapshot(reason),
+    emitLifecycleEvent: (rawType, payload) => this.emitLifecycleEvent(rawType, payload)
+  });
   private injectedBridgeNonce: string | null = null;
   private indicator: HTMLDivElement | null = null;
   private mutationObserver: MutationObserver | null = null;
@@ -180,7 +178,6 @@ export class LiteCaptureAgent {
   private backgroundCaptureRetryTimer = 0;
   private quietModeRecoveryTimer = 0;
   private deferredStartTaskTimers: number[] = [];
-  private trailingScrollTimer = 0;
   private mutationFlushTimer = 0;
 
   private domChangeSnapshotTimer = 0;
@@ -188,8 +185,6 @@ export class LiteCaptureAgent {
   private indexedDbSnapshotInFlight = false;
 
   private lastDomSnapshotMono = Number.NEGATIVE_INFINITY;
-  private lastScrollTime = 0;
-  private lastPointerTime = Number.NEGATIVE_INFINITY;
   private screenshotInFlight = false;
   private screenshotCaptureBlocked = false;
   private screenshotInFlightPromise: Promise<void> | null = null;
@@ -197,7 +192,6 @@ export class LiteCaptureAgent {
   private hasCapturedScreenshot = false;
   private lastActionScreenshotMono = Number.NEGATIVE_INFINITY;
   private lastUserActivityMono = monotonicTime();
-  private scrollBurstActiveUntilMono = Number.NEGATIVE_INFINITY;
   private mutationPressureUntilMono = Number.NEGATIVE_INFINITY;
   private inputPressureUntilMono = Number.NEGATIVE_INFINITY;
   private editorPressureUntilMono = Number.NEGATIVE_INFINITY;
@@ -207,12 +201,6 @@ export class LiteCaptureAgent {
   private recentEditableInteractionMonos: number[] = [];
   private recentScrollMonos: number[] = [];
   private lastPointerState: { x: number; y: number; t: number; mono: number } | null = null;
-  private pendingScrollPayload: {
-    target: Record<string, unknown>;
-    scrollX: number;
-    scrollY: number;
-  } | null = null;
-  private lastEmittedScrollPosition: { scrollX: number; scrollY: number } | null = null;
   private hasDomSnapshot = false;
   private hasLocalStorageSnapshot = false;
   private mutationSummary: MutationBatchSummary = createEmptyMutationSummary();
@@ -336,7 +324,7 @@ export class LiteCaptureAgent {
 
   /** Flushes the current buffered raw events immediately. */
   public flush(): void {
-    this.flushPendingScrollEvent();
+    this.inputCapture.flushPendingScrollEvent();
     this.eventBuffer.drainBufferedEvents();
   }
 
@@ -443,243 +431,6 @@ export class LiteCaptureAgent {
       t: typeof event.t === "number" ? event.t : Date.now(),
       mono: typeof event.mono === "number" ? event.mono : monotonicTime(),
       payload: event.payload ?? {}
-    });
-  }
-
-  private installInputAndLifecycleCapture(): void {
-    this.pointerCapture.install();
-
-    this.listen(
-      document,
-      "wheel",
-      (event: WheelEvent) => {
-        this.markUserActivity();
-
-        if (this.mode === "full") {
-          return;
-        }
-
-        if (Math.abs(event.deltaX) + Math.abs(event.deltaY) <= 0) {
-          return;
-        }
-
-        this.recordScrollPressure();
-      },
-      PASSIVE_INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "click",
-      (event: MouseEvent) => {
-        this.markUserActivity();
-        this.trackPointer(event.clientX, event.clientY);
-        const mono = monotonicTime();
-        this.queueEvent("click", this.createClickPayload(event), mono);
-        this.pointerCapture.onClick(mono);
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "dblclick",
-      (event: MouseEvent) => {
-        this.markUserActivity();
-        this.trackPointer(event.clientX, event.clientY);
-        this.queueEvent("dblclick", this.createClickPayload(event));
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "keydown",
-      (event: KeyboardEvent) => {
-        this.markUserActivity();
-        this.recordEditableInteraction(event.target);
-        notePasswordField(event.target);
-        if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "m") {
-          this.emitMarker("Keyboard marker");
-        }
-
-        this.queueEvent(
-          "keydown",
-          createKeydownPayload(event, this.capturePolicy, (target) =>
-            this.targets.resolveTargetPayload(target, "fast")
-          )
-        );
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "input",
-      (event: Event) => {
-        this.markUserActivity();
-        const target = event.target;
-
-        if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
-          return;
-        }
-
-        this.recordEditableInteraction(target);
-
-        const value = readCapturableInputValue(target, this.capturePolicy);
-
-        this.queueEvent("input", {
-          inputType: target.type,
-          length: target.value.length,
-          ...(value === undefined ? { valueRedacted: true } : { value }),
-          target: this.targets.resolveTargetPayload(target, "input")
-        });
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "change",
-      (event: Event) => {
-        this.markUserActivity();
-        this.recordEditableInteraction(event.target);
-        this.queueEvent("input", {
-          kind: "change",
-          target: this.targets.resolveTargetPayload(event.target, "fast")
-        });
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "focus",
-      (event: FocusEvent) => {
-        this.markUserActivity();
-        notePasswordField(event.target);
-        this.queueEvent("focus", {
-          target: this.targets.resolveTargetPayload(event.target, "fast")
-        });
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "blur",
-      (event: FocusEvent) => {
-        this.markUserActivity();
-        this.queueEvent("blur", {
-          target: this.targets.resolveTargetPayload(event.target, "fast")
-        });
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "submit",
-      (event: Event) => {
-        this.markUserActivity();
-        this.queueEvent("submit", {
-          target: this.targets.resolveTargetPayload(event.target, "fast")
-        });
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "scroll",
-      (event: Event) => {
-        this.markUserActivity();
-        if (this.mode === "full") {
-          return;
-        }
-
-        this.recordScrollPressure();
-
-        const now = performance.now();
-        const scrollGapMs = Math.max(16, Math.round(1000 / Math.max(1, this.sampling.scrollHz)));
-
-        if (now - this.lastScrollTime < scrollGapMs) {
-          this.queueTrailingScrollEvent(event);
-          return;
-        }
-
-        this.lastScrollTime = now;
-        this.scrollBurstActiveUntilMono =
-          monotonicTime() + Math.max(POINTERMOVE_SUPPRESS_AFTER_SCROLL_MS, scrollGapMs);
-
-        const payload = {
-          target: toFastTargetPayload(event.target, this.targets.selectorSalt()),
-          scrollX: window.scrollX,
-          scrollY: window.scrollY
-        };
-
-        this.pendingScrollPayload = payload;
-        this.emitQueuedScrollEvent(payload);
-        this.scheduleTrailingScrollFlush(scrollGapMs);
-      },
-      PASSIVE_INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "pointermove",
-      (event: PointerEvent) => {
-        this.pointerCapture.onPointerMove(event);
-        const now = performance.now();
-        const pointerGapMs = Math.max(
-          16,
-          Math.round(1000 / Math.max(1, this.sampling.mousemoveHz))
-        );
-
-        // Full mode keeps page-side work minimal: nothing runs between samples, even while
-        // capture is suppressed, so the sample clock advances before the pressure check.
-        if (this.mode === "full") {
-          if (now - this.lastPointerTime < pointerGapMs) {
-            return;
-          }
-
-          this.lastPointerTime = now;
-        }
-
-        this.markUserActivity();
-        this.trackPointer(event.clientX, event.clientY);
-
-        if (this.shouldSuppressPointerMoveCapture()) {
-          return;
-        }
-
-        if (this.mode !== "full") {
-          if (now - this.lastPointerTime < pointerGapMs) {
-            return;
-          }
-
-          this.lastPointerTime = now;
-        }
-
-        this.queueEvent("mousemove", {
-          x: round(event.clientX),
-          y: round(event.clientY),
-          target: toFastTargetPayload(event.target, this.targets.selectorSalt())
-        });
-      },
-      PASSIVE_INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(window, "resize", () => {
-      this.markUserActivity();
-      this.emitViewportSnapshot("resize");
-    });
-
-    this.listen(document, "visibilitychange", () => {
-      this.markUserActivity();
-      this.emitLifecycleEvent("visibilitychange", {
-        state: document.visibilityState
-      });
     });
   }
 
@@ -832,10 +583,7 @@ export class LiteCaptureAgent {
       this.startCaptureTimer = 0;
     }
 
-    if (this.trailingScrollTimer > 0) {
-      clearTimeout(this.trailingScrollTimer);
-      this.trailingScrollTimer = 0;
-    }
+    this.inputCapture.cancelTrailingScrollFlush();
 
     if (this.backgroundCaptureRetryTimer > 0) {
       clearTimeout(this.backgroundCaptureRetryTimer);
@@ -870,7 +618,7 @@ export class LiteCaptureAgent {
       this.domChangeSnapshotTimer = 0;
     }
 
-    this.flushPendingScrollEvent();
+    this.inputCapture.flushPendingScrollEvent();
   }
 
   private ensureCaptureInstalled(): void {
@@ -878,7 +626,7 @@ export class LiteCaptureAgent {
       return;
     }
 
-    this.installInputAndLifecycleCapture();
+    this.inputCapture.install();
 
     if (this.isTopLevelFrame) {
       this.installPerformanceCapture();
@@ -1338,16 +1086,6 @@ export class LiteCaptureAgent {
     }
   }
 
-  private queueTrailingScrollEvent(event: Event): void {
-    this.pendingScrollPayload = {
-      target: toFastTargetPayload(event.target, this.targets.selectorSalt()),
-      scrollX: window.scrollX,
-      scrollY: window.scrollY
-    };
-    this.scrollBurstActiveUntilMono = monotonicTime() + POINTERMOVE_SUPPRESS_AFTER_SCROLL_MS;
-    this.scheduleTrailingScrollFlush(SCROLL_BURST_DEBOUNCE_MS);
-  }
-
   private recordScrollPressure(): void {
     if (!this.recordingActive) {
       return;
@@ -1362,57 +1100,6 @@ export class LiteCaptureAgent {
     if (this.recentScrollMonos.length >= SCROLL_PRESSURE_EVENT_COUNT) {
       this.enterQuietMode("scroll");
     }
-  }
-
-  private scheduleTrailingScrollFlush(delayMs: number): void {
-    if (this.trailingScrollTimer > 0) {
-      clearTimeout(this.trailingScrollTimer);
-    }
-
-    this.trailingScrollTimer = window.setTimeout(
-      () => {
-        this.trailingScrollTimer = 0;
-        this.flushPendingScrollEvent();
-      },
-      Math.max(SCROLL_BURST_DEBOUNCE_MS, delayMs)
-    );
-  }
-
-  private flushPendingScrollEvent(): void {
-    const pending = this.pendingScrollPayload;
-
-    if (!pending) {
-      return;
-    }
-
-    this.pendingScrollPayload = null;
-
-    if (
-      this.lastEmittedScrollPosition &&
-      this.lastEmittedScrollPosition.scrollX === pending.scrollX &&
-      this.lastEmittedScrollPosition.scrollY === pending.scrollY
-    ) {
-      return;
-    }
-
-    this.emitQueuedScrollEvent(pending);
-  }
-
-  private emitQueuedScrollEvent(payload: {
-    target: Record<string, unknown>;
-    scrollX: number;
-    scrollY: number;
-  }): void {
-    this.lastEmittedScrollPosition = {
-      scrollX: payload.scrollX,
-      scrollY: payload.scrollY
-    };
-
-    this.queueEvent("scroll", payload);
-  }
-
-  private isScrollBurstActive(): boolean {
-    return monotonicTime() < this.scrollBurstActiveUntilMono;
   }
 
   private isUserRecentlyActive(idleMs = BACKGROUND_CAPTURE_IDLE_MS): boolean {
@@ -1512,7 +1199,7 @@ export class LiteCaptureAgent {
       return "hard";
     }
 
-    if (this.isScrollBurstActive()) {
+    if (this.inputCapture.isScrollBurstActive()) {
       return "soft";
     }
 
@@ -1526,7 +1213,7 @@ export class LiteCaptureAgent {
   private shouldSuppressPointerMoveCapture(): boolean {
     const stage = this.resolveCapturePressureStage();
     return (
-      this.isScrollBurstActive() ||
+      this.inputCapture.isScrollBurstActive() ||
       stage === "hard" ||
       stage === "critical" ||
       this.eventBuffer.length >= EVENT_BUFFER_FORCE_FLUSH_SIZE
@@ -1760,22 +1447,6 @@ export class LiteCaptureAgent {
     }
 
     this.eventBuffer.enqueue(event);
-  }
-
-  private createClickPayload(event: MouseEvent): Record<string, unknown> {
-    return {
-      x: round(event.clientX),
-      y: round(event.clientY),
-      pageX: round(event.pageX),
-      pageY: round(event.pageY),
-      ...readGeometry(),
-      button: event.button,
-      altKey: event.altKey,
-      ctrlKey: event.ctrlKey,
-      shiftKey: event.shiftKey,
-      metaKey: event.metaKey,
-      target: this.targets.createPointerTargetPayload(event.target, "rich")
-    };
   }
 
   private ensureIndicator(sid?: string, mode?: string): void {
