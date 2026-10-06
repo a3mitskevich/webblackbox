@@ -3,3 +3,4 @@
 // from this subpath where zod is wanted so the dependency stays explicit.
 export * from "./messages.js";
 export * from "./schemas.js";
+export * from "./script-schemas.js";

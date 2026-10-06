@@ -12,7 +12,7 @@ import {
   WEBBLACKBOX_PROTOCOL_VERSION
 } from "./constants.js";
 import { compileValuePattern } from "./redaction-rules.js";
-import { scriptSourceMapDataSchema } from "./script.js";
+import { scriptSourceMapDataSchema } from "./script-schemas.js";
 
 const recordStringUnknown = z.record(z.string(), z.unknown());
 

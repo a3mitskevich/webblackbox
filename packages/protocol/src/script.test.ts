@@ -5,9 +5,9 @@ import {
   extractSourceMappingUrl,
   readSourceMapHeader,
   resolveSourceMapReference,
-  scriptSourceMapDataSchema,
   toScriptLocation
 } from "./script.js";
+import { scriptSourceMapDataSchema } from "./script-schemas.js";
 
 describe("toScriptLocation", () => {
   it("keeps origin and path (hashed bundle names included) and drops query, hash and credentials", () => {
