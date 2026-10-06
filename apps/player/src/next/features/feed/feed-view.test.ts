@@ -55,6 +55,11 @@ function texts(params: Partial<FeedParams> = {}) {
 }
 
 describe("feed view", () => {
+  it("counts an action's requests and failures as the inspector does (all of them)", () => {
+    const click = texts().find((row) => row.entry.item.actId === "A-000002");
+    expect(click?.row.secondary).toContain("6 requests · 5 failed");
+  });
+
   it("starts with the recording and lists actions, routes and failures", () => {
     const rows = texts();
     expect(rows[0]?.row.lead).toBe("Recording started");

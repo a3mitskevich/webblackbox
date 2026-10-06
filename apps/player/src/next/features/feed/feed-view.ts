@@ -12,6 +12,7 @@ import {
   type RouteChapterKind
 } from "@webblackbox/player-sdk";
 
+import { countActionRequests, type ActionRequestCounts } from "../../../core/action-requests.js";
 import { resolveRequestScope, resolveScopeByEventId } from "../../../core/filters.js";
 import type { PlayerLocale } from "../../../lib/i18n.js";
 import { matchesScopeFilter, type EventScope, type ScopeFilter } from "../../../lib/scope.js";
@@ -86,6 +87,8 @@ type FeedData = {
   curated: ActivityItem[];
   all: () => ActivityItem[];
   actionById: ReadonlyMap<string, ActionTimelineEntry>;
+  /** Requests and failures per action, counted as the inspector counts them. */
+  actionRequests: ReadonlyMap<string, ActionRequestCounts>;
   streams: ReadonlyMap<string, StreamStats>;
   navigationKinds: ReadonlyMap<string, RouteChapterKind>;
   /** Flagged rows: the first problem after each action, and the first one before any action. */
@@ -164,6 +167,7 @@ function buildFeedData(archive: LoadedArchive): FeedData {
     curated,
     all: () => (all ??= selectActivityItems(input, "all")),
     actionById: new Map(model.actionTimeline.map((action) => [action.actId, action])),
+    actionRequests: countActionRequests(model),
     streams: streamStatsOf(archive),
     navigationKinds: new Map(
       chapters.flatMap((chapter) => (chapter.eventId ? [[chapter.eventId, chapter.kind]] : []))
@@ -238,19 +242,16 @@ function readTarget(event: WebBlackboxEvent | undefined): { text: string; css: s
 }
 
 function actionSummary(actId: string | null, data: FeedData, t: FeedTranslator): string {
-  const action = actId ? data.actionById.get(actId) : undefined;
+  const counts = actId ? data.actionRequests.get(actId) : undefined;
 
-  if (!action || action.requestCount === 0) {
+  if (!counts || counts.requests === 0) {
     return "";
   }
 
-  const failed = action.requests.filter(
-    (request) => request.failed || (request.status ?? 0) >= 400
-  ).length;
-  const requests = t(action.requestCount === 1 ? "requestsOne" : "requestsN", {
-    count: action.requestCount
+  const requests = t(counts.requests === 1 ? "requestsOne" : "requestsN", {
+    count: counts.requests
   });
-  return failed > 0 ? `${requests} · ${t("failedN", { count: failed })}` : requests;
+  return counts.failed > 0 ? `${requests} · ${t("failedN", { count: counts.failed })}` : requests;
 }
 
 function hostOf(url: string): string {

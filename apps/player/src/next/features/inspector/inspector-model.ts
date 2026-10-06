@@ -7,7 +7,6 @@ import {
   describeEventPhrase,
   inspectEventTarget,
   summarizeActionConsequences,
-  type ActionConsequenceRequest,
   type ActionConsequences,
   type ActionTimelineEntry,
   type ClickReaction,
@@ -19,6 +18,7 @@ import {
 
 import type { TimeRange } from "../../../core/time-range.js";
 import type { Selection } from "../../../core/navigation.js";
+import { collectActionRequests } from "../../../core/action-requests.js";
 import type { ArchiveModel } from "../../../core/archive-model.js";
 import { lowerBoundByMono } from "../../../lib/range.js";
 import { resolveSelectedEventId } from "../../controller.js";
@@ -184,42 +184,6 @@ function reactionLookupOf(archive: LoadedArchive): ClickReactionLookup {
   return lookup;
 }
 
-/**
- * Every request of the action, from its own events (the action timeline keeps only the first
- * few): deduplicated, in start order, with the waterfall's error text so cancellations do not
- * count as failures.
- */
-function actionRequests(
-  model: ArchiveModel,
-  events: readonly WebBlackboxEvent[]
-): ActionConsequenceRequest[] {
-  const seen = new Set<string>();
-  const requests: ActionConsequenceRequest[] = [];
-
-  for (const event of events) {
-    const reqId = extractRequestId(event);
-    const entry = reqId && !seen.has(reqId) ? model.waterfallByReqId.get(reqId) : undefined;
-
-    if (!reqId || !entry) {
-      continue;
-    }
-
-    seen.add(reqId);
-    requests.push({
-      reqId,
-      method: entry.method,
-      url: entry.url,
-      status: entry.status ?? null,
-      failed: entry.failed,
-      ...(entry.errorText ? { errorText: entry.errorText } : {}),
-      startMono: entry.startMono,
-      eventIds: entry.eventIds
-    });
-  }
-
-  return requests.sort((left, right) => left.startMono - right.startMono);
-}
-
 function isFrameEvent(event: WebBlackboxEvent): boolean {
   const data = asRecord(event.data);
   return Boolean(event.frame) || asRecord(data?.frameOffset) !== null;
@@ -285,7 +249,7 @@ function buildInspection(archive: LoadedArchive, event: WebBlackboxEvent): Inspe
         triggerEventId: event.id,
         endMono: triggered.endMono,
         events: actionEvents,
-        requests: actionRequests(model, actionEvents),
+        requests: collectActionRequests(model, actionEvents),
         maxItems: MAX_CONSEQUENCES
       })
     : null;
