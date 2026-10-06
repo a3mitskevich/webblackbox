@@ -66,7 +66,6 @@ webblackbox/
 | `pnpm bench:ci`      | Benchmark regression gate (see [Performance](docs/PERFORMANCE.md))     |
 | `pnpm bundle:size`   | Check built bundles after `pnpm build` (see `bundle-size/README.md`)   |
 | `pnpm player`        | Build the Player and serve it on port 4177                             |
-| `pnpm commit`        | Write a Conventional Commit message with Commitizen                    |
 
 Use `pnpm --filter <package-name> <script>` for package-specific work.
 
@@ -177,14 +176,13 @@ CI (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `mai
 
 ## Versioning and Releases
 
-Changesets is configured (`.changeset/config.json`, `pnpm changeset`, `pnpm version-packages`), but in practice no changeset files are committed: package versions are bumped by hand, in lockstep, in a `chore(version): update version to X.Y.Z` commit. Don't add changesets unless asked.
+Package versions are bumped by hand, in lockstep, in a `chore(version): update version to X.Y.Z` commit.
 
 Notes:
 
 - The extension manifest is generated at build time with the version from `apps/extension/package.json`, so there is nothing to sync.
-- This fork publishes no releases, so the two release workflows below are inherited from upstream and are not used here; they are described for completeness.
-- Publishing a GitHub release runs `.github/workflows/release.yml`: lint, typecheck, test and build, then `pnpm release` (`changeset publish`) publishes the npm packages with npm trusted publishing.
-- `.github/workflows/release-assets.yml` uploads the Chrome extension ZIP to the release and deploys the Player to GitHub Pages (see [apps/player/README.md](apps/player/README.md) for the `--site-url` caveat).
+- This fork publishes nothing to npm: there is no Changesets setup and no npm publish workflow.
+- `.github/workflows/release-assets.yml` is inherited from upstream and not used here; it uploads the Chrome extension ZIP to the release and deploys the Player to GitHub Pages (see [apps/player/README.md](apps/player/README.md) for the `--site-url` caveat).
 
 ## Architecture Touchpoints
 
