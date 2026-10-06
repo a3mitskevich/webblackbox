@@ -16,6 +16,7 @@ Enterprise deployments can provide a managed policy object through `chrome.stora
       "cdp": "off"
     },
     "disableLabMode": true,
+    "playerUrl": "https://player.example.com/",
     "retention": {
       "localTtlMs": 86400000,
       "shareTtlMs": 604800000
@@ -25,6 +26,10 @@ Enterprise deployments can provide a managed policy object through `chrome.stora
 ```
 
 `siteDenylist` wins over `siteAllowlist`. If `siteAllowlist` is non-empty, recording is denied outside the allowlist. `disableLabMode` forces lab-only categories such as full CDP and heap profiles off. `dataCategoryCaps` are a ceiling for every recording profile, presets included; the popup names the capped categories and archives record them. If the policy changes what a running recording's profile may record, the recording is stopped as soon as the policy changes and the user is told why.
+
+### Player URL
+
+`playerUrl` is the address of your organization's (self-hosted) Player. The extension has no built-in Player address: "Export and open in Player" on the Sessions page is hidden until a Player URL is set, either here or by the user in Options → Export & encryption. A managed value wins; Options shows it read-only with a "Set by your organization's policy" note. It must be an `https://` URL (`http://` only for `localhost` or `127.0.0.1`); any other value is ignored. Only the page is opened after the export: the archive stays in the user's downloads folder and is opened in the Player locally, and neither the archive nor its passphrase is sent to this address.
 
 ### Managed Recording Profiles And Rules
 
