@@ -1,10 +1,3 @@
-import { escapeHtml } from "./dom.js";
-
-export function highlightJsonPreview(value: string): string {
-  const escaped = escapeHtml(value);
-  return escaped.replaceAll(/(&quot;[^&]*&quot;)(\s*:)/g, '<span class="json-key">$1</span>$2');
-}
-
 export function redactPreviewText(value: string): string {
   return value
     .replaceAll(

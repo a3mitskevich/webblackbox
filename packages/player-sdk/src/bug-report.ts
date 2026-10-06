@@ -38,9 +38,9 @@ export function buildBugReport(
 
   const heading = options.title ?? "WebBlackbox Bug Report";
   const derived = player.buildDerived(options.range);
+  const pointerSignals = detectPointerSignals(scoped);
   // The whole session: what was open in parallel does not depend on the selected range.
   const tabsContext = readTabsContext(player.query());
-  const pointerSignals = detectPointerSignals(scoped);
   const notCaptured = player
     .getNetworkWaterfall(options.range)
     .filter((entry) => entry.responseBodySkip || entry.requestBodySkipReason)

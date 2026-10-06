@@ -20,23 +20,50 @@ The Player provides an interactive UI for exploring recorded web sessions with m
 - **React 19** — UI framework
 - **@webblackbox/player-sdk** — Session analysis engine
 - **@webblackbox/protocol** — Type definitions and validation
-- **Custom CSS** — Player styling in `public/styles.css`
-- **class-variance-authority** — Component variants
-- **tsup** — Build/watch pipeline
+- **Custom CSS** — the token sheet `src/next/styles/next.css` (light and dark themes) with self-hosted Onest and JetBrains Mono; each feature ships its own stylesheet file
+- **Vetted libraries** — Base UI, TanStack Virtual, react-resizable-panels, lucide-react, react-hotkeys-hook, Shiki (JavaScript regex engine), uPlot, jsdiff, microdiff, uFuzzy (see `LIBRARIES.md` in the rewrite notes and the PR #20 summary)
+- **Vite** — build, dev server with HMR and code splitting (the rest of the monorepo builds with tsup)
+
+The UI is React only (function components, hooks, one external store read with `useSyncExternalStore`); `src/main.ts` just mounts it. Its layout, feature folders, rail-tab registry, per-feature i18n, store slices and e2e scenarios are documented in [`src/next/README.md`](src/next/README.md). Nothing in `src/` renders HTML strings or builds DOM by hand: `src/no-dom-rendering.test.ts` fails on `innerHTML`, `dangerouslySetInnerHTML`, `document.createElement` and the like.
 
 ## Development
 
 ```bash
 cd apps/player
-pnpm dev
+pnpm dev        # Vite dev server with HMR on http://localhost:4177
 ```
+
+The dev server relaxes the page CSP for React refresh (its inline preamble script), the HMR websocket and the CSS Vite injects as `<style>` in development only; production builds keep `index.html` as written.
 
 ## Build
 
 ```bash
 cd apps/player
-pnpm build
+pnpm build      # vite build → build/
+pnpm serve      # serve build/ on http://localhost:4177
 ```
+
+`build/` is what GitHub Pages and the extension e2e serve:
+
+- `index.html` (from `apps/player/index.html`, the Vite entry; its CSP meta is the Player CSP) and `main.js`, the entry with a stable name (the app shell);
+- chunks, CSS files and fonts under `assets/` with content hashes: React, Zod and the archive SDK are named chunks, and heavy panels (`React.lazy`) and libraries such as Shiki and uPlot load their own chunk on first use;
+- everything in `public/` copied as is (logo, iframe examples, font licences);
+- `__PLAYER_VERSION__` from `package.json`, source maps next to every chunk;
+- no `eval`/`Function`/WebAssembly and no runtime-injected `<style>`: the CSP is `script-src 'self'; style-src 'self'` (no `'unsafe-inline'`), CSS ships as files and fonts are never inlined as `data:` URIs (`e2e:player` scans the build and fails on any CSP violation).
+
+`pnpm bundle:size` (repo root) checks the entry chunk and the total of all JS and CSS files against `bundle-size/budgets.json`.
+
+## E2E
+
+```bash
+WB_E2E_CHROME_BIN=/path/to/chrome pnpm --filter @webblackbox/player e2e:player
+```
+
+`e2e:player` builds the Player, opens a synthetic encrypted archive in Chrome over CDP and runs the shell scenarios (`scripts/e2e-next/shell.mjs`) and every feature's scenarios (`src/next/features/<feature>/<feature>.e2e.mjs`) through `data-testid` hooks only. `WB_E2E_PLAYER_FEATURES=network` runs one feature's scenarios; `WB_E2E_SCREENSHOTS_DIR` captures 1440/1920, light/dark, EN/RU screenshots; `WB_E2E_REAL_ARCHIVE` (+ `WB_E2E_REAL_PASSPHRASE`) also opens a real archive (keep its screenshots local).
+
+## Bench (long recordings)
+
+`pnpm bench` (here) builds a ten-minute synthetic recording of about 60k events (`scripts/lib/synthetic-long-session.mjs`: clicks with action spans, requests with bodies, failures, a SignalR socket, console, storage, routes, screenshots) and times opening it, the archive model, the rail derivations, the work every 120 ms playhead tick redoes while playing with "Follow playhead", and a jsdom render pass of the whole React player per tick on every rail tab (`scripts/bench/render-ticks.bench.tsx`). `pnpm bench:ci` (repo root) runs it with the recorder and pipeline benches and fails on the `player` limits in `benchmarks/ci-thresholds.json`. `BENCH_PLAYER_EVENTS`, `BENCH_PLAYER_DURATION_MS` and `BENCH_PLAYER_RENDER_TICKS` resize it; `BENCH_PLAYER_RENDER=0` skips the render pass.
 
 ## GitHub Pages
 

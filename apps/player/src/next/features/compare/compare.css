@@ -1,0 +1,299 @@
+/* Compare rail tab (R4). Scoped to .cmp*; tokens from styles/next.css. */
+.cmp {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+.cmp-tools {
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.cmp-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 40%;
+}
+.cmp-side b {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 11px;
+}
+.cmp-side .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.cmp-empty {
+  padding: 28px 20px;
+  max-width: 560px;
+}
+.cmp-empty p:first-child {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.cmp-report {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 12px 24px;
+}
+.cmp-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.cmp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.cmp-card b {
+  font: 600 18px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.cmp-card span {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.cmp-card.worse {
+  border-color: color-mix(in srgb, var(--bad) 40%, var(--line));
+  background: var(--bad-soft);
+}
+.cmp-card.worse b {
+  color: var(--bad);
+}
+.cmp-section {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.cmp-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-2);
+}
+.cmp-section-head h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.cmp-section > .muted {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+.cmp-signals {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cmp .sig {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--line-2);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.cmp .sig-regressed {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+.cmp .sig-slower {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.cmp .sig-new {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.cmp .sig-missing {
+  background: var(--ws-soft);
+  color: var(--ws);
+}
+.cmp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  table-layout: fixed;
+}
+.cmp-table th {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line-2);
+  color: var(--ink-3);
+  font-weight: 500;
+  text-align: left;
+}
+.cmp-table th:first-child {
+  width: 40%;
+}
+.cmp-table th:last-child {
+  width: 96px;
+}
+.cmp-table td .failed {
+  color: var(--bad);
+}
+.cmp-table td {
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--line-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmp-table tr:last-child td {
+  border-bottom: 0;
+}
+.cmp-table td.num {
+  text-align: right;
+}
+.cmp-table td.worse {
+  color: var(--bad);
+}
+.cmp-table tbody tr[data-signal] {
+  cursor: pointer;
+}
+.cmp-table tbody tr[data-signal]:hover {
+  background: var(--surface-2);
+}
+.cmp-table tr.cur {
+  background: var(--accent-soft);
+}
+.cmp .linklike {
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cmp-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.cmp-diff {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--line-2);
+}
+.cmp-diff h4 {
+  margin: 10px 0 6px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.cmp-diff .muted {
+  margin: 0;
+  font-size: 12.5px;
+}
+.cmp-headers {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.cmp-headers .hd {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+}
+.cmp-headers .name {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.cmp-headers .hd-added {
+  color: var(--ok);
+}
+.cmp-headers .hd-removed {
+  color: var(--bad);
+}
+/* The body diff is a VirtualList (fixed 19px rows, see DIFF_ROW_HEIGHT in body-diff.tsx). */
+.cmp-lines {
+  flex: none;
+  max-height: 420px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font: 12px/19px var(--mono);
+}
+/* Long lines scroll sideways; the row tints span the widest line in view. */
+.cmp-lines .vlist-window {
+  right: auto;
+  width: max-content;
+  min-width: 100%;
+}
+.cmp-lines .dl {
+  display: flex;
+  height: 19px;
+  white-space: pre;
+}
+.cmp-lines .dl code {
+  font: inherit;
+}
+.cmp-lines .dl .n {
+  flex: 0 0 4.5ch;
+  padding-right: 6px;
+  color: var(--ink-3);
+  text-align: right;
+  user-select: none;
+}
+.cmp-lines .dl .sign {
+  flex: 0 0 2ch;
+  text-align: center;
+  user-select: none;
+}
+.cmp-lines .dl.add {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.cmp-lines .dl.del {
+  background: var(--bad-soft);
+}
+.cmp-lines .dl.fold {
+  display: block;
+  padding: 0 12px;
+  color: var(--ink-3);
+  background: var(--line-2);
+}
+@media (max-width: 900px) {
+  .cmp-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .cmp-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Event types and storage: the name column takes the rest and the counts keep their width
+   (table-layout: fixed sizes columns from the hidden header row). */
+.cmp-pair .cmp-table th:first-child {
+  width: auto;
+}
+.cmp-pair .cmp-table th.num {
+  /* The header cell has no padding; 84px leaves ~8 mono digits beside the cells' 24px. */
+  width: 84px;
+}
+/* Column headers kept for screen readers only (zero-height row, labels visually hidden). */
+.cmp-sr-head th {
+  height: 0;
+  padding: 0;
+  border: 0;
+}

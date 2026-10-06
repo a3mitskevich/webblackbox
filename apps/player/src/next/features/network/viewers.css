@@ -1,0 +1,435 @@
+/* Body, message and timing viewers of the network feature (imported by network.css). */
+
+/* Code (Shiki tokens carry both themes as CSS variables) */
+.ncode-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.ncode-view.ninline {
+  flex: none;
+}
+.ncode {
+  font: 12.5px/19px var(--mono);
+  color: var(--ink);
+  background: var(--surface-2);
+  border-radius: 6px;
+  min-height: 0;
+  overflow: auto;
+}
+.ncode-view .vlist.ncode {
+  min-height: 120px;
+}
+/* Scrolling code, hex dumps and message lists take focus (arrows scroll or select). */
+.vlist.ncode,
+.hex,
+.frames,
+.convo {
+  outline: none;
+}
+.vlist.ncode:focus-visible,
+.hex:focus-visible,
+.frames:focus-visible,
+.convo:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+.ncode-line {
+  display: flex;
+  height: 19px;
+  white-space: pre;
+}
+.ncode-line .nln {
+  flex: none;
+  padding-right: 10px;
+  text-align: right;
+  color: var(--ink-3);
+  user-select: none;
+}
+.ncode-line .nlc {
+  padding-right: 12px;
+}
+.ncode-note {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.ntok {
+  color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style, inherit);
+  font-weight: var(--shiki-light-font-weight, inherit);
+}
+:root[data-theme="dark"] .ntok {
+  color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style, inherit);
+  font-weight: var(--shiki-dark-font-weight, inherit);
+}
+
+/* JSON tree */
+.json-tree {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.tree-list {
+  font: 12.5px/22px var(--mono);
+  background: var(--surface-2);
+  border-radius: 6px;
+  outline: none;
+  min-height: 120px;
+}
+.tree-list:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+.jt-row {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  white-space: nowrap;
+  cursor: default;
+}
+.jt-row.cur {
+  background: var(--accent-soft);
+}
+.jt-twist {
+  flex: none;
+  width: 16px;
+  color: var(--ink-3);
+  display: inline-flex;
+}
+.jt-twist .ic {
+  width: 12px;
+  height: 12px;
+}
+.jt-key {
+  color: var(--nav);
+}
+.jt-index,
+.jt-colon {
+  color: var(--ink-3);
+}
+.jt-colon {
+  white-space: pre;
+}
+.jt-string {
+  color: var(--ok);
+}
+.jt-number {
+  color: var(--ws);
+}
+.jt-boolean,
+.jt-null {
+  color: var(--warn);
+}
+.jt-row > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Hex */
+.hex {
+  font: 12px/19px var(--mono);
+  background: var(--surface-2);
+  border-radius: 6px;
+  min-height: 120px;
+}
+.hex-row {
+  display: flex;
+  gap: 14px;
+  height: 19px;
+  padding: 0 8px;
+  white-space: pre;
+}
+.hex-offset {
+  color: var(--ink-3);
+}
+.hex-ascii {
+  color: var(--ink-2);
+}
+
+/* Timing */
+.nphases {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  font-size: 12.5px;
+}
+.nphase {
+  display: grid;
+  grid-template-columns: minmax(130px, 34%) minmax(0, 1fr) 74px;
+  gap: 10px;
+  align-items: center;
+  padding: 3px 0;
+}
+.nphase-track {
+  position: relative;
+  height: 10px;
+  background: var(--surface-2);
+  border-radius: 2px;
+}
+.nphase-track i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--ink-3);
+}
+.phase-wait .nphase-track i {
+  background: var(--ok);
+}
+.phase-download .nphase-track i {
+  background: var(--accent);
+}
+.phase-dns .nphase-track i,
+.phase-connect .nphase-track i,
+.phase-ssl .nphase-track i {
+  background: var(--warn);
+}
+.nphase-ms {
+  text-align: right;
+}
+.nphase-total {
+  border-top: 1px solid var(--line-2);
+  margin-top: 4px;
+  padding-top: 6px;
+  font-weight: 600;
+}
+.nphase-total .nphase-track {
+  background: none;
+}
+
+/* Initiator */
+.ninitiator-action {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.nstack {
+  margin: 6px 0 0;
+  padding-left: 22px;
+  font-size: 12px;
+}
+.nstack li {
+  overflow-wrap: anywhere;
+}
+.nlinked {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12.5px;
+}
+.nlink {
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.nlink:hover {
+  color: var(--accent);
+}
+
+/* Socket messages: the list beside the parsed message */
+.ntwo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.ntwo > * {
+  min-height: 0;
+  overflow: auto;
+}
+.ntwo > .frames {
+  border-right: 1px solid var(--line-2);
+}
+@container (max-width: 640px) {
+  .ntwo {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr);
+  }
+  .ntwo > .frames {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-2);
+  }
+}
+.nmsg {
+  display: grid;
+  grid-template-columns: 52px 14px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  height: 26px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.nmsg:hover {
+  background: var(--surface-2);
+}
+.nmsg time {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.nmsg .p {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+.nmsg .p b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.nmsg .sz {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.nmsg.nsel {
+  background: var(--ws-soft);
+  box-shadow: inset 3px 0 0 var(--ws);
+}
+.nmsg.ndim .p {
+  color: var(--ink-3);
+}
+.ndir {
+  display: inline-flex;
+}
+.ndir.sent {
+  color: var(--accent);
+}
+.ndir.received {
+  color: var(--ws);
+}
+.ntwo-detail {
+  padding: 0 0 12px;
+}
+.nmessage-view .ndh {
+  padding: 10px 14px 4px;
+}
+.nmessage-view .nnotice {
+  margin: 4px 14px;
+}
+.nrecords {
+  padding: 4px 14px 12px;
+}
+.nrecord + .nrecord {
+  margin-top: 10px;
+}
+.nrecord-head {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+}
+.nrest {
+  margin: 4px 0 0;
+  color: var(--ink-3);
+  font-style: italic;
+  font-size: 12px;
+}
+
+/* Realtime conversation (Casefile borrowing) */
+.nrealtime-tools {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.nstream-pick {
+  flex: 1 1 220px;
+}
+.nstream-pick select {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.convo {
+  position: relative;
+  overflow-x: hidden;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0;
+}
+.bubble-row {
+  display: flex;
+  padding: 3px 14px;
+}
+.bubble-row.sent {
+  justify-content: flex-end;
+}
+.bubble {
+  max-width: min(78%, 560px);
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.bubble.sent {
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.bubble.nservice {
+  padding: 2px 8px;
+  background: var(--surface-2);
+  border-color: var(--line-2);
+  color: var(--ink-3);
+}
+.bubble.nsel {
+  box-shadow: 0 0 0 2px var(--ws);
+}
+.bubble.nfuture {
+  opacity: 0.6;
+}
+.bubble-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  min-width: 0;
+}
+.bubble-head b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bubble-head .muted {
+  font-size: 11.5px;
+}
+.bubble-text {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nrealtime-detail {
+  height: 100%;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .net-row,
+  .nmsg,
+  .bubble {
+    transition: background-color 80ms ease-out;
+  }
+}

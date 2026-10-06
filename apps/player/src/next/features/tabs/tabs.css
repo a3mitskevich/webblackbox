@@ -1,0 +1,149 @@
+/* Tabs rail tab (R4). Scoped to .tb*; tokens from styles/next.css. */
+.tb {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 16px;
+  font-size: 13px;
+}
+.tb-summary {
+  margin: 0;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.tb-head {
+  margin: 14px 14px 6px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.tb-none {
+  margin: 0 14px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.tb-open {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0 14px;
+  list-style: none;
+}
+.tb-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.tb .rel {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.tb .rel-same-origin {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tb .rel-same-site {
+  background: var(--ws-soft);
+  color: var(--ws);
+}
+.tb-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.tb-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.tb-where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.tb-where .path {
+  color: var(--ink-2);
+}
+.tb-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tb .tag {
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--line-2);
+  color: var(--ink-2);
+  font: 11px var(--mono);
+}
+.tb-log {
+  border-top: 1px solid var(--line-2);
+}
+.tb-row {
+  display: grid;
+  grid-template-columns: 52px 128px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 40px;
+  padding: 4px 14px 4px 6px;
+  border-bottom: 1px solid var(--line-2);
+  cursor: pointer;
+}
+.tb-row:hover {
+  background: var(--surface-2);
+}
+.tb-row time {
+  font: 12px var(--mono);
+  color: var(--ink-3);
+  text-align: right;
+}
+.tb .chg {
+  justify-self: start;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--line-2);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.tb .chg-opened,
+.tb .chg-entered {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+.tb .chg-closed,
+.tb .chg-left {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+.tb .chg-navigated {
+  background: color-mix(in srgb, var(--nav) 16%, transparent);
+  color: var(--nav);
+}
+.tb-row .count {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.tb-row.future,
+.tb-row.future .tb-title {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.tb-row.cur {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--playhead);
+}
