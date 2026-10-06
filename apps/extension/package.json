@@ -48,11 +48,11 @@
     "@webblackbox/pipeline": "workspace:*",
     "@webblackbox/protocol": "workspace:*",
     "@webblackbox/recorder": "workspace:*",
-    "@zumer/snapdom": "^2.0.2",
+    "@zumer/snapdom": "^2.24.18",
     "webblackbox": "workspace:*",
-    "zod": "^4.1.12"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.2"
   }
 }
