@@ -14,9 +14,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 241000,
-      "maxGzipBytes": 59700,
-      "note": "Combined integration of the 8 open PRs and #21 on main, measured 155,484 / 38,623 B: #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, #16's tabs context and #21's capture completeness report. Player rewrite (#20): R2's third-party marking, problem grouping and Activity feed items (third-party.ts, problems.ts, activity-feed.ts), R3's realtime message parsing (SignalR records), WebSocket/SSE streams and request timing/initiator details, and R4's console entries, storage state at a moment, perf series and endpoint alignment (console-entries.ts, storage-state.ts, perf-series.ts, compare-endpoints.ts), measured 222,319 / 55,134 B together (+3%). R5's event inspection (event-inspection.ts: target, click reaction, action consequences, one-line phrase) measured 233,839 / 57,902 B (+3%)."
+      "maxBytes": 266000,
+      "maxGzipBytes": 66100,
+      "note": "Combined integration of the 8 open PRs and #21 on main, measured 155,484 / 38,623 B: #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, #16's tabs context and #21's capture completeness report. Player rewrite (#20): R2's third-party marking, problem grouping and Activity feed items (third-party.ts, problems.ts, activity-feed.ts), R3's realtime message parsing (SignalR records), WebSocket/SSE streams and request timing/initiator details, and R4's console entries, storage state at a moment, perf series and endpoint alignment (console-entries.ts, storage-state.ts, perf-series.ts, compare-endpoints.ts), measured 222,319 / 55,134 B together (+3%). R5's event inspection (event-inspection.ts: target, click reaction, action consequences, one-line phrase) measured 233,839 / 57,902 B (+3%). Video export: tab video segments and the WebM Duration/Cues rewrite (screen-recordings.ts, webm-seekable.ts, no dependency) measured 257,983 / 64,133 B (+10% raw)."
     },
     {
       "path": "apps/player/build/main.js",

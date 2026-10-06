@@ -1,6 +1,7 @@
 import { Menu } from "@base-ui/react/menu";
 import type { ScreenRecordingSegment } from "@webblackbox/player-sdk";
 import { Download, Film, Files, type LucideIcon } from "lucide-react";
+import { memo } from "react";
 
 import { formatClock } from "../../../core/format.js";
 import type { PlayerI18n, PlayerLocale } from "../../../lib/i18n.js";
@@ -225,9 +226,10 @@ export function VideoMenuItems({ archive }: VideoMenuItemsProps) {
 
 /**
  * The transport's "download the tab video" button, only when the archive has a video: one
- * segment downloads at once, several open a menu of parts.
+ * segment downloads at once, several open a menu of parts. Memoized: the transport re-renders on
+ * every playhead tick, this button only when the archive or the language changes.
  */
-export function VideoTransportButton() {
+export const VideoTransportButton = memo(function VideoTransportButton() {
   const t = useFeatureI18n(generateMessages);
   const i18n = useI18n();
   const archive = usePlayerState((state) => state.archive);
@@ -280,4 +282,4 @@ export function VideoTransportButton() {
       </Menu.Portal>
     </Menu.Root>
   );
-}
+});
