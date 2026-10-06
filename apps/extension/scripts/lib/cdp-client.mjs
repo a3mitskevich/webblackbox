@@ -168,7 +168,10 @@ export class CdpClient {
     );
 
     if (result?.exceptionDetails) {
-      const message = result.exceptionDetails.text ?? "Runtime.evaluate failed";
+      const message =
+        result.exceptionDetails.exception?.description ??
+        result.exceptionDetails.text ??
+        "Runtime.evaluate failed";
       throw new Error(message);
     }
 

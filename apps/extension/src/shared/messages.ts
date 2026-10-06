@@ -212,6 +212,10 @@ export type ProfilePreviewResponse = {
     source: "explicit" | "rule" | "default";
     ruleName?: string;
     extended: boolean;
+    /** The profile records data only the Full engine captures: Start always uses Full. */
+    requiresFull: boolean;
+    /** Visual capture the profile pins; absent = the popup's choice applies. */
+    visual?: FullModeVisualCapture;
     /** Categories the enterprise policy caps below what the profile asks for. */
     enterpriseCapped?: string[];
   } | null;

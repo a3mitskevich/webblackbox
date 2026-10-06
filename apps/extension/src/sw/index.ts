@@ -73,6 +73,7 @@ import {
   toArchivedProfileInfo,
   type ProfileSelection
 } from "../shared/profiles/resolve.js";
+import { resolveStartEngine } from "../shared/profiles/engine.js";
 import type { ProfilesState } from "../shared/profiles/storage.js";
 import {
   resolveLocalDataSettings,
@@ -932,11 +933,11 @@ async function handleInboundMessage(
       return;
     }
 
-    await startSession(tabId, message.mode, {
+    const mode = await startSession(tabId, message.mode, {
       visualCapture: resolveFullModeVisualCapture(message),
       profileId: typeof message.profileId === "string" ? message.profileId : undefined
     });
-    if (message.mode === "lite" && message.reloadPage) {
+    if (mode === "lite" && message.reloadPage) {
       try {
         await reloadRecordingTab(tabId);
       } catch (error) {
@@ -1136,11 +1137,12 @@ async function deleteSessionBySid(sid: string): Promise<void> {
   }
 }
 
+/** Starts recording the tab; resolves with the engine it runs in. */
 async function startSession(
   tabId: number,
-  mode: CaptureMode,
+  requestedMode: CaptureMode,
   options: { visualCapture?: FullModeVisualCapture; profileId?: string } = {}
-): Promise<void> {
+): Promise<CaptureMode> {
   const existing = sessionsByTab.get(tabId);
 
   if (existing) {
@@ -1170,6 +1172,10 @@ async function startSession(
     throw new Error(NO_RECORDING_PROFILE_ERROR);
   }
 
+  // A profile that needs the Full engine never runs in Lite, whatever the caller asked for: Lite
+  // would drop its bodies, socket messages and visuals without a trace. Upgrading (rather than
+  // refusing) keeps the start the user asked for; the popup already shows the engine as Full.
+  const mode = resolveStartEngine(requestedMode, profileSelection);
   const loadedRecorderConfig = await buildSessionRecorderConfig(
     mode,
     profileSelection,
@@ -1315,6 +1321,7 @@ async function startSession(
   pushSessionList();
   await persistRuntimeState();
   notifyOffscreenPipelineStatus();
+  return mode;
 }
 
 async function reloadRecordingTab(tabId: number): Promise<void> {
@@ -5702,15 +5709,17 @@ async function loadRecorderConfig(mode: CaptureMode): Promise<typeof DEFAULT_REC
 function resolveFullModeVisualCapture(
   message: ExtensionInboundMessage
 ): FullModeVisualCapture | undefined {
-  if (message.kind !== "ui.start" || message.mode !== "full") {
+  if (message.kind !== "ui.start") {
     return undefined;
   }
 
+  // Kept for a Lite request too: when the profile needs the Full engine the start runs in Full,
+  // and an explicit choice (e.g. "none") must hold there. A Lite session ignores it.
   if (isFullModeVisualCapture(message.visualCapture)) {
     return message.visualCapture;
   }
 
-  return message.recordScreen === true ? "both" : undefined;
+  return message.mode === "full" && message.recordScreen === true ? "both" : undefined;
 }
 
 function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture {
