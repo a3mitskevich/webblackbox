@@ -79,6 +79,7 @@ import {
 import { formatTabsContextReport, readTabsContext } from "./tabs-context.js";
 
 /** Player lifecycle status. */
+export * from "./activity-feed.js";
 export * from "./compare-endpoints.js";
 export * from "./console-entries.js";
 export * from "./perf-series.js";
