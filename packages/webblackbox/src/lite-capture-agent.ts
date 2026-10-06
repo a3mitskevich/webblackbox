@@ -1,60 +1,70 @@
 import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_POINTER_CAPTURE_OPTIONS,
-  isContentRedactionEnabled,
-  recordUrl,
-  redactKeystrokePayload,
-  shouldRedactKeystroke,
   type CapturePolicy,
-  type PointerCaptureOptions,
-  type RedactionRules
+  type PointerCaptureOptions
 } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
-import { snapdom } from "@zumer/snapdom";
 
 import type { LiteCaptureAgentOptions, LiteCaptureSampling, LiteCaptureState } from "./types.js";
 import {
-  capStorageValue,
+  DEFAULT_SAMPLING,
+  monotonicTime,
+  resolveContentFrameContext,
+  sanitizePointerOptions,
+  sanitizeSamplingConfig
+} from "./lite-capture-config.js";
+import {
   capturesPageStorageInFullMode,
   capturesRawDom,
-  isPageEventKeptInFullMode,
-  STORAGE_SNAPSHOT_MAX_ITEMS,
-  STORAGE_SNAPSHOT_MAX_VALUE_CHARS
+  isPageEventKeptInFullMode
 } from "./capture-scope.js";
-import { readIndexedDbSnapshot } from "./indexeddb-snapshot.js";
-import { serializeRawDom } from "./raw-dom-snapshot.js";
-import {
-  INJECTED_MESSAGE_SOURCE,
-  INJECTED_RAW_EVENT_TYPES,
-  type InjectedCaptureWindowMessage
-} from "./injected-hooks.js";
 import {
   SCRIPT_SOURCE_MAP_RAW_TYPE,
   startScriptSourceMapScanner
 } from "./script-source-map-scanner.js";
+import { watchPasswordFieldReveals } from "./input-value-policy.js";
+import { PointerCaptureController } from "./pointer-capture.js";
 import {
-  notePasswordField,
-  readCapturableInputValue,
-  watchPasswordFieldReveals
-} from "./input-value-policy.js";
+  accumulateMutationRecord,
+  buildPressureRecoverySnapshotPayload,
+  buildRawDomSnapshotPayload,
+  buildRrwebMutationPayload,
+  buildSummaryDomSnapshotPayload,
+  createEmptyMutationSummary,
+  OBSERVED_MUTATION_ATTRIBUTES,
+  type DomSnapshotSummaryMode,
+  type MutationBatchSummary
+} from "./lite-dom-snapshot.js";
 import {
-  PointerCaptureController,
-  readGeometry,
-  type PointerTargetDetail
-} from "./pointer-capture.js";
-import { buildReadableTarget, readDataTestId, readTargetRect, round } from "./pointer-target.js";
+  EVENT_BUFFER_FORCE_FLUSH_SIZE,
+  EVENT_BUFFER_HARD_LIMIT,
+  EVENT_BUFFER_SOFT_LIMIT,
+  LiteEventBuffer
+} from "./lite-event-buffer.js";
+import { installInjectedBridgeListener } from "./lite-injected-bridge.js";
+import { LiteInputCapture } from "./lite-input-capture.js";
+import {
+  installPerformanceObservers,
+  LONG_TASK_PRESSURE_THRESHOLD_MS,
+  RAF_PRESSURE_GAP_MS
+} from "./lite-performance-capture.js";
+import {
+  buildCookieSnapshotPayload,
+  buildLocalStorageSnapshotPayload,
+  captureIndexedDbSnapshot
+} from "./lite-storage-snapshots.js";
+import { captureViewportScreenshot } from "./lite-screenshots.js";
+import { isEditableInteractionTarget, isRichTextEditableTarget } from "./lite-keystrokes.js";
+import { LiteTargetPayloads } from "./lite-target-payload.js";
 
-const PRE_RECORDING_BUFFER_MAX = 400;
-const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
 const SCREENSHOT_POINTER_STALE_MS = 2_500;
 const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
 const BACKGROUND_CAPTURE_IDLE_MS = 1_500;
 const START_CAPTURE_STORAGE_DELAY_MS = 400;
 const START_CAPTURE_SCREENSHOT_DELAY_MS = 1_000;
-const SCROLL_BURST_DEBOUNCE_MS = 140;
 const SCROLL_PRESSURE_WINDOW_MS = 700;
 const SCROLL_PRESSURE_EVENT_COUNT = 6;
-const POINTERMOVE_SUPPRESS_AFTER_SCROLL_MS = 220;
 const MUTATION_PRESSURE_RECORD_LIMIT = 220;
 const MUTATION_PRESSURE_BUFFER_LIMIT = 280;
 const MUTATION_PRESSURE_SUMMARY_LIMIT = 320;
@@ -73,62 +83,13 @@ const QUIET_MODE_COOLDOWN_MS = 3_000;
 const DOM_CHANGE_SNAPSHOT_INTERVAL_MS = 2_500;
 const QUIET_MODE_SCROLL_COOLDOWN_MS = 2_000;
 const QUIET_MODE_EDITOR_COOLDOWN_MS = 4_200;
-const SCREENSHOT_MAX_DIMENSION_PX = 1_200;
-const SCREENSHOT_MAX_SCALE = 1.5;
-const SCREENSHOT_MIN_SCALE = 0.45;
-const SCREENSHOT_WEBP_QUALITY = 0.66;
-const SCREENSHOT_CAPTURE_TIMEOUT_MS = 4_000;
-const DOM_SNAPSHOT_MAX_HTML_CHARS = 300_000;
 const DOM_SNAPSHOT_SUMMARY_NODE_THRESHOLD = 3_500;
 const START_CAPTURE_DEFER_MS = 2_000;
-const TARGET_ENRICH_DELAY_MS = 0;
-const LONG_TASK_PRESSURE_THRESHOLD_MS = 40;
 const LONG_TASK_PRESSURE_COOLDOWN_MS = 1_800;
 const LONG_TASK_PRESSURE_EXTENDED_COOLDOWN_MS = 3_000;
-const RAF_PRESSURE_GAP_MS = 34;
 const RAF_PRESSURE_COOLDOWN_MS = 1_400;
-const EVENT_BUFFER_FLUSH_DELAY_MS = 180;
-const EVENT_BUFFER_FORCE_FLUSH_SIZE = 120;
-const EVENT_BUFFER_EMIT_CHUNK_SIZE = 80;
-const EVENT_BUFFER_SOFT_LIMIT = 420;
-const EVENT_BUFFER_HARD_LIMIT = 1_200;
 const MUTATION_DETAIL_RECORD_LIMIT = 160;
 const MUTATION_DETAIL_BUFFER_LIMIT = 240;
-const MUTATION_SAMPLE_TARGETS_MAX = 24;
-const MUTATION_SAMPLE_ATTRIBUTES_MAX = 16;
-const SELECTOR_CACHE_MAX = 1_500;
-const PERF_LOG_FLAG = "__WEBBLACKBOX_PERF__";
-const OBSERVED_MUTATION_ATTRIBUTES = [
-  "hidden",
-  "open",
-  "disabled",
-  "checked",
-  "selected",
-  "aria-expanded",
-  "aria-hidden",
-  "aria-pressed",
-  "aria-selected",
-  "aria-current",
-  "aria-busy",
-  "href",
-  "src"
-];
-
-const INJECTED_RAW_EVENT_TYPE_SET: ReadonlySet<string> = new Set(INJECTED_RAW_EVENT_TYPES);
-
-const LOW_PRIORITY_RAW_TYPES = new Set([
-  "mousemove",
-  "wheel",
-  "hover",
-  "scroll",
-  "mutation",
-  "rrweb",
-  "vitals",
-  "longtask",
-  "snapshot",
-  "screenshot"
-]);
-
 const FULL_MODE_SKIPPED_RAW_TYPES = new Set([
   "scroll",
   "mutation",
@@ -139,52 +100,6 @@ const FULL_MODE_SKIPPED_RAW_TYPES = new Set([
   "cookieSnapshot"
 ]);
 
-// Input types whose keystrokes do not enter text (e.g. Space toggles a checkbox).
-const NON_TEXT_INPUT_TYPES = new Set([
-  "button",
-  "checkbox",
-  "color",
-  "file",
-  "hidden",
-  "image",
-  "radio",
-  "range",
-  "reset",
-  "submit"
-]);
-const PASSWORD_INPUT_SELECTOR = "input[type='password']";
-
-const DEFAULT_SAMPLING: LiteCaptureSampling = {
-  mousemoveHz: 20,
-  scrollHz: 15,
-  domFlushMs: 100,
-  snapshotIntervalMs: 20_000,
-  screenshotIdleMs: 0
-};
-
-const INPUT_OPTIONS_TRUE: AddEventListenerOptions = {
-  capture: true
-};
-
-const PASSIVE_INPUT_OPTIONS_TRUE: AddEventListenerOptions = {
-  capture: true,
-  passive: true
-};
-
-type MutationBatchSummary = {
-  count: number;
-  sampledCount: number;
-  truncated: boolean;
-  childListCount: number;
-  attributeCount: number;
-  characterDataCount: number;
-  addedNodes: number;
-  removedNodes: number;
-  sampleTargets: string[];
-  attributeNames: string[];
-};
-
-type TargetPayloadDetail = "action" | "input" | "fast" | "navigation";
 type CapturePressureStage = "none" | "soft" | "hard" | "critical";
 
 /**
@@ -192,8 +107,6 @@ type CapturePressureStage = "none" | "soft" | "hard" | "critical";
  * It collects DOM/input/network/error/perf signals and emits buffered raw events.
  */
 export class LiteCaptureAgent {
-  private readonly eventBuffer: RawRecorderEvent[] = [];
-  private readonly preRecordingBuffer: RawRecorderEvent[] = [];
   private readonly cleanupCallbacks: Array<() => void> = [];
   private readonly frameMarker: string | undefined;
   private readonly isTopLevelFrame: boolean;
@@ -206,16 +119,42 @@ export class LiteCaptureAgent {
   private sampling: LiteCaptureSampling = { ...DEFAULT_SAMPLING };
   private capturePolicy: CapturePolicy = DEFAULT_CAPTURE_POLICY;
   private pointerOptions: PointerCaptureOptions = { ...DEFAULT_POINTER_CAPTURE_OPTIONS };
+  private readonly eventBuffer = new LiteEventBuffer({
+    emitBatch: (events) => this.options.emitBatch(events),
+    mode: () => this.mode
+  });
+  private readonly targets = new LiteTargetPayloads({
+    policy: () => this.capturePolicy,
+    mode: () => this.mode,
+    isActive: () => this.recordingActive && !this.disposed
+  });
   private readonly pointerCapture = new PointerCaptureController({
     options: () => this.pointerOptions,
     policy: () => this.capturePolicy,
     isRecording: () => this.recordingActive && !this.disposed,
     emit: (rawType, payload, mono) => this.queueEvent(rawType, payload, mono),
-    targetPayload: (target, detail) => this.createPointerTargetPayload(target, detail),
+    targetPayload: (target, detail) => this.targets.createPointerTargetPayload(target, detail),
     listen: (target, type, listener, options) => this.listen(target, type, listener, options),
     markUserActivity: () => this.markUserActivity(),
     trackPointer: (x, y) => this.trackPointer(x, y),
     now: monotonicTime
+  });
+  private readonly inputCapture = new LiteInputCapture({
+    pointerCapture: this.pointerCapture,
+    targets: this.targets,
+    mode: () => this.mode,
+    sampling: () => this.sampling,
+    capturePolicy: () => this.capturePolicy,
+    listen: (target, type, listener, options) => this.listen(target, type, listener, options),
+    emit: (rawType, payload, mono) => this.queueEvent(rawType, payload, mono),
+    markUserActivity: () => this.markUserActivity(),
+    trackPointer: (x, y) => this.trackPointer(x, y),
+    recordEditableInteraction: (target) => this.recordEditableInteraction(target),
+    recordScrollPressure: () => this.recordScrollPressure(),
+    shouldSuppressPointerMoveCapture: () => this.shouldSuppressPointerMoveCapture(),
+    emitMarker: (message) => this.emitMarker(message),
+    emitViewportSnapshot: (reason) => this.emitViewportSnapshot(reason),
+    emitLifecycleEvent: (rawType, payload) => this.emitLifecycleEvent(rawType, payload)
   });
   private injectedBridgeNonce: string | null = null;
   private indicator: HTMLDivElement | null = null;
@@ -226,8 +165,6 @@ export class LiteCaptureAgent {
   private backgroundCaptureRetryTimer = 0;
   private quietModeRecoveryTimer = 0;
   private deferredStartTaskTimers: number[] = [];
-  private pendingTargetEnrichmentTimers = new Set<number>();
-  private trailingScrollTimer = 0;
   private mutationFlushTimer = 0;
 
   private domChangeSnapshotTimer = 0;
@@ -235,9 +172,6 @@ export class LiteCaptureAgent {
   private indexedDbSnapshotInFlight = false;
 
   private lastDomSnapshotMono = Number.NEGATIVE_INFINITY;
-  private flushTimer = 0;
-  private lastScrollTime = 0;
-  private lastPointerTime = Number.NEGATIVE_INFINITY;
   private screenshotInFlight = false;
   private screenshotCaptureBlocked = false;
   private screenshotInFlightPromise: Promise<void> | null = null;
@@ -245,7 +179,6 @@ export class LiteCaptureAgent {
   private hasCapturedScreenshot = false;
   private lastActionScreenshotMono = Number.NEGATIVE_INFINITY;
   private lastUserActivityMono = monotonicTime();
-  private scrollBurstActiveUntilMono = Number.NEGATIVE_INFINITY;
   private mutationPressureUntilMono = Number.NEGATIVE_INFINITY;
   private inputPressureUntilMono = Number.NEGATIVE_INFINITY;
   private editorPressureUntilMono = Number.NEGATIVE_INFINITY;
@@ -255,19 +188,9 @@ export class LiteCaptureAgent {
   private recentEditableInteractionMonos: number[] = [];
   private recentScrollMonos: number[] = [];
   private lastPointerState: { x: number; y: number; t: number; mono: number } | null = null;
-  private pendingScrollPayload: {
-    target: Record<string, unknown>;
-    scrollX: number;
-    scrollY: number;
-  } | null = null;
-  private lastEmittedScrollPosition: { scrollX: number; scrollY: number } | null = null;
   private hasDomSnapshot = false;
   private hasLocalStorageSnapshot = false;
   private mutationSummary: MutationBatchSummary = createEmptyMutationSummary();
-  private selectorCache = new WeakMap<Element, string>();
-  private selectorCacheSize = 0;
-  private readonly hashingSalt = createSelectorSalt();
-  private droppedLowPriorityEvents = 0;
   private disposed = false;
   private readonly stopWatchingPasswordReveals: () => void;
   private pendingQuietRecoverySummary = false;
@@ -284,11 +207,6 @@ export class LiteCaptureAgent {
   }
 
   /** Updates recording state and sampling profile from the host SDK. */
-  /** The salt that hashes selector tokens, or null to record them as-is (masking off). */
-  private selectorSalt(): SelectorSalt {
-    return isContentRedactionEnabled(this.capturePolicy.redaction) ? this.hashingSalt : null;
-  }
-
   public setRecordingStatus(state: LiteCaptureState): void {
     if (this.disposed) {
       return;
@@ -344,7 +262,7 @@ export class LiteCaptureAgent {
       this.ensureCaptureInstalled();
 
       if (!wasRecording) {
-        this.flushPreRecordingBuffer();
+        this.eventBuffer.flushPreRecordingBuffer();
       }
 
       this.ensureIndicator(this.sid, this.mode);
@@ -393,8 +311,8 @@ export class LiteCaptureAgent {
 
   /** Flushes the current buffered raw events immediately. */
   public flush(): void {
-    this.flushPendingScrollEvent();
-    this.drainBufferedEvents();
+    this.inputCapture.flushPendingScrollEvent();
+    this.eventBuffer.drainBufferedEvents();
   }
 
   /** Completes any in-flight screenshot and captures one final frame if none was recorded yet. */
@@ -430,434 +348,27 @@ export class LiteCaptureAgent {
     this.stopMutationAndSnapshots();
     this.removeIndicator();
 
-    if (this.flushTimer > 0) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = 0;
-    }
-
+    this.eventBuffer.cancelScheduledFlush();
     this.runCleanupCallbacks();
-    this.clearPendingTargetEnrichmentTimers();
+    this.targets.clearPendingTargetEnrichmentTimers();
     this.pointerCapture.reset();
 
-    this.eventBuffer.length = 0;
-    this.preRecordingBuffer.length = 0;
+    this.eventBuffer.clear();
     this.mutationSummary = createEmptyMutationSummary();
-    this.selectorCache = new WeakMap<Element, string>();
-    this.selectorCacheSize = 0;
+    this.targets.resetSelectorCache();
     this.hasCapturedScreenshot = false;
   }
 
-  private installInjectedMessageBridge(): void {
-    this.listen(window, "message", (event: MessageEvent<unknown>) => {
-      if (event.source !== window) {
-        return;
-      }
-
-      const data = event.data as InjectedCaptureWindowMessage | undefined;
-
-      if (!data || data.source !== INJECTED_MESSAGE_SOURCE) {
-        return;
-      }
-
-      // Page scripts share the window with the injected hooks and can post look-alike
-      // messages; once the host set a session nonce, unstamped messages are forgeries.
-      if (this.injectedBridgeNonce !== null && data.nonce !== this.injectedBridgeNonce) {
-        return;
-      }
-
-      if (data.kind === "capture-event" && typeof data.rawType === "string") {
-        this.queueInjectedRawEvent(data);
-        return;
-      }
-
-      if (data.kind === "capture-events" && Array.isArray(data.events)) {
-        for (const item of data.events) {
-          if (item && typeof item.rawType === "string") {
-            this.queueInjectedRawEvent(item);
-          }
-        }
-
-        return;
-      }
-
-      if (data.kind === "marker") {
-        this.emitMarker(typeof data.message === "string" ? data.message : "Marker");
-      }
-    });
-  }
-
-  private queueInjectedRawEvent(event: {
-    rawType: string;
-    payload?: Record<string, unknown>;
-    t?: number;
-    mono?: number;
-  }): void {
-    // Only raw types the hooks emit. Script records ("script") make the extension fetch source
-    // maps, so they come from the scanner only, never from page-world messages.
-    if (!INJECTED_RAW_EVENT_TYPE_SET.has(event.rawType)) {
-      return;
-    }
-
-    this.queueRawEvent({
-      source: "content",
-      rawType: event.rawType,
-      tabId: this.tabId,
-      sid: this.sid,
-      t: typeof event.t === "number" ? event.t : Date.now(),
-      mono: typeof event.mono === "number" ? event.mono : monotonicTime(),
-      payload: event.payload ?? {}
-    });
-  }
-
-  private installInputAndLifecycleCapture(): void {
-    this.pointerCapture.install();
-
-    this.listen(
-      document,
-      "wheel",
-      (event: WheelEvent) => {
-        this.markUserActivity();
-
-        if (this.mode === "full") {
-          return;
-        }
-
-        if (Math.abs(event.deltaX) + Math.abs(event.deltaY) <= 0) {
-          return;
-        }
-
-        this.recordScrollPressure();
-      },
-      PASSIVE_INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "click",
-      (event: MouseEvent) => {
-        this.markUserActivity();
-        this.trackPointer(event.clientX, event.clientY);
-        const mono = monotonicTime();
-        this.queueEvent("click", this.createClickPayload(event), mono);
-        this.pointerCapture.onClick(mono);
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "dblclick",
-      (event: MouseEvent) => {
-        this.markUserActivity();
-        this.trackPointer(event.clientX, event.clientY);
-        this.queueEvent("dblclick", this.createClickPayload(event));
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "keydown",
-      (event: KeyboardEvent) => {
-        this.markUserActivity();
-        this.recordEditableInteraction(event.target);
-        notePasswordField(event.target);
-        if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "m") {
-          this.emitMarker("Keyboard marker");
-        }
-
-        this.queueEvent("keydown", this.createKeydownPayload(event));
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "input",
-      (event: Event) => {
-        this.markUserActivity();
-        const target = event.target;
-
-        if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
-          return;
-        }
-
-        this.recordEditableInteraction(target);
-
-        const value = readCapturableInputValue(target, this.capturePolicy);
-
-        this.queueEvent("input", {
-          inputType: target.type,
-          length: target.value.length,
-          ...(value === undefined ? { valueRedacted: true } : { value }),
-          target: this.resolveTargetPayload(target, "input")
-        });
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "change",
-      (event: Event) => {
-        this.markUserActivity();
-        this.recordEditableInteraction(event.target);
-        this.queueEvent("input", {
-          kind: "change",
-          target: this.resolveTargetPayload(event.target, "fast")
-        });
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "focus",
-      (event: FocusEvent) => {
-        this.markUserActivity();
-        notePasswordField(event.target);
-        this.queueEvent("focus", {
-          target: this.resolveTargetPayload(event.target, "fast")
-        });
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "blur",
-      (event: FocusEvent) => {
-        this.markUserActivity();
-        this.queueEvent("blur", {
-          target: this.resolveTargetPayload(event.target, "fast")
-        });
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "submit",
-      (event: Event) => {
-        this.markUserActivity();
-        this.queueEvent("submit", {
-          target: this.resolveTargetPayload(event.target, "fast")
-        });
-      },
-      INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "scroll",
-      (event: Event) => {
-        this.markUserActivity();
-        if (this.mode === "full") {
-          return;
-        }
-
-        this.recordScrollPressure();
-
-        const now = performance.now();
-        const scrollGapMs = Math.max(16, Math.round(1000 / Math.max(1, this.sampling.scrollHz)));
-
-        if (now - this.lastScrollTime < scrollGapMs) {
-          this.queueTrailingScrollEvent(event);
-          return;
-        }
-
-        this.lastScrollTime = now;
-        this.scrollBurstActiveUntilMono =
-          monotonicTime() + Math.max(POINTERMOVE_SUPPRESS_AFTER_SCROLL_MS, scrollGapMs);
-
-        const payload = {
-          target: toFastTargetPayload(event.target, this.selectorSalt()),
-          scrollX: window.scrollX,
-          scrollY: window.scrollY
-        };
-
-        this.pendingScrollPayload = payload;
-        this.emitQueuedScrollEvent(payload);
-        this.scheduleTrailingScrollFlush(scrollGapMs);
-      },
-      PASSIVE_INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(
-      document,
-      "pointermove",
-      (event: PointerEvent) => {
-        this.pointerCapture.onPointerMove(event);
-        const now = performance.now();
-        const pointerGapMs = Math.max(
-          16,
-          Math.round(1000 / Math.max(1, this.sampling.mousemoveHz))
-        );
-
-        // Full mode keeps page-side work minimal: nothing runs between samples, even while
-        // capture is suppressed, so the sample clock advances before the pressure check.
-        if (this.mode === "full") {
-          if (now - this.lastPointerTime < pointerGapMs) {
-            return;
-          }
-
-          this.lastPointerTime = now;
-        }
-
-        this.markUserActivity();
-        this.trackPointer(event.clientX, event.clientY);
-
-        if (this.shouldSuppressPointerMoveCapture()) {
-          return;
-        }
-
-        if (this.mode !== "full") {
-          if (now - this.lastPointerTime < pointerGapMs) {
-            return;
-          }
-
-          this.lastPointerTime = now;
-        }
-
-        this.queueEvent("mousemove", {
-          x: round(event.clientX),
-          y: round(event.clientY),
-          target: toFastTargetPayload(event.target, this.selectorSalt())
-        });
-      },
-      PASSIVE_INPUT_OPTIONS_TRUE
-    );
-
-    this.listen(window, "resize", () => {
-      this.markUserActivity();
-      this.emitViewportSnapshot("resize");
-    });
-
-    this.listen(document, "visibilitychange", () => {
-      this.markUserActivity();
-      this.emitLifecycleEvent("visibilitychange", {
-        state: document.visibilityState
-      });
-    });
-  }
-
   private installPerformanceCapture(): void {
-    if (typeof PerformanceObserver === "undefined") {
-      return;
-    }
-
-    try {
-      // Long tasks and vitals are page-only signals (CDP has no stream for them): kept in full mode.
-      const longTaskObserver = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          if (this.mode !== "full" && entry.duration >= LONG_TASK_PRESSURE_THRESHOLD_MS) {
-            this.extendLongTaskPressure(entry.duration);
-          }
-
-          this.queueEvent("longtask", {
-            name: entry.name,
-            startTime: entry.startTime,
-            duration: entry.duration
-          });
-        }
-      });
-
-      longTaskObserver.observe({ entryTypes: ["longtask"] });
-      this.cleanupCallbacks.push(() => longTaskObserver.disconnect());
-    } catch {
-      void 0;
-    }
-
-    // Frame-gap pressure only tunes lite capture; full mode does not need the rAF loop.
-    if (this.mode !== "full" && typeof window.requestAnimationFrame === "function") {
-      let lastFrameMono = monotonicTime();
-      let rafHandle = 0;
-
-      const tick = () => {
-        const nowMono = monotonicTime();
-        const frameGap = nowMono - lastFrameMono;
-        lastFrameMono = nowMono;
-
-        if (frameGap >= RAF_PRESSURE_GAP_MS) {
-          this.extendRafPressure(frameGap);
-        }
-
-        rafHandle = window.requestAnimationFrame(tick);
-      };
-
-      rafHandle = window.requestAnimationFrame(tick);
-      this.cleanupCallbacks.push(() => {
-        if (rafHandle > 0) {
-          window.cancelAnimationFrame(rafHandle);
-        }
-      });
-    }
-
-    const vitalTypes: Array<{ type: string; rawType: string }> = [
-      { type: "largest-contentful-paint", rawType: "vitals" },
-      { type: "layout-shift", rawType: "vitals" },
-      { type: "first-input", rawType: "vitals" }
-    ];
-
-    for (const item of vitalTypes) {
-      try {
-        const observer = new PerformanceObserver((list) => {
-          for (const entry of list.getEntries()) {
-            this.queueEvent(item.rawType, {
-              metric: item.type,
-              name: entry.name,
-              startTime: entry.startTime,
-              duration: entry.duration,
-              value: (entry as PerformanceEntry & { value?: number }).value
-            });
-          }
-        });
-
-        observer.observe({ type: item.type, buffered: true });
-        this.cleanupCallbacks.push(() => observer.disconnect());
-      } catch {
-        void 0;
+    installPerformanceObservers({
+      mode: () => this.mode,
+      emit: (rawType, payload) => this.queueEvent(rawType, payload),
+      onLongTask: (duration) => this.extendLongTaskPressure(duration),
+      onFrameGap: (frameGap) => this.extendRafPressure(frameGap),
+      addCleanup: (cleanup) => {
+        this.cleanupCallbacks.push(cleanup);
       }
-    }
-  }
-
-  private accumulateMutationRecord(record: MutationRecord, includeDetails: boolean): void {
-    this.mutationSummary.count += 1;
-    this.mutationSummary.sampledCount += 1;
-    this.mutationSummary.addedNodes += record.addedNodes.length;
-    this.mutationSummary.removedNodes += record.removedNodes.length;
-
-    if (record.type === "childList") {
-      this.mutationSummary.childListCount += 1;
-    } else if (record.type === "attributes") {
-      this.mutationSummary.attributeCount += 1;
-    } else if (record.type === "characterData") {
-      this.mutationSummary.characterDataCount += 1;
-    }
-
-    if (!includeDetails) {
-      return;
-    }
-
-    if (record.type === "attributes" && record.attributeName) {
-      const names = this.mutationSummary.attributeNames;
-
-      if (names.length < MUTATION_SAMPLE_ATTRIBUTES_MAX && !names.includes(record.attributeName)) {
-        names.push(record.attributeName);
-      }
-    }
-
-    const sampleTargets = this.mutationSummary.sampleTargets;
-
-    if (sampleTargets.length >= MUTATION_SAMPLE_TARGETS_MAX) {
-      return;
-    }
-
-    const selector = this.readCachedSelector(record.target);
-
-    if (!sampleTargets.includes(selector)) {
-      sampleTargets.push(selector);
-    }
+    });
   }
 
   private accumulateMutationRecords(records: MutationRecord[]): void {
@@ -887,37 +398,16 @@ export class LiteCaptureAgent {
         : records.length;
     const sampledCount = Math.min(records.length, sampleLimit);
 
+    const readSelector = (target: EventTarget | null) => this.targets.readCachedSelector(target);
+
     for (let index = 0; index < sampledCount; index += 1) {
-      this.accumulateMutationRecord(records[index]!, includeDetails);
+      accumulateMutationRecord(this.mutationSummary, records[index]!, includeDetails, readSelector);
     }
 
     if (sampledCount < records.length) {
       this.mutationSummary.count += records.length - sampledCount;
       this.mutationSummary.truncated = true;
     }
-  }
-
-  private readCachedSelector(target: EventTarget | null): string {
-    if (!(target instanceof Element)) {
-      return "unknown";
-    }
-
-    const cached = this.selectorCache.get(target);
-
-    if (cached) {
-      return cached;
-    }
-
-    if (this.selectorCacheSize >= SELECTOR_CACHE_MAX) {
-      this.selectorCache = new WeakMap<Element, string>();
-      this.selectorCacheSize = 0;
-    }
-
-    const selector = safeSelector(target, this.selectorSalt());
-    this.selectorCache.set(target, selector);
-    this.selectorCacheSize += 1;
-
-    return selector;
   }
 
   private shouldCaptureScreenshots(): boolean {
@@ -1018,10 +508,7 @@ export class LiteCaptureAgent {
       this.startCaptureTimer = 0;
     }
 
-    if (this.trailingScrollTimer > 0) {
-      clearTimeout(this.trailingScrollTimer);
-      this.trailingScrollTimer = 0;
-    }
+    this.inputCapture.cancelTrailingScrollFlush();
 
     if (this.backgroundCaptureRetryTimer > 0) {
       clearTimeout(this.backgroundCaptureRetryTimer);
@@ -1056,7 +543,7 @@ export class LiteCaptureAgent {
       this.domChangeSnapshotTimer = 0;
     }
 
-    this.flushPendingScrollEvent();
+    this.inputCapture.flushPendingScrollEvent();
   }
 
   private ensureCaptureInstalled(): void {
@@ -1064,13 +551,20 @@ export class LiteCaptureAgent {
       return;
     }
 
-    this.installInputAndLifecycleCapture();
+    this.inputCapture.install();
 
     if (this.isTopLevelFrame) {
       this.installPerformanceCapture();
     }
 
-    this.installInjectedMessageBridge();
+    installInjectedBridgeListener({
+      listen: (target, type, listener, options) => this.listen(target, type, listener, options),
+      nonce: () => this.injectedBridgeNonce,
+      queueRawEvent: (event) => this.queueRawEvent(event),
+      emitMarker: (message) => this.emitMarker(message),
+      tabId: () => this.tabId,
+      sid: () => this.sid
+    });
     this.captureInstalled = true;
     this.emitLifecycleEvent("visibilitychange", { state: document.visibilityState });
   }
@@ -1097,7 +591,7 @@ export class LiteCaptureAgent {
 
     this.captureInstalled = false;
     this.runCleanupCallbacks();
-    this.clearPendingTargetEnrichmentTimers();
+    this.targets.clearPendingTargetEnrichmentTimers();
     this.pointerCapture.reset();
   }
 
@@ -1105,14 +599,6 @@ export class LiteCaptureAgent {
     for (const cleanup of this.cleanupCallbacks.splice(0, this.cleanupCallbacks.length)) {
       cleanup();
     }
-  }
-
-  private clearPendingTargetEnrichmentTimers(): void {
-    for (const timerId of this.pendingTargetEnrichmentTimers) {
-      clearTimeout(timerId);
-    }
-
-    this.pendingTargetEnrichmentTimers.clear();
   }
 
   private scheduleMutationFlush(): void {
@@ -1190,28 +676,7 @@ export class LiteCaptureAgent {
   }
 
   private emitRrwebMutationSummary(summary: MutationBatchSummary): void {
-    this.queueEvent("rrweb", {
-      schema: "rrweb-lite/v1",
-      event: {
-        type: "incremental-snapshot",
-        source: "mutation-summary",
-        timestamp: Date.now(),
-        data: {
-          count: summary.count,
-          sampledCount: summary.sampledCount,
-          truncated: summary.truncated,
-          childListCount: summary.childListCount,
-          attributeCount: summary.attributeCount,
-          characterDataCount: summary.characterDataCount,
-          addedNodes: summary.addedNodes,
-          removedNodes: summary.removedNodes,
-          sampleTargets: [...summary.sampleTargets],
-          attributeNames: [...summary.attributeNames]
-        }
-      },
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title
-    });
+    this.queueEvent("rrweb", buildRrwebMutationPayload(summary, this.capturePolicy.redaction));
   }
 
   private emitDomSnapshot(reason: string): void {
@@ -1223,62 +688,27 @@ export class LiteCaptureAgent {
       return;
     }
 
-    const html = buildDomSnapshotSummaryHtml({
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title,
+    const payload = buildSummaryDomSnapshotPayload({
       reason,
       nodeCount,
       summaryMode,
-      capturedAtIso: new Date().toISOString()
+      redaction: this.capturePolicy.redaction
     });
-    const truncated = true;
-    const sampledHtml = html.slice(0, DOM_SNAPSHOT_MAX_HTML_CHARS);
 
     this.hasDomSnapshot = true;
-
-    this.queueEvent("snapshot", {
-      reason,
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title,
-      nodeCount,
-      htmlLength: html.length,
-      truncated,
-      html: sampledHtml,
-      summaryOnly: true,
-      summaryMode
-    });
+    this.queueEvent("snapshot", payload);
   }
 
   /** `dom: allow`: the page itself, masked by blocked selectors. False when not recorded. */
   private emitRawDomSnapshot(reason: string, nodeCount: number): boolean {
-    const { categories, redaction } = this.capturePolicy;
+    const payload = buildRawDomSnapshotPayload(reason, nodeCount, this.capturePolicy);
 
-    if (!capturesRawDom(categories)) {
-      return false;
-    }
-
-    const snapshot = serializeRawDom(document, {
-      blockedSelectors: redaction.blockedSelectors,
-      keepInputValues: categories.inputs === "allow",
-      sensitiveNamePatterns: redaction.redactBodyPatterns,
-      redaction
-    });
-
-    if (!snapshot) {
+    if (!payload) {
       return false;
     }
 
     this.hasDomSnapshot = true;
-    this.queueEvent("snapshot", {
-      reason,
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title,
-      nodeCount,
-      htmlLength: snapshot.htmlLength,
-      truncated: snapshot.truncated,
-      html: snapshot.html,
-      summaryOnly: false
-    });
+    this.queueEvent("snapshot", payload);
     return true;
   }
 
@@ -1300,52 +730,10 @@ export class LiteCaptureAgent {
   }
 
   private emitCookieSnapshot(reason: string): void {
-    const cookies = document.cookie
-      .split(";")
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-    // A cookie without `=` is a bare value, not a name: it is counted but never listed.
-    const names = cookies
-      .filter((entry) => entry.includes("="))
-      .map((entry) => entry.split("=")[0]?.trim() ?? "");
-    const level = this.capturePolicy.categories.cookies;
-
-    if (level === "allow") {
-      // `cookies` (name/value records) so the recorder's cookie-name rules can mask values.
-      const listed = cookies
-        .filter((entry) => entry.includes("="))
-        .slice(0, STORAGE_SNAPSHOT_MAX_ITEMS);
-      this.queueEvent("cookieSnapshot", {
-        reason,
-        count: cookies.length,
-        mode: "allow",
-        redacted: false,
-        truncated: cookies.length > listed.length,
-        cookies: listed.map((entry) => {
-          const separator = entry.indexOf("=");
-          return {
-            name: entry.slice(0, separator).trim(),
-            ...capStorageValue(entry.slice(separator + 1))
-          };
-        })
-      });
-      return;
-    }
-
-    const showsNames = level === "names-only";
-
-    this.queueEvent("cookieSnapshot", {
-      reason,
-      count: cookies.length,
-      mode: showsNames ? "names-only" : "counts-only",
-      redacted: true,
-      ...(showsNames
-        ? {
-            names: names.slice(0, STORAGE_SNAPSHOT_MAX_ITEMS),
-            truncated: names.length > STORAGE_SNAPSHOT_MAX_ITEMS
-          }
-        : {})
-    });
+    this.queueEvent(
+      "cookieSnapshot",
+      buildCookieSnapshotPayload(reason, this.capturePolicy.categories.cookies)
+    );
   }
 
   private emitLocalStorageSnapshot(reason: string): void {
@@ -1353,51 +741,7 @@ export class LiteCaptureAgent {
     const level = this.capturePolicy.categories.storage;
 
     this.hasLocalStorageSnapshot = true;
-
-    if (level !== "names-only" && level !== "lengths-only" && level !== "allow") {
-      this.queueEvent("localStorageSnapshot", {
-        reason,
-        count,
-        truncated: false,
-        mode: "counts-only",
-        redacted: true
-      });
-      return;
-    }
-
-    const keys = readStorageKeys(localStorage, STORAGE_SNAPSHOT_MAX_ITEMS);
-    let truncated = count > keys.length;
-    let budget = STORAGE_SNAPSHOT_MAX_VALUE_CHARS;
-    const details: Record<string, unknown> = {};
-
-    if (level === "names-only") {
-      details.keys = keys;
-    } else if (level === "lengths-only") {
-      details.lengths = keys.map((key) => (localStorage.getItem(key) ?? "").length);
-    } else {
-      details.entries = keys.flatMap((key) => {
-        const value = localStorage.getItem(key) ?? "";
-
-        if (budget <= 0) {
-          truncated = true;
-          return [];
-        }
-
-        const entry = { key, valueLength: value.length, ...capStorageValue(value) };
-        budget -= entry.value.length;
-        return [entry];
-      });
-    }
-
-    // Values go through the recorder's redactor (sensitive key names mask their values).
-    this.queueEvent("localStorageSnapshot", {
-      reason,
-      count,
-      truncated,
-      mode: level,
-      redacted: level !== "allow",
-      ...details
-    });
+    this.queueEvent("localStorageSnapshot", buildLocalStorageSnapshotPayload(reason, level, count));
   }
 
   private async emitIndexedDbSnapshot(reason: string): Promise<void> {
@@ -1413,40 +757,10 @@ export class LiteCaptureAgent {
     this.indexedDbSnapshotInFlight = true;
 
     try {
-      const rows = await indexedDB.databases();
-
-      if (this.capturePolicy.categories.indexedDb === "allow") {
-        const snapshot = await readIndexedDbSnapshot(indexedDB, rows);
-
-        if (!this.recordingActive) {
-          return;
-        }
-
-        this.queueEvent("indexedDbSnapshot", {
-          reason,
-          count: rows.length,
-          mode: "allow",
-          redacted: false,
-          truncated: snapshot.truncated,
-          databaseNames: snapshot.databases.map((database) => database.name),
-          databases: snapshot.databases
-        });
-        return;
-      }
-
-      const showsNames = this.capturePolicy.categories.indexedDb === "names-only";
-      const names = rows
-        .map((row) => row.name)
-        .filter((name): name is string => typeof name === "string")
-        .slice(0, STORAGE_SNAPSHOT_MAX_ITEMS);
-
-      this.queueEvent("indexedDbSnapshot", {
-        reason,
-        count: rows.length,
-        mode: showsNames ? "names-only" : "counts-only",
-        redacted: true,
-        truncated: showsNames && rows.length > names.length,
-        ...(showsNames ? { databaseNames: names } : {})
+      await captureIndexedDbSnapshot(reason, {
+        level: () => this.capturePolicy.categories.indexedDb,
+        isRecording: () => this.recordingActive,
+        emit: (payload) => this.queueEvent("indexedDbSnapshot", payload)
       });
     } catch {
       void 0;
@@ -1591,72 +905,20 @@ export class LiteCaptureAgent {
       return;
     }
 
-    const root = document.documentElement;
-    const viewportWidth = Math.max(1, Math.round(window.innerWidth));
-    const viewportHeight = Math.max(1, Math.round(window.innerHeight));
-    const scale = computeScreenshotScale(
-      viewportWidth,
-      viewportHeight,
-      window.devicePixelRatio || 1
-    );
-    const captureWidth = Math.max(1, Math.round(viewportWidth * scale));
-    const captureHeight = Math.max(1, Math.round(viewportHeight * scale));
-    const snapdomCaptureOptions = createSnapdomCaptureOptions(scale);
-
-    const previousIndicatorVisibility = this.indicator?.style.visibility;
-
-    if (this.indicator) {
-      this.indicator.style.visibility = "hidden";
-    }
-
-    try {
-      const captureTask = captureSnapdomDataUrl(root, snapdomCaptureOptions, {
-        width: captureWidth,
-        height: captureHeight
-      });
-      this.screenshotCaptureBlocked = true;
-      void captureTask.then(
-        () => {
-          this.releaseScreenshotCaptureBlock();
-        },
-        () => {
-          this.releaseScreenshotCaptureBlock();
-        }
-      );
-
-      const screenshot = await withTimeout(captureTask, SCREENSHOT_CAPTURE_TIMEOUT_MS);
-
-      if (
-        !screenshot ||
-        typeof screenshot.dataUrl !== "string" ||
-        screenshot.dataUrl.length > SCREENSHOT_MAX_DATA_URL_LENGTH
-      ) {
-        return;
+    await captureViewportScreenshot(reason, {
+      indicator: () => this.indicator,
+      onCaptureStarted: () => {
+        this.screenshotCaptureBlocked = true;
+      },
+      onCaptureSettled: () => {
+        this.releaseScreenshotCaptureBlock();
+      },
+      pointer: () => this.readPointerSnapshot(),
+      emit: (payload) => {
+        this.hasCapturedScreenshot = true;
+        this.queueEvent("screenshot", payload);
       }
-
-      this.hasCapturedScreenshot = true;
-
-      this.queueEvent("screenshot", {
-        reason,
-        dataUrl: screenshot.dataUrl,
-        format: screenshot.format,
-        quality: screenshot.quality,
-        w: captureWidth,
-        h: captureHeight,
-        viewport: {
-          width: viewportWidth,
-          height: viewportHeight,
-          dpr: Number((window.devicePixelRatio || 1).toFixed(3))
-        },
-        pointer: this.readPointerSnapshot()
-      });
-    } catch {
-      void 0;
-    } finally {
-      if (this.indicator) {
-        this.indicator.style.visibility = previousIndicatorVisibility ?? "";
-      }
-    }
+    });
   }
 
   private trackPointer(x: number, y: number): void {
@@ -1670,38 +932,6 @@ export class LiteCaptureAgent {
 
   private markUserActivity(): void {
     this.lastUserActivityMono = monotonicTime();
-  }
-
-  private createKeydownPayload(event: KeyboardEvent): Record<string, unknown> {
-    const focusTarget = resolveComposedTarget(event);
-    const editable = isKeystrokeEditableTarget(focusTarget);
-    // Masking off (`contentRedaction: false`): keys are recorded as typed, passwords included.
-    const sensitive =
-      isContentRedactionEnabled(this.capturePolicy.redaction) &&
-      isSensitiveKeystrokeTarget(focusTarget, this.capturePolicy.redaction.blockedSelectors);
-    const payload = stripUndefinedRecord({
-      key: event.key,
-      code: event.code,
-      repeat: event.repeat,
-      altKey: event.altKey,
-      ctrlKey: event.ctrlKey,
-      shiftKey: event.shiftKey,
-      metaKey: event.metaKey,
-      editable: editable,
-      sensitiveTarget: sensitive,
-      target: this.resolveTargetPayload(event.target, "fast")
-    });
-    const shouldRedact = shouldRedactKeystroke({
-      key: event.key,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey,
-      altKey: event.altKey,
-      editable,
-      sensitive,
-      inputs: this.capturePolicy.categories.inputs
-    });
-
-    return shouldRedact ? redactKeystrokePayload(payload) : payload;
   }
 
   private recordEditableInteraction(target: EventTarget | null): void {
@@ -1736,16 +966,6 @@ export class LiteCaptureAgent {
     }
   }
 
-  private queueTrailingScrollEvent(event: Event): void {
-    this.pendingScrollPayload = {
-      target: toFastTargetPayload(event.target, this.selectorSalt()),
-      scrollX: window.scrollX,
-      scrollY: window.scrollY
-    };
-    this.scrollBurstActiveUntilMono = monotonicTime() + POINTERMOVE_SUPPRESS_AFTER_SCROLL_MS;
-    this.scheduleTrailingScrollFlush(SCROLL_BURST_DEBOUNCE_MS);
-  }
-
   private recordScrollPressure(): void {
     if (!this.recordingActive) {
       return;
@@ -1760,57 +980,6 @@ export class LiteCaptureAgent {
     if (this.recentScrollMonos.length >= SCROLL_PRESSURE_EVENT_COUNT) {
       this.enterQuietMode("scroll");
     }
-  }
-
-  private scheduleTrailingScrollFlush(delayMs: number): void {
-    if (this.trailingScrollTimer > 0) {
-      clearTimeout(this.trailingScrollTimer);
-    }
-
-    this.trailingScrollTimer = window.setTimeout(
-      () => {
-        this.trailingScrollTimer = 0;
-        this.flushPendingScrollEvent();
-      },
-      Math.max(SCROLL_BURST_DEBOUNCE_MS, delayMs)
-    );
-  }
-
-  private flushPendingScrollEvent(): void {
-    const pending = this.pendingScrollPayload;
-
-    if (!pending) {
-      return;
-    }
-
-    this.pendingScrollPayload = null;
-
-    if (
-      this.lastEmittedScrollPosition &&
-      this.lastEmittedScrollPosition.scrollX === pending.scrollX &&
-      this.lastEmittedScrollPosition.scrollY === pending.scrollY
-    ) {
-      return;
-    }
-
-    this.emitQueuedScrollEvent(pending);
-  }
-
-  private emitQueuedScrollEvent(payload: {
-    target: Record<string, unknown>;
-    scrollX: number;
-    scrollY: number;
-  }): void {
-    this.lastEmittedScrollPosition = {
-      scrollX: payload.scrollX,
-      scrollY: payload.scrollY
-    };
-
-    this.queueEvent("scroll", payload);
-  }
-
-  private isScrollBurstActive(): boolean {
-    return monotonicTime() < this.scrollBurstActiveUntilMono;
   }
 
   private isUserRecentlyActive(idleMs = BACKGROUND_CAPTURE_IDLE_MS): boolean {
@@ -1910,7 +1079,7 @@ export class LiteCaptureAgent {
       return "hard";
     }
 
-    if (this.isScrollBurstActive()) {
+    if (this.inputCapture.isScrollBurstActive()) {
       return "soft";
     }
 
@@ -1924,16 +1093,14 @@ export class LiteCaptureAgent {
   private shouldSuppressPointerMoveCapture(): boolean {
     const stage = this.resolveCapturePressureStage();
     return (
-      this.isScrollBurstActive() ||
+      this.inputCapture.isScrollBurstActive() ||
       stage === "hard" ||
       stage === "critical" ||
       this.eventBuffer.length >= EVENT_BUFFER_FORCE_FLUSH_SIZE
     );
   }
 
-  private resolveDomSnapshotSummaryMode(
-    nodeCount: number
-  ): "pressure" | "large-dom" | "runtime-lite" {
+  private resolveDomSnapshotSummaryMode(nodeCount: number): DomSnapshotSummaryMode {
     const stage = this.resolveCapturePressureStage();
 
     if (stage === "hard" || stage === "critical") {
@@ -2106,28 +1273,10 @@ export class LiteCaptureAgent {
   }
 
   private emitPressureRecoverySnapshot(): void {
-    const nodeCount = document.getElementsByTagName("*").length;
-    const html = buildDomSnapshotSummaryHtml({
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title,
-      reason: "pressure-recovery",
-      nodeCount,
-      summaryMode: "pressure",
-      capturedAtIso: new Date().toISOString()
-    });
+    const payload = buildPressureRecoverySnapshotPayload(this.capturePolicy.redaction);
 
     this.hasDomSnapshot = true;
-    this.queueEvent("snapshot", {
-      reason: "pressure-recovery",
-      href: readPageUrl(this.capturePolicy.redaction),
-      title: document.title,
-      nodeCount,
-      htmlLength: html.length,
-      truncated: true,
-      html,
-      summaryOnly: true,
-      summaryMode: "pressure"
-    });
+    this.queueEvent("snapshot", payload);
   }
 
   private readPointerSnapshot(): Record<string, unknown> | undefined {
@@ -2173,299 +1322,11 @@ export class LiteCaptureAgent {
     }
 
     if (!this.recordingActive) {
-      if (shouldBufferBeforeRecording(event)) {
-        this.preRecordingBuffer.push(event);
-
-        if (this.preRecordingBuffer.length > PRE_RECORDING_BUFFER_MAX) {
-          this.preRecordingBuffer.splice(
-            0,
-            this.preRecordingBuffer.length - PRE_RECORDING_BUFFER_MAX
-          );
-        }
-      }
-
+      this.eventBuffer.bufferBeforeRecording(event);
       return;
     }
 
-    if (this.shouldDropEventForBackpressure(event)) {
-      return;
-    }
-
-    this.eventBuffer.push(event);
-    this.scheduleBufferedFlush(
-      this.eventBuffer.length >= EVENT_BUFFER_FORCE_FLUSH_SIZE ? 0 : EVENT_BUFFER_FLUSH_DELAY_MS
-    );
-  }
-
-  private createClickPayload(event: MouseEvent): Record<string, unknown> {
-    return {
-      x: round(event.clientX),
-      y: round(event.clientY),
-      pageX: round(event.pageX),
-      pageY: round(event.pageY),
-      ...readGeometry(),
-      button: event.button,
-      altKey: event.altKey,
-      ctrlKey: event.ctrlKey,
-      shiftKey: event.shiftKey,
-      metaKey: event.metaKey,
-      target: this.createPointerTargetPayload(event.target, "rich")
-    };
-  }
-
-  /**
-   * Target of a pointer action. `rich` adds the bounding rect and, when the profile allows
-   * readable actions, labels and a readable CSS selector; otherwise the target stays hashed.
-   */
-  private createPointerTargetPayload(
-    target: EventTarget | null,
-    detail: PointerTargetDetail
-  ): Record<string, unknown> {
-    if (detail === "fast") {
-      return toFastTargetPayload(target, this.selectorSalt());
-    }
-
-    const navigationTarget = resolveNavigationTarget(target);
-    const element = navigationTarget ?? target;
-    const payload = navigationTarget
-      ? this.resolveTargetPayload(navigationTarget, "navigation")
-      : this.resolveTargetPayload(target, "action");
-    this.scheduleTargetRectEnrichment(payload, element);
-    return payload;
-  }
-
-  /**
-   * Fills `rect` right after the event handlers ran instead of on the hot path, where reading it
-   * could force a synchronous layout. Fresh payload object, like the lite selector enrichment.
-   */
-  private scheduleTargetRectEnrichment(
-    payload: Record<string, unknown>,
-    element: EventTarget | null
-  ): void {
-    if (!(element instanceof Element)) {
-      return;
-    }
-
-    const timerId = window.setTimeout(() => {
-      this.pendingTargetEnrichmentTimers.delete(timerId);
-
-      if (!this.recordingActive || this.disposed) {
-        return;
-      }
-
-      const rect = readTargetRect(element);
-
-      if (rect) {
-        payload.rect = rect;
-      }
-    }, TARGET_ENRICH_DELAY_MS);
-
-    this.pendingTargetEnrichmentTimers.add(timerId);
-  }
-
-  private resolveTargetPayload(
-    target: EventTarget | null,
-    detail: TargetPayloadDetail
-  ): Record<string, unknown> {
-    if (detail === "fast") {
-      return toFastTargetPayload(target, this.selectorSalt());
-    }
-
-    const readable =
-      target instanceof Element ? buildReadableTarget(target, this.capturePolicy) : undefined;
-    const payload =
-      this.mode === "full"
-        ? toFastTargetPayload(target, this.selectorSalt())
-        : detail === "navigation"
-          ? this.createNavigationTargetPayload(target)
-          : this.createDeferredTargetPayload(target);
-
-    if (readable) {
-      payload.readable = readable;
-    }
-
-    return payload;
-  }
-
-  private createDeferredTargetPayload(target: EventTarget | null): Record<string, unknown> {
-    if (!(target instanceof Element)) {
-      return {};
-    }
-
-    const payload = toDeferredTargetPayload(target, this.selectorSalt());
-    const cachedSelector = this.selectorCache.get(target);
-
-    if (cachedSelector) {
-      payload.selector = cachedSelector;
-      return payload;
-    }
-
-    const timerId = window.setTimeout(() => {
-      this.pendingTargetEnrichmentTimers.delete(timerId);
-
-      if (!this.recordingActive || this.disposed) {
-        return;
-      }
-
-      payload.selector = this.readCachedSelector(target);
-    }, TARGET_ENRICH_DELAY_MS);
-
-    this.pendingTargetEnrichmentTimers.add(timerId);
-    return payload;
-  }
-
-  private createNavigationTargetPayload(target: EventTarget | null): Record<string, unknown> {
-    const navigationTarget = resolveNavigationTarget(target);
-
-    if (!navigationTarget) {
-      return toFastTargetPayload(target, this.selectorSalt());
-    }
-
-    const href = sanitizeOptionalUrl(
-      navigationTarget.getAttribute("href") ?? navigationTarget.href,
-      this.capturePolicy.redaction
-    );
-    const payload = toFastTargetPayload(navigationTarget, this.selectorSalt());
-    payload.selector = this.readCachedSelector(navigationTarget);
-
-    if (href) {
-      payload.href = href;
-    }
-
-    return payload;
-  }
-
-  private flushPreRecordingBuffer(): void {
-    if (!this.recordingActive || this.preRecordingBuffer.length === 0) {
-      return;
-    }
-
-    this.eventBuffer.push(...this.preRecordingBuffer.splice(0, this.preRecordingBuffer.length));
-    this.scheduleBufferedFlush(0);
-  }
-
-  private flushEvents(): void {
-    if (this.flushTimer > 0) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = 0;
-    }
-
-    if (this.eventBuffer.length === 0) {
-      return;
-    }
-
-    const events = this.eventBuffer.splice(0, EVENT_BUFFER_EMIT_CHUNK_SIZE);
-
-    if (events.length > 0) {
-      this.options.emitBatch(events);
-    }
-
-    if (this.eventBuffer.length > 0) {
-      this.scheduleBufferedFlush(0);
-    }
-  }
-
-  private scheduleBufferedFlush(delayMs: number): void {
-    if (this.flushTimer > 0) {
-      if (delayMs > 0) {
-        return;
-      }
-
-      clearTimeout(this.flushTimer);
-      this.flushTimer = 0;
-    }
-
-    this.flushTimer = window.setTimeout(
-      () => {
-        this.flushEvents();
-      },
-      Math.max(0, delayMs)
-    );
-  }
-
-  private drainBufferedEvents(): void {
-    if (this.flushTimer > 0) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = 0;
-    }
-
-    if (this.eventBuffer.length === 0) {
-      return;
-    }
-
-    while (this.eventBuffer.length > 0) {
-      const events = this.eventBuffer.splice(0, EVENT_BUFFER_EMIT_CHUNK_SIZE);
-
-      if (events.length === 0) {
-        break;
-      }
-
-      this.options.emitBatch(events);
-    }
-  }
-
-  private shouldDropEventForBackpressure(event: RawRecorderEvent): boolean {
-    const buffered = this.eventBuffer.length;
-
-    if (buffered < EVENT_BUFFER_SOFT_LIMIT) {
-      return false;
-    }
-
-    if (!LOW_PRIORITY_RAW_TYPES.has(event.rawType)) {
-      return false;
-    }
-
-    if (buffered < EVENT_BUFFER_SOFT_LIMIT) {
-      return false;
-    }
-
-    if (buffered >= EVENT_BUFFER_HARD_LIMIT || this.mode === "full") {
-      if (buffered >= EVENT_BUFFER_HARD_LIMIT && this.mode !== "full") {
-        this.dropBufferedLowPriorityEvents(buffered - EVENT_BUFFER_SOFT_LIMIT + 1);
-        this.scheduleBufferedFlush(0);
-      }
-
-      this.droppedLowPriorityEvents += 1;
-
-      if (isPerfLoggingEnabled() && this.droppedLowPriorityEvents % 200 === 0) {
-        console.info("[WebBlackbox][perf] dropped low-priority events", {
-          mode: this.mode,
-          dropped: this.droppedLowPriorityEvents,
-          buffered,
-          rawType: event.rawType
-        });
-      }
-
-      return true;
-    }
-
-    return false;
-  }
-
-  private dropBufferedLowPriorityEvents(targetDropCount: number): void {
-    if (targetDropCount <= 0 || this.eventBuffer.length === 0) {
-      return;
-    }
-
-    let dropped = 0;
-    const retained: RawRecorderEvent[] = [];
-
-    for (const event of this.eventBuffer) {
-      if (dropped < targetDropCount && LOW_PRIORITY_RAW_TYPES.has(event.rawType)) {
-        dropped += 1;
-        continue;
-      }
-
-      retained.push(event);
-    }
-
-    if (dropped === 0) {
-      return;
-    }
-
-    this.eventBuffer.length = 0;
-    this.eventBuffer.push(...retained);
-    this.droppedLowPriorityEvents += dropped;
+    this.eventBuffer.enqueue(event);
   }
 
   private ensureIndicator(sid?: string, mode?: string): void {
@@ -2520,621 +1381,5 @@ export class LiteCaptureAgent {
   }
 }
 
-function sanitizeSamplingConfig(raw: unknown): LiteCaptureSampling {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return { ...DEFAULT_SAMPLING };
-  }
-
-  const row = raw as Record<string, unknown>;
-
-  return {
-    mousemoveHz: clampRate(row.mousemoveHz, DEFAULT_SAMPLING.mousemoveHz),
-    scrollHz: clampRate(row.scrollHz, DEFAULT_SAMPLING.scrollHz),
-    domFlushMs: clampInterval(row.domFlushMs, DEFAULT_SAMPLING.domFlushMs),
-    snapshotIntervalMs: clampInterval(row.snapshotIntervalMs, DEFAULT_SAMPLING.snapshotIntervalMs),
-    screenshotIdleMs: clampOptionalInterval(row.screenshotIdleMs, DEFAULT_SAMPLING.screenshotIdleMs)
-  };
-}
-
-function sanitizePointerOptions(raw: unknown): PointerCaptureOptions {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return { ...DEFAULT_POINTER_CAPTURE_OPTIONS };
-  }
-
-  const row = raw as Record<string, unknown>;
-
-  return {
-    hover: row.hover === true,
-    drag: row.drag === true,
-    wheel: row.wheel === true
-  };
-}
-
-function clampRate(value: unknown, fallback: number): number {
-  return clampNumber(value, fallback, 1, 240);
-}
-
-function clampInterval(value: unknown, fallback: number): number {
-  return clampNumber(value, fallback, 25, 120_000);
-}
-
-function clampOptionalInterval(value: unknown, fallback: number): number {
-  if (value === 0) {
-    return 0;
-  }
-
-  return clampNumber(value, fallback, 0, 120_000);
-}
-
-function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return fallback;
-  }
-
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
-
-function monotonicTime(): number {
-  return performance.timeOrigin + performance.now();
-}
-
-function resolveContentFrameContext(scope: LiteCaptureAgentOptions["frameScope"] = "auto"): {
-  marker: string | undefined;
-  isTopLevel: boolean;
-} {
-  if (scope === "top") {
-    return {
-      marker: undefined,
-      isTopLevel: true
-    };
-  }
-
-  if (scope === "child") {
-    return {
-      marker: "content-iframe",
-      isTopLevel: false
-    };
-  }
-
-  try {
-    if (window.top === window) {
-      return {
-        marker: undefined,
-        isTopLevel: true
-      };
-    }
-  } catch {
-    return {
-      marker: "content-iframe",
-      isTopLevel: false
-    };
-  }
-
-  return {
-    marker: "content-iframe",
-    isTopLevel: false
-  };
-}
-
-function toDeferredTargetPayload(target: Element, salt: SelectorSalt): Record<string, unknown> {
-  return {
-    ...toFastTargetPayload(target, salt),
-    dataTestIdToken: tokenForValue(readDataTestId(target), salt)
-  };
-}
-
-function toFastTargetPayload(
-  target: EventTarget | null,
-  salt: SelectorSalt
-): Record<string, unknown> {
-  if (!(target instanceof Element)) {
-    return {};
-  }
-
-  const classTokens = readClassTokens(target)
-    .slice(0, 3)
-    .map((className) => hashToken(className, salt));
-  const payload: Record<string, unknown> = {
-    tag: target.tagName,
-    idToken: tokenForValue(target.id, salt),
-    classTokens: classTokens.length > 0 ? classTokens : undefined
-  };
-
-  return stripUndefinedRecord(payload);
-}
-
-function buildDomSnapshotSummaryHtml(options: {
-  href: string;
-  title: string;
-  reason: string;
-  nodeCount: number;
-  summaryMode: "pressure" | "large-dom" | "runtime-lite";
-  capturedAtIso: string;
-}): string {
-  const body = [
-    "<!doctype html>",
-    `<html data-webblackbox-summary="true" data-summary-mode="${escapeHtml(options.summaryMode)}">`,
-    "<head>",
-    '<meta charset="utf-8">',
-    `<title>${escapeHtml(options.title || "WebBlackbox DOM Summary")}</title>`,
-    "</head>",
-    "<body>",
-    "<main>",
-    "<h1>WebBlackbox Lite DOM Summary</h1>",
-    `<p>mode=${escapeHtml(options.summaryMode)}</p>`,
-    `<p>reason=${escapeHtml(options.reason)}</p>`,
-    `<p>href=${escapeHtml(options.href)}</p>`,
-    `<p>title=${escapeHtml(options.title)}</p>`,
-    `<p>nodeCount=${String(options.nodeCount)}</p>`,
-    `<p>capturedAt=${escapeHtml(options.capturedAtIso)}</p>`,
-    "</main>",
-    "</body>",
-    "</html>"
-  ];
-
-  return body.join("");
-}
-
-function isEditableInteractionTarget(target: EventTarget | null): boolean {
-  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-    return true;
-  }
-
-  return isRichTextEditableTarget(target);
-}
-
-/** Real focus target, including elements inside open shadow roots (event.target is retargeted). */
-function resolveComposedTarget(event: Event): EventTarget | null {
-  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-  return path[0] ?? event.target;
-}
-
-function isKeystrokeEditableTarget(target: EventTarget | null): boolean {
-  if (target instanceof HTMLInputElement) {
-    return !NON_TEXT_INPUT_TYPES.has(target.type);
-  }
-
-  if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
-    return true;
-  }
-
-  return isRichTextEditableTarget(target);
-}
-
-function isSensitiveKeystrokeTarget(
-  target: EventTarget | null,
-  blockedSelectors: readonly string[]
-): boolean {
-  if (!(target instanceof Element)) {
-    return false;
-  }
-
-  return [PASSWORD_INPUT_SELECTOR, ...blockedSelectors].some((selector) =>
-    matchesClosestSelector(target, selector)
-  );
-}
-
-function matchesClosestSelector(target: Element, selector: string): boolean {
-  try {
-    return target.closest(selector) !== null;
-  } catch {
-    // Invalid user-provided selectors must not break capture.
-    return false;
-  }
-}
-
-function resolveNavigationTarget(target: EventTarget | null): HTMLAnchorElement | null {
-  if (target instanceof HTMLAnchorElement && hasNavigableHref(target)) {
-    return target;
-  }
-
-  if (!(target instanceof Element)) {
-    return null;
-  }
-
-  const anchor = target.closest("a[href]");
-  return anchor instanceof HTMLAnchorElement && hasNavigableHref(anchor) ? anchor : null;
-}
-
-function hasNavigableHref(anchor: HTMLAnchorElement): boolean {
-  const href = anchor.getAttribute("href");
-  return typeof href === "string" && href.length > 0;
-}
-
-function isRichTextEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-
-  if (target.isContentEditable) {
-    return true;
-  }
-
-  const directValue = target.getAttribute("contenteditable");
-
-  if (directValue === "" || directValue === "true" || directValue === "plaintext-only") {
-    return true;
-  }
-
-  return (
-    target.closest(
-      "[contenteditable='true'], [contenteditable='plaintext-only'], [contenteditable='']"
-    ) !== null
-  );
-}
-
-function safeSelector(target: EventTarget | null, salt: SelectorSalt): string {
-  if (!(target instanceof Element)) {
-    return "unknown";
-  }
-
-  const segments: string[] = [];
-  let current: Element | null = target;
-
-  while (current && segments.length < 5) {
-    let segment = current.tagName.toLowerCase();
-
-    if (current.id) {
-      segment += `[id:${hashToken(current.id, salt)}]`;
-      segments.unshift(segment);
-      break;
-    }
-
-    const classNames = readClassTokens(current).slice(0, 2);
-
-    if (classNames.length > 0) {
-      segment += classNames.map((name) => `[class:${hashToken(name, salt)}]`).join("");
-    }
-
-    const parent: Element | null = current.parentElement;
-
-    if (parent) {
-      const index = nthOfType(current);
-
-      if (index > 1) {
-        segment += `:nth-of-type(${index})`;
-      }
-    }
-
-    segments.unshift(segment);
-    current = parent;
-  }
-
-  return segments.join(" > ");
-}
-
-function nthOfType(node: Element): number {
-  let index = 1;
-  let cursor = node.previousElementSibling;
-
-  while (cursor) {
-    if (cursor.tagName === node.tagName) {
-      index += 1;
-    }
-
-    cursor = cursor.previousElementSibling;
-  }
-
-  return index;
-}
-
-function readClassTokens(target: Element): string[] {
-  if (target.classList.length > 0) {
-    return Array.from(target.classList).filter((token) => token.length > 0);
-  }
-
-  return typeof target.className === "string"
-    ? target.className.split(/\s+/).filter((token) => token.length > 0)
-    : [];
-}
-
-function tokenForValue(value: string | undefined | null, salt: SelectorSalt): string | undefined {
-  return value && value.length > 0 ? hashToken(value, salt) : undefined;
-}
-
-/** `salt` null: masking is off and tokens are recorded as they are. */
-function hashToken(value: string, salt: SelectorSalt): string {
-  return salt === null ? value : `t_${hashString(`${salt}:${value}`)}`;
-}
-
-/** Per-agent salt of selector token hashes; null records tokens as-is. */
-type SelectorSalt = string | null;
-
-function createSelectorSalt(): string {
-  const bytes = new Uint32Array(2);
-
-  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
-    crypto.getRandomValues(bytes);
-  } else {
-    bytes[0] = Math.floor(Math.random() * 0xffffffff);
-    bytes[1] = Date.now() >>> 0;
-  }
-
-  return `${bytes[0]?.toString(36) ?? "0"}${bytes[1]?.toString(36) ?? "0"}`;
-}
-
-function hashString(value: string): string {
-  let hash = 0x811c9dc5;
-
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-
-  return hash.toString(36).padStart(7, "0");
-}
-
-function stripUndefinedRecord(value: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
-}
-
-function readPageUrl(rules: RedactionRules): string {
-  return typeof location !== "undefined" && typeof location.href === "string"
-    ? recordUrl(location.href, rules)
-    : "";
-}
-
-function sanitizeOptionalUrl(
-  value: string | null | undefined,
-  rules: RedactionRules
-): string | undefined {
-  if (typeof value !== "string" || value.length === 0) {
-    return undefined;
-  }
-
-  const sanitized = recordUrl(value, rules);
-  return sanitized.length > 0 ? sanitized : undefined;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function createEmptyMutationSummary(): MutationBatchSummary {
-  return {
-    count: 0,
-    sampledCount: 0,
-    truncated: false,
-    childListCount: 0,
-    attributeCount: 0,
-    characterDataCount: 0,
-    addedNodes: 0,
-    removedNodes: 0,
-    sampleTargets: [],
-    attributeNames: []
-  };
-}
-
-function isPerfLoggingEnabled(): boolean {
-  const flags = window as unknown as Record<string, unknown>;
-  return flags[PERF_LOG_FLAG] === true;
-}
-
-function computeScreenshotScale(
-  viewportWidth: number,
-  viewportHeight: number,
-  dpr: number
-): number {
-  const baseScale = Math.max(1, dpr || 1);
-  const dimensionScale = Math.min(
-    1,
-    SCREENSHOT_MAX_DIMENSION_PX / Math.max(viewportWidth, viewportHeight)
-  );
-
-  return Math.max(
-    SCREENSHOT_MIN_SCALE,
-    Math.min(SCREENSHOT_MAX_SCALE, Number((baseScale * dimensionScale).toFixed(3)))
-  );
-}
-
-type SnapdomBlobOptions = Parameters<typeof snapdom.toBlob>[1];
-type SnapdomCaptureOptions = Omit<NonNullable<SnapdomBlobOptions>, "type" | "quality">;
-type ScreenshotCropTarget = {
-  width: number;
-  height: number;
-};
-
-function createSnapdomCaptureOptions(scale: number): SnapdomCaptureOptions {
-  return {
-    fast: true,
-    cache: "auto",
-    dpr: 1,
-    scale,
-    backgroundColor: "transparent"
-  };
-}
-
-async function captureSnapdomDataUrl(
-  element: Element,
-  options: SnapdomCaptureOptions,
-  cropTarget: ScreenshotCropTarget
-): Promise<{ dataUrl: string; format: "webp" | "png"; quality?: number } | null> {
-  const webpDataUrl = await captureSnapdomFormatDataUrl(
-    element,
-    {
-      ...options,
-      type: "webp",
-      quality: SCREENSHOT_WEBP_QUALITY
-    },
-    {
-      ...cropTarget,
-      mimeType: "image/webp",
-      quality: SCREENSHOT_WEBP_QUALITY
-    }
-  );
-
-  if (webpDataUrl) {
-    return {
-      dataUrl: webpDataUrl,
-      format: "webp",
-      quality: Math.round(SCREENSHOT_WEBP_QUALITY * 100)
-    };
-  }
-
-  const pngDataUrl = await captureSnapdomFormatDataUrl(
-    element,
-    {
-      ...options,
-      type: "png"
-    },
-    {
-      ...cropTarget,
-      mimeType: "image/png"
-    }
-  );
-
-  if (!pngDataUrl) {
-    return null;
-  }
-
-  return {
-    dataUrl: pngDataUrl,
-    format: "png"
-  };
-}
-
-async function captureSnapdomFormatDataUrl(
-  element: Element,
-  options: NonNullable<SnapdomBlobOptions>,
-  cropTarget: ScreenshotCropTarget & { mimeType: string; quality?: number }
-): Promise<string | null> {
-  const blob = await safeSnapdomToBlob(element, options);
-  return cropBlobToDataUrl(blob, cropTarget);
-}
-
-async function safeSnapdomToBlob(
-  element: Element,
-  options: NonNullable<SnapdomBlobOptions>
-): Promise<Blob | null> {
-  try {
-    const blob = await snapdom.toBlob(element, options);
-    return blob instanceof Blob ? blob : null;
-  } catch {
-    return null;
-  }
-}
-
-function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-
-  return Promise.race<T | null>([
-    task,
-    new Promise<null>((resolve) => {
-      timer = setTimeout(() => {
-        resolve(null);
-      }, timeoutMs);
-    })
-  ]).finally(() => {
-    if (timer !== null) {
-      clearTimeout(timer);
-    }
-  });
-}
-
-async function cropBlobToDataUrl(
-  blob: Blob | null,
-  options: ScreenshotCropTarget & { mimeType: string; quality?: number }
-): Promise<string | null> {
-  if (!(blob instanceof Blob)) {
-    return null;
-  }
-
-  const objectUrl = URL.createObjectURL(blob);
-
-  try {
-    const image = await loadImageFromUrl(objectUrl);
-    const targetWidth = Math.max(1, Math.round(options.width));
-    const targetHeight = Math.max(1, Math.round(options.height));
-    const sourceWidth = Math.max(1, Math.round(image.naturalWidth || image.width || targetWidth));
-    const sourceHeight = Math.max(
-      1,
-      Math.round(image.naturalHeight || image.height || targetHeight)
-    );
-    const cropWidth = Math.max(1, Math.min(targetWidth, sourceWidth));
-    const cropHeight = Math.max(1, Math.min(targetHeight, sourceHeight));
-    const canvas = document.createElement("canvas");
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
-
-    const context = canvas.getContext("2d");
-
-    if (!context) {
-      return null;
-    }
-
-    context.clearRect(0, 0, targetWidth, targetHeight);
-    context.drawImage(image, 0, 0, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-
-    return safeCanvasToDataUrl(canvas, options.mimeType, options.quality);
-  } catch {
-    return null;
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
-async function loadImageFromUrl(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.decoding = "async";
-    image.onload = () => {
-      resolve(image);
-    };
-    image.onerror = () => {
-      reject(new Error("image-load-failed"));
-    };
-    image.src = url;
-  });
-}
-
-function safeCanvasToDataUrl(
-  canvas: HTMLCanvasElement,
-  format: string,
-  quality?: number
-): string | null {
-  try {
-    return typeof quality === "number"
-      ? canvas.toDataURL(format, quality)
-      : canvas.toDataURL(format);
-  } catch {
-    return null;
-  }
-}
-
-function shouldBufferBeforeRecording(event: RawRecorderEvent): boolean {
-  if (event.source !== "content") {
-    return false;
-  }
-
-  return (
-    event.rawType === "console" ||
-    event.rawType === "fetch" ||
-    event.rawType === "xhr" ||
-    event.rawType === "networkBody" ||
-    event.rawType === "fetchError" ||
-    event.rawType === "pageError" ||
-    event.rawType === "unhandledrejection" ||
-    event.rawType === "resourceError"
-  );
-}
-
 /** Default sanitized sampling profile used by `LiteCaptureAgent`. */
-export { DEFAULT_SAMPLING as DEFAULT_LITE_CAPTURE_SAMPLING };
-
-function readStorageKeys(storage: Storage, maxItems: number): string[] {
-  const keys: string[] = [];
-
-  for (let index = 0; index < storage.length && keys.length < maxItems; index += 1) {
-    const key = storage.key(index);
-
-    if (key !== null) {
-      keys.push(key);
-    }
-  }
-
-  return keys;
-}
+export { DEFAULT_SAMPLING as DEFAULT_LITE_CAPTURE_SAMPLING } from "./lite-capture-config.js";
