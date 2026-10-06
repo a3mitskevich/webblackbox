@@ -54,16 +54,10 @@ import {
   buildLocalStorageSnapshotPayload,
   captureIndexedDbSnapshot
 } from "./lite-storage-snapshots.js";
-import {
-  captureSnapdomDataUrl,
-  computeScreenshotScale,
-  createSnapdomCaptureOptions,
-  withTimeout
-} from "./lite-screenshots.js";
+import { captureViewportScreenshot } from "./lite-screenshots.js";
 import { isEditableInteractionTarget, isRichTextEditableTarget } from "./lite-keystrokes.js";
 import { LiteTargetPayloads } from "./lite-target-payload.js";
 
-const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
 const SCREENSHOT_POINTER_STALE_MS = 2_500;
 const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
 const BACKGROUND_CAPTURE_IDLE_MS = 1_500;
@@ -89,7 +83,6 @@ const QUIET_MODE_COOLDOWN_MS = 3_000;
 const DOM_CHANGE_SNAPSHOT_INTERVAL_MS = 2_500;
 const QUIET_MODE_SCROLL_COOLDOWN_MS = 2_000;
 const QUIET_MODE_EDITOR_COOLDOWN_MS = 4_200;
-const SCREENSHOT_CAPTURE_TIMEOUT_MS = 4_000;
 const DOM_SNAPSHOT_SUMMARY_NODE_THRESHOLD = 3_500;
 const START_CAPTURE_DEFER_MS = 2_000;
 const LONG_TASK_PRESSURE_COOLDOWN_MS = 1_800;
@@ -912,72 +905,20 @@ export class LiteCaptureAgent {
       return;
     }
 
-    const root = document.documentElement;
-    const viewportWidth = Math.max(1, Math.round(window.innerWidth));
-    const viewportHeight = Math.max(1, Math.round(window.innerHeight));
-    const scale = computeScreenshotScale(
-      viewportWidth,
-      viewportHeight,
-      window.devicePixelRatio || 1
-    );
-    const captureWidth = Math.max(1, Math.round(viewportWidth * scale));
-    const captureHeight = Math.max(1, Math.round(viewportHeight * scale));
-    const snapdomCaptureOptions = createSnapdomCaptureOptions(scale);
-
-    const previousIndicatorVisibility = this.indicator?.style.visibility;
-
-    if (this.indicator) {
-      this.indicator.style.visibility = "hidden";
-    }
-
-    try {
-      const captureTask = captureSnapdomDataUrl(root, snapdomCaptureOptions, {
-        width: captureWidth,
-        height: captureHeight
-      });
-      this.screenshotCaptureBlocked = true;
-      void captureTask.then(
-        () => {
-          this.releaseScreenshotCaptureBlock();
-        },
-        () => {
-          this.releaseScreenshotCaptureBlock();
-        }
-      );
-
-      const screenshot = await withTimeout(captureTask, SCREENSHOT_CAPTURE_TIMEOUT_MS);
-
-      if (
-        !screenshot ||
-        typeof screenshot.dataUrl !== "string" ||
-        screenshot.dataUrl.length > SCREENSHOT_MAX_DATA_URL_LENGTH
-      ) {
-        return;
+    await captureViewportScreenshot(reason, {
+      indicator: () => this.indicator,
+      onCaptureStarted: () => {
+        this.screenshotCaptureBlocked = true;
+      },
+      onCaptureSettled: () => {
+        this.releaseScreenshotCaptureBlock();
+      },
+      pointer: () => this.readPointerSnapshot(),
+      emit: (payload) => {
+        this.hasCapturedScreenshot = true;
+        this.queueEvent("screenshot", payload);
       }
-
-      this.hasCapturedScreenshot = true;
-
-      this.queueEvent("screenshot", {
-        reason,
-        dataUrl: screenshot.dataUrl,
-        format: screenshot.format,
-        quality: screenshot.quality,
-        w: captureWidth,
-        h: captureHeight,
-        viewport: {
-          width: viewportWidth,
-          height: viewportHeight,
-          dpr: Number((window.devicePixelRatio || 1).toFixed(3))
-        },
-        pointer: this.readPointerSnapshot()
-      });
-    } catch {
-      void 0;
-    } finally {
-      if (this.indicator) {
-        this.indicator.style.visibility = previousIndicatorVisibility ?? "";
-      }
-    }
+    });
   }
 
   private trackPointer(x: number, y: number): void {

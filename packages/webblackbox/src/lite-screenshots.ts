@@ -1,11 +1,94 @@
 import { snapdom } from "@zumer/snapdom";
 
+const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
+const SCREENSHOT_CAPTURE_TIMEOUT_MS = 4_000;
 const SCREENSHOT_MAX_DIMENSION_PX = 1_200;
 const SCREENSHOT_MAX_SCALE = 1.5;
 const SCREENSHOT_MIN_SCALE = 0.45;
 const SCREENSHOT_WEBP_QUALITY = 0.66;
 
-export function computeScreenshotScale(
+/** What the agent provides while one viewport screenshot is taken. */
+export type ViewportScreenshotHost = {
+  /** The recording indicator (hidden while the page is captured), read when it is needed. */
+  indicator(): HTMLElement | null;
+  /** snapdom started cloning the page: no other screenshot may start until it settles. */
+  onCaptureStarted(): void;
+  onCaptureSettled(): void;
+  pointer(): Record<string, unknown> | undefined;
+  emit(payload: Record<string, unknown>): void;
+};
+
+/** Captures the viewport with snapdom and emits it, unless it times out or is too large. */
+export async function captureViewportScreenshot(
+  reason: string,
+  host: ViewportScreenshotHost
+): Promise<void> {
+  const root = document.documentElement;
+  const viewportWidth = Math.max(1, Math.round(window.innerWidth));
+  const viewportHeight = Math.max(1, Math.round(window.innerHeight));
+  const scale = computeScreenshotScale(viewportWidth, viewportHeight, window.devicePixelRatio || 1);
+  const captureWidth = Math.max(1, Math.round(viewportWidth * scale));
+  const captureHeight = Math.max(1, Math.round(viewportHeight * scale));
+  const snapdomCaptureOptions = createSnapdomCaptureOptions(scale);
+
+  const indicator = host.indicator();
+  const previousIndicatorVisibility = indicator?.style.visibility;
+
+  if (indicator) {
+    indicator.style.visibility = "hidden";
+  }
+
+  try {
+    const captureTask = captureSnapdomDataUrl(root, snapdomCaptureOptions, {
+      width: captureWidth,
+      height: captureHeight
+    });
+    host.onCaptureStarted();
+    void captureTask.then(
+      () => {
+        host.onCaptureSettled();
+      },
+      () => {
+        host.onCaptureSettled();
+      }
+    );
+
+    const screenshot = await withTimeout(captureTask, SCREENSHOT_CAPTURE_TIMEOUT_MS);
+
+    if (
+      !screenshot ||
+      typeof screenshot.dataUrl !== "string" ||
+      screenshot.dataUrl.length > SCREENSHOT_MAX_DATA_URL_LENGTH
+    ) {
+      return;
+    }
+
+    host.emit({
+      reason,
+      dataUrl: screenshot.dataUrl,
+      format: screenshot.format,
+      quality: screenshot.quality,
+      w: captureWidth,
+      h: captureHeight,
+      viewport: {
+        width: viewportWidth,
+        height: viewportHeight,
+        dpr: Number((window.devicePixelRatio || 1).toFixed(3))
+      },
+      pointer: host.pointer()
+    });
+  } catch {
+    void 0;
+  } finally {
+    const shownIndicator = host.indicator();
+
+    if (shownIndicator) {
+      shownIndicator.style.visibility = previousIndicatorVisibility ?? "";
+    }
+  }
+}
+
+function computeScreenshotScale(
   viewportWidth: number,
   viewportHeight: number,
   dpr: number
@@ -29,7 +112,7 @@ type ScreenshotCropTarget = {
   height: number;
 };
 
-export function createSnapdomCaptureOptions(scale: number): SnapdomCaptureOptions {
+function createSnapdomCaptureOptions(scale: number): SnapdomCaptureOptions {
   return {
     fast: true,
     cache: "auto",
@@ -39,7 +122,7 @@ export function createSnapdomCaptureOptions(scale: number): SnapdomCaptureOption
   };
 }
 
-export async function captureSnapdomDataUrl(
+async function captureSnapdomDataUrl(
   element: Element,
   options: SnapdomCaptureOptions,
   cropTarget: ScreenshotCropTarget
@@ -109,7 +192,7 @@ async function safeSnapdomToBlob(
   }
 }
 
-export function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T | null> {
+function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   return Promise.race<T | null>([
