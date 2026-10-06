@@ -36,8 +36,8 @@ export function isInRange(range: TimeRange | null, mono: number): boolean {
 /**
  * `[` / `]`: moves one end of the range to the playhead. Without a range, `[` starts one that runs
  * to the end of the recording and `]` one that runs from its start. An end that would cross the
- * other one swaps them. A move that would leave less than `MIN_RANGE_MS` keeps the range as it was
- * (an edge key never clears a selection).
+ * other one swaps them. `null` when the move would leave less than `MIN_RANGE_MS`: the caller keeps
+ * the range it has (an edge key never clears a selection) and says why.
  */
 export function moveRangeEdge(
   range: TimeRange | null,
@@ -46,11 +46,9 @@ export function moveRangeEdge(
   bounds: { minMono: number; maxMono: number }
 ): TimeRange | null {
   const current = range ?? { startMono: bounds.minMono, endMono: bounds.maxMono };
-  const moved =
-    edge === "start"
-      ? normalizeRange(mono, current.endMono, bounds)
-      : normalizeRange(current.startMono, mono, bounds);
-  return moved ?? range;
+  return edge === "start"
+    ? normalizeRange(mono, current.endMono, bounds)
+    : normalizeRange(current.startMono, mono, bounds);
 }
 
 export function isSameRange(left: TimeRange | null, right: TimeRange | null): boolean {

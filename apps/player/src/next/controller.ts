@@ -557,10 +557,14 @@ export function createPlayerController(
 
       const next = moveRangeEdge(state.range, edge, state.playheadMono, bounds(archive));
 
-      // Too close to the other end (or to the edge of the recording): say so instead of
-      // silently ignoring the key.
-      if (!next || isSameRange(state.range, next)) {
+      // Too close to the other end (or to the edge of the recording): keep the range and say so
+      // instead of silently ignoring the key. An end already at the playhead changes nothing.
+      if (!next) {
         update({ announcement: i18n().tn("rangeTooShort") });
+        return;
+      }
+
+      if (isSameRange(state.range, next)) {
         return;
       }
 

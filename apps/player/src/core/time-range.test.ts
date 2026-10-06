@@ -34,10 +34,10 @@ describe("time range", () => {
     });
   });
 
-  it("keeps the range when an edge move would collapse it", () => {
+  it("reports an edge move that would collapse the range as null", () => {
     const range = { startMono: 2_000, endMono: 5_000 };
-    expect(moveRangeEdge(range, "start", 5_000, bounds)).toBe(range);
-    expect(moveRangeEdge(range, "end", 2_020, bounds)).toBe(range);
+    expect(moveRangeEdge(range, "start", 5_000, bounds)).toBeNull();
+    expect(moveRangeEdge(range, "end", 2_020, bounds)).toBeNull();
     // At the very start / end of the recording there is nothing to select.
     expect(moveRangeEdge(null, "end", 1_000, bounds)).toBeNull();
     expect(moveRangeEdge(null, "start", 11_000, bounds)).toBeNull();

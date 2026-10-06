@@ -296,6 +296,13 @@ describe("playback", () => {
     controller.markRange("start");
     expect(store.getState().range).toEqual({ startMono: minMono, endMono: minMono + 3_000 });
     expect(store.getState().announcement).toMatch(/^Range too short/);
+    // `[` where the range already starts changes nothing and announces nothing new.
+    controller.seek(minMono + 1_000);
+    controller.markRange("start");
+    const announced = store.getState().announcement;
+    controller.markRange("start");
+    expect(store.getState().announcement).toBe(announced);
+    expect(announced).toMatch(/^Range .* selected$/);
 
     // A click-sized range is no range; a new archive starts without one.
     controller.setRange({ startMono: minMono + 10, endMono: minMono + 20 });
