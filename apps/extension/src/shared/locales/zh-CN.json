@@ -270,7 +270,7 @@
   "optionsNavTransfer": "导入 / 导出",
   "optionsSensitivityHint": "数据离开页面前要遮盖的内容，作用于默认配置。",
   "optionsPointerHint": "指针和滚动的采样频率。",
-  "optionsSamplingHint": "扩展在何处运行、缓冲区时长与采集节奏；数值越低越省 CPU。",
+  "optionsSamplingHint": "扩展在何处运行、何时发出异常提醒以及采集节奏；数值越低越省 CPU。",
   "optionsGroupInjection": "页面注入",
   "optionsContentInjection": "注入页面",
   "optionsContentInjectionHint": "两种模式下，按下“开始”之前都不会录制任何内容。对保存后加载的页面生效；已打开的标签页在重新加载前保持原状。",

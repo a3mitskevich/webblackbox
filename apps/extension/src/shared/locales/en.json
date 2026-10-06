@@ -270,7 +270,7 @@
   "optionsNavTransfer": "Import / Export",
   "optionsSensitivityHint": "What is masked before data leaves the page. Applies to the Default profile.",
   "optionsPointerHint": "How often pointer and scroll movement is sampled.",
-  "optionsSamplingHint": "Where the extension runs, buffer length and capture cadence; lower values cost less CPU.",
+  "optionsSamplingHint": "Where the extension runs, when it flags incidents and how often it captures; lower values cost less CPU.",
   "optionsGroupInjection": "Page injection",
   "optionsContentInjection": "Inject into pages",
   "optionsContentInjectionHint": "In both modes nothing is recorded before you press Start. Applies to pages loaded after saving; open tabs keep their state until reloaded.",
