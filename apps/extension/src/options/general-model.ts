@@ -12,7 +12,6 @@ import {
   type ContentInjectionMode
 } from "../shared/content-injection.js";
 import type { ExtensionMessageKey, ExtensionUnit } from "../shared/i18n.js";
-import { OPTIONS_STORAGE_VERSION } from "../shared/options-storage.js";
 import { parsePlayerUrl } from "../shared/player-url.js";
 import {
   DEFAULT_PERFORMANCE_BUDGET,
@@ -27,12 +26,14 @@ import { DEFAULT_START_RELOAD_OFFER } from "../shared/start-reload-offer.js";
  */
 
 export type GeneralDraft = {
+  /** Shows and edits the Default profile's sampling, freeze-on-error and redaction lists. */
   recorderConfig: RecorderConfig;
+  /** Stored under its own key (`webblackbox.performanceBudget`). */
   performanceBudget: PerformanceBudgetConfig;
   archive: ExportPolicyPrefs;
-  /** Stored under its own key (`webblackbox.injection`), not in `webblackbox.options`. */
+  /** Stored under its own key (`webblackbox.injection`). */
   injection: ContentInjectionMode;
-  /** Stored under its own key (`webblackbox.startReloadOffer`), not in `webblackbox.options`. */
+  /** Stored under its own key (`webblackbox.startReloadOffer`). */
   startReloadOffer: boolean;
   /**
    * The user's own Player URL ("" = none), stored under `webblackbox.playerUrl`. A managed value
@@ -488,20 +489,22 @@ export function resetGeneralSection(draft: GeneralDraft, section: GeneralSection
   }, draft);
 }
 
-/** `webblackbox.options` record for the general settings; fields the page does not show stay. */
-export function toStoredOptionsPayload(draft: GeneralDraft): Record<string, unknown> {
-  return {
-    ...normalizeOptionsConfig(draft.recorderConfig),
-    optionsVersion: OPTIONS_STORAGE_VERSION,
-    performanceBudget: normalizePerformanceBudget(draft.performanceBudget)
-  };
+/** The recorder fields the form saves into the Default profile. */
+export function toGeneralFormFields(draft: GeneralDraft): RecorderConfig {
+  return normalizeOptionsConfig(draft.recorderConfig);
 }
 
-/** Whether the parts stored in `webblackbox.options` differ (archive prefs live elsewhere). */
-export function isStoredOptionsChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
+/** Whether the fields saved into the Default profile differ. */
+export function isRecorderFieldsChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
   return (
-    JSON.stringify(toStoredOptionsPayload(draft)) !==
-    JSON.stringify(toStoredOptionsPayload(baseline))
+    JSON.stringify(toGeneralFormFields(draft)) !== JSON.stringify(toGeneralFormFields(baseline))
+  );
+}
+
+export function isPerformanceBudgetChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
+  return (
+    JSON.stringify(normalizePerformanceBudget(draft.performanceBudget)) !==
+    JSON.stringify(normalizePerformanceBudget(baseline.performanceBudget))
   );
 }
 

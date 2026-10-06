@@ -8,7 +8,7 @@ import {
   isReadOnlyProfileId,
   type ProfileRule
 } from "../shared/profiles/model.js";
-import { selectionRequiresFullEngine } from "../shared/profiles/engine.js";
+import { requiresFullEngine } from "../shared/profiles/engine.js";
 import { isExtendedCaptureProfile, type ProfileSelection } from "../shared/profiles/resolve.js";
 import {
   collectPageSignalRequest,
@@ -30,12 +30,11 @@ const MAX_META_VALUES = 10;
 const MAX_META_VALUE_LENGTH = 500;
 
 type ProfileStorageKeys = {
-  legacyOptionsKey: string;
   enterprisePolicyKey: string;
 };
 
 /**
- * Reads the v2 store, v1 options and managed policy; never throws. `readManagedPolicy` replaces
+ * Reads the profiles store and the managed policy; never throws. `readManagedPolicy` replaces
  * the direct `storage.managed` read (the service worker passes its bounded, shared one).
  */
 export async function loadProfilesState(
@@ -44,14 +43,11 @@ export async function loadProfilesState(
   readManagedPolicy: () => Promise<Record<string, unknown> | null> = () =>
     readManagedEnterprisePolicy(chromeApi?.storage?.managed, keys.enterprisePolicyKey)
 ): Promise<ProfilesState> {
-  const local = await chromeApi?.storage?.local
-    ?.get([PROFILES_STORAGE_KEY, keys.legacyOptionsKey])
-    .catch(() => undefined);
+  const local = await chromeApi?.storage?.local?.get([PROFILES_STORAGE_KEY]).catch(() => undefined);
   const managedPolicy = await readManagedPolicy();
 
   return resolveProfilesState({
     rawProfilesStore: local?.[PROFILES_STORAGE_KEY],
-    rawLegacyOptions: local?.[keys.legacyOptionsKey],
     managed: parseManagedProfilesPolicy(managedPolicy)
   });
 }
@@ -126,7 +122,7 @@ export function buildProfilePreview(
           source: selection.source,
           ...(selection.rule?.name ? { ruleName: selection.rule.name } : {}),
           extended: selection.extended,
-          requiresFull: selectionRequiresFullEngine(selection),
+          requiresFull: requiresFullEngine(selection.profile),
           ...(selection.profile.visual ? { visual: selection.profile.visual } : {}),
           ...(enterpriseCapped.length > 0 ? { enterpriseCapped: [...enterpriseCapped] } : {})
         }

@@ -59,7 +59,6 @@ async function mount(rules: ProfileRule[], profiles: unknown[] = []) {
     chromeApi: storage.chromeApi,
     t,
     locale: "en",
-    legacyOptionsKey: "webblackbox.options",
     enterprisePolicyKey: "enterprisePolicy",
     onChange
   });

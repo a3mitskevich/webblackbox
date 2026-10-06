@@ -159,8 +159,8 @@ async function main() {
   await control.send("Runtime.enable");
   await waitForPopupRuntimeReady(control, 20_000);
 
-  const configured = await configureFullCaptureOptions(control);
-  assert(configured?.ok === true, "Failed to configure Full capture options.", configured);
+  const configured = await configureFullCaptureProfile(control);
+  assert(configured === true, "Failed to make Full capture the default profile.", configured);
 
   const port = fixture.port;
   const crossSite = await runIsolationScenario(control, fixture, "cross-site", [
@@ -369,9 +369,12 @@ function verifyArchiveIsolation(name, archive, foreignTabs) {
     );
   }
 
+  // Full capture lists the other tabs of the site on purpose (`tabsContext: allow`): their paths
+  // and titles in `meta.tabs.*` come from the tabs API, not from another tab's CDP events.
+  const leakCandidates = serialized.filter((entry) => !entry.type?.startsWith("meta.tabs."));
   const leaks = foreignTabs.flatMap((foreign) =>
     allMarkers(foreign).flatMap((marker) => {
-      const hits = matching(marker);
+      const hits = leakCandidates.filter((entry) => entry.json.includes(marker));
       return hits.length > 0
         ? [{ from: foreign.role, marker, count: hits.length, types: summarizeTypes(hits) }]
         : [];
@@ -513,74 +516,20 @@ async function findCompletedArchiveDownload(control, requestedAtMs) {
   return download.filename;
 }
 
-async function configureFullCaptureOptions(control) {
+/** Records with the Full capture profile (CDP, bodies, DOM, storage), picked as the default. */
+async function configureFullCaptureProfile(control) {
   return control.evaluate(`
-    (async () => {
-      const capturePolicy = {
-        schemaVersion: 2,
-        mode: 'lab',
-        captureContext: 'synthetic',
-        captureContextEvidenceRef: 'synthetic:e2e-cdp-tab-isolation',
-        consent: {
-          id: 'webblackbox-e2e-consent',
-          provenance: 'self-recording',
-          purpose: 'qa',
-          grantedBy: 'webblackbox-e2e',
-          grantedAt: new Date().toISOString()
-        },
-        unmaskPolicySource: 'extension-managed',
-        scope: {
-          tabId: 0,
-          origin: '',
-          allowedOrigins: [],
-          deniedOrigins: [],
-          includeSubframes: true,
-          stopOnOriginChange: true,
-          excludedUrlPatterns: []
-        },
-        categories: {
-          actions: 'allow',
-          inputs: 'masked',
-          dom: 'allow',
-          screenshots: 'off',
-          screenRecordings: 'off',
-          console: 'allow',
-          network: 'body-allowlist',
-          storage: 'allow',
-          indexedDb: 'names-only',
-          cookies: 'names-only',
-          cdp: 'full',
-          heapProfiles: 'off'
-        },
-        encryption: {
-          localAtRest: 'required',
-          archive: 'required',
-          archiveKeyEnvelope: 'passphrase'
-        },
-        retention: { localTtlMs: 24 * 60 * 60 * 1000 }
-      };
-
-      await chrome.storage.local.set({
-        'webblackbox.options': {
-          optionsVersion: 1,
-          mode: 'full',
-          freezeOnNetworkFailure: false,
-          freezeOnLongTaskSpike: false,
-          sampling: {
-            mousemoveHz: 20,
-            scrollHz: 15,
-            domFlushMs: 100,
-            screenshotIdleMs: 0,
-            snapshotIntervalMs: 1000,
-            actionWindowMs: 1500,
-            bodyCaptureMaxBytes: 65536
-          },
-          capturePolicy
+    chrome.storage.local
+      .set({
+        "webblackbox.profiles": {
+          schemaVersion: 2,
+          defaultProfileId: "builtin:full-capture",
+          profiles: [],
+          rules: [],
+          extendedCaptureHosts: []
         }
-      });
-
-      return { ok: true };
-    })()
+      })
+      .then(() => true)
   `);
 }
 

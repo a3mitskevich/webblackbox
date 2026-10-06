@@ -6,11 +6,12 @@ import {
   createDefaultGeneralDraft,
   findField,
   isInjectionChanged,
+  isPerformanceBudgetChanged,
   isPlayerUrlChanged,
-  isStoredOptionsChanged,
+  isRecorderFieldsChanged,
   resetGeneralSection,
   type TextFieldSpec,
-  toStoredOptionsPayload
+  toGeneralFormFields
 } from "./general-model.js";
 
 function injectionField(): ChoiceFieldSpec {
@@ -40,14 +41,15 @@ describe("content injection setting", () => {
     expect(spec.set(draft, "sometimes")).toBe(draft);
   });
 
-  it("is compared on its own and stays out of the stored options record", () => {
+  it("is compared on its own and stays out of the recording profile", () => {
     const spec = injectionField();
     const baseline = createDefaultGeneralDraft();
     const draft = spec.set(baseline, "on-start");
 
     expect(isInjectionChanged(draft, baseline)).toBe(true);
-    expect(isStoredOptionsChanged(draft, baseline)).toBe(false);
-    expect(toStoredOptionsPayload(draft)).not.toHaveProperty("injection");
+    expect(isRecorderFieldsChanged(draft, baseline)).toBe(false);
+    expect(isPerformanceBudgetChanged(draft, baseline)).toBe(false);
+    expect(toGeneralFormFields(draft)).not.toHaveProperty("injection");
   });
 
   it("goes back to the default with the section reset", () => {

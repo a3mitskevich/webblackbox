@@ -66,7 +66,7 @@ export function testRulesForUrl(input: RuleTestInput): RuleTestResult {
     ...input.draft.rules
   ];
   const selection = selectRecordingProfile({
-    state: { ...input.state, store: input.draft, legacy: false, catalog: input.catalog, rules },
+    state: { ...input.state, store: input.draft, catalog: input.catalog, rules },
     page: {
       url: url.href,
       incognito: input.incognito === true,

@@ -20,14 +20,15 @@ import {
 } from "./presets.js";
 import {
   applyDefaultProfileToGeneralForm,
+  applyGeneralFormToDefaultProfile,
+  createDefaultProfilesStore,
   removeProfileFromStore,
   restoreRecommendedProfiles,
   migrateLegacyOptionsToProfiles,
   parseManagedProfilesPolicy,
   parseProfilesStore,
   resolveProfilesState,
-  serializeProfilesStore,
-  syncDefaultProfileWithLegacyOptions
+  serializeProfilesStore
 } from "./storage.js";
 
 const OPTIONS_PAGE_V1 = {
@@ -59,6 +60,7 @@ describe("migrateLegacyOptionsToProfiles", () => {
     expect(store.defaultProfileId).toBe(DEFAULT_PROFILE_ID);
     expect(store.profiles).toEqual([createDefaultProfile()]);
     expect(store.rules).toEqual([]);
+    expect(store).toEqual(createDefaultProfilesStore());
   });
 
   it("carries every v1 knob into the Default profile", () => {
@@ -88,7 +90,7 @@ describe("migrateLegacyOptionsToProfiles", () => {
     expect(profile?.basePolicy?.captureContext).toBe("synthetic");
   });
 
-  it("applies the v1 screenshot migration before carrying sampling over", () => {
+  it("keeps a v1 idle screenshot interval of 0 (no idle screenshots)", () => {
     const [profile] = migrateLegacyOptionsToProfiles({
       sampling: { screenshotIdleMs: 0 }
     }).profiles;
@@ -205,13 +207,10 @@ describe("parseProfilesStore", () => {
 });
 
 describe("resolveProfilesState", () => {
-  it("derives a legacy Default from v1 options when no v2 store exists", () => {
-    const state = resolveProfilesState({
-      rawProfilesStore: undefined,
-      rawLegacyOptions: OPTIONS_PAGE_V1
-    });
+  it("uses a Default profile with today's defaults when no store exists", () => {
+    const state = resolveProfilesState({ rawProfilesStore: undefined });
 
-    expect(state.legacy).toBe(true);
+    expect(state.store).toEqual(createDefaultProfilesStore());
     expect(state.issues).toEqual([]);
     expect(state.catalog.map((profile) => profile.id)).toEqual([
       DEFAULT_PROFILE_ID,
@@ -220,27 +219,23 @@ describe("resolveProfilesState", () => {
       BUILT_IN_PROFILE_IDS.qa,
       BUILT_IN_PROFILE_IDS.fullCapture
     ]);
-    expect(state.catalog[0]?.recorder.freezeOnError).toBe(false);
+    expect(state.catalog[0]).toEqual(createDefaultProfile());
   });
 
-  it("falls back to the v1 Default and reports a corrupt v2 store", () => {
+  it("falls back to the defaults and reports a corrupt store", () => {
     const state = resolveProfilesState({
-      rawProfilesStore: { schemaVersion: 2, profiles: "broken" },
-      rawLegacyOptions: OPTIONS_PAGE_V1
+      rawProfilesStore: { schemaVersion: 2, profiles: "broken" }
     });
 
-    expect(state.legacy).toBe(true);
+    expect(state.store).toEqual(createDefaultProfilesStore());
     expect(state.issues).toEqual([{ kind: "corrupt-store", message: expect.any(String) }]);
-    expect(state.catalog[0]?.recorder.freezeOnError).toBe(false);
   });
 
   it("uses the v2 store when present and resets an unknown default id", () => {
     const state = resolveProfilesState({
-      rawProfilesStore: storeWith({ defaultProfileId: "ghost" }),
-      rawLegacyOptions: OPTIONS_PAGE_V1
+      rawProfilesStore: storeWith({ defaultProfileId: "ghost" })
     });
 
-    expect(state.legacy).toBe(false);
     expect(state.store.defaultProfileId).toBe(DEFAULT_PROFILE_ID);
     expect(state.issues).toEqual([{ kind: "missing-default-profile", id: "ghost" }]);
     expect(state.catalog[0]?.recorder.freezeOnError).toBeUndefined();
@@ -258,7 +253,6 @@ describe("resolveProfilesState", () => {
       rawProfilesStore: storeWith({
         rules: [{ id: "u1", profileId: "default", priority: 1, enabled: true, match: {} }]
       }),
-      rawLegacyOptions: undefined,
       managed
     });
 
@@ -311,9 +305,8 @@ describe("general settings form and the Default profile", () => {
   };
 
   it("copies only the fields the form edits onto the Default profile", () => {
-    const synced = syncDefaultProfileWithLegacyOptions(storeWith({ profiles: [edited] }), {
+    const synced = applyGeneralFormToDefaultProfile(storeWith({ profiles: [edited] }), {
       ...DEFAULT_RECORDER_CONFIG,
-      optionsVersion: 1,
       redaction: { ...DEFAULT_RECORDER_CONFIG.redaction, blockedSelectors: [".from-form"] }
     });
     const profile = synced.profiles[0];
@@ -325,7 +318,7 @@ describe("general settings form and the Default profile", () => {
   });
 
   it("copies only the form fields the user changed when the shown values are known", () => {
-    const shown = { ...DEFAULT_RECORDER_CONFIG, optionsVersion: 1 };
+    const shown = structuredClone(DEFAULT_RECORDER_CONFIG);
     const saved = {
       ...shown,
       freezeOnError: false,
@@ -335,9 +328,9 @@ describe("general settings form and the Default profile", () => {
     const before = store.profiles[0];
 
     // Saving what the form showed (e.g. only the performance budget changed) leaves Default as is.
-    expect(syncDefaultProfileWithLegacyOptions(store, shown, shown).profiles[0]).toEqual(before);
+    expect(applyGeneralFormToDefaultProfile(store, shown, shown).profiles[0]).toEqual(before);
 
-    const profile = syncDefaultProfileWithLegacyOptions(store, saved, shown).profiles[0];
+    const profile = applyGeneralFormToDefaultProfile(store, saved, shown).profiles[0];
     expect(profile?.sampling).toEqual({ ...before?.sampling, scrollHz: 3 });
     expect(profile?.recorder).toEqual({ ...before?.recorder, freezeOnError: false });
     expect(profile?.redaction).toEqual(before?.redaction);
@@ -389,9 +382,7 @@ describe("serializeProfilesStore", () => {
 
 describe("deleting and restoring recommended profiles", () => {
   const catalogIds = (store: RecordingProfilesStore): string[] =>
-    resolveProfilesState({ rawProfilesStore: store, rawLegacyOptions: undefined }).catalog.map(
-      (profile) => profile.id
-    );
+    resolveProfilesState({ rawProfilesStore: store }).catalog.map((profile) => profile.id);
 
   it("hides deleted presets and the Default profile from the catalog", () => {
     const store = storeWith({
@@ -459,13 +450,12 @@ describe("deleting and restoring recommended profiles", () => {
 
   it("can remove every profile; the catalog is then empty", () => {
     const empty = RECOMMENDED_PROFILE_IDS.reduce(removeProfileFromStore, storeWith({}));
-    const state = resolveProfilesState({ rawProfilesStore: empty, rawLegacyOptions: undefined });
+    const state = resolveProfilesState({ rawProfilesStore: empty });
 
     expect(serializeProfilesStore(empty).removedRecommendedProfileIds).toEqual([
       ...RECOMMENDED_PROFILE_IDS
     ]);
     expect(state.catalog).toEqual([]);
-    expect(state.legacy).toBe(false);
   });
 
   it("restores missing recommended profiles and keeps user profiles", () => {

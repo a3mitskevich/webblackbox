@@ -2,7 +2,6 @@ import { DEFAULT_RECORDER_CONFIG, type RecorderConfig } from "@webblackbox/proto
 
 import type { ProfileCancelNotice, ProfileCancelReason } from "../shared/messages.js";
 import {
-  DEFAULT_PROFILE_ID,
   PROFILES_STORAGE_KEY,
   type ProfileRule,
   type RecordingProfile
@@ -26,7 +25,7 @@ export type SessionProfileSnapshot = {
   effectiveConfig: RecorderConfig;
 };
 
-/** What a recorder config sets; v1 option keys stored next to them are not profile settings. */
+/** What a recorder config sets; v1 option keys a profile renders next to them are not settings. */
 const RECORDER_CONFIG_KEYS = [
   ...new Set([...Object.keys(DEFAULT_RECORDER_CONFIG), "capturePolicy"])
 ] as Array<keyof RecorderConfig>;
@@ -66,13 +65,11 @@ export function detectProfileChange(input: {
 
   if (
     !isSameRunningConfig(next.profileConfig, started.profileConfig) ||
-    // The service worker also reads some settings from the profile itself. The legacy Default is
-    // derived from v1 options, which the config comparison already covers.
-    (!started.selection.legacy &&
-      !isSameValue(
-        toSettingsOutsideConfig(next.selection.profile),
-        toSettingsOutsideConfig(started.selection.profile)
-      ))
+    // The service worker also reads some settings from the profile itself.
+    !isSameValue(
+      toSettingsOutsideConfig(next.selection.profile),
+      toSettingsOutsideConfig(started.selection.profile)
+    )
   ) {
     return "profile-edited";
   }
@@ -101,21 +98,15 @@ export function shouldDeferProfileCheck(input: {
 }
 
 /**
- * Storage writes that can change the profile a running recording uses: the profiles store, the
- * v1 options behind the legacy Default profile, and the managed enterprise policy.
+ * Storage writes that can change the profile a running recording uses: the profiles store and
+ * the managed enterprise policy.
  */
 export function isProfileSettingsChange(
   changes: Record<string, unknown>,
-  areaName: string,
-  keys: { legacyOptionsKey: string }
+  areaName: string
 ): boolean {
-  if (areaName === "managed") {
-    return true;
-  }
-
   return (
-    areaName === "local" &&
-    (Object.hasOwn(changes, PROFILES_STORAGE_KEY) || Object.hasOwn(changes, keys.legacyOptionsKey))
+    areaName === "managed" || (areaName === "local" && Object.hasOwn(changes, PROFILES_STORAGE_KEY))
   );
 }
 
@@ -133,8 +124,7 @@ export function reselectStartedProfile(
     return null;
   }
 
-  const legacy = state.legacy && profile.id === DEFAULT_PROFILE_ID;
-  return { ...started, profile, legacy, extended: !legacy && isExtendedCaptureProfile(profile) };
+  return { ...started, profile, extended: isExtendedCaptureProfile(profile) };
 }
 
 /**
@@ -192,9 +182,9 @@ function isSameRunningConfig(left: RecorderConfig, right: RecorderConfig): boole
 }
 
 /**
- * The part of a config the recorder runs: recorder config keys only (the legacy Default path
- * spreads the whole v1 options record, `optionsVersion` and `performanceBudget` included), with
- * the capture policy's redaction replaced by the config's, as the session start does.
+ * The part of a config the recorder runs: recorder config keys only (a profile renders as a v1
+ * options record, `optionsVersion` included), with the capture policy's redaction replaced by the
+ * config's, as the session start does.
  */
 function toRunningConfig(config: RecorderConfig): Record<string, unknown> {
   const picked = Object.fromEntries(RECORDER_CONFIG_KEYS.map((key) => [key, config[key]]));

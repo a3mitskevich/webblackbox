@@ -13,13 +13,12 @@ import { el } from "./dom.js";
 
 export type EditorStorageDeps = {
   chromeApi: ChromeApi | null;
-  legacyOptionsKey: string;
   enterprisePolicyKey: string;
 };
 
 export async function loadProfilesState(deps: EditorStorageDeps): Promise<ProfilesState> {
   const local = await deps.chromeApi?.storage?.local
-    ?.get([PROFILES_STORAGE_KEY, deps.legacyOptionsKey])
+    ?.get([PROFILES_STORAGE_KEY])
     .catch(() => undefined);
   const managedPolicy = await readManagedEnterprisePolicy(
     deps.chromeApi?.storage?.managed,
@@ -28,7 +27,6 @@ export async function loadProfilesState(deps: EditorStorageDeps): Promise<Profil
 
   return resolveProfilesState({
     rawProfilesStore: local?.[PROFILES_STORAGE_KEY],
-    rawLegacyOptions: local?.[deps.legacyOptionsKey],
     managed: parseManagedProfilesPolicy(managedPolicy)
   });
 }
