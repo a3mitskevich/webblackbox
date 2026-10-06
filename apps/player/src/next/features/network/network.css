@@ -1,0 +1,526 @@
+/* Network and Realtime rail tabs (R3): toolbar, table, details. Tokens come from styles/next.css. */
+@import "./viewers.css";
+
+/* Toolbar: the filter and actions, then the chips */
+.net-tools {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.net-tools-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.net-tools .field {
+  flex: 1 1 200px;
+}
+.net-tools .btn.small.icon-only {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+}
+.nchips-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+  margin: 0 2px;
+}
+.nchips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.nchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.nchip:hover {
+  border-color: var(--ink-3);
+}
+.nchip .c {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.nchip.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+.nchip.on .c {
+  color: inherit;
+}
+.nsmall {
+  font-size: 12px;
+}
+.ncheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Table: one CSS grid shared by the header, the rows and the playhead overlay. Columns step aside
+   as the rail narrows (container queries on the table). */
+.net-table {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.net-grid {
+  --net-cols: 56px 52px minmax(0, 1fr) 82px 54px 70px 64px minmax(80px, 140px);
+  display: grid;
+  grid-template-columns: var(--net-cols);
+  align-items: center;
+  column-gap: 8px;
+  padding: 0 10px;
+}
+.net-head {
+  flex: none;
+  min-height: 28px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.net-head button {
+  border: 0;
+  background: none;
+  padding: 6px 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+}
+.net-head [aria-sort] button {
+  color: var(--ink);
+  font-weight: 600;
+}
+.net-head .c-time button,
+.net-head .c-size button {
+  width: 100%;
+  text-align: right;
+}
+.net-table:focus-visible {
+  outline: none;
+}
+.net-body {
+  flex: 1 1 auto;
+}
+/* The grid takes focus (it owns the active row); the ring goes around the rows. */
+.net-table:focus-visible .net-body {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+.net-row {
+  height: 24px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--line-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.net-row:hover {
+  background: var(--surface-2);
+}
+.net-row.nsel {
+  background: var(--ws-soft);
+  box-shadow: inset 3px 0 0 var(--ws);
+}
+.net-row.nfuture > :not(.c-wf) {
+  color: var(--ink-3);
+}
+.net-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.c-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.c-name .npath-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.c-name .nhost {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 10 auto;
+  min-width: 0;
+}
+.c-size,
+.c-time {
+  text-align: right;
+}
+.c-time.nslow {
+  color: var(--warn);
+}
+.c-initiator {
+  color: var(--ink-2);
+}
+.nst {
+  font: 600 12px var(--mono);
+}
+.nst.ok {
+  color: var(--ok);
+}
+.nst.bad {
+  color: var(--bad);
+}
+.nst.warn {
+  color: var(--warn);
+}
+.nst.ws {
+  color: var(--ws);
+}
+.nst.muted {
+  color: var(--ink-3);
+}
+.nws-glyph {
+  color: var(--ws);
+  flex: none;
+}
+/*
+ * --warn on --warn-soft is 4.4:1 in the light theme, short of AA for 10.5px text: the badges use
+ * a darker amber there (6.0:1); the dark theme keeps --warn (7.0:1).
+ */
+.nflag,
+.ncut {
+  --nbadge-warn: #8a5000;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) :is(.nflag, .ncut) {
+    --nbadge-warn: var(--warn);
+  }
+}
+:root[data-theme="dark"] :is(.nflag, .ncut) {
+  --nbadge-warn: var(--warn);
+}
+.nflag {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--warn-soft);
+  color: var(--nbadge-warn);
+  font: 700 10.5px var(--mono);
+}
+.ncut {
+  flex: none;
+  font: 600 10.5px var(--mono);
+  color: var(--nbadge-warn);
+  background: var(--warn-soft);
+  padding: 0 4px;
+  border-radius: 3px;
+  margin-left: 4px;
+}
+.nwf {
+  position: relative;
+  display: block;
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 2px;
+}
+.nwf i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--ink-3);
+}
+.nwf i.ok {
+  background: var(--accent);
+  opacity: 0.55;
+}
+.nwf i.bad {
+  background: var(--bad);
+}
+.nwf i.warn {
+  background: var(--warn);
+}
+.nwf i.ws {
+  background: var(--ws);
+}
+.net-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.net-overlay .c-wf {
+  grid-column: 8;
+  position: relative;
+  height: 100%;
+}
+.nwf-ph {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--playhead);
+}
+@container (max-width: 720px) {
+  .net-grid {
+    --net-cols: 50px 46px minmax(0, 1fr) 0 46px 0 58px 72px;
+  }
+  .net-grid .c-type,
+  .net-grid .c-size {
+    visibility: hidden;
+  }
+  .c-name .nhost {
+    display: none;
+  }
+}
+@container (max-width: 460px) {
+  .net-grid {
+    --net-cols: 46px 0 minmax(0, 1fr) 0 0 0 56px 0;
+    column-gap: 6px;
+  }
+  .net-grid .c-method,
+  .net-grid .c-initiator,
+  .net-grid .c-wf,
+  .net-overlay {
+    visibility: hidden;
+  }
+}
+
+/* Details */
+.ndetails {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.ndetails .ndh {
+  flex: none;
+  padding: 10px 14px 6px;
+}
+.ndh-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ndh h2,
+.ndh h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ndh h2 > :not(.nu) {
+  flex: none;
+  white-space: nowrap;
+}
+.ndh .nu {
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ndh .nsub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.nwarn-text {
+  color: var(--warn);
+}
+.nactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.nactions .btn.small,
+.nviewer-tools .btn.small {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.ncopy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.nreplay {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.nreplay .bad {
+  color: var(--bad);
+}
+.ndtabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.nsubtabs {
+  position: relative;
+  display: flex;
+  gap: 16px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line-2);
+  flex: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nsubtab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  padding: 6px 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nsubtab[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.nsubtab .c {
+  font: 11px var(--mono);
+  color: var(--ink-3);
+}
+.npanel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.npanel[hidden] {
+  display: none;
+}
+.ndtab {
+  padding: 8px 14px 16px;
+}
+.ndtab-fill {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: 0;
+}
+.ndsec + .ndsec {
+  margin-top: 12px;
+}
+.ndsec h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.nkv {
+  margin: 0;
+  font-size: 12.5px;
+}
+.nkv-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 30%) minmax(0, 1fr);
+  gap: 12px;
+  padding: 2px 0;
+}
+.nkv dt {
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+.nkv dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.nnotice {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.nnotice.warn {
+  background: var(--warn-soft);
+}
+.nnotice.bad {
+  background: var(--bad-soft);
+}
+.nbody-note {
+  margin: 8px 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.nbody-viewer {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 160px;
+}
+.nviewer-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0 6px;
+  flex: none;
+}
+.npath {
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+}
+.nbody-image {
+  max-width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  align-self: flex-start;
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+}

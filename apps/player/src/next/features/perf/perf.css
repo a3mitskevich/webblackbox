@@ -1,0 +1,134 @@
+/* Perf rail tab (R4). Scoped to .pf*; uPlot's own sheet ships as uPlot.min.css. */
+.pf {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 14px 18px;
+  font-size: 13px;
+}
+.pf-head {
+  margin: 14px 0 8px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.pf-head .muted {
+  font-weight: 400;
+}
+.pf-vitals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.pf-vital {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.pf-vital .name {
+  color: var(--ink-3);
+  font: 600 11px var(--mono);
+  letter-spacing: 0.04em;
+}
+.pf-vital b {
+  font: 600 18px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.pf-vital .hint {
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+.pf-vital.good {
+  box-shadow: inset 0 3px 0 var(--ok);
+}
+.pf-vital.good .hint {
+  color: var(--ok);
+}
+.pf-vital.needs {
+  box-shadow: inset 0 3px 0 var(--warn);
+}
+.pf-vital.needs .hint {
+  color: var(--warn);
+}
+.pf-vital.poor {
+  box-shadow: inset 0 3px 0 var(--bad);
+  background: var(--bad-soft);
+}
+.pf-vital.poor .hint,
+.pf-vital.poor b {
+  color: var(--bad);
+}
+.pf-chart {
+  margin: 0;
+  padding: 8px 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.pf-plot {
+  width: 100%;
+  cursor: crosshair;
+}
+.pf-chart .u-legend {
+  color: var(--ink-2);
+  font: 12px var(--sans);
+}
+.pf-chart .u-legend .u-marker {
+  border-radius: 3px;
+}
+.pf-none {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.pf-artifacts {
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  list-style: none;
+  overflow: hidden;
+}
+.pf-artifact {
+  display: grid;
+  grid-template-columns: 56px 110px minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line-2);
+}
+.pf-artifact:last-child {
+  border-bottom: 0;
+}
+.pf-artifact .kind {
+  font-weight: 600;
+}
+.pf-artifact .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-artifact .size {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.pf .linklike {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+@media (max-width: 900px) {
+  .pf-vitals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.pf-artifact .btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
