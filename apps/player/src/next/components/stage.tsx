@@ -94,8 +94,12 @@ type RecordingViewProps = {
   onSize: (size: MediaSize) => void;
 };
 
-/** The tab video, kept in step with the player clock (the clock is the master). */
-function RecordingView({
+/**
+ * The tab video, kept in step with the player clock (the clock is the master). The element can
+ * only seek once it has metadata, so loading it re-runs the sync: a paused player opened at a
+ * `#t=` link shows the playhead's frame, not the first one.
+ */
+export function RecordingView({
   recording,
   url,
   playheadMono,
@@ -105,6 +109,7 @@ function RecordingView({
 }: RecordingViewProps) {
   const ref = useRef<HTMLVideoElement>(null);
   const i18n = useI18n();
+  const [loads, setLoads] = useState(0);
 
   useEffect(() => {
     const video = ref.current;
@@ -131,7 +136,7 @@ function RecordingView({
     } else if (!isPlaying && !video.paused) {
       video.pause();
     }
-  }, [recording, playheadMono, isPlaying, rate]);
+  }, [recording, playheadMono, isPlaying, rate, loads]);
 
   return (
     <video
@@ -142,9 +147,10 @@ function RecordingView({
       playsInline
       preload="metadata"
       aria-label={i18n.tn("stageTabVideo")}
-      onLoadedMetadata={(event) =>
-        onSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })
-      }
+      onLoadedMetadata={(event) => {
+        onSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight });
+        setLoads((count) => count + 1);
+      }}
       data-testid="stage-video"
     />
   );
