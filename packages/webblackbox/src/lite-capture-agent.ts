@@ -1,10 +1,12 @@
 import {
   DEFAULT_CAPTURE_POLICY,
+  DEFAULT_POINTER_CAPTURE_OPTIONS,
   isContentRedactionEnabled,
   recordUrl,
   redactKeystrokePayload,
   shouldRedactKeystroke,
   type CapturePolicy,
+  type PointerCaptureOptions,
   type RedactionRules
 } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
@@ -31,6 +33,12 @@ import {
   readCapturableInputValue,
   watchPasswordFieldReveals
 } from "./input-value-policy.js";
+import {
+  PointerCaptureController,
+  readGeometry,
+  type PointerTargetDetail
+} from "./pointer-capture.js";
+import { buildReadableTarget, readDataTestId, readTargetRect, round } from "./pointer-target.js";
 
 const PRE_RECORDING_BUFFER_MAX = 400;
 const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
@@ -54,7 +62,6 @@ const INPUT_PRESSURE_BURST_COUNT = 6;
 const INPUT_PRESSURE_COOLDOWN_MS = 1_800;
 const INPUT_PRESSURE_EDITOR_COOLDOWN_MS = 2_400;
 const INPUT_PRESSURE_MUTATION_SAMPLE_LIMIT = 16;
-const FULL_MODE_POINTER_TRACK_INTERVAL_MS = 250;
 const QUIET_MODE_MUTATION_RECORD_LIMIT = 360;
 const QUIET_MODE_EVENT_BUFFER_LIMIT = 560;
 const QUIET_MODE_COOLDOWN_MS = 3_000;
@@ -107,6 +114,8 @@ const INJECTED_RAW_EVENT_TYPE_SET: ReadonlySet<string> = new Set(INJECTED_RAW_EV
 
 const LOW_PRIORITY_RAW_TYPES = new Set([
   "mousemove",
+  "wheel",
+  "hover",
   "scroll",
   "mutation",
   "rrweb",
@@ -117,7 +126,6 @@ const LOW_PRIORITY_RAW_TYPES = new Set([
 ]);
 
 const FULL_MODE_SKIPPED_RAW_TYPES = new Set([
-  "mousemove",
   "scroll",
   "mutation",
   "snapshot",
@@ -193,6 +201,18 @@ export class LiteCaptureAgent {
   private mode: LiteCaptureState["mode"] = "lite";
   private sampling: LiteCaptureSampling = { ...DEFAULT_SAMPLING };
   private capturePolicy: CapturePolicy = DEFAULT_CAPTURE_POLICY;
+  private pointerOptions: PointerCaptureOptions = { ...DEFAULT_POINTER_CAPTURE_OPTIONS };
+  private readonly pointerCapture = new PointerCaptureController({
+    options: () => this.pointerOptions,
+    policy: () => this.capturePolicy,
+    isRecording: () => this.recordingActive && !this.disposed,
+    emit: (rawType, payload, mono) => this.queueEvent(rawType, payload, mono),
+    targetPayload: (target, detail) => this.createPointerTargetPayload(target, detail),
+    listen: (target, type, listener, options) => this.listen(target, type, listener, options),
+    markUserActivity: () => this.markUserActivity(),
+    trackPointer: (x, y) => this.trackPointer(x, y),
+    now: monotonicTime
+  });
   private injectedBridgeNonce: string | null = null;
   private indicator: HTMLDivElement | null = null;
   private mutationObserver: MutationObserver | null = null;
@@ -290,10 +310,15 @@ export class LiteCaptureAgent {
       this.emitLocalStorageSnapshot("stop");
     }
 
+    if (!state.active && wasRecording) {
+      this.pointerCapture.flushPending();
+    }
+
     this.recordingActive = state.active;
     this.mode = state.mode ?? this.mode;
     this.sampling = sanitizeSamplingConfig(state.sampling);
     this.capturePolicy = state.capturePolicy ?? this.capturePolicy;
+    this.pointerOptions = sanitizePointerOptions(state.pointer);
 
     if (typeof state.sid === "string") {
       this.sid = state.sid;
@@ -403,6 +428,7 @@ export class LiteCaptureAgent {
 
     this.runCleanupCallbacks();
     this.clearPendingTargetEnrichmentTimers();
+    this.pointerCapture.reset();
 
     this.eventBuffer.length = 0;
     this.preRecordingBuffer.length = 0;
@@ -473,6 +499,8 @@ export class LiteCaptureAgent {
   }
 
   private installInputAndLifecycleCapture(): void {
+    this.pointerCapture.install();
+
     this.listen(
       document,
       "wheel",
@@ -498,7 +526,9 @@ export class LiteCaptureAgent {
       (event: MouseEvent) => {
         this.markUserActivity();
         this.trackPointer(event.clientX, event.clientY);
-        this.queueEvent("click", this.createClickPayload(event));
+        const mono = monotonicTime();
+        this.queueEvent("click", this.createClickPayload(event), mono);
+        this.pointerCapture.onClick(mono);
       },
       INPUT_OPTIONS_TRUE
     );
@@ -646,17 +676,21 @@ export class LiteCaptureAgent {
       document,
       "pointermove",
       (event: PointerEvent) => {
-        if (this.mode === "full") {
-          const now = performance.now();
+        this.pointerCapture.onPointerMove(event);
+        const now = performance.now();
+        const pointerGapMs = Math.max(
+          16,
+          Math.round(1000 / Math.max(1, this.sampling.mousemoveHz))
+        );
 
-          if (now - this.lastPointerTime < FULL_MODE_POINTER_TRACK_INTERVAL_MS) {
+        // Full mode keeps page-side work minimal: nothing runs between samples, even while
+        // capture is suppressed, so the sample clock advances before the pressure check.
+        if (this.mode === "full") {
+          if (now - this.lastPointerTime < pointerGapMs) {
             return;
           }
 
           this.lastPointerTime = now;
-          this.markUserActivity();
-          this.trackPointer(event.clientX, event.clientY);
-          return;
         }
 
         this.markUserActivity();
@@ -666,21 +700,17 @@ export class LiteCaptureAgent {
           return;
         }
 
-        const now = performance.now();
-        const pointerGapMs = Math.max(
-          16,
-          Math.round(1000 / Math.max(1, this.sampling.mousemoveHz))
-        );
+        if (this.mode !== "full") {
+          if (now - this.lastPointerTime < pointerGapMs) {
+            return;
+          }
 
-        if (now - this.lastPointerTime < pointerGapMs) {
-          return;
+          this.lastPointerTime = now;
         }
 
-        this.lastPointerTime = now;
-
         this.queueEvent("mousemove", {
-          x: event.clientX,
-          y: event.clientY,
+          x: round(event.clientX),
+          y: round(event.clientY),
           target: toFastTargetPayload(event.target, this.selectorSalt())
         });
       },
@@ -1042,6 +1072,7 @@ export class LiteCaptureAgent {
     this.captureInstalled = false;
     this.runCleanupCallbacks();
     this.clearPendingTargetEnrichmentTimers();
+    this.pointerCapture.reset();
   }
 
   private runCleanupCallbacks(): void {
@@ -2090,14 +2121,17 @@ export class LiteCaptureAgent {
     };
   }
 
-  private queueEvent(rawType: string, payload: Record<string, unknown>): void {
+  private queueEvent(rawType: string, payload: Record<string, unknown>, mono?: number): void {
+    const now = monotonicTime();
+    const eventMono = mono ?? now;
+
     this.queueRawEvent({
       source: "content",
       rawType,
       tabId: this.tabId,
       sid: this.sid,
-      t: Date.now(),
-      mono: monotonicTime(),
+      t: Date.now() - Math.max(0, now - eventMono),
+      mono: eventMono,
       frame: this.frameMarker,
       payload
     });
@@ -2138,35 +2172,93 @@ export class LiteCaptureAgent {
   }
 
   private createClickPayload(event: MouseEvent): Record<string, unknown> {
-    const navigationTarget = resolveNavigationTarget(event.target);
-
     return {
-      x: event.clientX,
-      y: event.clientY,
+      x: round(event.clientX),
+      y: round(event.clientY),
+      pageX: round(event.pageX),
+      pageY: round(event.pageY),
+      ...readGeometry(),
       button: event.button,
       altKey: event.altKey,
       ctrlKey: event.ctrlKey,
       shiftKey: event.shiftKey,
       metaKey: event.metaKey,
-      target: navigationTarget
-        ? this.resolveTargetPayload(navigationTarget, "navigation")
-        : this.resolveTargetPayload(event.target, "action")
+      target: this.createPointerTargetPayload(event.target, "rich")
     };
+  }
+
+  /**
+   * Target of a pointer action. `rich` adds the bounding rect and, when the profile allows
+   * readable actions, labels and a readable CSS selector; otherwise the target stays hashed.
+   */
+  private createPointerTargetPayload(
+    target: EventTarget | null,
+    detail: PointerTargetDetail
+  ): Record<string, unknown> {
+    if (detail === "fast") {
+      return toFastTargetPayload(target, this.selectorSalt());
+    }
+
+    const navigationTarget = resolveNavigationTarget(target);
+    const element = navigationTarget ?? target;
+    const payload = navigationTarget
+      ? this.resolveTargetPayload(navigationTarget, "navigation")
+      : this.resolveTargetPayload(target, "action");
+    this.scheduleTargetRectEnrichment(payload, element);
+    return payload;
+  }
+
+  /**
+   * Fills `rect` right after the event handlers ran instead of on the hot path, where reading it
+   * could force a synchronous layout. Fresh payload object, like the lite selector enrichment.
+   */
+  private scheduleTargetRectEnrichment(
+    payload: Record<string, unknown>,
+    element: EventTarget | null
+  ): void {
+    if (!(element instanceof Element)) {
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      this.pendingTargetEnrichmentTimers.delete(timerId);
+
+      if (!this.recordingActive || this.disposed) {
+        return;
+      }
+
+      const rect = readTargetRect(element);
+
+      if (rect) {
+        payload.rect = rect;
+      }
+    }, TARGET_ENRICH_DELAY_MS);
+
+    this.pendingTargetEnrichmentTimers.add(timerId);
   }
 
   private resolveTargetPayload(
     target: EventTarget | null,
     detail: TargetPayloadDetail
   ): Record<string, unknown> {
-    if (this.mode === "full" || detail === "fast") {
+    if (detail === "fast") {
       return toFastTargetPayload(target, this.selectorSalt());
     }
 
-    if (detail === "navigation") {
-      return this.createNavigationTargetPayload(target);
+    const readable =
+      target instanceof Element ? buildReadableTarget(target, this.capturePolicy) : undefined;
+    const payload =
+      this.mode === "full"
+        ? toFastTargetPayload(target, this.selectorSalt())
+        : detail === "navigation"
+          ? this.createNavigationTargetPayload(target)
+          : this.createDeferredTargetPayload(target);
+
+    if (readable) {
+      payload.readable = readable;
     }
 
-    return this.createDeferredTargetPayload(target);
+    return payload;
   }
 
   private createDeferredTargetPayload(target: EventTarget | null): Record<string, unknown> {
@@ -2418,6 +2510,20 @@ function sanitizeSamplingConfig(raw: unknown): LiteCaptureSampling {
   };
 }
 
+function sanitizePointerOptions(raw: unknown): PointerCaptureOptions {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ...DEFAULT_POINTER_CAPTURE_OPTIONS };
+  }
+
+  const row = raw as Record<string, unknown>;
+
+  return {
+    hover: row.hover === true,
+    drag: row.drag === true,
+    wheel: row.wheel === true
+  };
+}
+
 function clampRate(value: unknown, fallback: number): number {
   return clampNumber(value, fallback, 1, 240);
 }
@@ -2509,15 +2615,6 @@ function toFastTargetPayload(
   };
 
   return stripUndefinedRecord(payload);
-}
-
-function readDataTestId(target: Element): string | undefined {
-  return (
-    target.getAttribute("data-testid") ??
-    target.getAttribute("data-test-id") ??
-    target.getAttribute("data-qa") ??
-    undefined
-  );
 }
 
 function buildDomSnapshotSummaryHtml(options: {

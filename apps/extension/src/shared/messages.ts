@@ -3,6 +3,7 @@ import type {
   CapturePolicy,
   ExportPolicy,
   FreezeReason,
+  PointerCaptureOptions,
   PrivacyScannerFindingKind,
   SamplingProfile
 } from "@webblackbox/protocol";
@@ -128,6 +129,7 @@ export type RecordingStatusMessage = {
   capturePolicy?: CapturePolicy;
   /** Per-session nonce the injected page hooks stamp on bridge messages (lite mode). */
   injectedBridgeNonce?: string;
+  pointer?: PointerCaptureOptions;
 };
 
 export type FreezeNoticeMessage = {

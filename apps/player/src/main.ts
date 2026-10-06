@@ -8,6 +8,8 @@ import {
   type RealtimeNetworkEntry,
   type ReplayDiagnosticEntry,
   type StorageTimelineEntry,
+  buildPointerTimeline,
+  detectPointerSignals,
   readProfileCancellation,
   readRecordingProfiles,
   WebBlackboxPlayer
@@ -56,6 +58,16 @@ import {
 import { markerKindToPanel } from "./lib/progress.js";
 import { normalizePlaybackEvents, type PlaybackTimeNormalization } from "./lib/playback-time.js";
 import { generatePlaywrightScriptFromEvents } from "./lib/playwright-script.js";
+import {
+  buildPointerLaneMarks,
+  buildRippleMarks,
+  projectOverlayPoint,
+  renderRippleSvg,
+  toOverlayActions,
+  type OverlayFrame,
+  type OverlayPointerAction,
+  type PointerLaneMark
+} from "./lib/pointer-overlay.js";
 import { lowerBoundByMono, prefixValue, upperBoundByMono } from "./lib/range.js";
 import {
   createReplayHeaders as buildReplayHeaders,
@@ -204,6 +216,8 @@ type PointerSample = {
   y: number;
   click: boolean;
   reason?: string;
+  viewportWidth?: number;
+  viewportHeight?: number;
 };
 
 type ScreenshotRecord = {
@@ -251,6 +265,8 @@ type ArchiveModel = {
   screenRecordings: ScreenRecordingRecord[];
   screenRecordingById: Map<string, ScreenRecordingRecord>;
   pointers: PointerSample[];
+  pointerActions: OverlayPointerAction[];
+  pointerLane: PointerLaneMark[];
   waterfall: NetworkWaterfallEntry[];
   waterfallByReqId: Map<string, NetworkWaterfallEntry>;
   requestScopeByReqId: Map<string, EventScope>;
@@ -414,6 +430,14 @@ const STAGE_HEIGHT_MIN_PX = 220;
 const STAGE_HEIGHT_BOTTOM_GUARD_PX = 280;
 const STAGE_HEIGHT_KEY_STEP = 24;
 const STAGE_HEIGHT_STORAGE_KEY = "webblackbox.player.stageHeightPx";
+const POINTER_SAMPLE_TYPES = new Set<string>([
+  "user.mousemove",
+  "user.click",
+  "user.dblclick",
+  "user.contextmenu",
+  "user.auxclick"
+]);
+
 const ACTION_MARKER_TYPES = new Set([
   "user.click",
   "user.dblclick",
@@ -549,6 +573,7 @@ const refs = {
   progressShell: getElement<HTMLElement>("progress-shell"),
   playbackProgress: getElement<HTMLInputElement>("playback-progress"),
   playbackMarkers: getElement<HTMLElement>("playback-markers"),
+  pointerLane: getElement<HTMLElement>("playback-pointer-lane"),
   playbackPlayhead: getElement<HTMLElement>("playback-playhead"),
   progressHover: getElement<HTMLElement>("progress-hover"),
   progressHoverImage: getElement<HTMLImageElement>("progress-hover-image"),
@@ -848,6 +873,19 @@ function bindGlobalActions(): void {
     setPlayhead(mono, { forcePanels: true });
   });
 
+  refs.pointerLane.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const mark = target.closest<HTMLButtonElement>("button[data-pointer-mono]");
+    const mono = Number(mark?.dataset.pointerMono);
+
+    if (!mark || !state.model || !Number.isFinite(mono)) {
+      return;
+    }
+
+    pausePlayback();
+    setPlayhead(mono, { forcePanels: true });
+  });
+
   refs.playbackMarkers.addEventListener("pointermove", (event) => {
     const target = event.target as HTMLElement;
     const marker = target.closest<HTMLButtonElement>("button[data-marker-mono]");
@@ -1055,6 +1093,7 @@ function bindGlobalActions(): void {
     refs.recording.hidden = false;
     updateStagePlaceholder();
     syncRecordingElementToPlayhead();
+    renderScreenshotOverlay();
   });
 
   refs.recording.addEventListener("error", () => {
@@ -2425,6 +2464,8 @@ function renderPlaybackChrome(): void {
     refs.playbackProgress.max = "1";
     refs.playbackProgress.value = "0";
     refs.playbackMarkers.innerHTML = "";
+    refs.pointerLane.replaceChildren();
+    refs.pointerLane.hidden = true;
     refs.playbackPlayhead.style.left = "0%";
     hideProgressHover();
     refs.playbackCurrent.textContent = "0.00s";
@@ -2636,6 +2677,8 @@ function renderProgressMarkers(model: ArchiveModel): void {
 
   state.progressMarkerSource = model;
 
+  renderPointerLane(model);
+
   if (model.progressMarkers.length === 0 || model.durationMono <= 0) {
     refs.playbackMarkers.innerHTML = "";
     return;
@@ -2659,6 +2702,33 @@ function renderProgressMarkers(model: ArchiveModel): void {
   }
 
   refs.playbackMarkers.replaceChildren(fragment);
+}
+
+function renderPointerLane(model: ArchiveModel): void {
+  if (model.pointerLane.length === 0 || model.durationMono <= 0) {
+    refs.pointerLane.replaceChildren();
+    refs.pointerLane.hidden = true;
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+
+  for (const mark of model.pointerLane) {
+    const ratio = (mark.mono - model.minMono) / model.durationMono;
+    const button = document.createElement("button");
+
+    button.type = "button";
+    button.className = `pointer-lane-mark pointer-lane-mark-${mark.tone}`;
+    button.dataset.pointerMono = String(mark.mono);
+    button.dataset.pointerKind = mark.kind;
+    button.style.left = `${(Math.min(1, Math.max(0, ratio)) * 100).toFixed(3)}%`;
+    button.title = `${mark.label} @ ${formatMono(mark.mono - model.minMono)}`;
+    button.setAttribute("aria-label", button.title);
+    fragment.append(button);
+  }
+
+  refs.pointerLane.replaceChildren(fragment);
+  refs.pointerLane.hidden = false;
 }
 
 async function handleProgressHoverFromPointer(event: PointerEvent): Promise<void> {
@@ -4301,6 +4371,15 @@ async function syncScreenRecordingForPlayhead(
   refs.filmstripMeta.textContent = describeScreenRecordingMeta(recording);
   syncRecordingElementToPlayhead(recording);
   updateStagePlaceholder();
+
+  const model = state.model;
+
+  if (model) {
+    state.screenshotTrail = buildScreenshotTrail(model.pointers, state.playheadMono);
+    state.screenshotMarker = resolveScreenshotMarker(model.pointers, state.playheadMono, null);
+  }
+
+  renderScreenshotOverlay();
 }
 
 async function syncScreenshotForPlayhead(forceReload: boolean): Promise<void> {
@@ -4364,10 +4443,54 @@ function renderScreenshotOverlay(): void {
   renderScreenshotMarker();
 }
 
+/**
+ * Stage box for overlays: the tab recording when it is showing, else the screenshot. Points are
+ * recorded in CSS pixels of the viewport; `viewport` overrides the size they were recorded in.
+ */
+function resolveOverlayFrame(viewport?: { width?: number; height?: number }): OverlayFrame | null {
+  const video = refs.recording;
+  const useVideo = !video.hidden && Boolean(video.getAttribute("src")) && video.videoWidth > 0;
+
+  if (!useVideo && !refs.preview.getAttribute("src")) {
+    return null;
+  }
+
+  const media = useVideo ? video : refs.preview;
+  const naturalWidth = useVideo ? video.videoWidth : refs.preview.naturalWidth;
+  const naturalHeight = useVideo ? video.videoHeight : refs.preview.naturalHeight;
+  const sourceWidth =
+    viewport?.width ??
+    (useVideo ? state.screenshotMarker?.viewportWidth : state.screenshotContext?.viewportWidth) ??
+    naturalWidth;
+  const sourceHeight =
+    viewport?.height ??
+    (useVideo ? state.screenshotMarker?.viewportHeight : state.screenshotContext?.viewportHeight) ??
+    naturalHeight;
+  const frame = {
+    width: media.clientWidth,
+    height: media.clientHeight,
+    sourceWidth,
+    sourceHeight
+  };
+
+  return frame.width > 0 &&
+    frame.height > 0 &&
+    sourceWidth > 0 &&
+    sourceHeight > 0 &&
+    naturalWidth > 0 &&
+    naturalHeight > 0
+    ? frame
+    : null;
+}
+
 function renderScreenshotMarker(): void {
   const cursor = document.getElementById("filmstrip-cursor") as HTMLDivElement | null;
+  const marker = state.screenshotMarker;
+  const frame = marker
+    ? resolveOverlayFrame({ width: marker.viewportWidth, height: marker.viewportHeight })
+    : null;
 
-  if (!cursor || !state.screenshotMarker || !refs.preview.getAttribute("src")) {
+  if (!cursor || !marker || !frame) {
     if (cursor) {
       cursor.hidden = true;
     }
@@ -4375,80 +4498,37 @@ function renderScreenshotMarker(): void {
     return;
   }
 
-  const marker = state.screenshotMarker;
-  const imageWidth = refs.preview.clientWidth;
-  const imageHeight = refs.preview.clientHeight;
-  const sourceWidth =
-    marker.viewportWidth ?? state.screenshotContext?.viewportWidth ?? refs.preview.naturalWidth;
-  const sourceHeight =
-    marker.viewportHeight ?? state.screenshotContext?.viewportHeight ?? refs.preview.naturalHeight;
+  const point = projectOverlayPoint(frame, marker.x, marker.y);
 
-  if (
-    imageWidth <= 0 ||
-    imageHeight <= 0 ||
-    sourceWidth <= 0 ||
-    sourceHeight <= 0 ||
-    refs.preview.naturalWidth <= 0 ||
-    refs.preview.naturalHeight <= 0
-  ) {
-    cursor.hidden = true;
-    return;
-  }
-
-  const scale = Math.min(imageWidth / sourceWidth, imageHeight / sourceHeight);
-  const renderedWidth = sourceWidth * scale;
-  const renderedHeight = sourceHeight * scale;
-  const offsetX = (imageWidth - renderedWidth) / 2;
-  const offsetY = (imageHeight - renderedHeight) / 2;
-  const markerX = offsetX + (marker.x / sourceWidth) * renderedWidth;
-  const markerY = offsetY + (marker.y / sourceHeight) * renderedHeight;
-
-  cursor.style.left = `${markerX}px`;
-  cursor.style.top = `${markerY}px`;
+  cursor.style.left = `${point.x}px`;
+  cursor.style.top = `${point.y}px`;
   cursor.hidden = false;
 }
 
 function renderScreenshotTrail(): void {
   const trailSvg = document.getElementById("filmstrip-trail-svg") as SVGSVGElement | null;
+  const frame = resolveOverlayFrame();
 
-  if (!trailSvg || !refs.preview.getAttribute("src") || state.screenshotTrail.length === 0) {
-    if (trailSvg) {
-      trailSvg.innerHTML = "";
-    }
-
+  if (!trailSvg) {
     return;
   }
 
-  const imageWidth = refs.preview.clientWidth;
-  const imageHeight = refs.preview.clientHeight;
-  const sourceWidth = state.screenshotContext?.viewportWidth ?? refs.preview.naturalWidth;
-  const sourceHeight = state.screenshotContext?.viewportHeight ?? refs.preview.naturalHeight;
-
-  if (
-    imageWidth <= 0 ||
-    imageHeight <= 0 ||
-    sourceWidth <= 0 ||
-    sourceHeight <= 0 ||
-    refs.preview.naturalWidth <= 0 ||
-    refs.preview.naturalHeight <= 0
-  ) {
+  if (!frame || !state.model) {
     trailSvg.innerHTML = "";
     return;
   }
 
-  const scale = Math.min(imageWidth / sourceWidth, imageHeight / sourceHeight);
-  const renderedWidth = sourceWidth * scale;
-  const renderedHeight = sourceHeight * scale;
-  const offsetX = (imageWidth - renderedWidth) / 2;
-  const offsetY = (imageHeight - renderedHeight) / 2;
-
   const projected = state.screenshotTrail.map((point) => ({
-    x: offsetX + (point.x / sourceWidth) * renderedWidth,
-    y: offsetY + (point.y / sourceHeight) * renderedHeight,
+    ...projectOverlayPoint(frame, point.x, point.y),
     click: point.click
   }));
+  const ripples = renderRippleSvg(
+    buildRippleMarks(state.model.pointerActions, state.playheadMono),
+    frame,
+    i18n.formatPointerRipple
+  );
 
-  if (projected.length === 0) {
+  if (projected.length === 0 && ripples.length === 0) {
     trailSvg.innerHTML = "";
     return;
   }
@@ -4468,9 +4548,13 @@ function renderScreenshotTrail(): void {
   const tailDot = tailPoint
     ? `<circle class="preview-trail-point preview-trail-point-tail" cx="${tailPoint.x.toFixed(2)}" cy="${tailPoint.y.toFixed(2)}" r="3"></circle>`
     : "";
+  const trail =
+    projected.length > 0
+      ? `<polyline class="preview-trail-line" points="${polylinePoints}"></polyline>${clickDots}${tailDot}`
+      : "";
 
-  trailSvg.setAttribute("viewBox", `0 0 ${imageWidth} ${imageHeight}`);
-  trailSvg.innerHTML = `<polyline class="preview-trail-line" points="${polylinePoints}"></polyline>${clickDots}${tailDot}`;
+  trailSvg.setAttribute("viewBox", `0 0 ${frame.width} ${frame.height}`);
+  trailSvg.innerHTML = `${trail}${ripples}`;
 }
 
 function clearScreenshotMedia(): void {
@@ -4928,11 +5012,7 @@ function buildArchiveModel(player: WebBlackboxPlayer): ArchiveModel {
       }
     }
 
-    if (
-      event.type === "user.mousemove" ||
-      event.type === "user.click" ||
-      event.type === "user.dblclick"
-    ) {
+    if (POINTER_SAMPLE_TYPES.has(event.type)) {
       const x = asFiniteNumber(data?.x);
       const y = asFiniteNumber(data?.y);
 
@@ -4940,13 +5020,21 @@ function buildArchiveModel(player: WebBlackboxPlayer): ArchiveModel {
         continue;
       }
 
-      const click = event.type === "user.click" || event.type === "user.dblclick";
+      // Same-origin iframes record frame-relative points; the stage shows the top viewport.
+      const frameOffset = asRecord(data?.frameOffset);
+      const viewport = asRecord(data?.viewport);
+      const viewportWidth = asFiniteNumber(viewport?.w);
+      const viewportHeight = asFiniteNumber(viewport?.h);
+      const click = event.type !== "user.mousemove";
       pointers.push({
         mono: event.mono,
-        x,
-        y,
+        x: x + (asFiniteNumber(frameOffset?.x) ?? 0),
+        y: y + (asFiniteNumber(frameOffset?.y) ?? 0),
         click,
-        reason: click ? i18n.messages.pointerReasonActionClick : i18n.messages.pointerReasonMove
+        reason: click ? i18n.messages.pointerReasonActionClick : i18n.messages.pointerReasonMove,
+        ...(viewportWidth !== null && viewportHeight !== null && frameOffset === null
+          ? { viewportWidth, viewportHeight }
+          : {})
       });
     }
   }
@@ -4987,6 +5075,15 @@ function buildArchiveModel(player: WebBlackboxPlayer): ArchiveModel {
   const minMono = events[0]?.mono ?? 0;
   const maxMono = events[events.length - 1]?.mono ?? 0;
   const progressMarkers = buildProgressMarkers(events, minMono, maxMono);
+  const pointerTimeline = buildPointerTimeline(events);
+  const pointerActions = toOverlayActions(pointerTimeline);
+  const pointerLane = buildPointerLaneMarks(
+    pointerTimeline,
+    detectPointerSignals(events, {
+      captureMonoOf: (event) => timeNormalization.rawMonoByEventId.get(event.id) ?? event.mono
+    }),
+    i18n.formatPointerKind
+  );
 
   return {
     events,
@@ -5032,6 +5129,8 @@ function buildArchiveModel(player: WebBlackboxPlayer): ArchiveModel {
       }))
       .sort((left, right) => left.mono - right.mono),
     progressMarkers,
+    pointerActions,
+    pointerLane,
     minMono,
     maxMono,
     durationMono: Math.max(0, maxMono - minMono),
@@ -5359,7 +5458,10 @@ function resolveScreenshotMarker(
     return {
       x: latest.x,
       y: latest.y,
-      reason: latest.reason
+      reason: latest.reason,
+      ...(latest.viewportWidth !== undefined && latest.viewportHeight !== undefined
+        ? { viewportWidth: latest.viewportWidth, viewportHeight: latest.viewportHeight }
+        : {})
     };
   }
 
