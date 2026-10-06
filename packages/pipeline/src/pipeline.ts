@@ -1,6 +1,5 @@
 import type {
   CapturePolicy,
-  ExportManifest,
   HashesManifest,
   InvertedIndexEntry,
   PrivacyManifest,
@@ -10,22 +9,23 @@ import type {
   WebBlackboxEvent
 } from "@webblackbox/protocol";
 
-import {
-  ARCHIVE_FORMAT_VERSION,
-  assertExportPassphrase,
-  CHUNK_CODECS,
-  DEFAULT_EXPORT_POLICY,
-  sanitizeUrlForPrivacy
-} from "@webblackbox/protocol";
+import { assertExportPassphrase, CHUNK_CODECS } from "@webblackbox/protocol";
 
-import { decodeChunkEvents, encodeChunkEvents } from "./codec.js";
+import type { ArchiveSink } from "./archive-writer.js";
 import { computeChunkTimeBounds, EventChunker } from "./chunker.js";
-import { createWebBlackboxArchive } from "./exporter.js";
+import { concatBytes } from "./exporter.js";
 import { sha256Hex } from "./hash.js";
-import { EventIndexer } from "./indexer.js";
-import { buildPrivacyManifest } from "./privacy.js";
+import type { EventIndexer } from "./indexer.js";
+import {
+  type ArchiveExportResult,
+  buildSessionIndexes,
+  type ExportBundleOptions,
+  exportSessionArchive
+} from "./session-export.js";
 import type { PipelineStorage, StoredBlob, StoredChunk } from "./storage.js";
 import { externalizeStreamPayload } from "./stream-payload.js";
+
+export type { ArchiveExportResult, ExportBundleOptions } from "./session-export.js";
 
 export type FlightRecorderPipelineOptions = {
   session: SessionMetadata;
@@ -42,44 +42,6 @@ export type ExportResult = {
   integrity: HashesManifest;
   privacyManifest: PrivacyManifest;
 };
-
-export type ExportBundleOptions = {
-  /** Required: every archive is encrypted (at least 8 characters, trimmed). */
-  passphrase?: string;
-  includeScreenshots?: boolean;
-  includeScreenRecordings?: boolean;
-  maxArchiveBytes?: number | null;
-  recentWindowMs?: number | null;
-};
-
-type PreparedExportChunk = {
-  chunk: StoredChunk;
-  events: WebBlackboxEvent[];
-  blobHashes: string[];
-};
-
-type ExportIndexes = {
-  time: ReturnType<EventIndexer["snapshot"]>["time"];
-  request: RequestIndexEntry[];
-  inverted: InvertedIndexEntry[];
-};
-
-type ResolvedExportPolicy = {
-  includeScreenshots: boolean;
-  includeScreenRecordings: boolean;
-  maxArchiveBytes: number | null;
-  recentWindowMs: number | null;
-  cutoffTimestamp: number;
-};
-
-type PreparedArchive = Awaited<ReturnType<typeof createWebBlackboxArchive>> & {
-  privacyManifest: PrivacyManifest;
-};
-
-const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
-const SCREENSHOT_EVENT_TYPE: WebBlackboxEvent["type"] = "screen.screenshot";
-const SCREEN_RECORDING_EVENT_PREFIX = "screen.recording.";
-const EXPORT_OVERHEAD_RESERVE_BYTES = 2 * 1024 * 1024;
 
 export class FlightRecorderPipeline {
   private readonly chunker: EventChunker;
@@ -193,410 +155,48 @@ export class FlightRecorderPipeline {
     inverted: InvertedIndexEntry[];
   }> {
     await this.flush();
-    const chunks = await this.options.storage.listChunks(this.options.session.sid);
-    const snapshot = await this.buildIndexesFromChunks(chunks);
+    const snapshot = await buildSessionIndexes(this.options.storage, this.options.session.sid);
     await this.options.storage.putIndexes(this.options.session.sid, snapshot);
     return snapshot;
   }
 
-  public async exportBundle(options: ExportBundleOptions = {}): Promise<ExportResult> {
+  /**
+   * Streams the session's archive into `sink` (one chunk or blob in memory at a time) under the
+   * export policy; see `exportSessionArchive`.
+   */
+  public async exportArchive(
+    sink: ArchiveSink,
+    options: ExportBundleOptions = {}
+  ): Promise<ArchiveExportResult> {
     // The scanner only reports findings; encryption is mandatory for every archive.
     assertExportPassphrase(options.passphrase);
     await this.flush();
-    const rawChunks = await this.options.storage.listChunks(this.options.session.sid);
-    const exportPolicy = resolveExportPolicy(options, {
-      latestEventTimestamp: rawChunks[rawChunks.length - 1]?.meta.tEnd,
-      sessionStartedAt: this.options.session.startedAt,
-      sessionEndedAt: this.options.session.endedAt
-    });
-    const hasCustomSelection =
-      !exportPolicy.includeScreenshots ||
-      !exportPolicy.includeScreenRecordings ||
-      exportPolicy.maxArchiveBytes !== null ||
-      exportPolicy.recentWindowMs !== null;
 
-    if (!hasCustomSelection) {
-      const indexes = await this.buildIndexesFromChunks(rawChunks);
-      await this.options.storage.putIndexes(this.options.session.sid, indexes);
-      const chunks = rawChunks;
-      const blobs = await this.listReferencedSessionBlobsFromChunks(chunks);
-      const manifest = this.buildManifest(chunks, blobs.length);
-      const events = await this.decodeEventsFromChunks(chunks);
-      const encrypted = true;
-      const privacyManifest = await buildPrivacyManifest({
-        events,
-        blobs,
-        capturePolicy: this.options.capturePolicy,
-        encrypted,
-        transfer: buildExportTransferPolicy({
-          capturePolicy: this.options.capturePolicy,
-          encrypted,
-          includeScreenshots: exportPolicy.includeScreenshots,
-          includeScreenRecordings: exportPolicy.includeScreenRecordings,
-          maxArchiveBytes: exportPolicy.maxArchiveBytes,
-          recentWindowMs: exportPolicy.recentWindowMs
-        })
-      });
-
-      const { bytes, integrity } = await createWebBlackboxArchive(
-        {
-          manifest,
-          chunks,
-          blobs,
-          timeIndex: indexes.time,
-          requestIndex: indexes.request,
-          invertedIndex: indexes.inverted,
-          privacyManifest
-        },
-        {
-          passphrase: options.passphrase
-        }
-      );
-
-      await this.options.storage.putIntegrity(this.options.session.sid, integrity);
-
-      return {
-        fileName: `${this.options.session.sid}.webblackbox`,
-        bytes,
-        integrity,
-        privacyManifest
-      };
-    }
-
-    const prepared = await this.prepareExportChunks(rawChunks, exportPolicy);
-    const blobsByHash = await this.listSessionBlobMap();
-    let selected = this.selectChunksBySize(prepared, blobsByHash, exportPolicy.maxArchiveBytes);
-    let archive = await this.createArchiveForSelection(
-      selected,
-      blobsByHash,
-      exportPolicy,
-      options.passphrase
-    );
-
-    if (
-      exportPolicy.maxArchiveBytes !== null &&
-      archive.bytes.byteLength > exportPolicy.maxArchiveBytes &&
-      selected.length > 0
-    ) {
-      const fitted = await this.fitSelectionToArchiveLimit(
-        selected,
-        blobsByHash,
-        exportPolicy,
-        exportPolicy.maxArchiveBytes,
-        options.passphrase
-      );
-
-      selected = fitted.selected;
-      archive = fitted.archive;
-    }
-
-    const { bytes, integrity, privacyManifest } = archive;
-
-    await this.options.storage.putIntegrity(this.options.session.sid, integrity);
-
-    return {
-      fileName: `${this.options.session.sid}.webblackbox`,
-      bytes,
-      integrity,
-      privacyManifest
-    };
-  }
-
-  private async listSessionBlobs(): Promise<StoredBlob[]> {
-    const chunks = await this.options.storage.listChunks(this.options.session.sid);
-    const hashes = new Set<string>();
-    const blobs: StoredBlob[] = [];
-
-    for (const chunk of chunks) {
-      const events = await decodeChunkEvents(chunk.bytes, chunk.meta.codec);
-
-      for (const hash of collectBlobHashesFromEvents(events)) {
-        hashes.add(hash);
-      }
-    }
-
-    for (const hash of [...hashes].sort()) {
-      const blob = await this.options.storage.getBlob(hash);
-
-      if (blob) {
-        blobs.push(blob);
-      }
-    }
-
-    return blobs;
-  }
-
-  private async listSessionBlobMap(): Promise<Map<string, StoredBlob>> {
-    const blobs = await this.listSessionBlobs();
-    const byHash = new Map<string, StoredBlob>();
-
-    for (const blob of blobs) {
-      byHash.set(blob.hash, blob);
-    }
-
-    return byHash;
-  }
-
-  private async listReferencedSessionBlobsFromChunks(chunks: StoredChunk[]): Promise<StoredBlob[]> {
-    const referencedHashes = new Set<string>();
-
-    for (const chunk of chunks) {
-      const events = await decodeChunkEvents(chunk.bytes, chunk.meta.codec);
-      const hashes = collectBlobHashesFromEvents(events);
-
-      for (const hash of hashes) {
-        referencedHashes.add(hash);
-      }
-    }
-
-    const referenced: StoredBlob[] = [];
-
-    for (const hash of [...referencedHashes].sort()) {
-      const blob = await this.options.storage.getBlob(hash);
-
-      if (blob) {
-        referenced.push(blob);
-      }
-    }
-
-    return referenced;
-  }
-
-  private async prepareExportChunks(
-    chunks: StoredChunk[],
-    exportPolicy: ResolvedExportPolicy
-  ): Promise<PreparedExportChunk[]> {
-    const output: PreparedExportChunk[] = [];
-
-    for (const chunk of chunks) {
-      const decoded = await decodeChunkEvents(chunk.bytes, chunk.meta.codec);
-      const filtered = decoded.filter((event) => shouldIncludeEvent(event, exportPolicy));
-
-      if (filtered.length === 0) {
-        continue;
-      }
-
-      const blobHashes = collectBlobHashesFromEvents(filtered);
-
-      if (filtered.length === decoded.length) {
-        output.push({
-          chunk,
-          events: filtered,
-          blobHashes
-        });
-        continue;
-      }
-
-      const encoded = await encodeChunkEvents(filtered, chunk.meta.codec);
-      const bytes = encoded.bytes;
-
-      output.push({
-        chunk: {
-          sid: chunk.sid,
-          meta: {
-            ...chunk.meta,
-            ...computeChunkTimeBounds(filtered, chunk.meta),
-            eventCount: filtered.length,
-            byteLength: bytes.byteLength,
-            codec: encoded.codec,
-            sha256: await sha256Hex(bytes)
-          },
-          bytes
-        },
-        events: filtered,
-        blobHashes
-      });
-    }
-
-    return output;
-  }
-
-  private selectChunksBySize(
-    chunks: PreparedExportChunk[],
-    blobsByHash: Map<string, StoredBlob>,
-    maxArchiveBytes: number | null
-  ): PreparedExportChunk[] {
-    if (maxArchiveBytes === null || chunks.length === 0) {
-      return chunks;
-    }
-
-    const reserve = Math.min(EXPORT_OVERHEAD_RESERVE_BYTES, Math.floor(maxArchiveBytes * 0.1));
-    const budget = Math.max(0, maxArchiveBytes - reserve);
-    const selected: PreparedExportChunk[] = [];
-    const selectedBlobHashes = new Set<string>();
-    let totalBytes = 0;
-
-    for (let index = chunks.length - 1; index >= 0; index -= 1) {
-      const candidate = chunks[index];
-
-      if (!candidate) {
-        continue;
-      }
-
-      let additionalBlobBytes = 0;
-
-      for (const hash of candidate.blobHashes) {
-        if (selectedBlobHashes.has(hash)) {
-          continue;
-        }
-
-        additionalBlobBytes += blobsByHash.get(hash)?.bytes.byteLength ?? 0;
-      }
-
-      const candidateBytes = candidate.chunk.bytes.byteLength + additionalBlobBytes;
-      const nextTotal = totalBytes + candidateBytes;
-
-      if (nextTotal > budget && selected.length > 0) {
-        break;
-      }
-
-      selected.push(candidate);
-      totalBytes = nextTotal;
-
-      for (const hash of candidate.blobHashes) {
-        selectedBlobHashes.add(hash);
-      }
-    }
-
-    return selected.reverse();
-  }
-
-  private buildExportSnapshot(
-    selectedChunks: PreparedExportChunk[],
-    blobsByHash: Map<string, StoredBlob>
-  ): {
-    chunks: StoredChunk[];
-    blobs: StoredBlob[];
-    indexes: ExportIndexes;
-  } {
-    const chunks = selectedChunks.map((entry) => entry.chunk);
-    const indexer = new EventIndexer();
-    const blobHashes = new Set<string>();
-
-    for (const chunk of selectedChunks) {
-      indexer.addChunk(chunk.chunk.meta);
-      indexer.addEvents(chunk.events);
-
-      for (const hash of chunk.blobHashes) {
-        blobHashes.add(hash);
-      }
-    }
-
-    const blobs: StoredBlob[] = [];
-
-    for (const hash of [...blobHashes].sort()) {
-      const blob = blobsByHash.get(hash);
-
-      if (blob) {
-        blobs.push(blob);
-      }
-    }
-
-    return {
-      chunks,
-      blobs,
-      indexes: indexer.snapshot()
-    };
-  }
-
-  private async createArchiveForSelection(
-    selectedChunks: PreparedExportChunk[],
-    blobsByHash: Map<string, StoredBlob>,
-    exportPolicy: ResolvedExportPolicy,
-    passphrase?: string
-  ): Promise<PreparedArchive> {
-    const exportData = this.buildExportSnapshot(selectedChunks, blobsByHash);
-    const manifest = this.buildManifest(exportData.chunks, exportData.blobs.length);
-    const events = selectedChunks.flatMap((chunk) => chunk.events);
-    const encrypted = true;
-    const privacyManifest = await buildPrivacyManifest({
-      events,
-      blobs: exportData.blobs,
-      capturePolicy: this.options.capturePolicy,
-      encrypted,
-      transfer: buildExportTransferPolicy({
-        capturePolicy: this.options.capturePolicy,
-        encrypted,
-        includeScreenshots: exportPolicy.includeScreenshots,
-        includeScreenRecordings: exportPolicy.includeScreenRecordings,
-        maxArchiveBytes: exportPolicy.maxArchiveBytes,
-        recentWindowMs: exportPolicy.recentWindowMs
-      })
-    });
-
-    const archive = await createWebBlackboxArchive(
+    return exportSessionArchive(
       {
-        manifest,
-        chunks: exportData.chunks,
-        blobs: exportData.blobs,
-        timeIndex: exportData.indexes.time,
-        requestIndex: exportData.indexes.request,
-        invertedIndex: exportData.indexes.inverted,
-        privacyManifest
+        storage: this.options.storage,
+        session: this.options.session,
+        chunkCodec: this.chunkCodec,
+        redactionProfile: this.options.redactionProfile,
+        capturePolicy: this.options.capturePolicy
       },
-      {
-        passphrase
-      }
+      options,
+      sink
     );
-
-    return {
-      ...archive,
-      privacyManifest
-    };
   }
 
-  private async fitSelectionToArchiveLimit(
-    selected: PreparedExportChunk[],
-    blobsByHash: Map<string, StoredBlob>,
-    exportPolicy: ResolvedExportPolicy,
-    maxArchiveBytes: number,
-    passphrase?: string
-  ): Promise<{
-    selected: PreparedExportChunk[];
-    archive: PreparedArchive;
-  }> {
-    let left = 1;
-    let right = selected.length;
-    let bestSelection: PreparedExportChunk[] | null = null;
-    let bestArchive: PreparedArchive | null = null;
-
-    while (left <= right) {
-      const dropCount = Math.floor((left + right) / 2);
-      const candidateSelection = selected.slice(dropCount);
-      const candidateArchive = await this.createArchiveForSelection(
-        candidateSelection,
-        blobsByHash,
-        exportPolicy,
-        passphrase
-      );
-
-      if (candidateArchive.bytes.byteLength <= maxArchiveBytes) {
-        bestSelection = candidateSelection;
-        bestArchive = candidateArchive;
-        right = dropCount - 1;
-      } else {
-        left = dropCount + 1;
-      }
-    }
-
-    if (bestSelection && bestArchive) {
-      return {
-        selected: bestSelection,
-        archive: bestArchive
-      };
-    }
-
-    const emptySelection = selected.slice(selected.length);
-    const emptyArchive = await this.createArchiveForSelection(
-      emptySelection,
-      blobsByHash,
-      exportPolicy,
-      passphrase
-    );
+  /** The archive as one byte array; `exportArchive` avoids holding it whole. */
+  public async exportBundle(options: ExportBundleOptions = {}): Promise<ExportResult> {
+    const parts: Uint8Array[] = [];
+    const exported = await this.exportArchive((part) => {
+      parts.push(part);
+    }, options);
 
     return {
-      selected: emptySelection,
-      archive: emptyArchive
+      fileName: exported.fileName,
+      bytes: concatBytes(parts),
+      integrity: exported.integrity,
+      privacyManifest: exported.privacyManifest
     };
   }
 
@@ -625,216 +225,12 @@ export class FlightRecorderPipeline {
 
     await this.options.storage.putChunk(chunk);
   }
-
-  private async buildIndexesFromChunks(chunks: StoredChunk[]): Promise<ExportIndexes> {
-    const indexer = new EventIndexer();
-
-    for (const chunk of chunks) {
-      indexer.addChunk(chunk.meta);
-      indexer.addEvents(await decodeChunkEvents(chunk.bytes, chunk.meta.codec));
-    }
-
-    return indexer.snapshot();
-  }
-
-  private async decodeEventsFromChunks(chunks: StoredChunk[]): Promise<WebBlackboxEvent[]> {
-    const events: WebBlackboxEvent[] = [];
-
-    for (const chunk of chunks) {
-      events.push(...(await decodeChunkEvents(chunk.bytes, chunk.meta.codec)));
-    }
-
-    return events;
-  }
-
-  private buildManifest(chunks: StoredChunk[], blobCount: number): ExportManifest {
-    const first = chunks[0]?.meta.tStart ?? this.options.session.startedAt;
-    const last = chunks[chunks.length - 1]?.meta.tEnd ?? this.options.session.startedAt;
-    const chunkCodec = chunks[0]?.meta.codec ?? this.chunkCodec;
-
-    return {
-      protocolVersion: ARCHIVE_FORMAT_VERSION,
-      createdAt: new Date().toISOString(),
-      mode: this.options.session.mode,
-      // The manifest stays readable even in encrypted archives, so the page title (which can
-      // carry names, emails or document titles) is never written here.
-      site: {
-        origin: sanitizeUrlForPrivacy(this.options.session.url)
-      },
-      chunkCodec,
-      redactionProfile: toManifestRedactionProfile(this.options.redactionProfile),
-      stats: {
-        eventCount: chunks.reduce((count, chunk) => count + chunk.meta.eventCount, 0),
-        chunkCount: chunks.length,
-        blobCount,
-        durationMs: Math.max(0, last - first)
-      }
-    };
-  }
-}
-
-/**
- * Copies only the schema-known redaction fields into the manifest. Profiles merged from stored
- * options can carry extra keys, which the strict manifest schema would reject on load.
- */
-function toManifestRedactionProfile(profile: RedactionProfile | undefined): RedactionProfile {
-  return {
-    redactHeaders: [...(profile?.redactHeaders ?? [])],
-    redactCookieNames: [...(profile?.redactCookieNames ?? [])],
-    redactBodyPatterns: [...(profile?.redactBodyPatterns ?? [])],
-    blockedSelectors: [...(profile?.blockedSelectors ?? [])],
-    hashSensitiveValues: profile?.hashSensitiveValues ?? true
-  };
-}
-
-function resolveExportPolicy(
-  options: ExportBundleOptions,
-  context: {
-    latestEventTimestamp?: number;
-    sessionStartedAt: number;
-    sessionEndedAt?: number;
-  }
-): ResolvedExportPolicy {
-  const includeScreenshots =
-    typeof options.includeScreenshots === "boolean"
-      ? options.includeScreenshots
-      : DEFAULT_EXPORT_POLICY.includeScreenshots;
-  const includeScreenRecordings =
-    typeof options.includeScreenRecordings === "boolean"
-      ? options.includeScreenRecordings
-      : DEFAULT_EXPORT_POLICY.includeScreenRecordings;
-  const maxArchiveBytes =
-    options.maxArchiveBytes === null
-      ? null
-      : normalizeBoundedPositiveInt(
-          options.maxArchiveBytes ?? DEFAULT_EXPORT_POLICY.maxArchiveBytes
-        );
-  const recentWindowMs =
-    options.recentWindowMs === null
-      ? null
-      : normalizeBoundedPositiveInt(options.recentWindowMs ?? DEFAULT_EXPORT_POLICY.recentWindowMs);
-  const anchorTimestamp =
-    typeof context.sessionEndedAt === "number"
-      ? Math.max(
-          context.latestEventTimestamp ?? Number.NEGATIVE_INFINITY,
-          context.sessionEndedAt,
-          context.sessionStartedAt
-        )
-      : Math.max(
-          Date.now(),
-          context.latestEventTimestamp ?? Number.NEGATIVE_INFINITY,
-          context.sessionStartedAt
-        );
-  const cutoffTimestamp =
-    recentWindowMs === null
-      ? Number.NEGATIVE_INFINITY
-      : Math.max(0, anchorTimestamp - recentWindowMs);
-
-  return {
-    includeScreenshots,
-    includeScreenRecordings,
-    maxArchiveBytes,
-    recentWindowMs,
-    cutoffTimestamp
-  };
-}
-
-function shouldIncludeEvent(event: WebBlackboxEvent, exportPolicy: ResolvedExportPolicy): boolean {
-  if (!exportPolicy.includeScreenshots && event.type === SCREENSHOT_EVENT_TYPE) {
-    return false;
-  }
-
-  if (!exportPolicy.includeScreenRecordings && isScreenRecordingEvent(event)) {
-    return false;
-  }
-
-  if (event.t < exportPolicy.cutoffTimestamp) {
-    return false;
-  }
-
-  return true;
-}
-
-function buildExportTransferPolicy(input: {
-  capturePolicy?: CapturePolicy;
-  encrypted: boolean;
-  includeScreenshots: boolean;
-  includeScreenRecordings: boolean;
-  maxArchiveBytes: number | null;
-  recentWindowMs: number | null;
-}): NonNullable<PrivacyManifest["transfer"]> {
-  return {
-    destination: "local-download",
-    archiveKeyEnvelope: input.encrypted
-      ? (input.capturePolicy?.encryption.archiveKeyEnvelope ?? "passphrase")
-      : "none",
-    encrypted: input.encrypted,
-    includeScreenshots: input.includeScreenshots,
-    includeScreenRecordings: input.includeScreenRecordings,
-    maxArchiveBytes: input.maxArchiveBytes,
-    recentWindowMs: input.recentWindowMs,
-    shareEligible: input.encrypted,
-    computedAt: new Date().toISOString()
-  };
-}
-
-function isScreenRecordingEvent(event: WebBlackboxEvent): boolean {
-  return event.type.startsWith(SCREEN_RECORDING_EVENT_PREFIX);
-}
-
-function collectBlobHashesFromEvents(events: WebBlackboxEvent[]): string[] {
-  const hashes = new Set<string>();
-
-  for (const event of events) {
-    collectBlobHashesFromUnknown(event.data, hashes);
-  }
-
-  return [...hashes].sort();
-}
-
-function collectBlobHashesFromUnknown(value: unknown, output: Set<string>): void {
-  const stack: unknown[] = [value];
-
-  while (stack.length > 0) {
-    const current = stack.pop();
-
-    if (typeof current === "string") {
-      if (SHA256_HEX_PATTERN.test(current)) {
-        output.add(current);
-      }
-
-      continue;
-    }
-
-    if (!current || typeof current !== "object") {
-      continue;
-    }
-
-    if (Array.isArray(current)) {
-      for (const entry of current) {
-        stack.push(entry);
-      }
-      continue;
-    }
-
-    for (const entry of Object.values(current as Record<string, unknown>)) {
-      stack.push(entry);
-    }
-  }
 }
 
 function assertPrivacyClassifiedEvent(event: WebBlackboxEvent): void {
   if (!event.privacy) {
     throw new Error(`Event ${event.id} is missing privacy classification.`);
   }
-}
-
-function normalizeBoundedPositiveInt(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return null;
-  }
-
-  return Math.max(1, Math.round(value));
 }
 
 function resolveChunkCodec(

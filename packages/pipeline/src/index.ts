@@ -1,3 +1,5 @@
+export * from "./archive-blob-sink.js";
+export type { ArchiveSink } from "./archive-writer.js";
 export * from "./chunker.js";
 export * from "./codec.js";
 export * from "./exporter.js";

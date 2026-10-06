@@ -6,7 +6,8 @@ import type {
   SessionMetadata
 } from "@webblackbox/protocol";
 
-import { decodeEventsNdjson } from "./codec.js";
+import { collectBlobHashesFromUnknown, SHA256_HEX_PATTERN } from "./blob-hashes.js";
+import { decodeChunkEvents } from "./codec.js";
 
 // The encrypted wrapper lives in its own module; re-exported so existing imports keep working.
 export * from "./encrypted-storage.js";
@@ -24,6 +25,13 @@ export type StoredBlob = {
   bytes: Uint8Array;
   createdAt: number;
   refCount: number;
+};
+
+/** A blob's identity, type and size, without its bytes. */
+export type StoredBlobInfo = {
+  hash: string;
+  mime: string;
+  size: number;
 };
 
 export type StoredIndexes = {
@@ -44,9 +52,19 @@ export type PipelineStorage = {
   listChunks(sid: string): Promise<StoredChunk[]>;
   getLatestChunkMeta(sid: string): Promise<ChunkTimeIndexEntry | undefined>;
   getChunk(sid: string, chunkId: string): Promise<StoredChunk | undefined>;
+  /**
+   * Chunk metadata of a session in sequence order, without the chunk bytes. Optional: exports
+   * fall back to `listChunks`, which loads every chunk at once.
+   */
+  listChunkMetas?(sid: string): Promise<ChunkTimeIndexEntry[]>;
   putBlob(blob: StoredBlob, sidHint?: string): Promise<void>;
   getBlob(hash: string): Promise<StoredBlob | undefined>;
   listBlobs(): Promise<StoredBlob[]>;
+  /**
+   * Hash, type and size of every blob tracked for a session, without the bytes. Optional:
+   * exports fall back to reading each referenced blob.
+   */
+  listSessionBlobInfo?(sid: string): Promise<StoredBlobInfo[]>;
   putIndexes(sid: string, indexes: StoredIndexes): Promise<void>;
   getIndexes(sid: string): Promise<StoredIndexes>;
   putIntegrity(sid: string, manifest: HashesManifest): Promise<void>;
@@ -59,7 +77,6 @@ const EMPTY_INDEXES: StoredIndexes = {
   request: [],
   inverted: []
 };
-const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_QUOTA_RECOVERY_ATTEMPTS = 2;
 
 export class MemoryPipelineStorage implements PipelineStorage {
@@ -116,6 +133,12 @@ export class MemoryPipelineStorage implements PipelineStorage {
     return chunks.find((chunk) => chunk.meta.chunkId === chunkId);
   }
 
+  public async listChunkMetas(sid: string): Promise<ChunkTimeIndexEntry[]> {
+    return (this.chunks.get(sid) ?? [])
+      .map((chunk) => chunk.meta)
+      .sort((left, right) => left.seq - right.seq);
+  }
+
   public async putBlob(blob: StoredBlob, sidHint?: string): Promise<void> {
     const trackingSid = normalizeTrackingSid(sidHint);
 
@@ -142,6 +165,13 @@ export class MemoryPipelineStorage implements PipelineStorage {
 
   public async listBlobs(): Promise<StoredBlob[]> {
     return [...this.blobs.values()];
+  }
+
+  public async listSessionBlobInfo(sid: string): Promise<StoredBlobInfo[]> {
+    return this.getTrackedBlobHashes(sid).flatMap((hash) => {
+      const blob = this.blobs.get(hash);
+      return blob ? [{ hash, mime: blob.mime, size: blob.size }] : [];
+    });
   }
 
   public async putIndexes(sid: string, indexes: StoredIndexes): Promise<void> {
@@ -323,6 +353,25 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
   public async getChunk(sid: string, chunkId: string): Promise<StoredChunk | undefined> {
     const row = await this.get<ChunkRow>("chunks", this.chunkKey(sid, chunkId));
     return row?.value;
+  }
+
+  /** Walks the session's chunks with a cursor, so only one chunk's bytes are loaded at a time. */
+  public async listChunkMetas(sid: string): Promise<ChunkTimeIndexEntry[]> {
+    const db = await this.db();
+
+    return runTransaction(db, "chunks", "readonly", (store) => {
+      if (!store.indexNames.contains(CHUNKS_BY_SID_SEQ_INDEX)) {
+        return collectCursorValues<ChunkRow, ChunkTimeIndexEntry>(store.openCursor(), (row) =>
+          row.value.sid === sid ? row.value.meta : null
+        ).then((metas) => metas.sort((left, right) => left.seq - right.seq));
+      }
+
+      const range = IDBKeyRange.bound([sid, 0], [sid, Number.MAX_SAFE_INTEGER]);
+      return collectCursorValues<ChunkRow, ChunkTimeIndexEntry>(
+        store.index(CHUNKS_BY_SID_SEQ_INDEX).openCursor(range),
+        (row) => row.value.meta
+      );
+    });
   }
 
   // Blob writes run one at a time: each reads and rewrites the blob's reference count and the
@@ -644,8 +693,17 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
       return tracked;
     }
 
-    const chunks = await this.listChunks(sid);
-    return [...collectBlobHashesFromChunks(chunks)];
+    const hashes = new Set<string>();
+
+    for (const meta of await this.listChunkMetas(sid)) {
+      const chunk = await this.getChunk(sid, meta.chunkId);
+
+      if (chunk) {
+        await collectBlobHashesFromChunk(chunk, hashes);
+      }
+    }
+
+    return [...hashes];
   }
 
   private async trackBlobHashForSession(sid: string, hash: string): Promise<void> {
@@ -749,22 +807,18 @@ async function getNavigatorStorageEstimate(): Promise<{ usage?: number; quota?: 
   }
 }
 
-function collectBlobHashesFromChunks(chunks: StoredChunk[]): Set<string> {
-  const hashes = new Set<string>();
-
-  for (const chunk of chunks) {
-    try {
-      const events = decodeEventsNdjson(chunk.bytes);
-
-      for (const event of events) {
-        collectBlobHashesFromUnknown(event.data, hashes);
-      }
-    } catch {
-      continue;
+/**
+ * Blob hashes referenced by one stored chunk, decoded with the chunk's codec. Chunks this
+ * storage cannot decode (sealed by an encrypting wrapper) reference nothing it can find.
+ */
+async function collectBlobHashesFromChunk(chunk: StoredChunk, output: Set<string>): Promise<void> {
+  try {
+    for (const event of await decodeChunkEvents(chunk.bytes, chunk.meta.codec)) {
+      collectBlobHashesFromUnknown(event.data, output);
     }
+  } catch {
+    return;
   }
-
-  return hashes;
 }
 
 function normalizeBlobHashes(values: unknown): string[] {
@@ -797,37 +851,6 @@ function mergeBlobHashes(...sources: unknown[]): string[] {
 
 function normalizeTrackingSid(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function collectBlobHashesFromUnknown(value: unknown, output: Set<string>): void {
-  const stack: unknown[] = [value];
-
-  while (stack.length > 0) {
-    const current = stack.pop();
-
-    if (typeof current === "string") {
-      if (SHA256_HEX_PATTERN.test(current)) {
-        output.add(current);
-      }
-
-      continue;
-    }
-
-    if (!current || typeof current !== "object") {
-      continue;
-    }
-
-    if (Array.isArray(current)) {
-      for (const item of current) {
-        stack.push(item);
-      }
-      continue;
-    }
-
-    for (const item of Object.values(current as Record<string, unknown>)) {
-      stack.push(item);
-    }
-  }
 }
 
 async function runTransaction<TResult>(
@@ -878,6 +901,36 @@ function deleteByCursor(request: IDBRequest<IDBCursorWithValue | null>): Promise
       }
 
       cursor.delete();
+      cursor.continue();
+    };
+  });
+}
+
+function collectCursorValues<TRow, TResult>(
+  request: IDBRequest<IDBCursorWithValue | null>,
+  pick: (row: TRow) => TResult | null
+): Promise<TResult[]> {
+  const output: TResult[] = [];
+
+  return new Promise<TResult[]>((resolve, reject) => {
+    request.onerror = () => {
+      reject(request.error ?? new Error("IndexedDB cursor iteration failed"));
+    };
+
+    request.onsuccess = () => {
+      const cursor = request.result;
+
+      if (!cursor) {
+        resolve(output);
+        return;
+      }
+
+      const value = pick(cursor.value as TRow);
+
+      if (value !== null) {
+        output.push(value);
+      }
+
       cursor.continue();
     };
   });
