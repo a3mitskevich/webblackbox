@@ -93,7 +93,7 @@ type OffscreenScreenRecordingState = {
   height?: number;
   frameRate?: number;
   nextChunkIndex: number;
-  postedChunkCount: number;
+  storedChunkCount: number;
   sizeBytes: number;
   pendingChunks: Set<Promise<void>>;
   stopping: boolean;
@@ -501,7 +501,7 @@ async function startOffscreenScreenRecording(
       height: normalizePositiveInteger(settings.height),
       frameRate: normalizePositiveNumber(settings.frameRate),
       nextChunkIndex: 0,
-      postedChunkCount: 0,
+      storedChunkCount: 0,
       sizeBytes: 0,
       pendingChunks: new Set(),
       stopping: false,
@@ -644,10 +644,19 @@ function handleScreenRecordingData(
   const startOffsetMs = Math.max(0, Math.round(performance.now() - recording.startedAt));
   recording.nextChunkIndex += 1;
 
+  // The chunk goes straight into the session's pipeline; the worker only gets its hash.
   const task = (async () => {
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const endOffsetMs = Math.max(0, Math.round(performance.now() - recording.startedAt));
-    recording.postedChunkCount += 1;
+    const pipeline = pipelines.get(recording.sid);
+
+    if (!pipeline) {
+      throw new Error(`Pipeline session not found: ${recording.sid}`);
+    }
+
+    const mime = blob.type || recording.mime;
+    const chunkId = await pipeline.putBlob(mime, bytes);
+    recording.storedChunkCount += 1;
     recording.sizeBytes += bytes.byteLength;
 
     postToSw({
@@ -655,8 +664,8 @@ function handleScreenRecordingData(
       sid: recording.sid,
       recordingId: recording.recordingId,
       index,
-      mime: blob.type || recording.mime,
-      bytes,
+      mime,
+      chunkId,
       size: bytes.byteLength,
       startOffsetMs,
       endOffsetMs,
@@ -745,7 +754,7 @@ function toScreenRecordingStopResult(
   return {
     recordingId: recording.recordingId,
     mime: recording.mime,
-    chunkCount: recording.postedChunkCount,
+    chunkCount: recording.storedChunkCount,
     size: recording.sizeBytes,
     durationMs: Math.max(0, Math.round(performance.now() - recording.startedAt)),
     width: recording.width,

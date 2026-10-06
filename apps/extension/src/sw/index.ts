@@ -315,7 +315,6 @@ type ScreenRecordingRuntime = {
   chunks: string[];
   chunkCount: number;
   sizeBytes: number;
-  pendingWrites: Set<Promise<void>>;
   stopPromise: Promise<void> | null;
 };
 
@@ -457,8 +456,9 @@ type OffscreenScreenRecordingChunkMessage = {
   recordingId: string;
   index: number;
   mime: string;
-  bytes: unknown;
-  size?: number;
+  /** Content hash of the chunk the offscreen document stored in the pipeline. */
+  chunkId: string;
+  size: number;
   startOffsetMs?: number;
   endOffsetMs?: number;
   durationMs?: number;
@@ -2747,13 +2747,7 @@ function handleOffscreenRuntimeMessage(rawMessage: unknown, port: PortLike): boo
   }
 
   const kind = (rawMessage as { kind?: unknown }).kind;
-  offscreenPortTraffic.recordReceived(
-    typeof kind === "string" ? kind : "unknown",
-    rawMessage,
-    kind === "offscreen.screen-recording-chunk"
-      ? (asFiniteNumber((rawMessage as { size?: unknown }).size) ?? 0)
-      : 0
-  );
+  offscreenPortTraffic.recordReceived(typeof kind === "string" ? kind : "unknown", rawMessage);
 
   if (kind === "offscreen.ready") {
     notifyOffscreenPipelineStatus();
@@ -2765,11 +2759,7 @@ function handleOffscreenRuntimeMessage(rawMessage: unknown, port: PortLike): boo
   }
 
   if (kind === "offscreen.screen-recording-chunk") {
-    void handleOffscreenScreenRecordingChunk(
-      rawMessage as OffscreenScreenRecordingChunkMessage
-    ).catch((error) => {
-      console.warn("[WebBlackbox] failed to persist screen recording chunk", error);
-    });
+    handleOffscreenScreenRecordingChunk(rawMessage as OffscreenScreenRecordingChunkMessage);
     return true;
   }
 
@@ -3590,7 +3580,6 @@ async function startScreenRecording(runtime: SessionRuntime): Promise<void> {
     chunks: [],
     chunkCount: 0,
     sizeBytes: 0,
-    pendingWrites: new Set(),
     stopPromise: null
   };
   runtime.screenRecording = recording;
@@ -3658,9 +3647,8 @@ async function stopScreenRecording(runtime: SessionRuntime, reason: string): Pro
   await recording.stopPromise;
 }
 
-async function handleOffscreenScreenRecordingChunk(
-  message: OffscreenScreenRecordingChunkMessage
-): Promise<void> {
+/** The offscreen document has already stored the chunk; the worker records where it is. */
+function handleOffscreenScreenRecordingChunk(message: OffscreenScreenRecordingChunkMessage): void {
   const runtime = sessionsBySid.get(message.sid);
   const recording = runtime?.screenRecording;
 
@@ -3668,53 +3656,37 @@ async function handleOffscreenScreenRecordingChunk(
     return;
   }
 
-  const bytes = asUint8Array(message.bytes);
+  const chunkId = typeof message.chunkId === "string" ? message.chunkId : "";
+  const size = asFiniteNumber(message.size) ?? 0;
 
-  if (!bytes || bytes.byteLength === 0) {
+  if (!chunkId || size <= 0) {
     return;
   }
 
   const index = resolveScreenRecordingChunkIndex(message.index, recording.chunkCount);
-  const task = (async () => {
-    const mime = typeof message.mime === "string" && message.mime ? message.mime : recording.mime;
-    const hash = await runtime.pipeline.putBlob(mime, bytes);
-    const size = bytes.byteLength;
-    recording.chunks[index] = hash;
-    recording.chunkCount = Math.max(recording.chunkCount, index + 1);
-    recording.sizeBytes += size;
+  const mime = typeof message.mime === "string" && message.mime ? message.mime : recording.mime;
+  recording.chunks[index] = chunkId;
+  recording.chunkCount = Math.max(recording.chunkCount, index + 1);
+  recording.sizeBytes += size;
 
-    ingestRawEvent({
-      source: "system",
-      rawType: "screen.recording.chunk",
-      sid: runtime.sid,
-      tabId: runtime.tabId,
-      t: Date.now(),
-      mono: monotonicTime(),
-      payload: {
-        recordingId: recording.recordingId,
-        chunkId: hash,
-        index,
-        mime,
-        size,
-        startOffsetMs: normalizeRecordingOffset(message.startOffsetMs),
-        endOffsetMs: normalizeRecordingOffset(message.endOffsetMs),
-        durationMs: normalizeRecordingOffset(message.durationMs)
-      }
-    });
-  })();
-
-  recording.pendingWrites.add(task);
-  task.then(
-    () => {
-      recording.pendingWrites.delete(task);
-    },
-    (error) => {
-      recording.pendingWrites.delete(task);
-      ingestScreenRecordingError(runtime, recording, error, "chunk");
+  ingestRawEvent({
+    source: "system",
+    rawType: "screen.recording.chunk",
+    sid: runtime.sid,
+    tabId: runtime.tabId,
+    t: Date.now(),
+    mono: monotonicTime(),
+    payload: {
+      recordingId: recording.recordingId,
+      chunkId,
+      index,
+      mime,
+      size,
+      startOffsetMs: normalizeRecordingOffset(message.startOffsetMs),
+      endOffsetMs: normalizeRecordingOffset(message.endOffsetMs),
+      durationMs: normalizeRecordingOffset(message.durationMs)
     }
-  );
-
-  await task;
+  });
 }
 
 async function handleOffscreenScreenRecordingEnded(
@@ -3763,7 +3735,6 @@ async function finalizeScreenRecording(
     return;
   }
 
-  await waitForScreenRecordingChunkWrites(recording);
   const chunks = recording.chunks.filter(
     (chunk): chunk is string => typeof chunk === "string" && chunk.length > 0
   );
@@ -3811,12 +3782,6 @@ function ingestScreenRecordingError(
       stage
     }
   });
-}
-
-async function waitForScreenRecordingChunkWrites(recording: ScreenRecordingRuntime): Promise<void> {
-  while (recording.pendingWrites.size > 0) {
-    await Promise.allSettled([...recording.pendingWrites]);
-  }
 }
 
 function resolveScreenRecordingChunkIndex(value: unknown, fallback: number): number {
@@ -4355,61 +4320,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function asUint8Array(value: unknown): Uint8Array | null {
-  if (value instanceof Uint8Array) {
-    return value;
-  }
-
-  if (value instanceof ArrayBuffer) {
-    return new Uint8Array(value);
-  }
-
-  if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  }
-
-  if (Array.isArray(value)) {
-    return Uint8Array.from(value, (entry) =>
-      typeof entry === "number" && Number.isFinite(entry) ? entry & 0xff : 0
-    );
-  }
-
-  const record = asRecord(value);
-
-  if (!record) {
-    return null;
-  }
-
-  const numericKeys = Object.keys(record)
-    .filter((key) => /^\d+$/.test(key))
-    .map((key) => Number(key))
-    .sort((left, right) => left - right);
-
-  if (numericKeys.length === 0) {
-    return null;
-  }
-
-  const maxIndex = numericKeys[numericKeys.length - 1];
-
-  if (typeof maxIndex !== "number" || !Number.isFinite(maxIndex)) {
-    return null;
-  }
-
-  const bytes = new Uint8Array(maxIndex + 1);
-
-  for (const index of numericKeys) {
-    const byte = record[String(index)];
-
-    if (typeof byte !== "number" || !Number.isFinite(byte)) {
-      return null;
-    }
-
-    bytes[index] = byte & 0xff;
-  }
-
-  return bytes;
 }
 
 function normalizeContentFrameId(value: unknown): string | undefined {
