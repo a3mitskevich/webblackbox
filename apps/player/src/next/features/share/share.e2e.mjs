@@ -1,4 +1,4 @@
-// e2e:player-next scenarios of the share feature (R4), picked up by scripts/e2e-player-next.mjs.
+// e2e:player scenarios of the share feature (R4), picked up by scripts/e2e-player.mjs.
 // The share server is stubbed inside the page (XMLHttpRequest for the upload, fetch for the
 // archive), because the harness already owns the CDP Fetch domain for the strict-CSP pass.
 import { readFile } from "node:fs/promises";
@@ -40,7 +40,7 @@ async function onNewDocument(ctx, source) {
 
 async function navigateWithShare(ctx, reference) {
   await ctx.client.send("Page.navigate", {
-    url: `${ctx.origin}/?ui=next&lang=en&csp=strict&share=${encodeURIComponent(reference)}`
+    url: `${ctx.origin}/?lang=en&share=${encodeURIComponent(reference)}`
   });
 }
 

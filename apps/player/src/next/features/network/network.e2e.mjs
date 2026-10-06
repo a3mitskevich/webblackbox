@@ -1,4 +1,4 @@
-// e2e:player-next scenarios of the network feature (picked up by scripts/e2e-player-next.mjs).
+// e2e:player scenarios of the network feature (picked up by scripts/e2e-player.mjs).
 // Tester flows through data-testid hooks only; archive data correctness lives in player-sdk tests.
 
 const text = (ctx, selector) =>

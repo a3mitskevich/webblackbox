@@ -26,7 +26,7 @@ afterEach(async () => {
   await Promise.all(temporary.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("e2e:player-next feature scenarios", () => {
+describe("e2e:player feature scenarios", () => {
   it("picks up <feature>/<feature>.e2e.mjs in feature order", async () => {
     const root = await featureTree({
       "network/network.e2e.mjs":

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { RAIL_TABS } from "../../core/url-hash.js";
 import { PLAYER_LOCALES } from "../../lib/i18n.js";
 import { defineFeatureMessages, mergeFeatureCatalog } from "./messages.js";
-import { placeholderPanel } from "./placeholder.js";
 import {
   collectRailTabs,
   FEATURE_CATALOG,
@@ -13,7 +12,7 @@ import {
 } from "./registry.js";
 import { FEATURE_IDS, type PlayerFeature } from "./types.js";
 
-const Panel = placeholderPanel("perf", () => "Perf");
+const Panel = () => null;
 
 describe("feature registry", () => {
   it("lists every feature folder exactly once", () => {

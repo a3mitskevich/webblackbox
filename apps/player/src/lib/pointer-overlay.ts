@@ -4,8 +4,6 @@ import type {
   PointerTimelineEntry
 } from "@webblackbox/player-sdk";
 
-import { escapeHtml } from "./dom.js";
-
 /** How long a click ripple stays on the stage after the click. */
 export const RIPPLE_WINDOW_MS = 1_200;
 /** Most marks drawn on the pointer lane; denser sessions keep the most telling mark per slot. */
@@ -204,40 +202,6 @@ export function projectOverlayPoint(
   };
 }
 
-/** SVG markup for ripples, drag paths and short labels ("right", "hold", ...). */
-export function renderRippleSvg(
-  marks: readonly RippleMark[],
-  frame: OverlayFrame,
-  labelFor: (kind: PointerActionKind) => string | null
-): string {
-  return marks
-    .map((mark) => {
-      const point = projectOverlayPoint(frame, mark.x, mark.y);
-      const radius = RIPPLE_MIN_RADIUS + (RIPPLE_MAX_RADIUS - RIPPLE_MIN_RADIUS) * mark.progress;
-      const opacity = (1 - mark.progress).toFixed(3);
-      const kindClass = `preview-ripple-${mark.kind}`;
-      const path =
-        mark.startX !== undefined && mark.startY !== undefined
-          ? (() => {
-              const start = projectOverlayPoint(frame, mark.startX, mark.startY);
-              return `<line class="preview-drag-path" x1="${fixed(start.x)}" y1="${fixed(start.y)}" x2="${fixed(point.x)}" y2="${fixed(point.y)}" opacity="${opacity}"></line>`;
-            })()
-          : "";
-      const ring = `<circle class="preview-ripple ${kindClass}" cx="${fixed(point.x)}" cy="${fixed(point.y)}" r="${fixed(radius)}" opacity="${opacity}"></circle>`;
-      const second =
-        mark.kind === "double"
-          ? `<circle class="preview-ripple ${kindClass}" cx="${fixed(point.x)}" cy="${fixed(point.y)}" r="${fixed(radius * 0.6)}" opacity="${opacity}"></circle>`
-          : "";
-      const label = labelFor(mark.kind);
-      const text = label
-        ? `<text class="preview-ripple-label" x="${fixed(point.x + RIPPLE_MAX_RADIUS * 0.6)}" y="${fixed(point.y - RIPPLE_MAX_RADIUS * 0.6)}" opacity="${opacity}">${escapeHtml(label)}</text>`
-        : "";
-
-      return `${path}${ring}${second}${text}`;
-    })
-    .join("");
-}
-
 function toLaneMark(
   mono: number,
   kind: PointerLaneKind,
@@ -269,8 +233,4 @@ function upperBound(actions: readonly OverlayPointerAction[], mono: number): num
   }
 
   return low;
-}
-
-function fixed(value: number): string {
-  return value.toFixed(2);
 }

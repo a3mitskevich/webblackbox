@@ -90,7 +90,7 @@ function Layout() {
   useArchiveDropTarget();
 
   return (
-    <div className="app" data-testid="player-next">
+    <div className="app" data-testid="player">
       <Header searchRef={searchRef} />
       {hasArchive ? (
         <Workspace />

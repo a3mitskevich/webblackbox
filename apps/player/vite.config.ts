@@ -55,7 +55,7 @@ export default defineConfig({
       // browser never evaluates the dynamic import, so leave it as is instead of a stub chunk.
       external: ["node:zlib", "node:crypto"],
       output: {
-        // Both UIs share React and the archive SDK: name those chunks so they cache across
+        // React and the archive SDK change rarely: name those chunks so they cache across
         // releases and read clearly in the bundle report. Everything else splits automatically.
         codeSplitting: {
           groups: [

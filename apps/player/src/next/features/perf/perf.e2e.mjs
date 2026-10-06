@@ -1,4 +1,4 @@
-// e2e:player-next scenarios of the perf feature (R4), picked up by scripts/e2e-player-next.mjs.
+// e2e:player scenarios of the perf feature (R4), picked up by scripts/e2e-player.mjs.
 
 const POLL_MS = 100;
 const TIMEOUT_MS = 8_000;

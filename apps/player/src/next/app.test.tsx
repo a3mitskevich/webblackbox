@@ -127,7 +127,7 @@ describe("React player", () => {
     expect(screen.getByTestId("live-region")).toHaveTextContent(/^Error 1 of \d+: /);
     const selected = store.getState().selection?.id;
     // jsdom has no layout, so the virtual list cannot scroll the row into its window; the
-    // listbox still points at it. e2e:player-next checks the rendered row (and that it is the
+    // listbox still points at it. e2e:player checks the rendered row (and that it is the
     // present, not the dimmed future) in Chrome.
     expect(screen.getByTestId("event-list")).toHaveAttribute(
       "aria-activedescendant",

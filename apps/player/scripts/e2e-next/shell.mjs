@@ -1,4 +1,4 @@
-// Shell scenarios of e2e:player-next (R1 foundation + stage V): archive open and passphrase,
+// Shell scenarios of e2e:player (R1 foundation + stage V): archive open and passphrase,
 // stage / transport / timeline / rail, keyboard map, live language switch, theme, URL hash,
 // responsive width, splitters, dialogs and tooltips. Feature scenarios live next to their
 // feature (src/next/features/<feature>/<feature>.e2e.mjs).
@@ -30,9 +30,7 @@ export async function verifyEmptyState(client, url) {
     await document.fonts.ready;
     return {
       mains: document.querySelectorAll("main").length,
-      // The classic stylesheet (its own chunk) defines --default-font-family on :root.
-      classicStylesheet: getComputedStyle(document.documentElement).getPropertyValue("--default-font-family").trim() !== "",
-      nextStylesheet: [...document.styleSheets].some((sheet) => (sheet.href ?? "").includes("/assets/") && sheet.href.endsWith(".css")),
+      stylesheet: [...document.styleSheets].some((sheet) => (sheet.href ?? "").includes("/assets/") && sheet.href.endsWith(".css")),
       styleElements: document.querySelectorAll("style").length,
       empty: Boolean(document.querySelector('${testId("empty-state")}')),
       lang: document.documentElement.lang,
@@ -42,12 +40,8 @@ export async function verifyEmptyState(client, url) {
     };
   })()`);
   assert(snapshot.mains === 1, "Expected exactly one <main>", snapshot);
-  assert(
-    !snapshot.classicStylesheet && snapshot.nextStylesheet,
-    "Stylesheets not switched",
-    snapshot
-  );
-  assert(snapshot.styleElements === 0, "The React player injected <style> elements", snapshot);
+  assert(snapshot.stylesheet, "The player stylesheet is not loaded as a file", snapshot);
+  assert(snapshot.styleElements === 0, "The player injected <style> elements", snapshot);
   assert(snapshot.empty && snapshot.title === "Open a recording", "Empty state missing", snapshot);
   assert(
     snapshot.font.includes("Onest") && snapshot.onestLoaded,
@@ -375,7 +369,7 @@ export async function verifyTheme(client) {
 
 export async function verifyHashRestore(client, origin, archivePath) {
   // A URL that differs only in its hash would be a same-document navigation.
-  await navigateFresh(client, `${origin}/?ui=next&lang=en#t=10.89&sel=req:90080.1706&tab=network`);
+  await navigateFresh(client, `${origin}/?lang=en#t=10.89&sel=req:90080.1706&tab=network`);
   await openEncrypted(client, archivePath, SYNTHETIC_PASSPHRASE);
   const restored = await waitForSnapshot(
     client,
