@@ -5,24 +5,34 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/copy-assets.mjs && tsup --config tsup.config.ts --watch",
-    "build": "tsup --config tsup.config.ts --clean && node scripts/copy-assets.mjs",
-    "e2e:playback": "pnpm run build && node scripts/e2e-playback-regression.mjs",
+    "dev": "vite",
+    "bench": "tsx scripts/benchmark.ts",
+    "build": "vite build",
+    "e2e:player": "pnpm run build && node scripts/e2e-player.mjs",
     "pages:build": "pnpm build && node scripts/prepare-pages-build.mjs",
     "pages:deploy": "node scripts/deploy-gh-pages.mjs",
-    "serve": "npx -y http-server ./ -p 4177",
+    "serve": "vite preview --strictPort",
     "lint": "eslint src scripts --ext .ts,.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@base-ui/react": "1.8.0",
+    "@leeoniya/ufuzzy": "1.0.19",
+    "@tanstack/react-virtual": "3.14.13",
     "@webblackbox/player-sdk": "workspace:*",
     "@webblackbox/protocol": "workspace:*",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
+    "diff": "9.0.0",
+    "lucide-react": "1.52.0",
+    "microdiff": "1.6.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "tailwind-merge": "^3.5.0"
+    "react-error-boundary": "6.1.6",
+    "react-hotkeys-hook": "5.3.3",
+    "react-resizable-panels": "4.14.2",
+    "shiki": "4.5.0",
+    "uplot": "1.6.32",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
@@ -30,7 +40,11 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "6.1.2",
+    "@webblackbox/pipeline": "workspace:*",
+    "axe-core": "4.14.0",
+    "jsdom": "^26.1.0",
     "jszip": "^3.10.1",
-    "jsdom": "^26.1.0"
+    "vite": "8.3.2"
   }
 }

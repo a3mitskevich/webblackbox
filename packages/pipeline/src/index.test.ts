@@ -34,6 +34,11 @@ const SESSION: SessionMetadata = {
   tags: []
 };
 const TEST_PASSPHRASE = "pipeline-test-passphrase";
+/**
+ * Fitting an export under `maxArchiveBytes` builds and encrypts the archive several times: about
+ * 4.3 s on a CI runner, more while turbo runs other suites in parallel, so 5 s is not enough.
+ */
+const SIZE_LIMITED_EXPORT_TIMEOUT_MS = 30_000;
 const FULL_EXPORT_OPTIONS = {
   passphrase: TEST_PASSPHRASE,
   includeScreenshots: true,
@@ -1169,38 +1174,42 @@ describe("pipeline", () => {
     expect(parsed.events).toEqual([]);
   });
 
-  it("limits exported archive size to recent suffix of chunks", async () => {
-    const storage = new MemoryPipelineStorage();
-    const pipeline = new FlightRecorderPipeline({
-      session: SESSION,
-      storage,
-      maxChunkBytes: 512
-    });
+  it(
+    "limits exported archive size to recent suffix of chunks",
+    async () => {
+      const storage = new MemoryPipelineStorage();
+      const pipeline = new FlightRecorderPipeline({
+        session: SESSION,
+        storage,
+        maxChunkBytes: 512
+      });
 
-    await pipeline.start();
-    const base = Date.now() - 3 * 60 * 1000;
+      await pipeline.start();
+      const base = Date.now() - 3 * 60 * 1000;
 
-    for (let index = 0; index < 60; index += 1) {
-      await pipeline.ingest(
-        createEvent(`E-size-${index}`, "sys.notice", base + index * 1000, {
-          index,
-          payload: createNoisyPayload(4096, index)
-        })
-      );
-    }
+      for (let index = 0; index < 60; index += 1) {
+        await pipeline.ingest(
+          createEvent(`E-size-${index}`, "sys.notice", base + index * 1000, {
+            index,
+            payload: createNoisyPayload(4096, index)
+          })
+        );
+      }
 
-    const exported = await pipeline.exportBundle({
-      passphrase: TEST_PASSPHRASE,
-      maxArchiveBytes: 150 * 1024,
-      recentWindowMs: 60 * 60 * 1000,
-      includeScreenshots: true
-    });
-    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
+      const exported = await pipeline.exportBundle({
+        passphrase: TEST_PASSPHRASE,
+        maxArchiveBytes: 150 * 1024,
+        recentWindowMs: 60 * 60 * 1000,
+        includeScreenshots: true
+      });
+      const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
-    expect(exported.bytes.byteLength).toBeLessThanOrEqual(150 * 1024);
-    expect(parsed.events.length).toBeGreaterThan(0);
-    expect(parsed.events.length).toBeLessThan(60);
-  });
+      expect(exported.bytes.byteLength).toBeLessThanOrEqual(150 * 1024);
+      expect(parsed.events.length).toBeGreaterThan(0);
+      expect(parsed.events.length).toBeLessThan(60);
+    },
+    SIZE_LIMITED_EXPORT_TIMEOUT_MS
+  );
 
   it("purges session-scoped chunks/indexes/integrity and blob refs on close", async () => {
     const storage = new MemoryPipelineStorage();

@@ -59,3 +59,48 @@ describe("player locales", () => {
     }
   );
 });
+
+// Per-feature dictionaries of the React player: `src/next/features/<feature>/locales/*.json`.
+const featuresDir = join(dirname(fileURLToPath(import.meta.url)), "..", "next", "features");
+const featureLocaleDirs = readdirSync(featuresDir, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => join(featuresDir, entry.name, "locales"))
+  .filter((dir) => {
+    try {
+      return readdirSync(dir).length > 0;
+    } catch {
+      return false;
+    }
+  });
+
+describe("feature locales", () => {
+  it("finds the feature dictionaries", () => {
+    expect(featureLocaleDirs.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it.each(featureLocaleDirs.map((dir) => [dir.split(/[\\/]/).at(-2) ?? dir, dir]))(
+    "%s ships EN/RU/中文 with the English keys and placeholders",
+    (_feature, dir) => {
+      const files = readdirSync(dir).filter((file) => file.endsWith(".json"));
+      expect(files.sort()).toEqual(["en.json", "ru.json", "zh-CN.json"]);
+
+      const read = (locale: string) =>
+        flatten(JSON.parse(readFileSync(join(dir, `${locale}.json`), "utf8")));
+      const english = read("en");
+
+      for (const locale of ["ru", "zh-CN"]) {
+        const dictionary = read(locale);
+        expect([...dictionary.keys()].sort(), locale).toEqual([...english.keys()].sort());
+
+        for (const [key, text] of english) {
+          const value = dictionary.get(key);
+          expect(typeof value, `${locale}.${key}`).toBe("string");
+          expect(String(value).trim(), `${locale}.${key}`).not.toBe("");
+          expect(placeholdersOf(String(value)), `${locale}.${key}`).toEqual(
+            placeholdersOf(String(text))
+          );
+        }
+      }
+    }
+  );
+});
