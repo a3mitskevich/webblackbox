@@ -159,8 +159,13 @@ function parseWebm(bytes: Uint8Array): ParsedWebm | null {
     if (header.id === ID.cluster) {
       const cluster = readCluster(bytes, position, header, segmentEnd, parsed);
 
-      if (!cluster) {
-        break;
+      if (cluster.end === header.dataStart) {
+        // No complete child: skip the empty cluster (or stop at a cluster cut off at the end).
+        position =
+          header.size === null
+            ? header.dataStart
+            : Math.min(segmentEnd, header.dataStart + header.size);
+        continue;
       }
 
       parsed.clusters.push(cluster);
@@ -212,13 +217,18 @@ function readHeaderOrNull(bytes: Uint8Array, position: number): ElementHeader | 
   }
 }
 
+/**
+ * Reads a cluster up to its last complete child. A cluster that cannot be read (a child of unknown
+ * size, or one that overruns a cluster ending before the bytes do) throws, so the caller keeps the
+ * original bytes instead of a file without the media after it.
+ */
 function readCluster(
   bytes: Uint8Array,
   start: number,
   header: ElementHeader,
   segmentEnd: number,
   parsed: ParsedWebm
-): ClusterInfo | null {
+): ClusterInfo {
   const limit =
     header.size === null ? segmentEnd : Math.min(segmentEnd, header.dataStart + header.size);
   const cluster: ClusterInfo = {
@@ -240,12 +250,16 @@ function readCluster(
     }
 
     if (child.size === null) {
-      return null;
+      throw new Error("Cluster child of unknown size");
     }
 
     const childEnd = child.dataStart + child.size;
 
     if (childEnd > limit) {
+      if (limit < segmentEnd) {
+        throw new Error("Cluster child overruns its cluster");
+      }
+
       // The recording stopped mid-element: keep the complete part of the cluster.
       break;
     }
@@ -268,7 +282,7 @@ function readCluster(
     cluster.end = childEnd;
   }
 
-  return cluster.end > header.dataStart ? cluster : null;
+  return cluster;
 }
 
 type BlockHeader = { track: number; relativeTime: number; keyFrame: boolean };

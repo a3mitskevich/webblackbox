@@ -379,6 +379,51 @@ describe("makeWebmSeekable", () => {
     expect(result?.durationMs).toBe(100);
   });
 
+  it("skips an empty cluster without dropping the clusters after it", () => {
+    const raw = liveSegment([
+      INFO,
+      tracks([{ number: 1, type: 1 }]),
+      liveCluster(0, [simpleBlock(1, 0, true), simpleBlock(1, 40, false)]),
+      [...idBytes(0x1f43b675), ...sizeBytes(UNKNOWN)],
+      liveCluster(1_000, [simpleBlock(1, 0, true), simpleBlock(1, 40, false)])
+    ]);
+    const result = makeWebmSeekable(raw);
+    const view = inspect(result?.bytes ?? new Uint8Array());
+
+    expect(result?.durationMs).toBe(1_080);
+    expect(view.clusters).toHaveLength(2);
+    expect(view.cues.map((cue) => cue.time)).toEqual([0, 1_000]);
+  });
+
+  it("keeps the bytes as they are when a cluster cannot be read in the middle of the file", () => {
+    const videoTracks = tracks([{ number: 1, type: 1 }]);
+    const nextCluster = liveCluster(1_000, [simpleBlock(1, 0, true)]);
+
+    // A child of unknown size inside a cluster.
+    expect(
+      makeWebmSeekable(
+        liveSegment([
+          INFO,
+          videoTracks,
+          liveCluster(0, [simpleBlock(1, 0, true), [...idBytes(0xa3), ...sizeBytes(UNKNOWN)]]),
+          nextCluster
+        ])
+      )
+    ).toBeNull();
+    // A frame that overruns its known-size cluster, with more media after it.
+    const frames = [...uint(0xe7, 0, 2), ...simpleBlock(1, 0, true), ...simpleBlock(1, 40, false)];
+    expect(
+      makeWebmSeekable(
+        liveSegment([
+          INFO,
+          videoTracks,
+          [...idBytes(0x1f43b675), ...sizeBytes(frames.length - 3), ...frames],
+          nextCluster
+        ])
+      )
+    ).toBeNull();
+  });
+
   it("returns null for bytes it does not understand", () => {
     const videoTracks = tracks([{ number: 1, type: 1 }]);
 
