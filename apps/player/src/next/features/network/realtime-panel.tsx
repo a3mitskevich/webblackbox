@@ -1,4 +1,9 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import {
+  observeElementRect,
+  useVirtualizer,
+  type Rect,
+  type Virtualizer
+} from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef } from "react";
 
 import {
@@ -36,6 +41,17 @@ const BUBBLE_ESTIMATE = 54;
 const SERVICE_ESTIMATE = 30;
 const OVERSCAN = 6;
 const REALTIME_DETAILS_PERCENT = 55;
+/** Like components/virtual-list.tsx: a list not laid out yet (hidden, jsdom) still renders rows. */
+const FALLBACK_VIEWPORT_HEIGHT = 480;
+
+function observeRectWithFallback(
+  instance: Virtualizer<HTMLDivElement, Element>,
+  onRect: (rect: Rect) => void
+): void | (() => void) {
+  return observeElementRect(instance, (rect) =>
+    onRect(rect.height > 0 ? rect : { width: rect.width, height: FALLBACK_VIEWPORT_HEIGHT })
+  );
+}
 
 const EMPTY_STREAM: RealtimeStream = {
   streamId: "",
@@ -96,6 +112,7 @@ function Conversation({
     getScrollElement: () => parentRef.current,
     estimateSize: (index) => (labels[index]?.service ? SERVICE_ESTIMATE : BUBBLE_ESTIMATE),
     overscan: OVERSCAN,
+    observeElementRect: observeRectWithFallback,
     // React 19 warns about flushSync inside lifecycle methods (LIBRARIES.md).
     useFlushSync: false
   });
