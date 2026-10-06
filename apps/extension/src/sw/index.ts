@@ -2370,14 +2370,15 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
     runtime.removeCdpListeners.push(unsubscribeEvent, unsubscribeDetach);
 
     await router.attach(runtime.tabId);
+    // Set before auto-attach: iframes and workers that already exist attach during
+    // enableAutoAttach, and priming them (on the session queue) needs the router.
+    runtime.cdpRouter = router;
     runtime.enabledCdpSessions.clear();
     await router.enableBaseline(runtime.tabId);
     runtime.enabledCdpSessions.add("root");
     await router.enableAutoAttach(runtime.tabId);
     await router.send({ tabId: runtime.tabId }, "DOMStorage.enable").catch(() => undefined);
     await router.send({ tabId: runtime.tabId }, "Performance.enable").catch(() => undefined);
-
-    runtime.cdpRouter = router;
 
     enqueue(
       runtime,
