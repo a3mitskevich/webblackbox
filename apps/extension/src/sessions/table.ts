@@ -164,6 +164,8 @@ type TableOptions = {
   expandedSid?: string;
   now: number;
   format: SessionFormatters;
+  /** A Player URL is configured; without one the rows offer no "Export and open in Player". */
+  canOpenPlayer: boolean;
 };
 
 export function createSessionsTable(options: TableOptions): HTMLElement {
@@ -288,9 +290,13 @@ function createRow(session: SessionListItem, options: TableOptions): HTMLElement
       ]),
       el("td", { className: "wb-table__actions" }, [
         el("div", { className: "wb-row-actions" }, [
-          iconAction(t("sessionsActionOpenPlayer"), { player: session.sid }, "external", {
-            hint: t("sessionsOpenPlayerHint")
-          }),
+          ...(options.canOpenPlayer
+            ? [
+                iconAction(t("sessionsActionOpenPlayer"), { player: session.sid }, "external", {
+                  hint: t("sessionsOpenPlayerHint")
+                })
+              ]
+            : []),
           iconAction(t("sessionsActionExport"), { export: session.sid }, "download"),
           ...(session.active
             ? [iconAction(t("sessionsActionStop"), { stop: String(session.tabId) }, "stop")]

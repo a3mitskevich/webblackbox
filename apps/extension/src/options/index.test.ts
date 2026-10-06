@@ -7,6 +7,7 @@ const PROFILES_KEY = "webblackbox.profiles";
 const ARCHIVE_KEY = "webblackbox.popup.export-policy";
 const INJECTION_KEY = "webblackbox.injection";
 const START_RELOAD_OFFER_KEY = "webblackbox.startReloadOffer";
+const PLAYER_URL_KEY = "webblackbox.playerUrl";
 
 function installChromeStub(initial: Record<string, unknown> = {}) {
   const data: Record<string, unknown> = { ...initial };
@@ -283,6 +284,72 @@ describe("options page", () => {
     cancelButton().click();
 
     expect(query<HTMLInputElement>("#startReloadOffer").checked).toBe(false);
+    expect(saveState()).toBe("All changes saved");
+  });
+
+  it("has no Player URL by default; validates it and stores it under its own key", async () => {
+    const storage = installChromeStub();
+    await importOptionsModule();
+    const input = query<HTMLInputElement>("[data-options-section='export'] input#playerUrl");
+
+    expect(input.value).toBe("");
+    expect(input.readOnly).toBe(false);
+
+    typeText("#playerUrl", "http://player.example.com/");
+
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(query("#playerUrl-error").textContent).toContain("https://");
+    expect(saveButton().disabled).toBe(true);
+
+    typeText("#playerUrl", "  https://player.example.com  ");
+
+    expect(input.hasAttribute("aria-invalid")).toBe(false);
+    expect(query("[data-section-link='export']").getAttribute("data-dirty")).toBe("true");
+
+    saveButton().click();
+    await flush();
+
+    expect(storage.data[PLAYER_URL_KEY]).toBe("https://player.example.com/");
+    expect(storage.data[STORAGE_KEY]).toBeUndefined();
+    expect(storage.data[PROFILES_KEY]).toBeUndefined();
+    expect(query<HTMLInputElement>("#playerUrl").value).toBe("https://player.example.com/");
+    expect(saveState()).toMatch(/^Saved at /);
+  });
+
+  it("clears a stored Player URL with an empty value and writes it only when changed", async () => {
+    const storage = installChromeStub({ [PLAYER_URL_KEY]: "http://localhost:4177/" });
+    await importOptionsModule();
+
+    expect(query<HTMLInputElement>("#playerUrl").value).toBe("http://localhost:4177/");
+
+    typeNumber("scrollHz", "30");
+    saveButton().click();
+    await flush();
+
+    expect(storage.set).not.toHaveBeenCalledWith(
+      expect.objectContaining({ [PLAYER_URL_KEY]: expect.anything() })
+    );
+
+    typeText("#playerUrl", "   ");
+    saveButton().click();
+    await flush();
+
+    expect(storage.data[PLAYER_URL_KEY]).toBe("");
+  });
+
+  it("shows the organization's Player URL read-only", async () => {
+    installChromeStub({ [PLAYER_URL_KEY]: "https://mine.example.com/" });
+    const { storage } = (globalThis as unknown as { chrome: { storage: Record<string, unknown> } })
+      .chrome;
+    storage.managed = {
+      get: async () => ({ enterprisePolicy: { playerUrl: "https://player.corp.example/qa/" } })
+    };
+    await importOptionsModule();
+    const input = query<HTMLInputElement>("#playerUrl");
+
+    expect(input.value).toBe("https://player.corp.example/qa/");
+    expect(input.readOnly).toBe(true);
+    expect(query("#playerUrl-hint").textContent).toBe("Set by your organization's policy.");
     expect(saveState()).toBe("All changes saved");
   });
 

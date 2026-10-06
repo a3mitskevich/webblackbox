@@ -20,6 +20,11 @@ import {
 } from "../shared/options-storage.js";
 import { normalizePerformanceBudget } from "../shared/performance-budget.js";
 import {
+  loadManagedPlayerUrl,
+  normalizePlayerUrl,
+  PLAYER_URL_STORAGE_KEY
+} from "../shared/player-url.js";
+import {
   normalizeStartReloadOffer,
   START_RELOAD_OFFER_STORAGE_KEY
 } from "../shared/start-reload-offer.js";
@@ -44,6 +49,7 @@ import {
   findField,
   isArchiveChanged,
   isInjectionChanged,
+  isPlayerUrlChanged,
   isStartReloadOfferChanged,
   isStoredOptionsChanged,
   normalizeOptionsConfig,
@@ -52,7 +58,11 @@ import {
   type GeneralDraft,
   type GeneralSectionId
 } from "./general-model.js";
-import { applyGeneralFieldInput, renderGeneralSection } from "./general-sections.js";
+import {
+  applyGeneralFieldInput,
+  renderGeneralSection,
+  type ManagedGeneralValues
+} from "./general-sections.js";
 import {
   createSettingsShell,
   isSettingsSectionId,
@@ -94,6 +104,8 @@ type PageState = {
    */
   pendingSources: Map<string, Element>;
   generalHosts: Record<GeneralSectionId, HTMLElement>;
+  /** General fields the organization's policy sets; they render read-only. */
+  managed: ManagedGeneralValues;
   editor?: ProfilesEditorHandle;
   /** Settles once the profiles editor has loaded; a Save made before that waits for it. */
   editorReady?: Promise<ProfilesEditorHandle>;
@@ -120,6 +132,7 @@ async function bootstrap(container: HTMLElement): Promise<void> {
     errors: new Map(),
     pendingSources: new Map(),
     generalHosts,
+    managed: {},
     saving: false
   };
   const sandboxSlot = el("div", { className: "wb-section__extra" });
@@ -138,6 +151,8 @@ async function bootstrap(container: HTMLElement): Promise<void> {
   // profiles editor is still loading.
   bindPage(page);
   refreshSaveBar(page);
+  // Read apart from the draft, so a slow managed storage never holds up the general form.
+  void applyManagedGeneralValues(page);
 
   page.editorReady = mountProfilesEditor(
     shell.content,
@@ -261,8 +276,24 @@ function dropDetachedPendingErrors(page: PageState): void {
 
 function renderGeneral(page: PageState, only?: GeneralSectionId): void {
   for (const section of only ? [only] : GENERAL_SECTIONS) {
-    page.generalHosts[section].replaceChildren(renderGeneralSection(section, page.draft, t));
+    page.generalHosts[section].replaceChildren(
+      renderGeneralSection(section, page.draft, t, page.managed)
+    );
   }
+}
+
+/** A Player URL from the policy replaces the user's own one in the form, read-only. */
+async function applyManagedGeneralValues(page: PageState): Promise<void> {
+  const playerUrl = await loadManagedPlayerUrl(chromeApi?.storage?.managed);
+
+  if (!playerUrl) {
+    return;
+  }
+
+  page.managed = { ...page.managed, playerUrl };
+  page.errors.delete("playerUrl");
+  renderGeneral(page, "export");
+  refreshSaveBar(page);
 }
 
 function isDirty(page: PageState): boolean {
@@ -271,6 +302,7 @@ function isDirty(page: PageState): boolean {
     isArchiveChanged(page.draft, page.baseline) ||
     isInjectionChanged(page.draft, page.baseline) ||
     isStartReloadOfferChanged(page.draft, page.baseline) ||
+    isPlayerUrlChanged(page.draft, page.baseline) ||
     (page.editor?.isDirty() ?? false)
   );
 }
@@ -338,6 +370,7 @@ async function saveAll(page: PageState): Promise<void> {
     const archiveChanged = isArchiveChanged(page.draft, page.baseline);
     const injectionChanged = isInjectionChanged(page.draft, page.baseline);
     const startReloadOfferChanged = isStartReloadOfferChanged(page.draft, page.baseline);
+    const playerUrlChanged = isPlayerUrlChanged(page.draft, page.baseline);
     const profilesChanged = editor.isDirty();
     // Nothing is written when the profiles draft cannot be saved, so a failed Save never leaves
     // the general options ahead of the Default profile they are folded into.
@@ -356,7 +389,8 @@ async function saveAll(page: PageState): Promise<void> {
         ...page.draft,
         archive: page.baseline.archive,
         injection: page.baseline.injection,
-        startReloadOffer: page.baseline.startReloadOffer
+        startReloadOffer: page.baseline.startReloadOffer,
+        playerUrl: page.baseline.playerUrl
       };
 
       if (profilesChanged) {
@@ -393,6 +427,11 @@ async function saveAll(page: PageState): Promise<void> {
       await chromeApi?.storage?.local.set({
         [START_RELOAD_OFFER_STORAGE_KEY]: page.draft.startReloadOffer
       });
+    }
+
+    if (playerUrlChanged) {
+      // The sessions page reads this key (and follows its changes).
+      await chromeApi?.storage?.local.set({ [PLAYER_URL_STORAGE_KEY]: page.draft.playerUrl });
     }
 
     const reloaded = await loadGeneralDraft();
@@ -432,7 +471,8 @@ async function loadGeneralDraft(): Promise<GeneralDraft> {
     STORAGE_KEY,
     PROFILES_STORAGE_KEY,
     CONTENT_INJECTION_STORAGE_KEY,
-    START_RELOAD_OFFER_STORAGE_KEY
+    START_RELOAD_OFFER_STORAGE_KEY,
+    PLAYER_URL_STORAGE_KEY
   ]);
   const legacy = toLegacyGeneralFields(values?.[STORAGE_KEY]);
   const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
@@ -444,13 +484,14 @@ async function loadGeneralDraft(): Promise<GeneralDraft> {
       : legacy.recorderConfig,
     archive: loadExportPolicyPrefs(),
     injection: normalizeContentInjectionMode(values?.[CONTENT_INJECTION_STORAGE_KEY]),
-    startReloadOffer: normalizeStartReloadOffer(values?.[START_RELOAD_OFFER_STORAGE_KEY])
+    startReloadOffer: normalizeStartReloadOffer(values?.[START_RELOAD_OFFER_STORAGE_KEY]),
+    playerUrl: normalizePlayerUrl(values?.[PLAYER_URL_STORAGE_KEY])
   };
 }
 
 function toLegacyGeneralFields(
   stored: unknown
-): Omit<GeneralDraft, "archive" | "injection" | "startReloadOffer"> {
+): Omit<GeneralDraft, "archive" | "injection" | "startReloadOffer" | "playerUrl"> {
   if (!stored || typeof stored !== "object") {
     const defaults = createDefaultGeneralDraft();
     return {
