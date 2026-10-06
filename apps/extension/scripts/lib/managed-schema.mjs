@@ -99,7 +99,6 @@ const profileSchema = {
     recorder: {
       type: "object",
       properties: {
-        ringBufferMinutes: integer("", 1),
         freezeOnError: { type: "boolean" }
       }
     },
@@ -116,13 +115,6 @@ const profileSchema = {
           pathAllowlist: stringList(""),
           pathDenylist: stringList("")
         }
-      }
-    },
-    export: {
-      type: "object",
-      properties: {
-        encryption: { type: "string", enum: ["required", "optional"] },
-        privacyScanner: { type: "string", enum: ["block", "warn"] }
       }
     },
     localData: {

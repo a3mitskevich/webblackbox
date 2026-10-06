@@ -108,6 +108,14 @@ pnpm --filter @webblackbox/extension package:chrome  # zip in apps/extension/dis
 
 The `e2e:*` scripts are Node scripts that drive a real Chrome over CDP against `apps/extension/build`, so build first. They need a Chrome binary: set `WB_E2E_CHROME_BIN` (the built-in fallbacks are macOS and `/usr/bin` paths). They run headless by default; `WB_E2E_HEADLESS=0` shows the window. `apps/extension/package.json` lists the rest (Full completeness, CDP tab isolation, injection modes, service worker restart, tabs context, at-rest encryption, UI screenshots, memory).
 
+UI strings of the extension pages live in per-feature fragments,
+`apps/extension/src/shared/locales/<feature>.<locale>.json`, one per locale (`en`, `ru`, `zh-CN`).
+A new feature adds its own three files instead of editing a shared dictionary. `build`, `dev`,
+`test` and `typecheck` merge the fragments into the git-ignored `locales/generated/`; a key defined
+by two features fails the merge, and `locales.test.ts` checks that every locale has every key.
+Run `node apps/extension/scripts/generate-locales.mjs` if your editor reports a missing
+`locales/generated/*.json` before the first build.
+
 ## Working on the Player
 
 ```bash

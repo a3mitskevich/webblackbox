@@ -20,12 +20,18 @@ const ciEnv = {
   BENCH_BLOB_BYTES: process.env.BENCH_BLOB_BYTES ?? "24576",
   BENCH_MAX_ARCHIVE_MB: process.env.BENCH_MAX_ARCHIVE_MB ?? "100",
   BENCH_RECENT_MINUTES: process.env.BENCH_RECENT_MINUTES ?? "20",
+  BENCH_VOLUME_EVENTS: process.env.BENCH_VOLUME_EVENTS ?? "100000",
+  BENCH_VOLUME_BLOBS: process.env.BENCH_VOLUME_BLOBS ?? "2000",
+  BENCH_VOLUME_BLOB_MIN_KB: process.env.BENCH_VOLUME_BLOB_MIN_KB ?? "100",
+  BENCH_VOLUME_BLOB_MAX_KB: process.env.BENCH_VOLUME_BLOB_MAX_KB ?? "500",
   BENCH_PLAYER_EVENTS: process.env.BENCH_PLAYER_EVENTS ?? "60000",
   BENCH_PLAYER_DURATION_MS: process.env.BENCH_PLAYER_DURATION_MS ?? "600000",
   BENCH_PLAYER_RENDER_TICKS: process.env.BENCH_PLAYER_RENDER_TICKS ?? "120",
   // The render pass is part of the gate: an inherited BENCH_PLAYER_RENDER=0 must not skip it.
   BENCH_PLAYER_RENDER: "1"
 };
+// The default export policy's size cap (protocol DEFAULT_EXPORT_POLICY.maxArchiveBytes).
+const DEFAULT_EXPORT_MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
@@ -36,9 +42,11 @@ async function main() {
   const thresholds = JSON.parse(await readFile(thresholdsPath, "utf8"));
   const recorder = runBenchCommand(["--filter", "@webblackbox/recorder", "bench"]);
   const pipeline = runBenchCommand(["--filter", "@webblackbox/pipeline", "bench"]);
+  const pipelineVolumes = runBenchCommand(["--filter", "@webblackbox/pipeline", "bench:volumes"]);
   const player = runBenchCommand(["--filter", "@webblackbox/player", "bench"]);
   const checks = [
     ...runChecks(recorder, pipeline, thresholds),
+    ...runVolumeChecks(pipelineVolumes, thresholds.pipelineVolumes),
     ...runPlayerChecks(player, thresholds.player)
   ];
 
@@ -51,6 +59,7 @@ async function main() {
         env: ciEnv,
         recorder,
         pipeline,
+        pipelineVolumes,
         player,
         checks
       },
@@ -67,6 +76,11 @@ async function main() {
     Math.round(recorder.recorderIngest.throughputOpsPerSec)
   );
   console.log("Pipeline ingest throughput:", Math.round(pipeline.ingestThroughputOpsPerSec));
+  console.log(
+    "Pipeline volume export (default policy):",
+    `${Math.round(pipelineVolumes.defaultExport.durationMs)} ms,`,
+    `peak RSS +${Math.round(pipelineVolumes.defaultExport.peakRssDeltaMb)} MB`
+  );
   console.log(
     "Player long archive:",
     `${player.eventCount} events, open ${Math.round(player.openMs)} ms,`,
@@ -182,6 +196,44 @@ function runChecks(recorder, pipeline, thresholds) {
   );
 
   return checks;
+}
+
+function runVolumeChecks(volumes, thresholds) {
+  const defaultExport = volumes.defaultExport;
+
+  return [
+    assertCheck(
+      "pipelineVolumes.ingestThroughputOpsPerSec",
+      volumes.ingestThroughputOpsPerSec >= thresholds.ingestMinOpsPerSec,
+      `expected >= ${thresholds.ingestMinOpsPerSec}, got ${Math.round(
+        volumes.ingestThroughputOpsPerSec
+      )}`
+    ),
+    // Machine-independent: blob writes must not slow down as the session tracks more blobs.
+    // Medians, so a GC pause among the last writes on a shared runner does not fail the gate.
+    assertCheck(
+      "pipelineVolumes.blobPutLatencyGrowth",
+      volumes.blobPutMedianMsLast <=
+        volumes.blobPutMedianMsFirst * thresholds.blobPutLatencyGrowthMax,
+      `expected the last blob writes within ${thresholds.blobPutLatencyGrowthMax}x the first, got ${volumes.blobPutMedianMsFirst.toFixed(2)} -> ${volumes.blobPutMedianMsLast.toFixed(2)} ms`
+    ),
+    assertCheck(
+      "pipelineVolumes.defaultExport.durationMs",
+      defaultExport.durationMs <= thresholds.defaultExportMaxMs,
+      `expected <= ${thresholds.defaultExportMaxMs}, got ${defaultExport.durationMs.toFixed(2)}`
+    ),
+    assertCheck(
+      "pipelineVolumes.defaultExport.peakRssDeltaMb",
+      defaultExport.peakRssDeltaMb <= thresholds.defaultExportPeakRssMaxMb,
+      `expected <= ${thresholds.defaultExportPeakRssMaxMb}, got ${defaultExport.peakRssDeltaMb.toFixed(1)}`
+    ),
+    assertCheck(
+      "pipelineVolumes.defaultExport.archiveBytes",
+      defaultExport.archiveBytes <= DEFAULT_EXPORT_MAX_ARCHIVE_BYTES &&
+        defaultExport.archiveEvents > 0,
+      `expected a non-empty archive <= ${DEFAULT_EXPORT_MAX_ARCHIVE_BYTES} bytes, got ${defaultExport.archiveBytes} bytes / ${defaultExport.archiveEvents} events`
+    )
+  ];
 }
 
 /**

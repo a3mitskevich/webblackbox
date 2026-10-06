@@ -289,7 +289,7 @@ describe("popup states", () => {
     expect(windowClose).toHaveBeenCalledTimes(2);
   });
 
-  it("renders the ring buffer meter without inline styles", async () => {
+  it("renders the recording panel without a ring buffer meter or inline styles", async () => {
     const port = new FakePort();
     installChromeStub(port);
 
@@ -297,14 +297,13 @@ describe("popup states", () => {
     await emitSessions(port, [
       {
         ...activeSession("sid-current", "lite"),
-        startedAt: Date.now() - 3 * 60 * 1000,
-        ringBufferMinutes: 10
+        startedAt: Date.now() - 3 * 60 * 1000
       }
     ]);
 
-    const meter = document.querySelector<HTMLProgressElement>("progress.wb-popup__buffer-meter");
-
-    expect(meter?.value).toBeGreaterThan(0);
+    expect(document.querySelector(".wb-popup__live")).not.toBeNull();
+    expect(document.querySelector("progress")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/ring buffer/i);
     expect(document.querySelector("[style]")).toBeNull();
   });
 });

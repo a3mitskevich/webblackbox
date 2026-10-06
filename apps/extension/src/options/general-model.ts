@@ -279,20 +279,6 @@ export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
     max: 10_000,
     step: 100
   }),
-  {
-    kind: "number",
-    id: "ringBufferMinutes",
-    section: "sampling",
-    label: "optionsRingBufferMinutes",
-    hint: "optionsRingBufferHint",
-    help: "optionsRingBufferHelp",
-    unit: "min",
-    min: 1,
-    max: 120,
-    slider: true,
-    get: (draft) => draft.recorderConfig.ringBufferMinutes,
-    set: (draft, value) => withConfig(draft, { ringBufferMinutes: value })
-  },
   samplingNumber("domFlushMs", {
     section: "sampling",
     label: "optionsDomFlushMs",
@@ -457,14 +443,12 @@ export function validateNumberField(spec: NumberFieldSpec, raw: string): NumberV
   return { ok: true, value };
 }
 
-/** Freeze triggers the shipped runtime keeps off, and the body capture cap. */
+/** The body capture cap; the runtime's mode boundary keeps the perf/network freezes off. */
 export function normalizeOptionsConfig(config: RecorderConfig): RecorderConfig {
   const bodyCaptureMaxBytes = config.sampling.bodyCaptureMaxBytes;
 
   return {
     ...config,
-    freezeOnNetworkFailure: false,
-    freezeOnLongTaskSpike: false,
     sampling: {
       ...config.sampling,
       bodyCaptureMaxBytes: Number.isFinite(bodyCaptureMaxBytes)

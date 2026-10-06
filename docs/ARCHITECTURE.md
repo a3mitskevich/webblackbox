@@ -183,7 +183,7 @@ Full mode records scripts with their source map references by default (`metadata
 
 ### Ring Buffer
 
-Events are stored in a time-windowed ring buffer (default: 10 minutes). When the buffer exceeds its time window, the oldest events are automatically pruned. This keeps memory usage bounded while always preserving recent context.
+The recorder can keep the most recent events in a time-windowed ring buffer (`ringBufferMinutes`, default: 10 minutes) for hosts that want an in-memory snapshot (`snapshotRingBuffer()`). When the buffer exceeds its time window, the oldest events are pruned. The ring buffer never limits what is recorded: every event still goes to the pipeline. The extension sets `ringBufferMinutes: 0` (no buffer), because the pipeline already persists every event and nothing reads an in-memory copy.
 
 ### Action Span Tracking
 
@@ -198,7 +198,7 @@ The recorder evaluates freeze conditions on every event:
 - **Performance freeze** — Long tasks of 200ms or more
 - **Marker freeze** — User-triggered markers (Ctrl/Cmd+Shift+M), reason `marker`
 
-When a freeze is triggered, the ring buffer contents are preserved, providing full context around the issue. The extension turns the network and performance freezes off in both modes (`applyModeProductBoundary` in `apps/extension/src/shared/mode-profile.ts`); the marker freeze is always on, and the error freeze is on by default (`freezeOnError`, which the options and profiles can turn off).
+When a freeze is triggered, it is a notification (`onFreeze` / `freezeReason`): the recorder keeps recording and nothing is trimmed or preserved because of it. The extension turns it into an incident alert (an ERR badge on the toolbar icon, the page indicator and an incident line in the popup) and keeps the network and performance triggers off in both modes (`applyModeProductBoundary` in `apps/extension/src/shared/mode-profile.ts`); the marker freeze is always on, and the error freeze is on by default (`freezeOnError`, which the options and profiles can turn off).
 
 ## Processing Architecture
 
@@ -207,7 +207,7 @@ When a freeze is triggered, the ring buffer contents are preserved, providing fu
 Events are grouped into size-bounded chunks (default: 512KB). Each chunk is:
 
 1. Serialized as NDJSON (newline-delimited JSON)
-2. Encoded with the pipeline's chunk codec: `none` by default, which the extension and the lite SDK keep, so their archives hold plain NDJSON (the ZIP itself is written with `STORE`); `gzip`, `br` and `zst` are available and fall back to `none` when the runtime lacks them
+2. Encoded with the pipeline's chunk codec: `none` is the default, while the extension and the lite SDK select `gzip` (a chunk falls back to `none` when the runtime lacks `CompressionStream`, and the ZIP itself is written with `STORE`); `br` and `zst` are also available
 3. Hashed with SHA-256 for integrity
 4. Stored with metadata (timestamps, event count, byte length)
 
@@ -221,7 +221,11 @@ Three indexes are built for efficient querying:
 2. **Request Index** — Maps network request IDs to event IDs for request tracing
 3. **Inverted Index** — Maps searchable terms to event IDs for full-text search
 
-In the extension pipeline, chunks are persisted first and indexes are rebuilt on demand during `finalizeIndexes()` / export. This avoids keeping full-session request and inverted indexes resident in offscreen memory during long-running recordings.
+In the extension pipeline, chunks are persisted first (gzip-compressed) and indexes are rebuilt on demand during `finalizeIndexes()` / export. This avoids keeping full-session request and inverted indexes resident in offscreen memory during long-running recordings. The inverted index leaves out terms found in more than half the events of a large session and caps its total postings; a term missing from the index means a full scan for readers.
+
+### Export
+
+The export streams the archive (`exportArchive`): chunks are selected newest first from their metadata and decoded one at a time, blob sizes come from the `blobRefs` store (one row per `[sid, hash]`), the exact archive size is computed before writing, and chunks, indexes and blobs are then encrypted and written one by one into a STORE ZIP. The offscreen document collects the stream into a `Blob` and downloads it.
 
 ### Blob Storage
 
@@ -323,7 +327,7 @@ Each context is its own tsup entry (`sw`, `content`, `content-agent`, `offscreen
 
 - **Page World** → Extension: `window.postMessage` (injected → content). The service worker hands the page hooks a per-recording bridge nonce through `chrome.scripting.executeScript`; once it is set, the content side drops messages without it.
 - **Extension** → Background: `chrome.runtime.connect` + `port.postMessage` (content → SW). The service worker trusts a port name only when the sender matches it (`apps/extension/src/sw/port-sender.ts`).
-- **Background** ↔ Offscreen: the offscreen document opens a `chrome.runtime.connect` port to the service worker for pipeline traffic; the service worker sends the at-rest storage key over the same port as a `sw.storage-key` message.
+- **Background** ↔ Offscreen: the offscreen document opens a `chrome.runtime.connect` port to the service worker for pipeline traffic. The messages are defined once in `apps/extension/src/shared/offscreen-messages.ts` and checked by hand-written guards on the receiving side. Ports carry JSON, so binary data never travels as a typed array: blobs the worker produces (screenshots, bodies, DOM snapshots) go as base64, and tab video chunks are written to the pipeline inside the offscreen document, which sends the worker only their hashes. The service worker sends the at-rest storage key over the same port as a `sw.storage-key` message.
 - **CDP**: `chrome.debugger.sendCommand/onEvent` (SW ↔ browser), Full mode only
 
 ## Security Considerations

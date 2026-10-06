@@ -80,6 +80,27 @@ console.log(`Exported: ${result.fileName} (${result.bytes.length} bytes)`);
 
 `includeScreenshots`, `includeScreenRecordings`, `maxArchiveBytes`, and `recentWindowMs` are optional export filters. Omitted ones fall back to `DEFAULT_EXPORT_POLICY` from `@webblackbox/protocol`: no screenshots, no screen recordings, at most 100 MiB, the last 20 minutes. Pass `null` for `maxArchiveBytes` or `recentWindowMs` to drop that limit; with screenshots and recordings included and both limits `null`, the export holds the full retained session. `exportBundle` throws without a passphrase of at least 8 characters.
 
+### Streaming Export
+
+`exportBundle` returns the archive as one byte array. `exportArchive` streams it into a sink
+instead, holding one chunk or one blob at a time: chunks are selected newest first from their
+metadata, the archive size is computed exactly before anything is written, and blobs the policy
+leaves out are never read. `createArchiveBlobSink` collects the stream into a `Blob`:
+
+```typescript
+import { createArchiveBlobSink } from "@webblackbox/pipeline";
+
+const archive = createArchiveBlobSink();
+const result = await pipeline.exportArchive(archive.sink, {
+  passphrase: "required-encryption-key"
+});
+const blob = archive.toBlob(); // result.sizeBytes bytes, ready for URL.createObjectURL
+```
+
+Storages can help it by implementing the optional `listChunkMetas(sid)` and
+`listSessionBlobInfo(sid)` (the memory, IndexedDB and encrypted storages do); without them the
+export falls back to `listChunks` and to reading each referenced blob.
+
 ### Optional At-Rest Storage Encryption
 
 `EncryptedPipelineStorage` wraps another storage and encrypts what it persists with AES-GCM (for example when using IndexedDB storage).
@@ -151,7 +172,12 @@ type FinalizedChunk = {
 
 ## Indexing
 
-`FlightRecorderPipeline` does not retain full request/text indexes in memory while recording. It rebuilds them from persisted chunks when `finalizeIndexes()` or `exportBundle()` runs, which keeps long-running extension sessions memory-bounded.
+`FlightRecorderPipeline` does not retain full request/text indexes in memory while recording. It rebuilds them from persisted chunks, one chunk at a time, when `finalizeIndexes()` or an export runs, which keeps long-running extension sessions memory-bounded.
+
+The inverted index is bounded (`INVERTED_INDEX_LIMITS`): once a session has 2,000+ events, terms
+found in more than half of them are left out, and the total postings are capped at one million
+(most frequent terms dropped first). Readers treat a term missing from the index as a full scan,
+so search results stay complete. Index files are written as compact JSON.
 
 The `EventIndexer` builds three types of indexes:
 

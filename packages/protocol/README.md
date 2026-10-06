@@ -15,15 +15,15 @@
 
 ---
 
-The foundational protocol package for WebBlackbox. Defines all event types, message formats, configuration schemas, and validation logic shared across the entire system.
+The foundational protocol package for WebBlackbox. Defines all event types, configuration schemas, and validation logic shared across the entire system.
 
 ## Overview
 
 This package provides:
 
-- **Constants** — Event types, message types, capture modes, codecs, freeze reasons, body skip reasons, archive format and KDF limits
+- **Constants** — Event types, capture modes, codecs, freeze reasons, body skip reasons, archive format and KDF limits
 - **TypeScript Types** — All data structures used across the system
-- **Zod Schemas** — Runtime validation for events, messages, configs, and archive manifests
+- **Zod Schemas** — Runtime validation for events, configs, and archive manifests
 - **ID Generators** — Deterministic and random ID creation for sessions, events, actions, and chunks
 - **Default Configuration** — Recommended recorder, capture policy, redaction, and export defaults
 - **Privacy helpers** — Body, URL, DOM-text and keystroke redaction shared by the recorder, the lite SDK and the extension (`redactBodyText`, `redactBodyBytes`, `recordUrl`, `maskDomText`, `shouldRedactKeystroke`, …)
@@ -234,7 +234,6 @@ All types have corresponding Zod schemas for runtime validation. Import them fro
 import {
   validateEvent,
   validateEventData,
-  validateMessage,
   eventEnvelopeSchema,
   recorderConfigSchema,
   exportManifestSchema,
@@ -319,24 +318,6 @@ import {
 
 `DEFAULT_RECORDER_CONFIG` is a shared baseline. Runtime products may apply product-specific
 overrides for sampling or freeze policies, but should document those overrides explicitly.
-
-## Message Types
-
-The protocol defines typed control messages with schemas (`webBlackboxMessageSchema`,
-`validateMessage`). No package in this repository sends them at the moment: the extension uses
-its own port messages (`apps/extension/src/shared/messages.ts`). The intended directions:
-
-| Message              | Direction          | Purpose                  |
-| -------------------- | ------------------ | ------------------------ |
-| `CTRL.START_SESSION` | SW → Pipeline      | Start recording session  |
-| `CTRL.STOP_SESSION`  | SW → Pipeline      | Stop recording session   |
-| `CTRL.FREEZE`        | Recorder → SW      | Freeze notification      |
-| `CTRL.EXPORT`        | UI → SW            | Export request           |
-| `EVT.BATCH`          | SW → Pipeline      | Batch of recorded events |
-| `PIPE.BLOB_PUT`      | Pipeline → Storage | Store binary blob        |
-| `PIPE.CHUNK_PUT`     | Pipeline → Storage | Store event chunk        |
-| `PIPE.BUILD_INDEX`   | Pipeline → Indexer | Build search indexes     |
-| `PIPE.EXPORT_DONE`   | Pipeline → SW      | Export complete          |
 
 ## License
 

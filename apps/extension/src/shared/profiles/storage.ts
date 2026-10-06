@@ -95,14 +95,13 @@ const GENERAL_FORM_REDACTION_KEYS = [
 ] as const;
 
 type GeneralFormFields = {
-  ringBufferMinutes: number;
   freezeOnError: boolean;
   sampling: object;
   redaction: Pick<RecordingProfile["redaction"], (typeof GENERAL_FORM_REDACTION_KEYS)[number]>;
 };
 
 /**
- * Mirrors the legacy general settings form (sampling, ring buffer, freeze-on-error and the
+ * Mirrors the legacy general settings form (sampling, freeze-on-error and the
  * redaction lists it shows) onto the Default profile, so that form keeps working after profiles
  * have been saved. Only the fields the form edits are copied: categories, cookie names and every
  * profile-only setting stay as the profile has them.
@@ -174,9 +173,6 @@ export function applyDefaultProfileToGeneralForm<TForm extends GeneralFormFields
 
   return {
     ...form,
-    ...(profile.recorder.ringBufferMinutes !== undefined
-      ? { ringBufferMinutes: profile.recorder.ringBufferMinutes }
-      : {}),
     ...(profile.recorder.freezeOnError !== undefined
       ? { freezeOnError: profile.recorder.freezeOnError }
       : {}),
@@ -354,8 +350,7 @@ const MANAGED_PROFILE_BLOCKS = [
   "network",
   "pointer",
   "sampling",
-  "recorder",
-  "export"
+  "recorder"
 ] as const;
 
 /**
@@ -558,9 +553,6 @@ function migrateLegacyDefaultProfile(legacyOptions: unknown): RecordingProfile {
     unmaskSelectors: redaction.success ? [...(redaction.data.unmaskSelectors ?? [])] : [],
     sampling: pickValidSampling(migrated.sampling),
     recorder: {
-      ...(isValidRingBufferMinutes(migrated.ringBufferMinutes)
-        ? { ringBufferMinutes: migrated.ringBufferMinutes }
-        : {}),
       ...(typeof migrated.freezeOnError === "boolean"
         ? { freezeOnError: migrated.freezeOnError }
         : {})
@@ -602,10 +594,6 @@ function pickValidSitePolicies(value: unknown): SiteCapturePolicy[] {
     const parsed = siteCapturePolicySchema.safeParse(entry);
     return parsed.success ? [parsed.data] : [];
   });
-}
-
-function isValidRingBufferMinutes(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 120;
 }
 
 function toManagedId(id: string): string {

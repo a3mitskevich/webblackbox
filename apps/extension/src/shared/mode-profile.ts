@@ -11,32 +11,11 @@ import type { FullModeVisualCapture } from "./messages.js";
 /** Default body capture cap for CDP-backed (full) sessions. */
 export const FULL_MODE_BODY_CAPTURE_MAX_BYTES = 128 * 1024;
 
-export type ModeProductProfile = {
-  label: string;
-  summary: string;
-  signals: string;
-  heavyCapture: string;
-};
-
-export const MODE_PRODUCT_PROFILES: Record<CaptureMode, ModeProductProfile> = {
-  lite: {
-    label: "Lite",
-    summary: "Page-side lightweight signals with browser-side network metadata.",
-    signals:
-      "click / input / scroll / pointer samples / mutation summary / browser-side network baseline",
-    heavyCapture:
-      "idle screenshots disabled by default, runtime DOM snapshots stay summary-only, page-side response-body capture disabled"
-  },
-  full: {
-    label: "Full",
-    summary:
-      "Browser-assisted capture with CDP screenshots, optional tab recording, navigation, and richer diagnostics.",
-    signals: "CDP network / navigation / runtime errors plus page-side interaction hints",
-    heavyCapture:
-      "screenshots stay browser-side, tab recording requires explicit enablement, page-side fetch/xhr hooks remain disabled, body capture stays capped"
-  }
-};
-
+/**
+ * The last step of every extension recorder config (v1 options and profiles alike): no ring
+ * buffer (the pipeline persists every event, nothing reads an in-memory copy), the
+ * network/long-task freeze triggers stay off and the mode's own body and CDP limits apply.
+ */
 export function applyModeProductBoundary(
   mode: CaptureMode,
   config: RecorderConfig
@@ -44,6 +23,7 @@ export function applyModeProductBoundary(
   const next: RecorderConfig = {
     ...config,
     mode,
+    ringBufferMinutes: 0,
     freezeOnNetworkFailure: false,
     freezeOnLongTaskSpike: false,
     sampling: {
@@ -62,7 +42,7 @@ export function applyModeProductBoundary(
   return next;
 }
 
-/** Transport defaults (sampling, freeze triggers) before stored options or profiles apply. */
+/** Transport sampling defaults before stored options or profiles apply. */
 export function resolveModeBaseConfig(mode: CaptureMode): RecorderConfig {
   const base: RecorderConfig = {
     ...DEFAULT_RECORDER_CONFIG,
@@ -72,8 +52,6 @@ export function resolveModeBaseConfig(mode: CaptureMode): RecorderConfig {
   if (mode === "full") {
     return {
       ...base,
-      freezeOnNetworkFailure: false,
-      freezeOnLongTaskSpike: false,
       sampling: {
         ...base.sampling,
         mousemoveHz: 12,
@@ -88,8 +66,6 @@ export function resolveModeBaseConfig(mode: CaptureMode): RecorderConfig {
 
   return {
     ...base,
-    freezeOnNetworkFailure: false,
-    freezeOnLongTaskSpike: false,
     sampling: {
       ...base.sampling,
       mousemoveHz: 14,
@@ -129,10 +105,6 @@ export function applyFullModeVisualCapture(
       }
     }
   };
-}
-
-export function shouldInjectPageHooksForMode(mode: CaptureMode): boolean {
-  return mode === "lite" || mode === "full";
 }
 
 function applyFullModeCapturePolicy(policy: CapturePolicy | undefined): CapturePolicy {

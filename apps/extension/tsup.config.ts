@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
 
 import { contentScriptScopePlugin } from "./scripts/lib/content-script-scope.mjs";
+import { mergedLocalesPlugin } from "./scripts/lib/locale-fragments.mjs";
 
 const appRoot = dirname(fileURLToPath(import.meta.url));
 const extensionNodeModulesDir = resolve(appRoot, "node_modules");
@@ -33,7 +34,7 @@ export default defineConfig({
   clean: true,
   splitting: false,
   dts: false,
-  plugins: [contentScriptScopePlugin()],
+  plugins: [mergedLocalesPlugin(), contentScriptScopePlugin()],
   esbuildOptions(options) {
     options.external = [];
     options.nodePaths = [extensionNodeModulesDir, workspaceNodeModulesDir];
