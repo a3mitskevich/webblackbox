@@ -85,14 +85,17 @@ const recordScreenInFullMode =
 const captureScreenshotsInFullMode =
   captureMode === "full" && (fullVisualCapture === "screenshots" || fullVisualCapture === "both");
 const configureRecorderOptions = (process.env.WB_E2E_CONFIGURE_OPTIONS ?? "1") !== "0";
-// Full mode records script → source map references unless a profile turns them off.
-const verifySourceMaps =
-  captureMode === "full" && (process.env.WB_E2E_VERIFY_SOURCE_MAPS ?? "1") !== "0";
 // Needs the configured console: allow / network: body-allowlist policy and CDP capture.
 // `e2e:completeness:full`: records the realistic fixture site (lib/realistic-site.mjs) with the
 // Full capture sampling and checks that the archive holds every body the policy asked for, or says
 // why one is missing; the demo page scenarios are skipped.
 const completenessMode = captureMode === "full" && (process.env.WB_E2E_COMPLETENESS ?? "0") === "1";
+// Full mode records script → source map references unless a profile turns them off. The
+// completeness run records the realistic fixture site, which has no minified demo bundle.
+const verifySourceMaps =
+  captureMode === "full" &&
+  !completenessMode &&
+  (process.env.WB_E2E_VERIFY_SOURCE_MAPS ?? "1") !== "0";
 const completenessDurationMs = readPositiveInteger(
   process.env.WB_E2E_COMPLETENESS_MS,
   REALISTIC_DEFAULT_DURATION_MS
