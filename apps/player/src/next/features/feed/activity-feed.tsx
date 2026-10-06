@@ -105,7 +105,7 @@ const FeedRow = memo(function FeedRow({
             // Not a button inside the option (axe nested-interactive): the pointer clicks it,
             // the keyboard opens and closes the group with → / ← on the row. The hidden text
             // tells screen readers whether the group is open (aria-expanded is not allowed on an
-            // option).
+            // option); the title says what a click does.
             <span
               className="rep"
               title={repeatHint}
@@ -116,7 +116,12 @@ const FeedRow = memo(function FeedRow({
               data-testid="repeat-toggle"
             >
               {context.t("repeatCount", { count: entry.count })}
-              <span className="visually-hidden"> ({repeatHint})</span>
+              <span className="visually-hidden">
+                {" "}
+                {entry.expanded
+                  ? context.t("repeatsExpanded")
+                  : context.t("repeatsCollapsed", { count: entry.count })}
+              </span>
             </span>
           ) : null}
           {text.lead ? <span className="lead">{text.lead}</span> : null}

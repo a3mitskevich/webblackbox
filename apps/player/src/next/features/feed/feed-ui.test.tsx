@@ -153,13 +153,13 @@ describe("activity feed filters", () => {
     const head = toggle.closest('[data-testid="event-row"]') as HTMLElement;
     const before = rowIds().length;
     // The group's state is in the option's name (aria-expanded is not allowed on an option).
-    expect(head).toHaveAccessibleName(/\(Show \d+ repeats\)/);
+    expect(head).toHaveAccessibleName(/Group collapsed, \d+ repeats/);
 
     act(() => {
       fireEvent.click(toggle);
     });
     expect(head).toHaveAttribute("data-expanded", "true");
-    expect(head).toHaveAccessibleName(/\(Hide repeats\)/);
+    expect(head).toHaveAccessibleName(/Group expanded/);
     expect(rowIds().length).toBeGreaterThan(before);
 
     act(() => {

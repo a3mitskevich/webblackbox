@@ -51,6 +51,8 @@
   "repeatCount": "×{count}",
   "expandRepeats": "显示 {count} 次重复",
   "collapseRepeats": "隐藏重复",
+  "repeatsCollapsed": "已折叠，共 {count} 次",
+  "repeatsExpanded": "已展开",
   "flagFirst": "首次出现：{problem}",
   "flagFirstAfterClick": "此次点击后首次出现：{problem}",
   "flagFirstAfterAction": "此操作后首次出现：{problem}",

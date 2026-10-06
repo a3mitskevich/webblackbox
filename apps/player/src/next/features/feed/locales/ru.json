@@ -51,6 +51,8 @@
   "repeatCount": "×{count}",
   "expandRepeats": "Показать повторы: {count}",
   "collapseRepeats": "Скрыть повторы",
+  "repeatsCollapsed": "Группа свёрнута, повторов: {count}",
+  "repeatsExpanded": "Группа развёрнута",
   "flagFirst": "Первая проблема: {problem}",
   "flagFirstAfterClick": "Первая проблема после этого клика: {problem}",
   "flagFirstAfterAction": "Первая проблема после этого действия: {problem}",

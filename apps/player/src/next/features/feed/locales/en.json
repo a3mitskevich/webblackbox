@@ -51,6 +51,8 @@
   "repeatCount": "×{count}",
   "expandRepeats": "Show {count} repeats",
   "collapseRepeats": "Hide repeats",
+  "repeatsCollapsed": "Group collapsed, {count} repeats",
+  "repeatsExpanded": "Group expanded",
   "flagFirst": "First {problem}",
   "flagFirstAfterClick": "First {problem} after this click",
   "flagFirstAfterAction": "First {problem} after this action",
