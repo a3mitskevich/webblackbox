@@ -16,7 +16,7 @@ import { useController, useI18n, usePlayerState } from "../../context.js";
 import { useFeatureI18n } from "../messages.js";
 import { CodeView } from "./code-view.js";
 import { decodeBase64, formatPartialJson } from "./formatters.js";
-import { nextListIndex, pageRowsOf, rowDomId } from "./list-keys.js";
+import { isOwnListKey, nextListIndex, pageRowsOf, rowDomId } from "./list-keys.js";
 import { labelStreamMessages, type MessageLabel } from "./message-labels.js";
 import { networkMessages, type NetworkTranslator } from "./messages.js";
 import { useRealtimeText } from "./use-archive-data.js";
@@ -62,7 +62,8 @@ export function MessageList({ labels, selectedId, minMono }: MessageListProps) {
   );
   const selectedIndex = labels.findIndex((label) => label.entry.eventId === selectedId);
   // Only a mounted row can be the active descendant (a virtualized-out id would dangle).
-  const isSelectedMounted = selectedIndex >= mounted.first && selectedIndex <= mounted.last;
+  const isSelectedMounted =
+    selectedIndex >= 0 && selectedIndex >= mounted.first && selectedIndex <= mounted.last;
 
   if (labels.length === 0) {
     return <p className="nbody-note">{t("messagesEmpty")}</p>;
@@ -74,6 +75,10 @@ export function MessageList({ labels, selectedId, minMono }: MessageListProps) {
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (!isOwnListKey(event)) {
+      return;
+    }
+
     const pageRows = pageRowsOf(event.currentTarget, MESSAGE_ROW_HEIGHT);
     const index = nextListIndex(event.key, selectedIndex, labels.length, pageRows);
     const next = index === null ? undefined : labels[index];

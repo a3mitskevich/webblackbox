@@ -18,7 +18,7 @@ import { ListDetailsSplit } from "../../components/split-layout.js";
 import { useController, useI18n, usePlayerState } from "../../context.js";
 import { useFeatureI18n } from "../messages.js";
 import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
-import { nextListIndex, pageRowsOf, rowDomId } from "./list-keys.js";
+import { isOwnListKey, nextListIndex, pageRowsOf, rowDomId } from "./list-keys.js";
 import { networkMessages } from "./messages.js";
 import { directionOf, kindText, MessageView, useMessageLabels } from "./messages-view.js";
 import { shownStream, type MessageLabel } from "./message-labels.js";
@@ -212,6 +212,10 @@ function Conversation({
   const isSelectedMounted = items.some((item) => item.index === selectedIndex);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (!isOwnListKey(event)) {
+      return;
+    }
+
     const pageRows = pageRowsOf(event.currentTarget, BUBBLE_ESTIMATE);
     const index = nextListIndex(event.key, selectedIndex, labels.length, pageRows);
     const next = index === null ? undefined : labels[index];

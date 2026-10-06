@@ -14,7 +14,7 @@ import { useController, useI18n, usePlayerState } from "../../context.js";
 import { useFeatureI18n } from "../messages.js";
 import { useFeatureSlice, useFeatureSliceUpdate } from "../slice.js";
 import { notCapturedSummary } from "./availability.js";
-import { nextListIndex, pageRowsOf, rowDomId } from "./list-keys.js";
+import { isOwnListKey, nextListIndex, pageRowsOf, rowDomId } from "./list-keys.js";
 import { networkMessages, type NetworkTranslator } from "./messages.js";
 import {
   displayName,
@@ -251,7 +251,8 @@ export function NetworkTable({ model, rows, selected }: NetworkTableProps) {
     []
   );
   // Only a mounted row can be the active descendant (a virtualized-out id would dangle).
-  const isSelectedMounted = selectedIndex >= mounted.first && selectedIndex <= mounted.last;
+  const isSelectedMounted =
+    selectedIndex >= 0 && selectedIndex >= mounted.first && selectedIndex <= mounted.last;
 
   const formatDuration = useCallback(
     (ms: number) =>
@@ -284,7 +285,7 @@ export function NetworkTable({ model, rows, selected }: NetworkTableProps) {
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     // The sort buttons in the header handle their own keys.
-    if (event.target !== event.currentTarget) {
+    if (!isOwnListKey(event)) {
       return;
     }
 

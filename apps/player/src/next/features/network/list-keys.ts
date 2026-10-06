@@ -37,6 +37,20 @@ export function nextListIndex(
   }
 }
 
+/**
+ * A key the list itself should handle: pressed on the list (not on a control inside it) and
+ * without Ctrl / Alt / Meta, whose combinations stay with the browser.
+ */
+export function isOwnListKey(event: {
+  target: EventTarget;
+  currentTarget: EventTarget;
+  ctrlKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+}): boolean {
+  return event.target === event.currentTarget && !event.ctrlKey && !event.altKey && !event.metaKey;
+}
+
 /** Rows that fit in the scroller's viewport (a PageUp / PageDown step). */
 export function pageRowsOf(element: HTMLElement, rowHeight: number): number {
   const rows = Math.floor(element.clientHeight / rowHeight);
