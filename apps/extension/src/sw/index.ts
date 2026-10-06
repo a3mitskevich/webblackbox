@@ -28,6 +28,7 @@ import {
   type WebBlackboxEvent
 } from "@webblackbox/protocol";
 import {
+  BODY_SKIPPED_RAW_TYPE,
   createDefaultRecorderPlugins,
   type RawRecorderEvent,
   WebBlackboxRecorder
@@ -77,6 +78,7 @@ import {
 } from "../shared/profiles/local-data.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
+  createBoundedManagedPolicyReader,
   ENTERPRISE_POLICY_STORAGE_KEY,
   getSessionStartBlockReason,
   isEnterpriseOriginAllowed,
@@ -87,10 +89,8 @@ import {
 import { resolveModeRecorderConfig } from "../shared/recorder-config.js";
 import {
   applyBodyUrlFilters,
-  isLikelyTextualResourceType as isLikelyTextualResourceTypeUtil,
   isMimeAllowed as isMimeAllowedUtil,
   normalizeBodyCaptureMaxBytes as normalizeBodyCaptureMaxBytesUtil,
-  isTextualMimeType as isTextualMimeTypeUtil,
   normalizeMimeType as normalizeMimeTypeUtil,
   isInlineRequestBodyAllowed,
   resolveFullBodyCaptureRule as resolveFullBodyCaptureRuleUtil,
@@ -109,6 +109,13 @@ import {
 } from "./at-rest-key.js";
 import { primeChildSession } from "./child-session-prime.js";
 import { withCdpCommandTimeout, type CdpCommandOutcome } from "./cdp-command.js";
+import {
+  completeRequestPostData,
+  FullBodyCapture,
+  needsRequestPostData,
+  type FinishedResponse,
+  type ReadBody
+} from "./full-body-capture.js";
 import {
   clearRetentionAlarm,
   createStoppedSessionStore,
@@ -129,6 +136,7 @@ import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
   classifyMessageSender,
   classifyPortSender,
+  isBroadcastDeliveredToPort,
   isInboundKindAllowed,
   type InboundSenderContext,
   type SenderTrustContext
@@ -161,6 +169,7 @@ import {
   upsertRequestMeta,
   type RequestMetaEntry
 } from "./request-meta.js";
+import { resolveRawEventSession } from "./session-routing.js";
 import {
   parseStoppedSessionRecords,
   pruneStoppedSessionRecords,
@@ -214,6 +223,8 @@ type SessionRuntime = {
   config: typeof DEFAULT_RECORDER_CONFIG;
   startedAt: number;
   stoppedAt?: number;
+  /** Set once Stop received the page's last events; later page snapshots are dropped. */
+  stopDrained?: boolean;
   /** Secret shared with the injected page hooks and the content script of this session. */
   injectedBridgeNonce: string;
   recorder: WebBlackboxRecorder;
@@ -235,8 +246,11 @@ type SessionRuntime = {
   pipelineFlushTimer: ReturnType<typeof setTimeout> | null;
   pipelineFlushQueued: boolean;
   stopping: boolean;
-  responseBodyCaptures: number;
-  responseBodyCaptureTimestamps: number[];
+  /** Full-mode response bodies: a body or a recorded skip for every textual response. */
+  fullBodyCapture: FullBodyCapture;
+  /** CDP events wait here, in order, while a request body CDP left out is being read. */
+  cdpIngestChain: Promise<void>;
+  cdpIngestBacklog: number;
   capturedEventCount: number;
   capturedErrorCount: number;
   capturedSizeBytes: number;
@@ -481,8 +495,17 @@ const SERVICE_WORKER_BOOTED_AT = Date.now();
 const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
 const POINTER_STALE_MS = 2_500;
 const NETWORK_BODY_MAX_BYTES = 256 * 1024;
-const FULL_MODE_BODY_CAPTURE_MAX_PER_MINUTE = 80;
-const FULL_MODE_BODY_CAPTURE_MAX_PER_SESSION = 2_000;
+/**
+ * How long stop waits for response bodies still being read before recording them as skipped:
+ * a base plus a share per pending body, capped.
+ */
+const FULL_MODE_BODY_STOP_DRAIN_MS = 3_000;
+const FULL_MODE_BODY_STOP_DRAIN_PER_BODY_MS = 25;
+const FULL_MODE_BODY_STOP_DRAIN_MAX_MS = 15_000;
+/** CDP events waiting behind request body reads before new reads are skipped as `backlog`. */
+const FULL_MODE_CDP_INGEST_MAX_BACKLOG = 500;
+/** How long a request body CDP left out of `requestWillBeSent` may take to read. */
+const FULL_MODE_POST_DATA_TIMEOUT_MS = 2_000;
 const FULL_MODE_INCIDENT_CAPTURE_COOLDOWN_MS = 15_000;
 const FULL_MODE_MIN_SCREENSHOT_INTERVAL_MS = 12_000;
 const FREEZE_NOTICE_COOLDOWN_MS = 20_000;
@@ -494,13 +517,10 @@ const PIPELINE_BATCH_MAX_EVENTS = 160;
 const PIPELINE_BATCH_DRAIN_CHUNK_EVENTS = 160;
 const PIPELINE_BATCH_FLUSH_MS = 120;
 const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
-const SKIPPED_FULL_MODE_BODY_RESOURCE_TYPES = new Set(["Image", "Media", "Font"]);
 const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
   "mousemove",
   "scroll",
   "mutation",
-  "vitals",
-  "longtask",
   "snapshot",
   "screenshot",
   "localStorageSnapshot",
@@ -517,15 +537,17 @@ const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
   "sse",
   "notice"
 ]);
+// Network bookkeeping for bodies runs inline (see `trackFullModeNetworkEvent`), never through
+// the best-effort queue, which drops tasks under load.
 const FULL_MODE_FOLLOWUP_METHODS = new Set([
   "Target.attachedToTarget",
   "Target.detachedFromTarget",
-  "Network.responseReceived",
-  "Network.loadingFinished",
   "Network.loadingFailed",
   "Runtime.exceptionThrown",
   "Page.frameNavigated"
 ]);
+// Child sessions (iframes, workers) must be primed or their traffic is never recorded.
+const FULL_MODE_REQUIRED_FOLLOWUP_METHODS = new Set(["Target.attachedToTarget"]);
 const LITE_DEFAULT_BODY_MIME_ALLOWLIST = [
   "text/*",
   "application/json",
@@ -535,6 +557,8 @@ const LITE_DEFAULT_BODY_MIME_ALLOWLIST = [
   "application/javascript",
   "application/x-www-form-urlencoded"
 ];
+/** Full mode reads bodies through CDP whatever loaded them, so SVG images (text) are kept too. */
+const FULL_DEFAULT_BODY_MIME_ALLOWLIST = [...LITE_DEFAULT_BODY_MIME_ALLOWLIST, "image/svg+xml"];
 const LITE_BODY_REDACTED_TOKEN = "[REDACTED]";
 const LITE_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const LITE_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
@@ -566,6 +590,8 @@ const STOP_DRAIN_ACK_TIMEOUT_MS = 3_000;
 const CDP_ARTIFACT_TIMEOUT_MS = 5_000;
 // Priming a live child session takes milliseconds; see primeChildSession.
 const CHILD_SESSION_PRIME_TIMEOUT_MS = 5_000;
+// Chrome can hold `storage.managed` reads back while the browser starts; see the reader.
+const ENTERPRISE_POLICY_READ_TIMEOUT_MS = 3_000;
 const CDP_HEAP_SNAPSHOT_TIMEOUT_MS = 8_000;
 const SCREEN_RECORDING_OFFSCREEN_SOURCE = "tab";
 
@@ -587,6 +613,15 @@ const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
   {
     portWaitMs: OFFSCREEN_PORT_READY_TIMEOUT_MS,
     pollMs: OFFSCREEN_PORT_READY_WAIT_MS
+  }
+);
+const readEnterprisePolicy = createBoundedManagedPolicyReader(
+  () => readManagedEnterprisePolicy(chromeApi?.storage?.managed),
+  {
+    timeoutMs: ENTERPRISE_POLICY_READ_TIMEOUT_MS,
+    onTimeout: () => {
+      console.warn("[WebBlackbox] enterprise policy not available yet; continuing without it");
+    }
   }
 );
 const orphanedOffscreenCleanup = closeOrphanedOffscreenDocument().catch((error) => {
@@ -757,8 +792,10 @@ async function syncContentPortStateOnConnect(port: PortLike): Promise<void> {
     return;
   }
 
+  // Only the connecting frame: re-running the hooks script resets a frame's live capture config
+  // (the script installs inactive), and only that frame gets the recording status back below.
   if (shouldInjectHooksForMode(runtime.mode)) {
-    await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
+    await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce, port.sender?.frameId);
   }
 
   syncContentPortRecordingState(port);
@@ -1005,8 +1042,13 @@ async function handleInboundMessage(
       };
     }
 
+    // The sender's frame only: the reply below reaches only that frame's content script.
     if (shouldInjectHooksForMode(runtime.mode)) {
-      await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
+      await ensureInjectedHooks(
+        tabId,
+        runtime.injectedBridgeNonce,
+        senderFrameId ?? port?.sender?.frameId
+      );
     }
 
     const sampling = toStatusSampling(runtime);
@@ -1320,6 +1362,16 @@ async function stopSession(tabId: number): Promise<void> {
       console.warn("[WebBlackbox] failed to capture cookie values at stop", error);
     });
   }
+
+  // Bodies still being read are kept (or recorded as skipped) before the debugger detaches.
+  await runtime.fullBodyCapture.drain(
+    Math.min(
+      FULL_MODE_BODY_STOP_DRAIN_MAX_MS,
+      FULL_MODE_BODY_STOP_DRAIN_MS +
+        runtime.fullBodyCapture.pendingCount() * FULL_MODE_BODY_STOP_DRAIN_PER_BODY_MS
+    )
+  );
+  await runtime.cdpIngestChain;
   await flushBufferedPipelineEvents(runtime);
   await teardownCaptureInstrumentation(runtime);
   sessionsByTab.delete(runtime.tabId);
@@ -1354,6 +1406,7 @@ async function stopSession(tabId: number): Promise<void> {
   notifyOffscreenPipelineStatus();
   await stopDrainAck;
   await flushBufferedPipelineEvents(runtime);
+  runtime.stopDrained = true;
   // The recording now waits for its export, possibly in a later worker: its tail goes to the
   // encrypted store and a snapshot lets that worker list and export it.
   await enqueueWithResult(runtime, () => runtime.pipeline.flush()).catch((error) => {
@@ -1512,10 +1565,14 @@ async function buildSessionRecorderConfig(
 }
 
 function loadSessionProfilesState(): Promise<ProfilesState> {
-  return loadProfilesState(chromeApi, {
-    legacyOptionsKey: OPTIONS_STORAGE_KEY,
-    enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
-  });
+  return loadProfilesState(
+    chromeApi,
+    {
+      legacyOptionsKey: OPTIONS_STORAGE_KEY,
+      enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
+    },
+    readEnterprisePolicy
+  );
 }
 
 async function resolveProfilePreview(
@@ -1760,10 +1817,15 @@ function resolveSessionExportPolicy(runtime: SessionRuntime, policy: ExportPolic
   };
 }
 
-function ingestRawEvent(rawEvent: RawRecorderEvent): void {
-  const runtime =
-    sessionsByTab.get(rawEvent.tabId) ??
-    (typeof rawEvent.sid === "string" ? sessionsBySid.get(rawEvent.sid) : undefined);
+/**
+ * `arrivedBeforeStop`: the event reached the service worker while recording and only waited in
+ * the ordered CDP chain, so a stop in the meantime must not drop it.
+ */
+function ingestRawEvent(
+  rawEvent: RawRecorderEvent,
+  options: { arrivedBeforeStop?: boolean } = {}
+): void {
+  const runtime = resolveRawEventSession(rawEvent, sessionsByTab, sessionsBySid);
 
   if (!runtime) {
     return;
@@ -1772,6 +1834,7 @@ function ingestRawEvent(rawEvent: RawRecorderEvent): void {
   if (
     runtime.stopping &&
     rawEvent.source !== "system" &&
+    !options.arrivedBeforeStop &&
     !shouldAllowStopDrainContentEvent(runtime, rawEvent)
   ) {
     return;
@@ -1820,9 +1883,12 @@ function shouldAllowStopDrainContentEvent(
   runtime: SessionRuntime,
   rawEvent: RawRecorderEvent
 ): boolean {
+  // Only while the stop drains: a snapshot that arrives after the drain (the session may already
+  // be exported and deleted) would leave its blob behind in the pipeline's storage.
   return (
     rawEvent.source === "content" &&
     rawEvent.sid === runtime.sid &&
+    runtime.stopDrained !== true &&
     STOP_DRAIN_CONTENT_RAW_TYPES.has(rawEvent.rawType)
   );
 }
@@ -2681,7 +2747,7 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
         }
       }
 
-      ingestRawEvent({
+      const rawEvent: RawRecorderEvent = {
         source: "cdp",
         rawType: event.method,
         tabId: runtime.tabId,
@@ -2690,7 +2756,18 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
         mono: monotonicTime(),
         cdpSessionId: event.sessionId,
         payload: cdpPayload
-      });
+      };
+
+      ingestCdpRawEvent(
+        runtime,
+        event.method === "Network.requestWillBeSent"
+          ? prepareCdpRequestEvent(runtime, rawEvent)
+          : rawEvent
+      );
+
+      if (!runtime.stopping) {
+        trackFullModeNetworkEvent(runtime, event.method, asRecord(cdpPayload), event.sessionId);
+      }
 
       if (!FULL_MODE_FOLLOWUP_METHODS.has(event.method)) {
         return;
@@ -2699,9 +2776,9 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
       enqueue(
         runtime,
         async () => {
-          await processFullModeEvent(runtime, event.method, event.params ?? {}, event.sessionId);
+          await processFullModeEvent(runtime, event.method, event.params ?? {});
         },
-        { bestEffort: true }
+        { bestEffort: !FULL_MODE_REQUIRED_FOLLOWUP_METHODS.has(event.method) }
       );
     });
 
@@ -2714,6 +2791,8 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
     runtime.removeCdpListeners.push(unsubscribeEvent, unsubscribeDetach);
 
     await router.attach(runtime.tabId);
+    // Set before the domains are enabled: their first events already read bodies through it.
+    runtime.cdpRouter = router;
     runtime.enabledCdpSessions.clear();
     await router.enableBaseline(runtime.tabId);
     runtime.enabledCdpSessions.add("root");
@@ -2761,8 +2840,7 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
 async function processFullModeEvent(
   runtime: SessionRuntime,
   method: string,
-  params: unknown,
-  sessionId?: string
+  params: unknown
 ): Promise<void> {
   if (runtime.stopping) {
     return;
@@ -2790,46 +2868,7 @@ async function processFullModeEvent(
     return;
   }
 
-  if (method === "Network.responseReceived") {
-    const requestId = typeof payload?.requestId === "string" ? payload.requestId : undefined;
-    const response = asRecord(payload?.response);
-    const resourceType = typeof payload?.type === "string" ? payload.type : undefined;
-
-    if (requestId) {
-      upsertRequestMeta(runtime.requestMeta, buildRequestMetaKey(requestId, sessionId), {
-        url: typeof response?.url === "string" ? response.url : undefined,
-        mimeType: typeof response?.mimeType === "string" ? response.mimeType : undefined,
-        status: typeof response?.status === "number" ? response.status : undefined,
-        resourceType
-      });
-    }
-
-    return;
-  }
-
-  if (method === "Network.loadingFinished") {
-    const requestId = typeof payload?.requestId === "string" ? payload.requestId : undefined;
-
-    if (requestId && shouldCaptureResponseBody(runtime, requestId, payload, sessionId)) {
-      await captureResponseBody(runtime, requestId, sessionId);
-    }
-
-    if (requestId) {
-      deleteRequestMeta(runtime.requestMeta, buildRequestMetaKey(requestId, sessionId));
-    }
-
-    return;
-  }
-
   if (method === "Runtime.exceptionThrown" || method === "Network.loadingFailed") {
-    if (method === "Network.loadingFailed") {
-      const requestId = typeof payload?.requestId === "string" ? payload.requestId : undefined;
-
-      if (requestId) {
-        deleteRequestMeta(runtime.requestMeta, buildRequestMetaKey(requestId, sessionId));
-      }
-    }
-
     if (shouldCaptureIncidentArtifacts(runtime)) {
       await captureIncidentArtifacts(runtime, method);
     }
@@ -2860,50 +2899,77 @@ async function primeChildCdpSession(
   }
 }
 
-async function captureResponseBody(
+function isFullBodyCaptureEnabled(runtime: SessionRuntime): boolean {
+  return (
+    runtime.mode === "full" && runtime.config.capturePolicy?.categories.network === "body-allowlist"
+  );
+}
+
+function createFullBodyCapture(getRuntime: () => SessionRuntime): FullBodyCapture {
+  return new FullBodyCapture({
+    isEnabled: () => isFullBodyCaptureEnabled(getRuntime()),
+    resolveRule: (url, mimeType) => resolveFullBodyCaptureRule(getRuntime(), url, mimeType),
+    readResponseBody: (requestId, sessionId) =>
+      readCdpForBodies(getRuntime(), sessionId, "Network.getResponseBody", { requestId }),
+    storeBody: (response, read, rule, mimeType) =>
+      storeFullModeResponseBody(getRuntime(), response, read, rule.maxBytes, mimeType),
+    emitSkip: (payload) => {
+      const runtime = getRuntime();
+      ingestCdpRawEvent(runtime, {
+        source: "system",
+        rawType: BODY_SKIPPED_RAW_TYPE,
+        sid: runtime.sid,
+        tabId: runtime.tabId,
+        t: Date.now(),
+        mono: monotonicTime(),
+        payload
+      });
+    }
+  });
+}
+
+/**
+ * CDP reads for body capture. Unlike `sendCdpCommand` they still run while the session stops
+ * (stop drains pending bodies before the debugger detaches) and report the CDP error text.
+ */
+async function readCdpForBodies<TResult>(
   runtime: SessionRuntime,
-  requestId: string,
-  sessionId?: string
-): Promise<void> {
-  if (!runtime.cdpRouter || runtime.stopping) {
-    return;
+  sessionId: string | undefined,
+  method: string,
+  params: Record<string, unknown>,
+  timeoutMs = CDP_ARTIFACT_TIMEOUT_MS
+): Promise<CdpCommandOutcome<TResult>> {
+  if (!runtime.cdpRouter) {
+    return { ok: false, error: "debugger detached" };
   }
 
   const target = sessionId ? { tabId: runtime.tabId, sessionId } : { tabId: runtime.tabId };
-  const response = await sendCdpCommand<{
-    body?: string;
-    base64Encoded?: boolean;
-  }>(runtime, target, "Network.getResponseBody", { requestId });
+  return withCdpCommandTimeout(runtime.cdpRouter.send<TResult>(target, method, params), timeoutMs);
+}
 
-  if (!response?.body) {
-    return;
-  }
-
-  const metadata = getRequestMeta(runtime.requestMeta, buildRequestMetaKey(requestId, sessionId));
-  const normalizedMime = normalizeMimeType(metadata?.mimeType ?? null);
-  const captureRule = resolveFullBodyCaptureRule(runtime, metadata?.url ?? "", normalizedMime);
-
-  if (!captureRule.enabled) {
-    return;
-  }
-
+async function storeFullModeResponseBody(
+  runtime: SessionRuntime,
+  response: FinishedResponse,
+  read: ReadBody,
+  maxBytes: number,
+  mimeType: string | undefined
+): Promise<number> {
   const transformed = transformResponseBodyForCapture({
-    body: response.body,
-    base64Encoded: response.base64Encoded === true,
+    body: read.body,
+    base64Encoded: read.base64Encoded,
     redaction: runtime.config.redaction,
-    maxBytes: captureRule.maxBytes,
-    mimeType: normalizedMime,
+    maxBytes,
+    mimeType,
     redactionToken: LITE_BODY_REDACTED_TOKEN,
     decodeBase64
   });
+  const rawMimeType = response.meta?.mimeType;
   const hash = await runtime.pipeline.putBlob(
-    metadata?.mimeType ?? "application/octet-stream",
+    rawMimeType ?? "application/octet-stream",
     transformed.sampledBytes
   );
 
-  runtime.responseBodyCaptures += 1;
-
-  ingestRawEvent({
+  ingestCdpRawEvent(runtime, {
     source: "system",
     rawType: "cdp.network.body",
     sid: runtime.sid,
@@ -2911,90 +2977,141 @@ async function captureResponseBody(
     t: Date.now(),
     mono: monotonicTime(),
     payload: {
-      reqId: requestId,
+      reqId: response.requestId,
       contentHash: hash,
-      mimeType: metadata?.mimeType,
+      mimeType: rawMimeType,
       size: transformed.originalBytes.byteLength,
       sampledSize: transformed.sampledBytes.byteLength,
       redacted: transformed.redacted,
       truncated: transformed.truncated
     }
   });
+
+  return transformed.sampledBytes.byteLength;
 }
 
-function shouldCaptureResponseBody(
+/**
+ * Keeps request ids and response metadata for body capture, inline on every CDP event: a dropped
+ * bookkeeping task would lose the body silently.
+ */
+function trackFullModeNetworkEvent(
   runtime: SessionRuntime,
-  requestId: string,
-  loadingFinishedPayload: Record<string, unknown> | null,
-  sessionId?: string
-): boolean {
-  if (runtime.mode !== "full" || runtime.stopping) {
-    return false;
+  method: string,
+  payload: Record<string, unknown> | null,
+  sessionId: string | undefined
+): void {
+  const requestId = typeof payload?.requestId === "string" ? payload.requestId : undefined;
+
+  if (!requestId) {
+    return;
   }
 
-  if (runtime.config.capturePolicy?.categories.network !== "body-allowlist") {
-    return false;
+  const metaKey = buildRequestMetaKey(requestId, sessionId);
+
+  if (method === "Network.requestWillBeSent") {
+    runtime.fullBodyCapture.onRequestWillBeSent(requestId, sessionId);
+    return;
   }
 
-  if (runtime.responseBodyCaptures >= FULL_MODE_BODY_CAPTURE_MAX_PER_SESSION) {
-    return false;
+  if (method === "Network.responseReceived") {
+    const response = asRecord(payload?.response);
+    upsertRequestMeta(runtime.requestMeta, metaKey, {
+      url: typeof response?.url === "string" ? response.url : undefined,
+      mimeType: typeof response?.mimeType === "string" ? response.mimeType : undefined,
+      status: typeof response?.status === "number" ? response.status : undefined,
+      resourceType: typeof payload?.type === "string" ? payload.type : undefined,
+      // Bytes received when the response arrived: its headers (the body follows).
+      headerBytes: asFiniteNumber(response?.encodedDataLength) ?? undefined
+    });
+    runtime.fullBodyCapture.onResponseReceived({
+      requestId,
+      sessionId,
+      meta: getRequestMeta(runtime.requestMeta, metaKey)
+    });
+    return;
   }
 
-  const metadata = getRequestMeta(runtime.requestMeta, buildRequestMetaKey(requestId, sessionId));
-
-  if (!metadata) {
-    return false;
+  if (method === "Network.loadingFinished") {
+    const encodedDataLength = asFiniteNumber(payload?.encodedDataLength);
+    runtime.fullBodyCapture.onLoadingFinished({
+      requestId,
+      sessionId,
+      encodedDataLength:
+        encodedDataLength !== null && encodedDataLength >= 0 ? encodedDataLength : undefined,
+      meta: getRequestMeta(runtime.requestMeta, metaKey)
+    });
+    deleteRequestMeta(runtime.requestMeta, metaKey);
+    return;
   }
 
-  if (metadata.resourceType && SKIPPED_FULL_MODE_BODY_RESOURCE_TYPES.has(metadata.resourceType)) {
-    return false;
+  if (method === "Network.loadingFailed") {
+    runtime.fullBodyCapture.onLoadingFailed(requestId, sessionId);
+    deleteRequestMeta(runtime.requestMeta, metaKey);
   }
-
-  const normalizedMime = normalizeMimeType(metadata.mimeType ?? null);
-  const captureRule = resolveFullBodyCaptureRule(runtime, metadata.url ?? "", normalizedMime);
-
-  if (!captureRule.enabled) {
-    return false;
-  }
-
-  if (normalizedMime && !isTextualMimeType(normalizedMime)) {
-    return false;
-  }
-
-  if (!normalizedMime && !isLikelyTextualResourceType(metadata.resourceType)) {
-    return false;
-  }
-
-  const encodedDataLength = asFiniteNumber(loadingFinishedPayload?.encodedDataLength);
-
-  if (
-    encodedDataLength !== null &&
-    Number.isFinite(encodedDataLength) &&
-    encodedDataLength > captureRule.maxBytes * 2
-  ) {
-    return false;
-  }
-
-  const now = Date.now();
-  const threshold = now - 60_000;
-  runtime.responseBodyCaptureTimestamps = runtime.responseBodyCaptureTimestamps.filter(
-    (timestamp) => timestamp >= threshold
-  );
-
-  if (runtime.responseBodyCaptureTimestamps.length >= FULL_MODE_BODY_CAPTURE_MAX_PER_MINUTE) {
-    return false;
-  }
-
-  runtime.responseBodyCaptureTimestamps.push(now);
-  return true;
 }
 
-function isTextualMimeType(mimeType: string): boolean {
-  return isTextualMimeTypeUtil(mimeType);
+/**
+ * Ingests a CDP-side raw event in arrival order. While a request body CDP left out is being read,
+ * later events wait behind it, so the request still comes before its response.
+ */
+function ingestCdpRawEvent(
+  runtime: SessionRuntime,
+  rawEvent: RawRecorderEvent | Promise<RawRecorderEvent>
+): void {
+  if (runtime.cdpIngestBacklog === 0 && !(rawEvent instanceof Promise)) {
+    ingestRawEvent(rawEvent);
+    return;
+  }
+
+  const arrivedBeforeStop = !runtime.stopping;
+  runtime.cdpIngestBacklog += 1;
+  runtime.cdpIngestChain = runtime.cdpIngestChain
+    .then(async () => {
+      ingestRawEvent(await rawEvent, { arrivedBeforeStop });
+    })
+    .catch((error) => {
+      console.warn("[WebBlackbox] failed to ingest a CDP event", error);
+    })
+    .finally(() => {
+      runtime.cdpIngestBacklog = Math.max(0, runtime.cdpIngestBacklog - 1);
+    });
 }
 
-function isLikelyTextualResourceType(resourceType?: string): boolean {
-  return isLikelyTextualResourceTypeUtil(resourceType);
+/** The `requestWillBeSent` raw event, with a body CDP did not inline read when bodies are on. */
+function prepareCdpRequestEvent(
+  runtime: SessionRuntime,
+  rawEvent: RawRecorderEvent
+): RawRecorderEvent | Promise<RawRecorderEvent> {
+  const payload = asRecord(rawEvent.payload);
+
+  if (!isFullBodyCaptureEnabled(runtime) || !payload || !needsRequestPostData(payload)) {
+    return rawEvent;
+  }
+
+  const requestId = typeof payload.requestId === "string" ? payload.requestId : undefined;
+
+  if (!requestId) {
+    return rawEvent;
+  }
+
+  // Events wait behind pending reads; past this backlog the body is recorded as skipped instead.
+  if (runtime.cdpIngestBacklog >= FULL_MODE_CDP_INGEST_MAX_BACKLOG) {
+    const request = asRecord(payload.request) ?? {};
+    return {
+      ...rawEvent,
+      payload: { ...payload, request: { ...request, postDataSkipped: "backlog" } }
+    };
+  }
+
+  return completeRequestPostData(payload, () =>
+    readCdpForBodies<{ postData?: string }>(
+      runtime,
+      rawEvent.cdpSessionId,
+      "Network.getRequestPostData",
+      { requestId },
+      FULL_MODE_POST_DATA_TIMEOUT_MS
+    )
+  ).then((completed) => ({ ...rawEvent, payload: completed }));
 }
 
 function shouldCaptureIncidentArtifacts(runtime: SessionRuntime): boolean {
@@ -3831,7 +3948,7 @@ async function sendCdpCommandOutcome<TResult = unknown>(
   timeoutMs = CDP_ARTIFACT_TIMEOUT_MS
 ): Promise<CdpCommandOutcome<TResult>> {
   if (!runtime.cdpRouter || runtime.stopping) {
-    return { ok: false };
+    return { ok: false, error: "debugger detached" };
   }
 
   return withCdpCommandTimeout(runtime.cdpRouter.send<TResult>(target, method, params), timeoutMs);
@@ -3877,7 +3994,10 @@ function resolveLiteBodyCaptureRule(
 ): LiteBodyCaptureRule {
   return applyBodyUrlFilters(
     resolveLiteBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(runtime),
+      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(
+        runtime,
+        LITE_DEFAULT_BODY_MIME_ALLOWLIST
+      ),
       fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
     }),
     url,
@@ -3892,7 +4012,10 @@ function resolveFullBodyCaptureRule(
 ): LiteBodyCaptureRule {
   return applyBodyUrlFilters(
     resolveFullBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(runtime),
+      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(
+        runtime,
+        FULL_DEFAULT_BODY_MIME_ALLOWLIST
+      ),
       fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
     }),
     url,
@@ -3900,9 +4023,13 @@ function resolveFullBodyCaptureRule(
   );
 }
 
-function resolveProfileBodyMimeAllowlist(runtime: SessionRuntime): string[] {
+/** The profile's body MIME allowlist, or the engine's default when the profile sets none. */
+function resolveProfileBodyMimeAllowlist(
+  runtime: SessionRuntime,
+  engineDefault: readonly string[]
+): string[] {
   const profileAllowlist = runtime.profile.selection.profile.network.bodyMimeAllowlist;
-  return profileAllowlist.length > 0 ? profileAllowlist : LITE_DEFAULT_BODY_MIME_ALLOWLIST;
+  return profileAllowlist.length > 0 ? profileAllowlist : [...engineDefault];
 }
 
 function isMimeAllowed(allowlist: string[], mimeType: string | undefined): boolean {
@@ -4344,10 +4471,21 @@ function normalizeHashesManifest(value: unknown): HashesManifest {
   };
 }
 
-async function ensureInjectedHooks(tabId: number, bridgeNonce: string): Promise<void> {
+/**
+ * Installs the page hooks in a frame (the top frame by default). On a frame that already has them
+ * the script only resets their config to inactive, so callers send the frame its recording
+ * status afterwards.
+ */
+async function ensureInjectedHooks(
+  tabId: number,
+  bridgeNonce: string,
+  frameId?: number
+): Promise<void> {
+  const target = frameId === undefined ? { tabId } : { tabId, frameIds: [frameId] };
+
   await chromeApi?.scripting
     ?.executeScript({
-      target: { tabId },
+      target,
       world: "MAIN",
       files: ["injected.js"]
     })
@@ -4356,7 +4494,7 @@ async function ensureInjectedHooks(tabId: number, bridgeNonce: string): Promise<
   // scripts could observe.
   await chromeApi?.scripting
     ?.executeScript({
-      target: { tabId },
+      target,
       world: "MAIN",
       func: applyInjectedBridgeNonce,
       args: [INJECTED_BRIDGE_NONCE_SETTER_KEY, bridgeNonce]
@@ -4891,7 +5029,7 @@ type SessionRuntimeInit = {
 
 /** A session runtime with its capture state reset; Start wires its recorder afterwards. */
 function createSessionRuntime(init: SessionRuntimeInit): SessionRuntime {
-  return {
+  const runtime: SessionRuntime = {
     sid: init.sid,
     tabId: init.tabId,
     mode: init.mode,
@@ -4935,8 +5073,10 @@ function createSessionRuntime(init: SessionRuntimeInit): SessionRuntime {
     pipelineFlushTimer: null,
     pipelineFlushQueued: false,
     stopping: false,
-    responseBodyCaptures: 0,
-    responseBodyCaptureTimestamps: [],
+    // The callbacks read `runtime` only after the session started.
+    fullBodyCapture: createFullBodyCapture(() => runtime),
+    cdpIngestChain: Promise.resolve(),
+    cdpIngestBacklog: 0,
     capturedEventCount: init.counters?.eventCount ?? 0,
     capturedErrorCount: init.counters?.errorCount ?? 0,
     capturedSizeBytes: init.counters?.sizeBytes ?? 0,
@@ -4953,6 +5093,8 @@ function createSessionRuntime(init: SessionRuntimeInit): SessionRuntime {
     heapSnapshotCapture: null,
     cleanupTimer: null
   };
+
+  return runtime;
 }
 
 /** Concurrent callers share one check-then-create: Chrome allows a single offscreen document. */
@@ -5100,7 +5242,7 @@ async function cleanupCdpInstrumentation(
 
   runtime.enabledCdpSessions.clear();
   runtime.requestMeta.clear();
-  runtime.responseBodyCaptureTimestamps.length = 0;
+  runtime.fullBodyCapture.close();
   runtime.heapSnapshotCapture = null;
 }
 
@@ -5508,7 +5650,9 @@ function resolveUrlOrigin(value: string): string | null {
 
 function broadcast(message: ExtensionOutboundMessage): void {
   for (const port of connectedPorts) {
-    sendPortMessage(port, message);
+    if (isBroadcastDeliveredToPort(message.kind, port.name)) {
+      sendPortMessage(port, message);
+    }
   }
 }
 
@@ -5555,9 +5699,7 @@ function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture
 }
 
 async function loadEnterprisePolicy(): Promise<EnterpriseRecorderPolicy> {
-  return normalizeEnterprisePolicy(
-    (await readManagedEnterprisePolicy(chromeApi?.storage?.managed)) ?? {}
-  );
+  return normalizeEnterprisePolicy((await readEnterprisePolicy()) ?? {});
 }
 
 function withSessionCapturePolicy(

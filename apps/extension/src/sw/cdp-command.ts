@@ -5,7 +5,11 @@ export type CdpCommandOutcome<TResult> =
     }
   | {
       ok: false;
+      /** The CDP error message, or `timeout`. */
+      error: string;
     };
+
+export const CDP_COMMAND_TIMEOUT_ERROR = "timeout";
 
 export function withCdpCommandTimeout<TResult>(
   task: Promise<TResult>,
@@ -19,14 +23,15 @@ export function withCdpCommandTimeout<TResult>(
         ok: true,
         value
       }),
-      () => ({
-        ok: false
+      (error: unknown) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
       })
     ),
     new Promise<CdpCommandOutcome<TResult>>((resolve) => {
       timer = setTimeout(
         () => {
-          resolve({ ok: false });
+          resolve({ ok: false, error: CDP_COMMAND_TIMEOUT_ERROR });
         },
         Math.max(0, timeoutMs)
       );

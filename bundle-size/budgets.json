@@ -1,39 +1,40 @@
 {
-  "entries": [
+  "absolute": [
     {
-      "path": "packages/recorder/dist/index.js",
-      "maxBytes": 78300,
-      "maxGzipBytes": 18400,
-      "note": "Measured 76,018 / 17,842 B (+3%): full console detail, the CDP cache tracker and byte-capped stream bodies (#9) plus per-profile redaction rules (#10)."
-    },
-    {
-      "path": "packages/pipeline/dist/index.js",
-      "maxBytes": 82600,
-      "maxGzipBytes": 18200,
-      "note": "Measured 80,191 / 17,596 B (+3%): sealed session metadata, indexes and integrity at rest (#15) on top of #9/#10."
-    },
-    {
-      "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 103500,
-      "maxGzipBytes": 24900,
-      "note": "Measured 100,424 / 24,105 B (+3%): #7's bounded, validated archive loading and #9's event ordering plus archive format 2 with the encrypted manifest (#10)."
-    },
-    {
-      "path": "apps/player/build/main.js",
-      "maxBytes": 1800000,
-      "maxGzipBytes": 330000
+      "path": "apps/extension/build/injected.js",
+      "maxBytes": 32000,
+      "maxGzipBytes": 11000,
+      "forbidSources": ["node_modules/zod/"],
+      "note": "MAIN-world page hook, executed on every recorded navigation. 20,549 B / 7,346 B gzip at introduction."
     },
     {
       "path": "apps/extension/build/content.js",
-      "maxBytes": 54100,
-      "maxGzipBytes": 14300,
-      "note": "Measured 52,488 / 13,848 B (+3%): the shared UI dictionary with the profile-change and profile-deletion strings (#10) and the local data settings strings (#15); #14 moves the dictionary out of the content script."
+      "maxBytes": 39500,
+      "maxGzipBytes": 12000,
+      "forbidSources": ["node_modules/zod/"],
+      "note": "Content script in every recorded frame. 22,431 B / 7,420 B gzip at introduction. 38,144 B / 11,643 B with #10: the shared UI dictionary it bundles for the keyboard-marker label grew with the profile strings, plus the typed-value policy for password fields; #14 loads the dictionary with the content agent instead."
     },
     {
-      "path": "apps/extension/build/sw.js",
-      "maxBytes": 946900,
-      "maxGzipBytes": 171000,
-      "note": "Measured 919,244 / 165,981 B (+3%): the service worker recovery (#8), the CDP Network allowlist (#9), recording profiles with cookie value capture (#10) and at-rest encryption (#15)."
+      "path": "apps/extension/build/content-agent.js",
+      "maxBytes": 190000,
+      "maxGzipBytes": 60000,
+      "forbidSources": ["node_modules/zod/"],
+      "note": "Lite capture agent imported by content.js in every recorded frame; snapdom is ~96 KB of it. 138,139 B / 43,110 B gzip at introduction."
     }
-  ]
+  ],
+  "delta": {
+    "maxGrowthPercent": 8,
+    "minGrowthBytes": 2048,
+    "entries": [
+      "apps/extension/build/sw.js",
+      "apps/extension/build/offscreen.js",
+      "apps/extension/build/popup.js",
+      "apps/extension/build/options.js",
+      "apps/extension/build/sessions.js",
+      "apps/player/build/main.js",
+      "packages/recorder/dist/index.js",
+      "packages/pipeline/dist/index.js",
+      "packages/player-sdk/dist/index.js"
+    ]
+  }
 }

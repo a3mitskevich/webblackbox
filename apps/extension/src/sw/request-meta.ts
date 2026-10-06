@@ -5,6 +5,8 @@ export type RequestMetaEntry = {
   mimeType?: string;
   status?: number;
   resourceType?: string;
+  /** Encoded bytes received when the response arrived (its headers). */
+  headerBytes?: number;
   updatedAt: number;
 };
 
