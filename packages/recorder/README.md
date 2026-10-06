@@ -55,9 +55,7 @@ const result = recorder.ingest({
   sid: "S-1706000000000-abc",
   t: Date.now(),
   mono: performance.now(),
-  payload: {
-    /* CDP event params */
-  }
+  payload: {/* CDP event params */}
 });
 
 if (result.event) {

@@ -59,14 +59,7 @@ const TICK_MS = 120;
 const STORAGE_BUCKET_MS = 250;
 
 type TickPanel =
-  | "stage"
-  | "feed"
-  | "network"
-  | "console"
-  | "realtime"
-  | "storage"
-  | "tabs"
-  | "perf";
+  "stage" | "feed" | "network" | "console" | "realtime" | "storage" | "tabs" | "perf";
 
 type Percentiles = { p50: number; p95: number; max: number };
 

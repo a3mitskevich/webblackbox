@@ -7,9 +7,7 @@ export type UploadState =
   | { phase: "error"; message: string };
 
 export type OpenSharedState =
-  | { phase: "idle" }
-  | { phase: "loading" }
-  | { phase: "error"; message: string };
+  { phase: "idle" } | { phase: "loading" } | { phase: "error"; message: string };
 
 export type ShareDialog =
   | { kind: "upload" }

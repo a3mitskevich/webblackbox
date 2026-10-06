@@ -39,8 +39,7 @@ export type ProfilesDiff = {
 };
 
 export type ProfilesImportPreview =
-  | { ok: true; next: RecordingProfilesStore; diff: ProfilesDiff }
-  | { ok: false; error: string };
+  { ok: true; next: RecordingProfilesStore; diff: ProfilesDiff } | { ok: false; error: string };
 
 const exportEnvelopeSchema = recordingProfilesStoreSchema.extend({
   format: z.literal(PROFILES_EXPORT_FORMAT),

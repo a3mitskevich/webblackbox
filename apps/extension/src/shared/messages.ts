@@ -167,10 +167,7 @@ export const PROFILES_SECTION_ID = "profiles";
 
 /** Why a recording was stopped after its effective profile changed. */
 export type ProfileCancelReason =
-  | "rule-changed"
-  | "profile-missing"
-  | "profile-edited"
-  | "enterprise-policy";
+  "rule-changed" | "profile-missing" | "profile-edited" | "enterprise-policy";
 
 /** What the popup needs to explain a cancelled recording and how to fix it. */
 export type ProfileCancelNotice = {

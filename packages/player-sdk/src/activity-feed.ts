@@ -14,13 +14,7 @@ import { isThirdPartyUrl } from "./third-party.js";
 
 /** What an Activity feed row is about (PROPOSAL §9 B: "action → consequences"). */
 export type ActivityItemKind =
-  | "start"
-  | "action"
-  | "navigation"
-  | "request"
-  | "realtime"
-  | "console"
-  | "exception";
+  "start" | "action" | "navigation" | "request" | "realtime" | "console" | "exception";
 
 /** One feed item: an event worth a row, with its context. */
 export type ActivityItem = {

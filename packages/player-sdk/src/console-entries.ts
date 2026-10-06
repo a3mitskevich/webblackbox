@@ -11,12 +11,7 @@ export const CONSOLE_LEVELS: readonly ConsoleLevel[] = ["error", "warn", "info",
 
 /** Where a console row comes from. */
 export type ConsoleEntryKind =
-  | "console"
-  | "exception"
-  | "rejection"
-  | "resource"
-  | "assert"
-  | "other";
+  "console" | "exception" | "rejection" | "resource" | "assert" | "other";
 
 /** Script position a console row points at (the top stack frame, else the logged URL). */
 export type ConsoleLocation = {

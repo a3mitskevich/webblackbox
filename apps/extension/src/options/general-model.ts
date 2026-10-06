@@ -111,11 +111,7 @@ export type TextFieldSpec = SpecText & {
 };
 
 export type GeneralFieldSpec =
-  | NumberFieldSpec
-  | ToggleFieldSpec
-  | ListFieldSpec
-  | ChoiceFieldSpec
-  | TextFieldSpec;
+  NumberFieldSpec | ToggleFieldSpec | ListFieldSpec | ChoiceFieldSpec | TextFieldSpec;
 
 type SamplingKey = keyof RecorderConfig["sampling"];
 type BudgetNumberKey = "lcpWarnMs" | "requestWarnMs" | "errorRateWarnPct";

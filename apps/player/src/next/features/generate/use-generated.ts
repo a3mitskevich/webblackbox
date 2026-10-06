@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 
 export type Output<T> =
-  | { status: "pending" }
-  | { status: "ready"; value: T }
-  | { status: "error"; message: string };
+  { status: "pending" } | { status: "ready"; value: T } | { status: "error"; message: string };
 
 /**
  * Runs `callback` once the browser has painted the current frame (a task queued from the next

@@ -1304,8 +1304,7 @@ describe("recorder", () => {
     expect(navPayload?.routeContext?.url).toBe("https://example.com/dashboard");
 
     const consolePayload = consoleEvent.event?.data as
-      | { routeContext?: { url?: string } }
-      | undefined;
+      { routeContext?: { url?: string } } | undefined;
     expect(consolePayload?.routeContext?.url).toBe("https://example.com/dashboard");
 
     const errorPayload = errorEvent.event?.data as
