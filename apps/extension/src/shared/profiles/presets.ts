@@ -46,7 +46,9 @@ const ALL_TEXT_BODY_MIME_ALLOWLIST = [
   "application/javascript",
   "application/x-javascript",
   "application/ecmascript",
-  "application/x-www-form-urlencoded"
+  "application/x-www-form-urlencoded",
+  // SVG is text too; the Full engine keeps it by default (FULL_DEFAULT_BODY_MIME_ALLOWLIST).
+  "image/svg+xml"
 ];
 
 const DEFAULT_CATEGORIES: CaptureCategories = completeCaptureCategories(

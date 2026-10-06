@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 
 import type {
+  BodySkipReason,
   ChunkCodec,
   ChunkTimeIndexEntry,
   EventLevel,
@@ -16,7 +17,8 @@ import {
   assertArchiveKdfIterations,
   ENCRYPTED_MANIFEST_PATH,
   extractRequestId,
-  inferBlobMime
+  inferBlobMime,
+  isBodySkipReason
 } from "@webblackbox/protocol";
 
 import {
@@ -37,6 +39,10 @@ import {
   parseArchiveTimeIndex
 } from "./archive-schema.js";
 import {
+  buildCaptureCompletenessReport,
+  type CaptureCompletenessReport
+} from "./capture-completeness.js";
+import {
   lowerBoundEventMono,
   mergeSortedEventLists,
   sortEventsForTimeline,
@@ -44,6 +50,15 @@ import {
 } from "./event-order.js";
 
 export { compareEventsForTimeline } from "./event-order.js";
+
+export {
+  buildCaptureCompletenessReport,
+  formatCaptureCompletenessReport,
+  MAX_MISSING_SAMPLES,
+  type BodyCompleteness,
+  type CaptureCompletenessReport,
+  type MimeCompleteness
+} from "./capture-completeness.js";
 
 export {
   ArchiveLimitError,
@@ -253,13 +268,31 @@ export type NetworkWaterfallEntry = {
   requestHeaders: Record<string, string>;
   responseHeaders: Record<string, string>;
   requestBodyText?: string;
+  /** The request carried a body (CDP `hasPostData`, or a known body size above zero). */
+  requestHasBody?: true;
+  /** The request body was cut at the profile limit. */
+  requestBodyTruncated?: true;
+  /** Why the request body the policy asked for is not in the archive. */
+  requestBodySkipReason?: BodySkipReason;
   responseBodyHash?: string;
   responseBodySize?: number;
+  /** The stored response body is a prefix cut at the profile limit. */
+  responseBodyTruncated?: true;
+  /** Why the response body the policy asked for is not in the archive. */
+  responseBodySkip?: NetworkBodySkip;
   /** Where the response came from when it skipped the network (CDP cache / service-worker flags). */
   fromCache?: NetworkCacheSource;
   /** Set when the archive holds no response, finish or failure: still open when recording stopped. */
   pending?: true;
   eventIds: string[];
+};
+
+/** A response body the policy asked for and the recorder could not keep, with the reason. */
+export type NetworkBodySkip = {
+  reason: BodySkipReason;
+  size?: number;
+  limit?: number;
+  detail?: string;
 };
 
 /** Cache layer that served a request, from CDP `requestServedFromCache` and response flags. */
@@ -503,7 +536,8 @@ const NETWORK_EVENT_TYPES = new Set<WebBlackboxEventType>([
   "network.finished",
   "network.failed",
   "network.redirect",
-  "network.body"
+  "network.body",
+  "network.body.skipped"
 ]);
 
 const STORAGE_EVENT_PREFIXES = [
@@ -1286,6 +1320,19 @@ export class WebBlackboxPlayer {
     };
   }
 
+  /**
+   * What the archive holds against what its capture policy asked for: body ratios by MIME type
+   * (with every loss explained or counted as missing), DOM changes, WebSocket frames, console,
+   * storage values and perf signals.
+   */
+  public getCaptureCompleteness(range?: PlayerRange): CaptureCompletenessReport {
+    return buildCaptureCompletenessReport({
+      events: this.query({ range }),
+      waterfall: this.getNetworkWaterfall(range),
+      realtime: this.getRealtimeNetworkTimeline(range)
+    });
+  }
+
   /** Returns realtime network stream entries (WebSocket/SSE). */
   public getRealtimeNetworkTimeline(range?: PlayerRange): RealtimeNetworkEntry[] {
     return this.query({ range })
@@ -1694,6 +1741,9 @@ export class WebBlackboxPlayer {
     const derived = this.buildDerived(options.range);
     // The whole session: what was open in parallel does not depend on the selected range.
     const tabsContext = readTabsContext(this.query());
+    const notCaptured = this.getNetworkWaterfall(options.range)
+      .filter((entry) => entry.responseBodySkip || entry.requestBodySkipReason)
+      .slice(0, maxItems);
 
     return [
       `# ${heading}`,
@@ -1741,6 +1791,19 @@ export class WebBlackboxPlayer {
               (entry) =>
                 `- ${entry.method} ${entry.url} (${entry.durationMs.toFixed(1)}ms${entry.actionId ? `, act=${entry.actionId}` : ""})`
             )
+            .join("\n"),
+      "",
+      "## Not Captured",
+      notCaptured.length === 0
+        ? "- None"
+        : notCaptured
+            .map((entry) => {
+              const parts = [
+                entry.requestBodySkipReason ? `request body: ${entry.requestBodySkipReason}` : "",
+                entry.responseBodySkip ? `response body: ${entry.responseBodySkip.reason}` : ""
+              ].filter(Boolean);
+              return `- ${entry.method} ${entry.url} (${parts.join("; ")})`;
+            })
             .join("\n"),
       "",
       "## Replay Diagnostics",
@@ -1984,6 +2047,7 @@ type MutableNetworkBucket = {
   finished?: WebBlackboxEvent;
   failed?: WebBlackboxEvent;
   body?: WebBlackboxEvent;
+  bodySkipped?: WebBlackboxEvent;
   startMono: number;
   endMono: number;
   startWallTime: number;
@@ -2038,6 +2102,10 @@ function collectNetworkBuckets(events: WebBlackboxEvent[]): MutableNetworkBucket
 
     if (event.type === "network.body") {
       bucket.body = event;
+    }
+
+    if (event.type === "network.body.skipped" && asRecord(event.data)?.side !== "request") {
+      bucket.bodySkipped = event;
     }
 
     buckets.set(reqId, bucket);
@@ -2111,11 +2179,45 @@ function toNetworkEntry(bucket: MutableNetworkBucket): NetworkWaterfallEntry {
     requestHeaders,
     responseHeaders,
     requestBodyText,
+    requestHasBody:
+      requestObject?.hasPostData === true || (asNumber(requestPayload?.postDataSize) ?? 0) > 0
+        ? true
+        : undefined,
+    requestBodyTruncated:
+      requestObject?.postDataTruncated === true || requestPayload?.postDataTruncated === true
+        ? true
+        : undefined,
+    requestBodySkipReason: requestBodyText
+      ? undefined
+      : readBodySkipReason(requestObject?.postDataSkipped ?? requestPayload?.postDataSkipped),
     responseBodyHash: asString(bodyPayload?.contentHash),
     responseBodySize: asNumber(bodyPayload?.size) ?? asNumber(bodyPayload?.sampledSize),
+    responseBodyTruncated: bodyPayload?.truncated === true ? true : undefined,
+    responseBodySkip: bodyPayload?.contentHash
+      ? undefined
+      : readNetworkBodySkip(asRecord(bucket.bodySkipped?.data)),
     fromCache: readNetworkCacheSource(responseObject ?? responsePayload, finishedPayload),
     pending: bucket.response || bucket.finished || bucket.failed ? undefined : true,
     eventIds: bucket.events.map((event) => event.id)
+  };
+}
+
+function readBodySkipReason(value: unknown): BodySkipReason | undefined {
+  return isBodySkipReason(value) ? value : undefined;
+}
+
+function readNetworkBodySkip(payload: Record<string, unknown> | null): NetworkBodySkip | undefined {
+  const reason = readBodySkipReason(payload?.reason);
+
+  if (!reason) {
+    return undefined;
+  }
+
+  return {
+    reason,
+    size: asNumber(payload?.size),
+    limit: asNumber(payload?.limit),
+    detail: asString(payload?.detail)
   };
 }
 

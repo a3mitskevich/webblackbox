@@ -1,4 +1,5 @@
 import type {
+  BODY_SKIP_REASONS,
   CAPTURE_MODES,
   CHUNK_CODECS,
   EVENT_LEVELS,
@@ -80,6 +81,22 @@ export type TabsChangePayload = {
   tab: RelatedTabInfo;
   /** Related tabs open after the change. */
   openCount: number;
+};
+
+export type BodySkipReason = (typeof BODY_SKIP_REASONS)[number];
+
+/** Payload of `network.body.skipped`. */
+export type NetworkBodySkippedPayload = {
+  reqId: string;
+  side: "request" | "response";
+  reason: BodySkipReason;
+  mimeType?: string;
+  /** Body size in bytes when the browser reported it. */
+  size?: number;
+  /** The limit that was hit (bytes for `too-large`, bodies for `session-limit`). */
+  limit?: number;
+  /** Short browser error text for `not-retained` / `fetch-failed`. */
+  detail?: string;
 };
 
 export type EventReference = {
