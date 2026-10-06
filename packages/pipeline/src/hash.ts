@@ -10,14 +10,23 @@ function toUint8Array(input: ArrayBuffer | Uint8Array | string): Uint8Array {
   return new Uint8Array(input);
 }
 
+/** Hashes archive files of tens of MB: a view over an ordinary buffer is digested without a copy. */
+function toBufferSource(data: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (data.buffer instanceof ArrayBuffer) {
+    return data as Uint8Array<ArrayBuffer>;
+  }
+
+  const copy = new Uint8Array(data.byteLength);
+  copy.set(data);
+  return copy;
+}
+
 export async function sha256Hex(input: ArrayBuffer | Uint8Array | string): Promise<string> {
   const data = toUint8Array(input);
   const subtle = globalThis.crypto?.subtle;
 
   if (subtle) {
-    const source = new Uint8Array(data.byteLength);
-    source.set(data);
-    const digest = await subtle.digest("SHA-256", source.buffer);
+    const digest = await subtle.digest("SHA-256", toBufferSource(data));
     return bufferToHex(new Uint8Array(digest));
   }
 
