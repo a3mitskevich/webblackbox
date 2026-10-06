@@ -53,6 +53,7 @@
     "jszip": "^3.10.2"
   },
   "devDependencies": {
+    "@webblackbox/pipeline": "workspace:*",
     "esbuild": "^0.28.2"
   }
 }
