@@ -22,7 +22,9 @@ const ciEnv = {
   BENCH_RECENT_MINUTES: process.env.BENCH_RECENT_MINUTES ?? "20",
   BENCH_PLAYER_EVENTS: process.env.BENCH_PLAYER_EVENTS ?? "60000",
   BENCH_PLAYER_DURATION_MS: process.env.BENCH_PLAYER_DURATION_MS ?? "600000",
-  BENCH_PLAYER_RENDER_TICKS: process.env.BENCH_PLAYER_RENDER_TICKS ?? "120"
+  BENCH_PLAYER_RENDER_TICKS: process.env.BENCH_PLAYER_RENDER_TICKS ?? "120",
+  // The render pass is part of the gate: an inherited BENCH_PLAYER_RENDER=0 must not skip it.
+  BENCH_PLAYER_RENDER: "1"
 };
 
 main().catch((error) => {
@@ -206,7 +208,11 @@ function runPlayerChecks(player, limits) {
     maxMs("tickMs.p95", player.tickMs.p95, limits.tickP95MaxMs)
   ];
 
-  if (player.render) {
+  if (!player.render) {
+    checks.push(
+      assertCheck("player.render", false, "the render pass did not run (BENCH_PLAYER_RENDER)")
+    );
+  } else {
     checks.push(
       assertCheck(
         "player.render.failedPanels",
