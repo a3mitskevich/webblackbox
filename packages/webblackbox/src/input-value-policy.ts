@@ -1,4 +1,4 @@
-import type { CapturePolicy } from "@webblackbox/protocol";
+import type { CapturePolicy, RedactionProfile } from "@webblackbox/protocol";
 // The zod-free leaf, not the package index: the content script loads this module on every page.
 import {
   isContentRedactionEnabled,
@@ -182,6 +182,21 @@ export function readCapturableInputValue(
   }
 
   return field.value.slice(0, MAX_CAPTURED_INPUT_VALUE_CHARS);
+}
+
+/**
+ * True when a blocked selector covers the element (itself or an ancestor) and no unmask selector
+ * re-allows it at least as close to the element. Invalid blocked selectors fail closed.
+ */
+export function isCoveredByBlockedSelector(element: Element, redaction: RedactionProfile): boolean {
+  const blockedAt = nearestMatch(element, redaction.blockedSelectors, true);
+
+  if (blockedAt === null) {
+    return false;
+  }
+
+  const unmaskedAt = nearestMatch(element, redaction.unmaskSelectors ?? [], false);
+  return unmaskedAt === null || !blockedAt.contains(unmaskedAt);
 }
 
 /**

@@ -31,6 +31,11 @@ export const MIN_RULE_PRIORITY = -1000;
 export const MAX_RULE_PRIORITY = 1000;
 export const MAX_MOUSEMOVE_HZ = 240;
 export const MAX_BODY_CAPTURE_BYTES = 8 * 1024 * 1024;
+/** Default and hard cap for one source map embedded at record time. */
+export const DEFAULT_SOURCE_MAP_MAX_BYTES = 8 * 1024 * 1024;
+export const MAX_SOURCE_MAP_BYTES = 32 * 1024 * 1024;
+export const MIN_UNEXPORTED_RETENTION_MINUTES = 1;
+export const MAX_UNEXPORTED_RETENTION_MINUTES = 24 * 60;
 
 /** Visual capture a profile pins; absent = the popup's choice (today's behaviour). */
 export type ProfileVisualCapture = "none" | "screenshots" | "recording" | "both";
@@ -54,9 +59,30 @@ export type ProfilePointerSettings = {
   wheel: boolean;
 };
 
+/**
+ * Source map capture: `metadata` records each script's map reference, `embed` also stores the
+ * map in the archive. A profile without `sourceMaps` uses metadata in Full mode (CDP) and
+ * nothing in Lite mode, where capture refetches scripts.
+ */
+export type ProfileSourceMapMode = "off" | "metadata" | "embed";
+
+export type ProfileSourceMapSettings = {
+  mode: ProfileSourceMapMode;
+  /** Largest map embedded; absent = `DEFAULT_SOURCE_MAP_MAX_BYTES`. */
+  maxMapBytes?: number;
+};
+
 export type ProfileExportSettings = {
   encryption: "required" | "optional";
   privacyScanner: "block" | "warn";
+};
+
+/** What happens to the encrypted local copy of a recording on this device. */
+export type ProfileLocalDataSettings = {
+  /** Delete the local recording once its export has been handed to the browser's downloads. */
+  deleteAfterExport: boolean;
+  /** Minutes a stopped, unexported recording is kept before it is deleted. */
+  unexportedRetentionMinutes: number;
 };
 
 export type RecordingProfile = {
@@ -72,6 +98,7 @@ export type RecordingProfile = {
   network: ProfileNetworkSettings;
   pointer: ProfilePointerSettings;
   visual?: ProfileVisualCapture;
+  sourceMaps?: ProfileSourceMapSettings;
   sampling: Partial<SamplingProfile>;
   recorder: {
     ringBufferMinutes?: number;
@@ -82,6 +109,8 @@ export type RecordingProfile = {
   /** Capture policy envelope migrated from v1 options (consent, context, retention); optional. */
   basePolicy?: CapturePolicy;
   export: ProfileExportSettings;
+  /** Absent = the defaults (delete after export, today's 10-minute retention). */
+  localData?: ProfileLocalDataSettings;
 };
 
 export type ProfileRuleMatch = {
@@ -144,7 +173,9 @@ const categoriesSchema = z
     indexedDb: z.enum(CAPTURE_CATEGORY_LEVELS.indexedDb),
     cookies: z.enum(CAPTURE_CATEGORY_LEVELS.cookies),
     cdp: z.enum(CAPTURE_CATEGORY_LEVELS.cdp),
-    heapProfiles: z.enum(CAPTURE_CATEGORY_LEVELS.heapProfiles)
+    heapProfiles: z.enum(CAPTURE_CATEGORY_LEVELS.heapProfiles),
+    // Profiles stored before the category existed record the metadata level.
+    tabsContext: z.enum(CAPTURE_CATEGORY_LEVELS.tabsContext).default("metadata")
   })
   .strict();
 
@@ -187,6 +218,13 @@ export const recordingProfileSchema = z
       })
       .strict(),
     visual: z.enum(["none", "screenshots", "recording", "both"]).optional(),
+    sourceMaps: z
+      .object({
+        mode: z.enum(["off", "metadata", "embed"]),
+        maxMapBytes: positiveIntSchema.max(MAX_SOURCE_MAP_BYTES).optional()
+      })
+      .strict()
+      .optional(),
     sampling: samplingSchema,
     recorder: z
       .object({
@@ -201,7 +239,18 @@ export const recordingProfileSchema = z
         encryption: z.enum(["required", "optional"]),
         privacyScanner: z.enum(["block", "warn"])
       })
+      .strict(),
+    localData: z
+      .object({
+        deleteAfterExport: z.boolean(),
+        unexportedRetentionMinutes: z
+          .number()
+          .int()
+          .min(MIN_UNEXPORTED_RETENTION_MINUTES)
+          .max(MAX_UNEXPORTED_RETENTION_MINUTES)
+      })
       .strict()
+      .optional()
   })
   .strict();
 

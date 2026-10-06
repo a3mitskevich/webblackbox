@@ -33,10 +33,17 @@ export function createProfileE2eHarness({ name, appRoot, defaultPort }) {
   const baseUrl = `http://127.0.0.1:${remotePort}`;
   const state = { chrome: null, logStream: null, servers: [], clients: [] };
 
-  /** Starts Chrome and connects to it, its service worker, the page and the popup. */
-  async function launch(pageUrl) {
+  /**
+   * Starts Chrome and connects to it, its service worker, the page and the popup. With
+   * `keepProfile` the user data dir of the previous launch is reused (a browser restart).
+   */
+  async function launch(pageUrl, { keepProfile = false } = {}) {
     await access(resolve(extensionDir, "manifest.json"), constants.R_OK);
-    await rm(profileDir, { recursive: true, force: true });
+
+    if (!keepProfile) {
+      await rm(profileDir, { recursive: true, force: true });
+    }
+
     await mkdir(profileDir, { recursive: true });
     await mkdir(downloadDir, { recursive: true });
     startChrome(await resolveChromeBinary());
@@ -83,7 +90,32 @@ export function createProfileE2eHarness({ name, appRoot, defaultPort }) {
     await acceptDialogs(page, dialogs);
     await sleep(1_000);
 
-    return { page, popup, sw, swExceptions, dialogs, extensionId };
+    return { browser, page, popup, sw, swExceptions, dialogs, extensionId };
+  }
+
+  /** Quits Chrome and waits for it to exit, keeping the servers and the user data dir. */
+  async function stopBrowser() {
+    for (const client of state.clients.splice(0)) {
+      client.close();
+    }
+
+    const chrome = state.chrome;
+    state.chrome = null;
+
+    if (chrome && chrome.exitCode === null) {
+      const exited = new Promise((resolveExit) => chrome.once("exit", resolveExit));
+      chrome.kill("SIGTERM");
+      await Promise.race([exited, sleep(15_000)]);
+    }
+  }
+
+  /** CDP client for a target already listed by Chrome. */
+  async function attach(target) {
+    return connect(target.webSocketDebuggerUrl);
+  }
+
+  function listTargets() {
+    return fetchJson(`${baseUrl}/json/list`);
   }
 
   /** The exported archive's path once Chrome finished downloading it. */
@@ -204,7 +236,18 @@ export function createProfileE2eHarness({ name, appRoot, defaultPort }) {
     }
   }
 
-  return { chromeLogPath, launch, openPage, closePage, waitForDownload, trackServer, cleanup };
+  return {
+    chromeLogPath,
+    launch,
+    stopBrowser,
+    attach,
+    listTargets,
+    openPage,
+    closePage,
+    waitForDownload,
+    trackServer,
+    cleanup
+  };
 }
 
 export async function fetchJson(url, init) {

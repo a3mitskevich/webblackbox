@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "WebBlackbox"
+  },
+  "extensionDescription": {
+    "message": "Бортовой самописец и отладчик с перемоткой времени для веб-приложений."
+  },
+  "extensionActionTitle": {
+    "message": "WebBlackbox"
+  },
+  "extensionCommandMarkBug": {
+    "message": "Поставить маркер"
+  }
+}

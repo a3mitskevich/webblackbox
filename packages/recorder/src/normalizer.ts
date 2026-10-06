@@ -21,6 +21,8 @@ import {
   sanitizeOptionalUrl,
   stripUndefined
 } from "./normalizer-utils.js";
+import { normalizeTabsContextPayload } from "./tabs-context.js";
+import { normalizeScriptSourceMapPayload } from "./script-source-map.js";
 import { recordedUrl } from "./url-recording.js";
 import type { EventNormalizer, RawRecorderEvent } from "./types.js";
 
@@ -49,6 +51,16 @@ const CONTENT_EVENT_MAP: Record<string, WebBlackboxEventType> = {
   submit: "user.submit",
   scroll: "user.scroll",
   mousemove: "user.mousemove",
+  pointerdown: "user.pointerdown",
+  pointerup: "user.pointerup",
+  contextmenu: "user.contextmenu",
+  auxclick: "user.auxclick",
+  clickReaction: "user.click.reaction",
+  dragStart: "user.drag.start",
+  dragEnd: "user.drag.end",
+  selection: "user.selection",
+  wheel: "user.wheel",
+  hover: "user.hover",
   focus: "user.focus",
   blur: "user.blur",
   marker: "user.marker",
@@ -73,6 +85,8 @@ const CONTENT_EVENT_MAP: Record<string, WebBlackboxEventType> = {
   cookieSnapshot: "storage.cookie.snapshot",
   sse: "network.sse.message"
 };
+/** Raw type of script → source map records from the debugger (system) or the lite scanner. */
+const SCRIPT_RAW_TYPE = "script";
 /** Host-side raw type of a body the policy asked for but the host could not keep. */
 export const BODY_SKIPPED_RAW_TYPE = "cdp.network.body.skipped";
 const MAX_BODY_SKIP_DETAIL_CHARS = 200;
@@ -95,6 +109,12 @@ export class DefaultEventNormalizer implements EventNormalizer {
   public normalize(
     input: RawRecorderEvent
   ): { eventType: WebBlackboxEventType; payload: unknown } | null {
+    if (input.rawType === SCRIPT_RAW_TYPE && input.source !== "cdp") {
+      const payload = normalizeScriptSourceMapPayload(input.payload);
+
+      return payload ? { eventType: "sys.script", payload } : null;
+    }
+
     if (input.source === "cdp") {
       return this.normalizeCdp(input);
     }
@@ -150,6 +170,10 @@ export class DefaultEventNormalizer implements EventNormalizer {
       };
     }
 
+    if (input.rawType === "tabs.snapshot" || input.rawType === "tabs.change") {
+      return normalizeTabsContextEvent(input.rawType, input.payload);
+    }
+
     if (input.rawType === BODY_SKIPPED_RAW_TYPE) {
       const payload = normalizeBodySkippedPayload(asRecord(input.payload));
       return payload ? { eventType: "network.body.skipped", payload } : null;
@@ -197,6 +221,17 @@ export class DefaultEventNormalizer implements EventNormalizer {
       payload: normalizeCdpPayload(eventType, input.rawType, input.payload, this.consoleDetail)
     };
   }
+}
+
+/** Parallel-tabs context from the extension; malformed payloads are dropped. */
+function normalizeTabsContextEvent(
+  rawType: "tabs.snapshot" | "tabs.change",
+  payload: unknown
+): { eventType: WebBlackboxEventType; payload: unknown } | null {
+  const eventType = rawType === "tabs.snapshot" ? "meta.tabs.snapshot" : "meta.tabs.change";
+  const normalized = normalizeTabsContextPayload(eventType, payload);
+
+  return normalized ? { eventType, payload: normalized } : null;
 }
 
 function normalizeCdpPayload(

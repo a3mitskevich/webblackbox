@@ -53,6 +53,23 @@ describe("PlayerShell", () => {
     expect(screen.getByText("复制 cURL")).toBeInTheDocument();
   });
 
+  it("renders Russian labels and offers every locale when locale is ru", () => {
+    render(<PlayerShell locale="ru" />);
+
+    const language = screen.getByLabelText("Язык");
+    expect(language).toHaveValue("ru");
+    expect(
+      [...(language as HTMLSelectElement).options].map((option) => [option.value, option.text])
+    ).toEqual([
+      ["en", "English"],
+      ["ru", "Русский"],
+      ["zh-CN", "中文"]
+    ]);
+    expect(screen.getByLabelText("Открыть архив")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Хронология" })).toBeInTheDocument();
+    expect(screen.getByText("Копировать cURL")).toBeInTheDocument();
+  });
+
   it("renders share privacy preflight controls", () => {
     render(<PlayerShell />);
 

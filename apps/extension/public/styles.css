@@ -592,6 +592,11 @@ input[type="radio"] {
   text-overflow: ellipsis;
 }
 
+/* Uppercase Cyrillic runs wider than Latin; tighter tracking keeps the labels inside the tiles. */
+:lang(ru) .wb-stats__item dt {
+  letter-spacing: 0.02em;
+}
+
 .wb-stats__item--warn dd {
   color: var(--wb-danger);
 }
@@ -696,10 +701,13 @@ input[type="radio"] {
 }
 
 .wb-popup__tab {
+  min-width: 0;
+  overflow: hidden;
   font-family: var(--wb-mono);
   font-size: 11px;
   color: var(--wb-text-subtle);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .wb-popup__spacer {

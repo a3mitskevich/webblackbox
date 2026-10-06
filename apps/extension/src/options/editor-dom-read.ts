@@ -28,7 +28,11 @@ export function readProfileForm(form: HTMLElement, profile: RecordingProfile): R
     includeUrls: readField(form, "includeUrls"),
     excludeUrls: readField(form, "excludeUrls"),
     mousemoveHz: readField(form, "mousemoveHz"),
-    visual: readField(form, "visual")
+    visual: readField(form, "visual"),
+    deleteAfterExport: readCheckbox(form, "deleteAfterExport"),
+    unexportedRetentionMinutes: readField(form, "unexportedRetentionMinutes"),
+    sourceMaps: readField(form, "sourceMaps"),
+    sourceMapMaxBytes: readField(form, "sourceMapMaxBytes")
   });
 }
 

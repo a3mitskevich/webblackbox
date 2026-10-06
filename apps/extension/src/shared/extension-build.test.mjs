@@ -251,6 +251,7 @@ async function writeBuildFixture(outputDir, manifest) {
     "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
     [MANAGED_SCHEMA_FILE]: `${JSON.stringify(createManagedStorageSchema())}\n`,
     "_locales/en/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
+    "_locales/ru/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
     "_locales/zh_CN/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
     "content-agent.js": "export {};\n",
     "content.js": "export {};\n",

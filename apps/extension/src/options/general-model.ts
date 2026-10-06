@@ -11,7 +11,7 @@ import {
   isContentInjectionMode,
   type ContentInjectionMode
 } from "../shared/content-injection.js";
-import type { ExtensionMessageKey } from "../shared/i18n.js";
+import type { ExtensionMessageKey, ExtensionUnit } from "../shared/i18n.js";
 import { OPTIONS_STORAGE_VERSION } from "../shared/options-storage.js";
 import {
   DEFAULT_PERFORMANCE_BUDGET,
@@ -47,7 +47,7 @@ type SpecText = {
 
 export type NumberFieldSpec = SpecText & {
   kind: "number";
-  unit?: string;
+  unit?: ExtensionUnit;
   min: number;
   max: number;
   step?: number;

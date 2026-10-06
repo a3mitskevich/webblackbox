@@ -1,4 +1,4 @@
-import type { ExtensionMessageKey } from "../shared/i18n.js";
+import { EXTENSION_UNIT_LABEL_KEYS, type ExtensionMessageKey } from "../shared/i18n.js";
 import { el } from "../shared/ui/dom.js";
 import {
   chipListField,
@@ -98,7 +98,7 @@ function renderField(spec: GeneralFieldSpec, draft: GeneralDraft, t: Translate):
         min: spec.zeroDisables ? 0 : spec.min,
         max: spec.max,
         ...(spec.step !== undefined ? { step: spec.step } : {}),
-        ...(spec.unit ? { unit: spec.unit } : {}),
+        ...(spec.unit ? { unit: t(EXTENSION_UNIT_LABEL_KEYS[spec.unit]) } : {}),
         ...(spec.slider ? { slider: true } : {})
       });
     case "toggle":

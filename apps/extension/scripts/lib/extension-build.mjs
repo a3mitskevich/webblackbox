@@ -39,6 +39,7 @@ const REQUIRED_BUILD_FILES = [
   "manifest.json",
   MANAGED_SCHEMA_FILE,
   "_locales/en/messages.json",
+  "_locales/ru/messages.json",
   "_locales/zh_CN/messages.json",
   "content.js",
   "content-agent.js",
@@ -73,6 +74,7 @@ export const EXTENSION_MANIFEST_PROFILES = ["dev", "store-safe"];
 // `<all_urls>` stays: webRequest, executeScript, registerContentScripts and captureVisibleTab
 // all need host access.
 const DEV_PERMISSIONS = [
+  "alarms",
   "debugger",
   "downloads",
   "offscreen",
@@ -85,6 +87,7 @@ const DEV_PERMISSIONS = [
 ];
 const STORE_SAFE_PERMISSIONS = [
   "activeTab",
+  "alarms",
   "downloads",
   "offscreen",
   "scripting",
