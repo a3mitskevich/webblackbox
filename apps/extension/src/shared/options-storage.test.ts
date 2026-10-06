@@ -1,8 +1,9 @@
 import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyEnterprisePolicyToRecorderConfig,
+  createBoundedManagedPolicyReader,
   getSessionStartBlockReason,
   isEnterpriseOriginAllowed,
   migrateStoredRecorderConfig,
@@ -230,5 +231,79 @@ describe("readManagedEnterprisePolicy", () => {
     await expect(
       readManagedEnterprisePolicy({ get: async () => Promise.reject(new Error("no policy")) })
     ).resolves.toBeNull();
+  });
+});
+
+describe("createBoundedManagedPolicyReader", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A managed read that settles only when the test says so, like Chrome's while it starts up. */
+  const deferredRead = () => {
+    const resolvers: Array<(value: Record<string, unknown> | null) => void> = [];
+    const read = vi.fn(
+      () =>
+        new Promise<Record<string, unknown> | null>((resolve) => {
+          resolvers.push(resolve);
+        })
+    );
+
+    return { read, settle: (value: Record<string, unknown> | null) => resolvers.shift()?.(value) };
+  };
+
+  it("returns the policy when the read answers in time", async () => {
+    const readPolicy = createBoundedManagedPolicyReader(async () => ({ siteDenylist: ["a"] }), {
+      timeoutMs: 1_000
+    });
+
+    await expect(readPolicy()).resolves.toEqual({ siteDenylist: ["a"] });
+  });
+
+  it("treats a failed read as no policy", async () => {
+    const readPolicy = createBoundedManagedPolicyReader(
+      () => Promise.reject(new Error("managed storage unavailable")),
+      { timeoutMs: 1_000 }
+    );
+
+    await expect(readPolicy()).resolves.toBeNull();
+  });
+
+  it("gives up after the timeout without a policy and reports it", async () => {
+    vi.useFakeTimers();
+    const { read } = deferredRead();
+    const onTimeout = vi.fn();
+    const readPolicy = createBoundedManagedPolicyReader(read, { timeoutMs: 1_000, onTimeout });
+
+    const result = readPolicy();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(onTimeout).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(result).resolves.toBeNull();
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares one pending read and reads afresh once it settles", async () => {
+    vi.useFakeTimers();
+    const { read, settle } = deferredRead();
+    const readPolicy = createBoundedManagedPolicyReader(read, { timeoutMs: 1_000 });
+
+    const first = readPolicy();
+    const second = readPolicy();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(first).resolves.toBeNull();
+    await expect(second).resolves.toBeNull();
+    // Still pending after the timeout: a later caller waits for the same read.
+    const third = readPolicy();
+    expect(read).toHaveBeenCalledTimes(1);
+
+    settle({ siteAllowlist: ["late"] });
+    await expect(third).resolves.toEqual({ siteAllowlist: ["late"] });
+
+    const fourth = readPolicy();
+    expect(read).toHaveBeenCalledTimes(2);
+    settle({ siteAllowlist: ["fresh"] });
+    await expect(fourth).resolves.toEqual({ siteAllowlist: ["fresh"] });
   });
 });

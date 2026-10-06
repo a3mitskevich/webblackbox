@@ -33,18 +33,20 @@ type ProfileStorageKeys = {
   enterprisePolicyKey: string;
 };
 
-/** Reads the v2 store, v1 options and managed policy; never throws. */
+/**
+ * Reads the v2 store, v1 options and managed policy; never throws. `readManagedPolicy` replaces
+ * the direct `storage.managed` read (the service worker passes its bounded, shared one).
+ */
 export async function loadProfilesState(
   chromeApi: ChromeApi | null,
-  keys: ProfileStorageKeys
+  keys: ProfileStorageKeys,
+  readManagedPolicy: () => Promise<Record<string, unknown> | null> = () =>
+    readManagedEnterprisePolicy(chromeApi?.storage?.managed, keys.enterprisePolicyKey)
 ): Promise<ProfilesState> {
   const local = await chromeApi?.storage?.local
     ?.get([PROFILES_STORAGE_KEY, keys.legacyOptionsKey])
     .catch(() => undefined);
-  const managedPolicy = await readManagedEnterprisePolicy(
-    chromeApi?.storage?.managed,
-    keys.enterprisePolicyKey
-  );
+  const managedPolicy = await readManagedPolicy();
 
   return resolveProfilesState({
     rawProfilesStore: local?.[PROFILES_STORAGE_KEY],

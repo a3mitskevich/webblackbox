@@ -33,10 +33,17 @@ const DETAILED_TEST_CAPTURE_POLICY: CapturePolicy = {
   }
 };
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+// Hooks deliver events through two 0 ms timers: their emit flush, then jsdom's postMessage
+// dispatch. Waiting a fixed number of 0 ms turns keeps that FIFO order however late the event loop
+// runs, where a fixed sleep (e.g. 10 ms) can expire in the same pass as the flush under load.
+const SETTLE_TURNS = 4;
+
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < SETTLE_TURNS; turn += 1) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  }
 }
 
 describe("injected-hooks", () => {
@@ -84,12 +91,34 @@ describe("injected-hooks", () => {
     sessionStorage.clear();
   });
 
+  it("posts captured events without waiting for a timer (hidden tabs throttle timers)", async () => {
+    vi.useFakeTimers();
+
+    try {
+      installInjectedLiteCaptureHooks({
+        flag: "__WB_TEST_INJECTED_NO_TIMER_FLUSH__",
+        capturePolicy: DETAILED_TEST_CAPTURE_POLICY
+      });
+      console.log("first");
+      console.log("second");
+      await Promise.resolve();
+
+      const texts = captured
+        .filter((message) => message.rawType === "console")
+        .map((message) => (message.payload as { text?: unknown }).text);
+      expect(texts).toEqual(["first", "second"]);
+      expect(window.postMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("is idempotent for the same flag and emits ready + console events", async () => {
     const flag = "__WB_TEST_INJECTED_CONSOLE__";
 
     installInjectedLiteCaptureHooks({ flag });
     installInjectedLiteCaptureHooks({ flag });
-    await delay(10);
+    await settle();
 
     const notices = captured.filter(
       (message) =>
@@ -101,7 +130,7 @@ describe("injected-hooks", () => {
 
     const markerText = `wb-console-${Date.now()}`;
     console.info(markerText, { ok: true });
-    await delay(10);
+    await settle();
 
     const consoleEvents = captured.filter((message) => message.rawType === "console");
     expect(consoleEvents.length).toBeGreaterThan(0);
@@ -121,7 +150,7 @@ describe("injected-hooks", () => {
     const flag = "__WB_TEST_INJECTED_NONCE__";
 
     installInjectedLiteCaptureHooks({ flag, exposeBridgeNonceSetter: true });
-    await delay(10);
+    await settle();
 
     const setter = (window as unknown as Record<string, unknown>)[INJECTED_BRIDGE_NONCE_SETTER_KEY];
     expect(typeof setter).toBe("function");
@@ -136,7 +165,7 @@ describe("injected-hooks", () => {
     (setter as (nonce: unknown) => void)("x".repeat(500));
 
     console.info(`wb-nonce-${Date.now()}`);
-    await delay(10);
+    await settle();
 
     const consoleEvents = captured.filter((message) => message.rawType === "console");
     expect(consoleEvents.length).toBeGreaterThan(0);
@@ -179,7 +208,7 @@ describe("injected-hooks", () => {
         break;
       }
 
-      await delay(5);
+      await settle();
     }
 
     const fetchStart = captured.find(
@@ -236,7 +265,7 @@ describe("injected-hooks", () => {
     installInjectedLiteCaptureHooks({ flag });
 
     await window.fetch("https://example.test/api/disabled");
-    await delay(20);
+    await settle();
 
     expect(captured.some((message) => message.rawType === "networkBody")).toBe(false);
 
@@ -256,7 +285,7 @@ describe("injected-hooks", () => {
         break;
       }
 
-      await delay(5);
+      await settle();
     }
 
     const networkBody = captured.find((message) => message.rawType === "networkBody");
@@ -270,12 +299,12 @@ describe("injected-hooks", () => {
     const flag = "__WB_TEST_INJECTED_ACTIVE_GATE__";
 
     installInjectedLiteCaptureHooks({ flag, active: false });
-    await delay(10);
+    await settle();
 
     expect(captured).toHaveLength(0);
 
     console.info("inactive-console");
-    await delay(10);
+    await settle();
 
     expect(captured.some((message) => message.rawType === "console")).toBe(false);
 
@@ -288,7 +317,7 @@ describe("injected-hooks", () => {
     );
 
     console.info("active-console");
-    await delay(10);
+    await settle();
 
     expect(captured.some((message) => message.rawType === "console")).toBe(true);
 
@@ -302,7 +331,7 @@ describe("injected-hooks", () => {
     );
 
     console.info("inactive-again");
-    await delay(10);
+    await settle();
 
     expect(captured.some((message) => message.rawType === "console")).toBe(false);
   });
@@ -325,7 +354,7 @@ describe("injected-hooks", () => {
     const xhr = new XMLHttpRequest();
     xhr.open("GET", "/disabled-network-xhr");
     xhr.send();
-    await delay(10);
+    await settle();
 
     expect(openSpy).toHaveBeenCalledTimes(1);
     expect(sendSpy).toHaveBeenCalledTimes(1);
@@ -340,7 +369,7 @@ describe("injected-hooks", () => {
     expect(() => {
       console.log(new Date("this-is-not-a-date"));
     }).not.toThrow();
-    await delay(10);
+    await settle();
 
     const consoleEvent = captured.filter((message) => message.rawType === "console").at(-1);
     const payload = (consoleEvent?.payload ?? {}) as {
@@ -367,7 +396,7 @@ describe("injected-hooks", () => {
     expect(() => {
       console.log(value);
     }).not.toThrow();
-    await delay(10);
+    await settle();
 
     const consoleEvent = captured.filter((message) => message.rawType === "console").at(-1);
     const payload = (consoleEvent?.payload ?? {}) as {
@@ -394,7 +423,7 @@ describe("injected-hooks", () => {
     xhr.open("GET", "https://example.test/second");
     xhr.send();
     xhr.dispatchEvent(new Event("loadend"));
-    await delay(10);
+    await settle();
 
     const endEvents = captured.filter(
       (message) =>
@@ -414,7 +443,7 @@ describe("injected-hooks", () => {
     const xhr = new XMLHttpRequest();
     xhr.open("GET", "https://example.test/no-auth");
     xhr.open("GET", "https://example.test/with-auth", true, "demo-user", "demo-pass");
-    await delay(10);
+    await settle();
 
     const firstCall = openSpy.mock.calls[0];
     const secondCall = openSpy.mock.calls[1];
@@ -492,7 +521,7 @@ describe("injected-hooks", () => {
       localStorage.setItem("big", "x".repeat(3_000));
       configureCapture({ active: true, capturePolicy: storagePolicy({ storage: "names-only" }) });
       localStorage.setItem("named", "light");
-      await delay(10);
+      await settle();
 
       expect(storageOps("theme")[0]).toMatchObject({
         op: "setItem",
@@ -521,7 +550,7 @@ describe("injected-hooks", () => {
         capturePolicy: storagePolicy({ indexedDb: "names-only" })
       });
       indexedDB.open("named-db");
-      await delay(10);
+      await settle();
 
       const ops = captured
         .filter((message) => message.rawType === "indexedDbOp")
@@ -547,7 +576,7 @@ describe("injected-hooks", () => {
 
       console.info("storage-only-console");
       localStorage.setItem("only", "storage");
-      await delay(10);
+      await settle();
 
       expect(captured.some((message) => message.rawType === "console")).toBe(false);
       expect(storageOps("only")[0]).toMatchObject({ value: "storage" });

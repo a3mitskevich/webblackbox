@@ -1,3 +1,5 @@
+import { normalizeMimeType } from "./mime.js";
+
 /** Default replacement written in place of masked body values. */
 export const BODY_REDACTION_TOKEN = "[REDACTED]";
 
@@ -67,7 +69,7 @@ export function redactBodyBytes(
   options: BodyBytesRedactionOptions = {}
 ): BodyBytesRedactionResult {
   const unchanged: BodyBytesRedactionResult = { bytes, redacted: false };
-  const mimeType = options.mimeType?.trim().toLowerCase();
+  const mimeType = normalizeMimeType(options.mimeType);
 
   if (bytes.byteLength === 0 || normalizePatterns(patterns).length === 0) {
     return unchanged;

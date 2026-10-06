@@ -8,6 +8,7 @@ export * from "./ids.js";
 export * from "./keyboard-privacy.js";
 export * from "./linear-regex.js";
 export * from "./messages.js";
+export * from "./mime.js";
 export * from "./network.js";
 export * from "./privacy.js";
 export * from "./redaction-rules.js";

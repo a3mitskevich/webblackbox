@@ -52,6 +52,7 @@ export const WEBBLACKBOX_EVENT_TYPES = [
   "network.failed",
   "network.redirect",
   "network.body",
+  "network.body.skipped", // a body the capture policy asked for is not in the archive, with the reason
   "network.ws.open",
   "network.ws.frame",
   "network.ws.close",
@@ -96,6 +97,34 @@ export const MESSAGE_TYPES = [
 export const FREEZE_REASONS = ["error", "network", "marker", "perf", "manual"] as const;
 
 export const STORAGE_SNAPSHOT_MODES = ["schema-only", "sample", "full"] as const;
+
+/**
+ * Why a request or response body the capture policy asked for is not in the archive
+ * (`network.body.skipped` events and `request.postDataSkipped` on `network.request`).
+ * Losses are recorded, never silent.
+ */
+export const BODY_SKIP_REASONS = [
+  // The profile's MIME allowlist excludes the body.
+  "mime-not-allowed",
+  // A site policy, a profile URL filter or another host rule excludes the request.
+  "filtered",
+  // Larger than the capture limit allows.
+  "too-large",
+  // The session's body budget is used up.
+  "session-limit",
+  // Too many bodies were waiting to be read at once.
+  "backlog",
+  // The browser no longer held the body when it was read (evicted from its buffer).
+  "not-retained",
+  // The request was already in flight when the capture began: the browser kept no body for it.
+  "started-before-capture",
+  // The browser never exposes this body (e.g. a streamed request body).
+  "unavailable",
+  // Reading the body failed for another reason.
+  "fetch-failed",
+  // The response has no body bytes.
+  "empty"
+] as const;
 
 /**
  * Ceiling for one console entry kept in full under the `console: allow` policy: its text, and all

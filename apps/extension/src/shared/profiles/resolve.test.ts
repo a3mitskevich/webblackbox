@@ -200,6 +200,12 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.capturePolicy?.redaction.blockedSelectors).toEqual([]);
   });
 
+  it("keeps SVG bodies in Full capture, like the Full engine's default allowlist", () => {
+    expect(preset(BUILT_IN_PROFILE_IDS.fullCapture).network.bodyMimeAllowlist).toContain(
+      "image/svg+xml"
+    );
+  });
+
   it("records the raw DOM in Full capture, and in other profiles only when a copy opts in", () => {
     expect(preset(BUILT_IN_PROFILE_IDS.qa).categories.dom).toBe(
       preset(BUILT_IN_PROFILE_IDS.full).categories.dom

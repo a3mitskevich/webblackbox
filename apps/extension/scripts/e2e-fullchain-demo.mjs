@@ -5,8 +5,16 @@ import { constants } from "node:fs";
 import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import JSZip from "jszip";
 
+import {
+  checkArchiveBasics,
+  checkArchiveEvidence,
+  checkCompleteness,
+  checkResponseBodyPreview,
+  checkScreenRecording,
+  checkScreenshots,
+  openArchive
+} from "./lib/archive-checks.mjs";
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
   CHROME_LAUNCH_PROFILES,
@@ -32,12 +40,13 @@ import {
   waitFor
 } from "./lib/e2e-utils.mjs";
 import { waitForIndicatorGone, waitForIndicatorText } from "./lib/extension-ui.mjs";
+import { runPlayerSmoke } from "./lib/player-smoke.mjs";
+import { REALISTIC_DEFAULT_DURATION_MS, startRealisticSite } from "./lib/realistic-site.mjs";
 import {
   attachFidelitySocketServer,
   runCaptureFidelityScenario,
   serveFidelityImage,
-  verifyCaptureFidelityArchive,
-  verifyPlayerRealtimePayload
+  verifyCaptureFidelityArchive
 } from "./lib/e2e-capture-fidelity.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -80,7 +89,17 @@ const configureRecorderOptions = (process.env.WB_E2E_CONFIGURE_OPTIONS ?? "1") !
 const verifySourceMaps =
   captureMode === "full" && (process.env.WB_E2E_VERIFY_SOURCE_MAPS ?? "1") !== "0";
 // Needs the configured console: allow / network: body-allowlist policy and CDP capture.
-const checkCaptureFidelity = captureMode === "full" && configureRecorderOptions;
+// `e2e:completeness:full`: records the realistic fixture site (lib/realistic-site.mjs) with the
+// Full capture sampling and checks that the archive holds every body the policy asked for, or says
+// why one is missing; the demo page scenarios are skipped.
+const completenessMode = captureMode === "full" && (process.env.WB_E2E_COMPLETENESS ?? "0") === "1";
+const completenessDurationMs = readPositiveInteger(
+  process.env.WB_E2E_COMPLETENESS_MS,
+  REALISTIC_DEFAULT_DURATION_MS
+);
+// The configured full-mode policy asks for bodies (`body-allowlist`).
+const bodiesRequested = captureMode === "full" && configureRecorderOptions;
+const checkCaptureFidelity = bodiesRequested && !completenessMode;
 // Lite records console text and stacks through the page hook under the same console: allow policy.
 const checkConsoleFidelity = captureMode === "lite" && configureRecorderOptions;
 const checkAnyFidelity = checkCaptureFidelity || checkConsoleFidelity;
@@ -118,6 +137,7 @@ const state = {
   tempExtensionDir: null,
   server: null,
   fidelitySockets: null,
+  realisticSite: null,
   baseUrl: null
 };
 
@@ -151,7 +171,8 @@ async function main() {
   state.server = server.server;
   state.fidelitySockets = server.fidelitySockets;
 
-  const demoUrl = `http://127.0.0.1:${server.port}/demo/`;
+  state.realisticSite = completenessMode ? await startRealisticSite({ holdRequests: true }) : null;
+  const demoUrl = state.realisticSite?.pageUrl ?? `http://127.0.0.1:${server.port}/demo/`;
   const playerUrl = `http://127.0.0.1:${server.port}/player/`;
 
   const chromeBinary = await resolveChromeBinary();
@@ -407,6 +428,9 @@ async function main() {
     );
   }
 
+  // The realistic page's held requests started before the capture (or, after a reload, inside it).
+  state.realisticSite?.releaseHeld();
+
   const activeSessions = await readRuntimeSessions(control);
   assert(
     Array.isArray(activeSessions) && activeSessions.length === 1,
@@ -440,8 +464,17 @@ async function main() {
     await sleep(500);
   }
 
-  const scenarioResult = await runDemoScenario(demoClient);
+  const scenarioResult = completenessMode
+    ? await runRealisticScenario(demoClient, completenessDurationMs)
+    : await runDemoScenario(demoClient);
   assert(scenarioResult?.ok === true, "Demo scenario failed", scenarioResult);
+  assert(
+    !completenessMode ||
+      (scenarioResult.heldRequests > 0 &&
+        scenarioResult.heldCompleted === scenarioResult.heldRequests),
+    "Realistic page's held requests did not complete",
+    scenarioResult
+  );
 
   const minifiedErrorResult = verifySourceMaps ? await logMinifiedBundleError(demoClient) : null;
   assert(
@@ -455,15 +488,17 @@ async function main() {
     : { ok: true, skipped: "needs-configured-options" };
   assert(fidelityScenario?.ok === true, "Capture fidelity scenario failed", fidelityScenario);
 
-  const realWorldResult = await runRealWorldScenarioAddons({
-    scenario: realWorldScenario,
-    demoClient,
-    control,
-    baseUrl,
-    demoUrl,
-    browserClient: state.browserClient,
-    extensionId
-  });
+  const realWorldResult = completenessMode
+    ? { ok: true, skipped: "completeness-mode" }
+    : await runRealWorldScenarioAddons({
+        scenario: realWorldScenario,
+        demoClient,
+        control,
+        baseUrl,
+        demoUrl,
+        browserClient: state.browserClient,
+        extensionId
+      });
   assert(realWorldResult.ok, "Real-world scenario failed", realWorldResult);
 
   const finalMarker = await requestFinalE2eMarkerCapture(demoClient, captureMode);
@@ -537,9 +572,41 @@ async function main() {
     downloadRecord
   });
 
+  // Archive data is checked on the decrypted archive with the built player-sdk; the Player UI
+  // only gets a thin smoke below (see lib/archive-checks.mjs and lib/player-smoke.mjs).
+  const archive = await openArchive({
+    archivePath: exportedPath,
+    passphrase: exportPassphrase,
+    playerSdkEntry
+  });
+  const requiredEventTypes = completenessMode
+    ? ["console.entry", "network.body", "network.ws.frame", "perf.vitals", "screen.screenshot"]
+    : captureMode === "lite"
+      ? [
+          "user.mousemove",
+          "console.entry",
+          "network.request",
+          "dom.snapshot",
+          "storage.local.snapshot"
+        ]
+      : !captureScreenshotsInFullMode
+        ? ["user.click", "console.entry"]
+        : configureRecorderOptions
+          ? ["user.click", "screen.screenshot", "console.entry"]
+          : ["user.click", "screen.screenshot", "network.request"];
+  const archiveBasics = checkArchiveBasics(archive, {
+    requiredEventTypes,
+    urlIncludes: completenessMode ? "/api/items/" : "/api/"
+  });
+  assert(
+    archiveBasics.ok,
+    "Exported archive is missing events, demo API requests or event types",
+    archiveBasics
+  );
+
   const archiveEvidenceResult =
     realWorldScenario && realWorldResult.archiveEvidence
-      ? await verifyRealWorldArchiveEvidence(exportedPath, realWorldResult.archiveEvidence)
+      ? checkArchiveEvidence(archive, realWorldResult.archiveEvidence)
       : { ok: true, skipped: true };
   assert(
     archiveEvidenceResult.ok,
@@ -563,7 +630,7 @@ async function main() {
   );
 
   const screenRecordingArchiveResult = recordScreenInFullMode
-    ? await verifyScreenRecordingArchiveEvidence(exportedPath)
+    ? await checkScreenRecording(archive)
     : { ok: true, skipped: "screen-recording-e2e-disabled" };
   assert(
     screenRecordingArchiveResult.ok,
@@ -579,6 +646,57 @@ async function main() {
     "Exported archive missing script source map evidence",
     sourceMapResult
   );
+
+  const screenshotResult =
+    captureMode !== "full"
+      ? { ok: true, skipped: "lite-screenshot-not-required" }
+      : recordScreenInFullMode && !captureScreenshotsInFullMode
+        ? await checkScreenshots(archive, { expected: false })
+        : captureScreenshotsInFullMode
+          ? await checkScreenshots(archive, { expected: true })
+          : { ok: true, skipped: "screenshots-disabled" };
+  assert(
+    screenshotResult.ok,
+    "Exported archive screenshots do not match the visual capture setting",
+    screenshotResult
+  );
+
+  const responseBodyResult = bodiesRequested
+    ? await checkResponseBodyPreview(archive, { urlIncludes: "/api/" })
+    : { ok: true, skipped: "bodies-not-requested" };
+  assert(responseBodyResult.ok, "Exported archive has no readable API response body", {
+    responseBodyResult
+  });
+
+  // Every body the policy asked for is in the archive or carries the reason it is not.
+  const completenessResult = completenessMode
+    ? checkCompleteness(
+        archive,
+        realisticCompletenessExpectations(scenarioResult, { reloadAfterStart })
+      )
+    : bodiesRequested
+      ? checkCompleteness(archive, {
+          maxMissingResponseBodies: 0,
+          maxMissingRequestBodies: 0,
+          maxInternalRequests: 0
+        })
+      : { ok: true, skipped: "bodies-not-requested" };
+  const trafficResult = completenessMode
+    ? checkRealisticTraffic(archive, scenarioResult)
+    : { ok: true, skipped: "demo-scenario" };
+  assert(trafficResult.ok, "Exported archive misses requests the page sent", trafficResult);
+  const duplicatedContentTypeResult = completenessMode
+    ? checkDuplicatedContentTypeBody(archive)
+    : { ok: true, skipped: "demo-scenario" };
+  assert(
+    duplicatedContentTypeResult.ok,
+    "Exported archive left out a body sent with a duplicated Content-Type",
+    duplicatedContentTypeResult
+  );
+  assert(completenessResult.ok, "Exported archive lost bodies silently", {
+    failures: completenessResult.failures,
+    report: completenessResult.lines
+  });
 
   const playerTarget = await openTarget(baseUrl, playerUrl);
   state.openedTargetIds.push(playerTarget.id);
@@ -598,115 +716,13 @@ async function main() {
   });
 
   await waitForPlayerReady(playerClient, 20_000);
-  await installPlayerArchivePassphraseAutoSubmit(playerClient, exportPassphrase);
-  await setFileInputFiles(playerClient, "#archive-input", [exportedPath]);
-  await playerClient.evaluate(`
-    (() => {
-      const input = document.querySelector('#archive-input');
-      if (!input) {
-        return { ok: false, reason: 'archive-input-not-found' };
-      }
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      return { ok: true };
-    })()
-  `);
-  const playerResult = await waitForPlayerLoad(playerClient, 35_000, exportPassphrase);
-  assert(playerResult.eventCount > 0, "Player rendered zero timeline events", playerResult);
-  assert(
-    playerResult.waterfallCount > 0,
-    "Player rendered zero network waterfall rows",
-    playerResult
-  );
-
-  const hasApiRequest = [
-    ...(playerResult.waterfallSamples ?? []),
-    ...(playerResult.waterfallSampleUrls ?? [])
-  ].some((sample) => sample.includes("/api/"));
-  assert(hasApiRequest, "Player waterfall does not include demo API requests", playerResult);
-
-  const requiredEventTypes =
-    captureMode === "lite"
-      ? [
-          "user.mousemove",
-          "console.entry",
-          "network.request",
-          "dom.snapshot",
-          "storage.local.snapshot"
-        ]
-      : !captureScreenshotsInFullMode
-        ? ["user.click", "console.entry"]
-        : configureRecorderOptions
-          ? ["user.click", "screen.screenshot", "console.entry"]
-          : ["user.click", "screen.screenshot", "network.request"];
-
-  for (const eventType of requiredEventTypes) {
-    await waitForPlayerEventType(playerClient, eventType, 20_000);
-  }
-
-  const playerSymbolicationResult = verifySourceMaps
-    ? await verifyPlayerSymbolication(playerClient, `${demoUrl}vendor/`, 20_000)
-    : { ok: true, skipped: "source-map-verification-disabled" };
-  assert(
-    playerSymbolicationResult.ok,
-    "Player did not show the original source of the minified error",
-    playerSymbolicationResult
-  );
-
-  const markerResult =
-    captureMode === "full" && captureScreenshotsInFullMode && !recordScreenInFullMode
-      ? await verifyPlayerScreenshotMarker(playerClient, 20_000)
-      : {
-          ok: true,
-          skipped:
-            recordScreenInFullMode && captureScreenshotsInFullMode
-              ? "screen-recording-stage-uses-video"
-              : recordScreenInFullMode
-                ? "recording-only-screenshot-disabled"
-                : "lite-screenshot-not-required"
-        };
-  if (captureMode === "full" && captureScreenshotsInFullMode && !recordScreenInFullMode) {
-    assert(markerResult.ok, "Player screenshot marker is missing", markerResult);
-  }
-
-  const screenshotSuppressionResult =
-    captureMode === "full" && recordScreenInFullMode && !captureScreenshotsInFullMode
-      ? await verifyPlayerEventTypeAbsent(playerClient, "screen.screenshot")
-      : { ok: true, skipped: "screenshot-suppression-not-required" };
-  assert(
-    screenshotSuppressionResult.ok,
-    "Recording-only full mode still captured screenshots",
-    screenshotSuppressionResult
-  );
-  const hoverResponseResult =
-    captureMode === "full"
-      ? await verifyPlayerProgressHoverResponse(playerClient, 20_000)
-      : {
-          ok: true,
-          skipped: "lite-response-body-preview-not-required"
-        };
-  assert(
-    hoverResponseResult.ok,
-    "Player hover response controls are not working",
-    hoverResponseResult
-  );
-
-  const playerRealtimeResult = checkCaptureFidelity
-    ? await verifyPlayerRealtimePayload(playerClient, fidelityScenario.sentChars, 20_000)
-    : fidelityScenario;
-  assert(
-    playerRealtimeResult.ok,
-    "Player does not show the full WebSocket frame",
-    playerRealtimeResult
-  );
-
-  const playerScreenRecordingResult = recordScreenInFullMode
-    ? await verifyPlayerScreenRecording(playerClient, 25_000)
-    : { ok: true, skipped: "screen-recording-e2e-disabled" };
-  assert(
-    playerScreenRecordingResult.ok,
-    "Player screen recording playback is not synced to the unified progress bar",
-    playerScreenRecordingResult
-  );
+  const playerResult = await runPlayerSmoke({
+    playerClient,
+    archivePath: exportedPath,
+    passphrase: exportPassphrase,
+    timeoutMs: 35_000
+  });
+  assert(playerResult.ok, "Player did not open the archive and list its events", playerResult);
 
   if (swExceptions.length > 0) {
     throw new Error(`Service worker runtime exceptions: ${JSON.stringify(swExceptions)}`);
@@ -729,7 +745,6 @@ async function main() {
   console.log("Player URL:", playerUrl);
   console.log("Capture mode:", captureMode);
   console.log("Capture fidelity (archive):", JSON.stringify(fidelityArchiveResult));
-  console.log("Capture fidelity (player):", JSON.stringify(playerRealtimeResult));
   console.log("Full visual capture:", fullVisualCapture);
   console.log("Record screen:", recordScreenInFullMode);
   console.log("Capture screenshots:", captureScreenshotsInFullMode);
@@ -745,15 +760,17 @@ async function main() {
   console.log("Archive bytes:", fileInfo.size);
   console.log("Scenario:", JSON.stringify(scenarioResult));
   console.log("Real-world scenario:", JSON.stringify(realWorldResult));
+  console.log("Archive basics:", JSON.stringify(archiveBasics));
   console.log("Real-world archive evidence:", JSON.stringify(archiveEvidenceResult));
   console.log("Screen recording archive evidence:", JSON.stringify(screenRecordingArchiveResult));
   console.log("Source maps:", JSON.stringify(sourceMapResult));
-  console.log("Player:", JSON.stringify(playerResult));
-  console.log("Player symbolication:", JSON.stringify(playerSymbolicationResult));
-  console.log("Screenshot marker:", JSON.stringify(markerResult));
-  console.log("Screenshot suppression:", JSON.stringify(screenshotSuppressionResult));
-  console.log("Hover response:", JSON.stringify(hoverResponseResult));
-  console.log("Player screen recording:", JSON.stringify(playerScreenRecordingResult));
+  console.log("Screenshots:", JSON.stringify(screenshotResult));
+  console.log("Response body:", JSON.stringify(responseBodyResult));
+  console.log("Realistic traffic:", JSON.stringify(trafficResult));
+  if (completenessResult.lines) {
+    console.log(["Capture completeness:", ...completenessResult.lines].join("\n"));
+  }
+  console.log("Player smoke:", JSON.stringify(playerResult));
   console.log("Extension restart:", JSON.stringify(restartResult));
   console.log(`Chrome log: ${chromeLogPath}`);
   console.log("Fullchain E2E passed.");
@@ -821,14 +838,6 @@ async function verifyScriptSourceMapEvidence(archivePath) {
       ? { raw: top.frame.raw, status: top.status, original: top.original, error: top.error }
       : null
   };
-}
-
-function safeStringify(value) {
-  try {
-    return JSON.stringify(value) ?? "";
-  } catch {
-    return String(value);
-  }
 }
 
 async function ensureBuildInputs() {
@@ -1003,7 +1012,9 @@ async function handleApiRequest(request, response, requestUrl, tasks) {
     return;
   }
 
-  if (pathname === "/api/large-response" && request.method === "GET") {
+  // `/api/large-response[/<source>]`: the source is in the path because recorded URLs drop the
+  // query string.
+  if (pathname.startsWith("/api/large-response") && request.method === "GET") {
     const rawBytes = Number(requestUrl.searchParams.get("bytes") ?? realWorldLargeResponseBytes);
     const size = Number.isFinite(rawBytes)
       ? Math.max(1024, Math.min(rawBytes, 4 * 1024 * 1024))
@@ -1727,6 +1738,35 @@ async function evaluateControl(control, expression) {
   }
 }
 
+/**
+ * Sampling of the configured e2e options. The completeness gate uses what the Full capture profile
+ * records with (1 MiB bodies, a 30 s DOM snapshot interval, 12 s screenshots), not the fast
+ * test values that hid losses: a 1 s snapshot interval and 64 KiB bodies.
+ */
+function resolveE2eSampling(mode) {
+  if (completenessMode) {
+    return {
+      mousemoveHz: 60,
+      scrollHz: 10,
+      domFlushMs: 180,
+      screenshotIdleMs: 12_000,
+      snapshotIntervalMs: 30_000,
+      actionWindowMs: 1500,
+      bodyCaptureMaxBytes: 1024 * 1024
+    };
+  }
+
+  return {
+    mousemoveHz: 20,
+    scrollHz: 15,
+    domFlushMs: 100,
+    screenshotIdleMs: mode === "full" ? 600 : 0,
+    snapshotIntervalMs: 1000,
+    actionWindowMs: 1500,
+    bodyCaptureMaxBytes: mode === "full" ? 65536 : 32768
+  };
+}
+
 async function configureE2eRecorderOptions(control, mode) {
   return evaluateControl(
     control,
@@ -1824,15 +1864,7 @@ async function configureE2eRecorderOptions(control, mode) {
             mode: ${JSON.stringify(mode)},
             freezeOnNetworkFailure: false,
             freezeOnLongTaskSpike: false,
-            sampling: {
-              mousemoveHz: 20,
-              scrollHz: 15,
-              domFlushMs: 100,
-              screenshotIdleMs: ${JSON.stringify(mode)} === 'full' ? 600 : 0,
-              snapshotIntervalMs: 1000,
-              actionWindowMs: 1500,
-              bodyCaptureMaxBytes: ${JSON.stringify(mode)} === 'full' ? 65536 : 32768
-            },
+            sampling: ${JSON.stringify(resolveE2eSampling(mode))},
             capturePolicy
           }
         });
@@ -1843,7 +1875,7 @@ async function configureE2eRecorderOptions(control, mode) {
           cdp: capturePolicy.categories.cdp,
           screenshots: capturePolicy.categories.screenshots,
           screenRecordings: capturePolicy.categories.screenRecordings,
-          screenshotIdleMs: ${JSON.stringify(mode)} === 'full' ? 600 : 0
+          screenshotIdleMs: ${JSON.stringify(resolveE2eSampling(mode).screenshotIdleMs)}
         };
       })()
     `
@@ -2537,123 +2569,85 @@ async function waitForExportedArchiveFile(sid, startedAtMs, timeoutMs) {
   );
 }
 
-async function verifyRealWorldArchiveEvidence(archivePath, evidence) {
-  if (exportPassphrase.length > 0) {
-    return { ok: true, skipped: "encrypted-export" };
-  }
+async function runRealisticScenario(demoClient, durationMs) {
+  return demoClient.evaluate(
+    `
+      (async () => {
+        if (!window.__realistic || typeof window.__realistic.run !== 'function') {
+          return { ok: false, reason: 'realistic-site-script-missing' };
+        }
 
-  const events = await readArchiveEvents(archivePath);
-  const eventTexts = events.map((event) => `${event.type} ${safeStringify(event.data)}`);
-  const missingMarkers = (evidence.markers ?? []).filter(
-    (marker) => !eventTexts.some((text) => text.includes(marker))
+        return window.__realistic.run(${JSON.stringify(durationMs)});
+      })()
+    `,
+    { timeoutMs: durationMs + 60_000 }
   );
-  const missingUrls = (evidence.urls ?? []).filter(
-    (url) => !eventTexts.some((text) => text.includes(url))
-  );
-  const missingEventTypes = (evidence.eventTypes ?? []).filter(
-    (type) => !events.some((event) => event.type === type)
-  );
+}
+
+/** Every burst, poll and XHR request the realistic page reports is in the waterfall. */
+function checkRealisticTraffic(archive, scenario) {
+  const urls = archive.getNetworkWaterfall().map((entry) => entry.url);
+  const recorded = urls.filter((url) => /\/api\/(items|text|slow|poll)\b/.test(url)).length;
+  const sent = Number(scenario?.fetches ?? 0) + Number(scenario?.xhrs ?? 0);
+
+  return { ok: sent > 0 && recorded >= sent, sent, recorded };
+}
+
+/** The POST that sent Content-Type twice ("application/json, application/json") kept its body. */
+function checkDuplicatedContentTypeBody(archive) {
+  const entry = archive
+    .getNetworkWaterfall()
+    .find((candidate) => candidate.url.includes("/api/echo/json-twice"));
 
   return {
-    ok: missingMarkers.length === 0 && missingUrls.length === 0 && missingEventTypes.length === 0,
-    eventCount: events.length,
-    missingMarkers,
-    missingUrls,
-    missingEventTypes
+    ok: typeof entry?.requestBodyText === "string" && entry.requestBodyText.length > 0,
+    found: Boolean(entry),
+    contentType: entry?.requestHeaders["content-type"],
+    skipReason: entry?.requestBodySkipReason
   };
 }
 
-async function verifyScreenRecordingArchiveEvidence(archivePath) {
-  if (exportPassphrase.length > 0) {
-    return { ok: true, skipped: "encrypted-export" };
-  }
-
-  const zip = await JSZip.loadAsync(await readFile(archivePath));
-  const paths = Object.keys(zip.files);
-  const events = await readArchiveEvents(archivePath);
-  const startEvents = events.filter((event) => event.type === "screen.recording.start");
-  const chunkEvents = events.filter((event) => event.type === "screen.recording.chunk");
-  const endEvents = events.filter((event) => event.type === "screen.recording.end");
-  const screenshotEvents = events.filter((event) => event.type === "screen.screenshot");
-  const endWithChunks = endEvents.find(
-    (event) => Array.isArray(event.data?.chunks) && event.data.chunks.length > 0
-  );
-  const referencedChunks = new Set([
-    ...chunkEvents
-      .map((event) => event.data?.chunkId)
-      .filter((value) => typeof value === "string" && value.length > 0),
-    ...((Array.isArray(endWithChunks?.data?.chunks) ? endWithChunks.data.chunks : []).filter(
-      (value) => typeof value === "string" && value.length > 0
-    ) ?? [])
-  ]);
-  const webmBlobs = paths.filter((path) => path.startsWith("blobs/") && path.endsWith(".webm"));
-  const screenshotBlobs = paths.filter(
-    (path) => path.startsWith("blobs/") && path.endsWith(".webp")
-  );
-  const missingChunkBlobs = [...referencedChunks].filter(
-    (hash) => !webmBlobs.some((path) => path.includes(hash))
-  );
-  const screenshotLeak =
-    !captureScreenshotsInFullMode && (screenshotEvents.length > 0 || screenshotBlobs.length > 0);
+/**
+ * What the realistic site must leave in a Full-capture archive. Bodies: none lost silently, the
+ * 2.6 MB bundle recorded as too large, no reads lost to load, SVG kept as text, `data:` URLs not
+ * counted. Requests the server held from page load: started before the capture (recorded as
+ * such), or, when Start reloads the page, inside it with their bodies. Traffic: at least what the
+ * page reports it sent, every WebSocket frame whole, perf and console signals present.
+ */
+function realisticCompletenessExpectations(scenario, { reloadAfterStart = false } = {}) {
+  const frames = Number(scenario?.wsSent ?? 0) + Number(scenario?.wsReceived ?? 0);
+  const held = Number(scenario?.heldRequests ?? 0);
 
   return {
-    ok:
-      startEvents.length > 0 &&
-      chunkEvents.length > 0 &&
-      endEvents.length > 0 &&
-      Boolean(endWithChunks) &&
-      webmBlobs.length > 0 &&
-      missingChunkBlobs.length === 0 &&
-      !screenshotLeak,
-    startEvents: startEvents.length,
-    chunkEvents: chunkEvents.length,
-    endEvents: endEvents.length,
-    screenshotEvents: screenshotEvents.length,
-    endChunkCount: Array.isArray(endWithChunks?.data?.chunks)
-      ? endWithChunks.data.chunks.length
-      : 0,
-    webmBlobs: webmBlobs.length,
-    screenshotBlobs: screenshotBlobs.length,
-    referencedChunks: referencedChunks.size,
-    missingChunkBlobs,
-    screenshotLeak
+    maxMissingResponseBodies: 0,
+    maxMissingRequestBodies: 0,
+    maxInternalRequests: 0,
+    minRequests: 300,
+    minResponseBodies: 250,
+    // string, JSON, JSON with Content-Type sent twice, untyped Blob, typed Blob, ArrayBuffer,
+    // URLSearchParams, PUT, XHR, beacon.
+    minRequestBodies: 10,
+    minSkipReasons: {
+      "too-large": 1,
+      "started-before-capture": reloadAfterStart ? 0 : held
+    },
+    maxSkipReasons: {
+      backlog: 0,
+      "session-limit": 0,
+      "not-retained": 0,
+      "fetch-failed": 0,
+      "mime-not-allowed": 0,
+      "started-before-capture": reloadAfterStart ? 0 : held
+    },
+    minSvgBodies: Number(scenario?.svgLoads ?? 0) + (reloadAfterStart ? 1 : 0),
+    minDataUrls: Number(scenario?.dataUrls ?? 0) > 0 ? 1 : 0,
+    // The last frames can race the socket close at stop.
+    minWsFrames: Math.max(1, frames - 2),
+    maxCutWsFrames: 0,
+    minConsoleEntries: 3,
+    minWithStack: 1,
+    minVitals: 1
   };
-}
-
-async function readArchiveEvents(archivePath) {
-  const zip = await JSZip.loadAsync(await readFile(archivePath));
-  const paths = Object.keys(zip.files)
-    .filter((path) => path.startsWith("events/") && path.endsWith(".ndjson"))
-    .sort();
-  const events = [];
-
-  for (const path of paths) {
-    const file = zip.file(path);
-
-    if (!file) {
-      continue;
-    }
-
-    const text = await file.async("string");
-
-    for (const line of text.split(/\r?\n/u)) {
-      const trimmed = line.trim();
-
-      if (!trimmed) {
-        continue;
-      }
-
-      try {
-        events.push(JSON.parse(trimmed));
-      } catch (error) {
-        throw new Error(
-          `Failed to parse ${path}: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-    }
-  }
-
-  return events;
 }
 
 async function runDemoScenario(demoClient) {
@@ -2734,10 +2728,23 @@ async function runRealWorldScenarioAddons({
           new MouseEvent('click', { bubbles: true })
         );
         result.iframe = iframe.contentDocument?.body?.dataset.ready === 'true';
+
+        // A same-origin page frame runs its own content script, which connects its own port
+        // while the page records: the page's capture must go on (its markers below must land).
+        const pageFrame = document.createElement('iframe');
+        pageFrame.id = 'wb-realworld-page-frame';
+        pageFrame.src = '/demo/frame.html';
+        const pageFrameLoaded = new Promise((resolve) =>
+          pageFrame.addEventListener('load', resolve, { once: true })
+        );
+        document.body.appendChild(pageFrame);
+        await pageFrameLoaded;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        result.pageFrame = pageFrame.contentDocument?.body?.dataset.ready === 'true';
         mark('iframe ready');
 
         if (${JSON.stringify(wantsIframeNetwork)}) {
-          const iframeResponse = await iframe.contentWindow?.fetch('/api/large-response?source=iframe&bytes=2048');
+          const iframeResponse = await iframe.contentWindow?.fetch('/api/large-response/iframe?bytes=2048');
           const iframeText = iframeResponse ? await iframeResponse.text() : '';
           result.iframeNetworkBytes = iframeText.length;
           mark('iframe network ' + result.iframeNetworkBytes);
@@ -2745,7 +2752,7 @@ async function runRealWorldScenarioAddons({
 
         if (${JSON.stringify(wantsChildTarget)}) {
           const workerResult = await new Promise((resolve) => {
-            const workerFetchUrl = new URL('/api/large-response?source=worker&bytes=2048', location.href).href;
+            const workerFetchUrl = new URL('/api/large-response/worker?bytes=2048', location.href).href;
             const workerSource = [
               'self.onmessage = async () => {',
               '  try {',
@@ -2940,18 +2947,20 @@ async function runRealWorldScenarioAddons({
     permissionMarker,
     multiTabMarker
   ].filter((marker) => typeof marker === "string" && marker.length > 0);
-  const expectedUrls = ["/api/large-response?bytes="];
+  // Recorded URLs keep the path but not the query string.
+  const expectedUrls = ["/api/large-response"];
   if (wantsIframeNetwork) {
-    expectedUrls.push("/api/large-response?source=iframe");
+    expectedUrls.push("/api/large-response/iframe");
   }
   if (wantsChildTarget) {
-    expectedUrls.push("/api/large-response?source=worker");
+    expectedUrls.push("/api/large-response/worker");
   }
 
   return {
     ok:
       pageResult?.ok === true &&
       pageResult.iframe === true &&
+      pageResult.pageFrame === true &&
       (!wantsIframeNetwork || pageResult.iframeNetworkBytes >= 1024) &&
       (!wantsChildTarget ||
         (pageResult.worker === true && pageResult.workerNetworkBytes >= 1024)) &&
@@ -3209,906 +3218,6 @@ async function waitForPlayerReady(playerClient, timeoutMs) {
   );
 }
 
-async function setFileInputFiles(pageClient, selector, files) {
-  const runtimeResult = await pageClient.send("Runtime.evaluate", {
-    expression: `document.querySelector(${JSON.stringify(selector)})`,
-    returnByValue: false,
-    awaitPromise: false
-  });
-
-  const objectId = runtimeResult?.result?.objectId;
-
-  if (!objectId) {
-    throw new Error(`File input not found: ${selector}`);
-  }
-
-  await pageClient.send("DOM.setFileInputFiles", {
-    files,
-    objectId
-  });
-}
-
-async function installPlayerArchivePassphraseAutoSubmit(playerClient, passphrase) {
-  if (passphrase.length === 0) {
-    return;
-  }
-
-  await playerClient.evaluate(`
-    (() => {
-      const passphrase = ${JSON.stringify(passphrase)};
-      const globalKey = '__WEBBLACKBOX_E2E_ARCHIVE_PASSPHRASE__';
-      const stateKey = '__WEBBLACKBOX_E2E_ARCHIVE_PASSPHRASE_STATE__';
-      const patchKey = '__WEBBLACKBOX_E2E_DIALOG_PATCHED__';
-
-      globalThis[globalKey] = passphrase;
-      globalThis[stateKey] = {
-        passphrase,
-        submitting: false,
-        submitCount: 0,
-        lastSubmittedAt: null,
-        lastError: null
-      };
-
-      const submitIfOpen = (targetDialog) => {
-        const state = globalThis[stateKey];
-        const dialog = targetDialog ?? document.querySelector('#archive-passphrase-dialog');
-
-        if (!state || !(dialog instanceof HTMLDialogElement) || !dialog.open || state.submitting) {
-          return;
-        }
-
-        const input = document.querySelector('#archive-passphrase-input');
-        const confirm = document.querySelector('#archive-passphrase-confirm');
-        const form = document.querySelector('#archive-passphrase-form');
-
-        if (!(input instanceof HTMLInputElement) || !(confirm instanceof HTMLButtonElement)) {
-          return;
-        }
-
-        const currentPassphrase = String(state.passphrase ?? passphrase);
-        input.value = currentPassphrase;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        state.submitting = true;
-        state.lastError = null;
-
-        requestAnimationFrame(() => {
-          try {
-            if (form instanceof HTMLFormElement) {
-              form.requestSubmit(confirm);
-            } else {
-              confirm.click();
-            }
-            state.submitCount += 1;
-            state.lastSubmittedAt = Date.now();
-          } catch (error) {
-            state.lastError = error instanceof Error ? error.message : String(error);
-          } finally {
-            setTimeout(() => {
-              state.submitting = false;
-
-              if (dialog.open) {
-                submitIfOpen(dialog);
-              }
-            }, 50);
-          }
-        });
-      };
-
-      if (!globalThis[patchKey]) {
-        const originalShowModal = HTMLDialogElement.prototype.showModal;
-        const originalClose = HTMLDialogElement.prototype.close;
-
-        HTMLDialogElement.prototype.showModal = function patchedShowModal(...args) {
-          const result = originalShowModal.apply(this, args);
-
-          if (this.id === 'archive-passphrase-dialog' && globalThis[globalKey]) {
-            requestAnimationFrame(() => submitIfOpen(this));
-          }
-
-          return result;
-        };
-
-        HTMLDialogElement.prototype.close = function patchedClose(returnValue) {
-          const state = globalThis[stateKey];
-
-          if (
-            this.id === 'archive-passphrase-dialog' &&
-            state?.passphrase &&
-            returnValue !== 'confirm'
-          ) {
-            const input = document.querySelector('#archive-passphrase-input');
-
-            if (input instanceof HTMLInputElement) {
-              input.value = String(state.passphrase);
-              input.dispatchEvent(new Event('input', { bubbles: true }));
-              input.dispatchEvent(new Event('change', { bubbles: true }));
-              state.submitCount += 1;
-              state.lastSubmittedAt = Date.now();
-              return originalClose.call(this, 'confirm');
-            }
-          }
-
-          return originalClose.call(this, returnValue);
-        };
-
-        globalThis[patchKey] = true;
-      }
-
-      const observer = new MutationObserver(() => submitIfOpen());
-      observer.observe(document.documentElement, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        attributeFilter: ['open']
-      });
-
-      const interval = setInterval(() => {
-        submitIfOpen();
-      }, 50);
-
-      setTimeout(() => {
-        clearInterval(interval);
-        observer.disconnect();
-      }, 30000);
-
-      submitIfOpen();
-    })()
-  `);
-}
-
-async function waitForPlayerLoad(playerClient, timeoutMs, passphrase = "") {
-  let lastSnapshot = null;
-
-  return waitFor(
-    async () => {
-      const snapshot = await playerClient.evaluate(`
-      (() => {
-        const dialog = document.querySelector('#archive-passphrase-dialog');
-        const passphrase = ${JSON.stringify(passphrase)};
-        const retryKey = '__WEBBLACKBOX_E2E_ARCHIVE_RETRY_COUNT__';
-        const autoSubmitState =
-          globalThis.__WEBBLACKBOX_E2E_ARCHIVE_PASSPHRASE_STATE__ ?? null;
-        let passphraseSubmitted = false;
-
-        if (passphrase && dialog instanceof HTMLDialogElement && dialog.open) {
-          const input = document.querySelector('#archive-passphrase-input');
-          const confirm = document.querySelector('#archive-passphrase-confirm');
-          const form = document.querySelector('#archive-passphrase-form');
-
-          if (!(input instanceof HTMLInputElement) || !(confirm instanceof HTMLButtonElement)) {
-            return { ok: false, reason: 'passphrase-controls-missing' };
-          }
-
-          input.value = passphrase;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-
-          if (form instanceof HTMLFormElement) {
-            form.requestSubmit(confirm);
-          } else {
-            confirm.click();
-          }
-
-          passphraseSubmitted = true;
-        }
-
-        const eventCount = document.querySelectorAll('#timeline-list .event').length;
-        const waterfallRows = document.querySelectorAll('#waterfall-body tr').length;
-        const recordingMarkerCount = document.querySelectorAll(
-          '#playback-markers button[data-marker-kind="recording"]'
-        ).length;
-        const recordingVideo = document.getElementById('filmstrip-recording');
-        const playbackProgress = document.getElementById('playback-progress');
-        const feedback = (document.getElementById('feedback')?.textContent ?? '').trim();
-        const passphraseDialogOpen =
-          dialog instanceof HTMLDialogElement ? dialog.open : false;
-        const passphraseAutoSubmit = autoSubmitState
-          ? {
-              submitting: autoSubmitState.submitting === true,
-              submitCount: Number(autoSubmitState.submitCount ?? 0),
-              lastSubmittedAt: autoSubmitState.lastSubmittedAt ?? null,
-              lastError: autoSubmitState.lastError ?? null
-            }
-          : null;
-        const sampleButtons = Array.from(document.querySelectorAll('#waterfall-body .waterfall-btn'))
-          .slice(0, 12)
-          .map((el) => ({
-            label: (el.textContent ?? '').trim(),
-            title: (el.getAttribute('title') ?? '').trim()
-          }));
-        const samples = sampleButtons.map((sample) => sample.label);
-        const sampleUrls = sampleButtons.map((sample) => sample.title);
-
-        if (eventCount === 0) {
-          const needsPassphraseRetry =
-            passphrase &&
-            !passphraseDialogOpen &&
-            feedback.includes('Passphrase is required for encrypted archive.');
-          const retryCount =
-            typeof globalThis[retryKey] === 'number' && Number.isFinite(globalThis[retryKey])
-              ? globalThis[retryKey]
-              : 0;
-
-          if (needsPassphraseRetry && retryCount < 1) {
-            const archiveInput = document.querySelector('#archive-input');
-
-            if (archiveInput instanceof HTMLInputElement && archiveInput.files?.length) {
-              globalThis[retryKey] = retryCount + 1;
-              archiveInput.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-          }
-
-          return {
-            pending: true,
-            eventCount,
-            waterfallCount: waterfallRows,
-            recordingMarkerCount,
-            recordingVideoPresent: recordingVideo instanceof HTMLVideoElement,
-            recordingVideoControls:
-              recordingVideo instanceof HTMLVideoElement ? recordingVideo.controls : null,
-            playbackProgressPresent: playbackProgress instanceof HTMLInputElement,
-            feedback,
-            passphraseDialogOpen,
-            passphraseSubmitted,
-            passphraseAutoSubmit,
-            retryCount: globalThis[retryKey] ?? retryCount
-          };
-        }
-
-        return {
-          eventCount,
-          waterfallCount: waterfallRows,
-          recordingMarkerCount,
-          recordingVideoPresent: recordingVideo instanceof HTMLVideoElement,
-          recordingVideoControls:
-            recordingVideo instanceof HTMLVideoElement ? recordingVideo.controls : null,
-          playbackProgressPresent: playbackProgress instanceof HTMLInputElement,
-          feedback,
-          passphraseDialogOpen,
-          passphraseSubmitted,
-          passphraseAutoSubmit,
-          waterfallSamples: samples,
-          waterfallSampleUrls: sampleUrls
-        };
-      })()
-    `);
-
-      if (snapshot?.ok === false) {
-        throw new Error(JSON.stringify(snapshot));
-      }
-
-      lastSnapshot = snapshot ?? lastSnapshot;
-      return snapshot && !snapshot.pending ? snapshot : null;
-    },
-    timeoutMs,
-    300,
-    () =>
-      `Player did not load archive in time${
-        lastSnapshot ? `; lastSnapshot=${JSON.stringify(lastSnapshot)}` : ""
-      }`
-  );
-}
-
-async function waitForPlayerEventType(playerClient, eventType, timeoutMs) {
-  return waitFor(
-    async () => {
-      const found = await playerClient.evaluate(`
-      (() => {
-        const tags = Array.from(document.querySelectorAll('#timeline-list .tag'));
-        return tags.some((node) => (node.textContent ?? '').trim() === ${JSON.stringify(eventType)});
-      })()
-    `);
-
-      return found ? true : null;
-    },
-    timeoutMs,
-    250,
-    `Timeline did not include event type: ${eventType}`
-  );
-}
-
-/**
- * Points the Player's symbol server at the demo's map folder and waits for the console row of
- * the minified error to show its original location.
- */
-async function verifyPlayerSymbolication(playerClient, symbolServerUrl, timeoutMs) {
-  const applied = await playerClient.evaluate(`
-    (() => {
-      const root = document.querySelector('#event-stack');
-      const input = root?.querySelector('[data-stack-input="server"]');
-      const apply = root?.querySelector('[data-stack-action="server"]');
-
-      if (!input || !apply) {
-        return false;
-      }
-
-      input.value = ${JSON.stringify(symbolServerUrl)};
-      apply.click();
-      return true;
-    })()
-  `);
-
-  if (!applied) {
-    return { ok: false, reason: "symbol-server-controls-missing" };
-  }
-
-  const origin = await waitFor(
-    async () => {
-      const text = await playerClient.evaluate(`
-        (() => Array.from(document.querySelectorAll('#console-list .signal-origin'))
-          .map((node) => node.textContent ?? '')
-          .find((value) => value.includes('vendor-src/checkout.js')) ?? null)()
-      `);
-
-      return typeof text === "string" ? text : null;
-    },
-    timeoutMs,
-    250,
-    "Console row did not show the original source location"
-  ).catch(() => null);
-
-  return { ok: typeof origin === "string" && origin.includes("checkout.js:9:"), origin };
-}
-
-async function verifyPlayerEventTypeAbsent(playerClient, eventType) {
-  const count = await playerClient.evaluate(`
-    (() => {
-      const tags = Array.from(document.querySelectorAll('#timeline-list .tag'));
-      return tags.filter((node) => (node.textContent ?? '').trim() === ${JSON.stringify(eventType)}).length;
-    })()
-  `);
-
-  return {
-    ok: count === 0,
-    eventType,
-    count
-  };
-}
-
-async function verifyPlayerScreenshotMarker(playerClient, timeoutMs) {
-  const count = await waitFor(
-    async () => {
-      const value = await playerClient.evaluate(`
-      (() => document.querySelectorAll('#filmstrip-list button[data-shot-event]').length)()
-    `);
-
-      return typeof value === "number" && value > 0 ? value : null;
-    },
-    timeoutMs,
-    250,
-    "No screenshot in player filmstrip"
-  );
-  const attempts = [];
-
-  for (let index = count - 1; index >= 0; index -= 1) {
-    const clicked = await playerClient.evaluate(`
-      (() => {
-        const buttons = Array.from(document.querySelectorAll('#filmstrip-list button[data-shot-event]'));
-        const button = buttons[${index}];
-
-        if (!button) {
-          return false;
-        }
-
-        button.click();
-        return true;
-      })()
-    `);
-
-    if (!clicked) {
-      continue;
-    }
-
-    try {
-      const details = await waitFor(
-        async () => {
-          const snapshot = await playerClient.evaluate(`
-          (() => {
-            const meta = (document.getElementById('filmstrip-meta')?.textContent ?? '').trim();
-            const cursor = document.getElementById('filmstrip-cursor');
-            const visible = !!cursor && !cursor.hasAttribute('hidden');
-            const trailSegments = document.querySelectorAll(
-              '#filmstrip-trail-svg .preview-trail-line, #filmstrip-trail-svg .preview-trail-point'
-            ).length;
-            return { meta, visible, trailSegments };
-          })()
-        `);
-
-          if (!snapshot || !snapshot.visible) {
-            return null;
-          }
-
-          if (!snapshot.meta.startsWith("Pointer marker:")) {
-            return null;
-          }
-
-          if (typeof snapshot.trailSegments !== "number" || snapshot.trailSegments <= 0) {
-            return null;
-          }
-
-          return snapshot;
-        },
-        2_500,
-        150,
-        "Marker not visible on this screenshot"
-      );
-
-      return {
-        ok: true,
-        meta: details.meta,
-        screenshotIndex: index
-      };
-    } catch {
-      const snapshot = await playerClient
-        .evaluate(
-          `
-            (() => {
-              const meta = (document.getElementById('filmstrip-meta')?.textContent ?? '').trim();
-              const cursor = document.getElementById('filmstrip-cursor');
-              const visible = !!cursor && !cursor.hasAttribute('hidden');
-              const trailSegments = document.querySelectorAll(
-                '#filmstrip-trail-svg .preview-trail-line, #filmstrip-trail-svg .preview-trail-point'
-              ).length;
-              return { meta, visible, trailSegments };
-            })()
-          `
-        )
-        .catch(() => null);
-      attempts.push({
-        screenshotIndex: index,
-        snapshot
-      });
-      // Continue trying older screenshots.
-    }
-  }
-
-  return {
-    ok: false,
-    reason: "no-screenshot-with-pointer-marker",
-    screenshotCount: count,
-    attempts: attempts.slice(0, 8)
-  };
-}
-
-async function verifyPlayerScreenRecording(playerClient, timeoutMs) {
-  const prepared = await waitFor(
-    async () => {
-      const snapshot = await playerClient.evaluate(`
-      (() => {
-        const markers = Array.from(
-          document.querySelectorAll('#playback-markers button[data-marker-kind="recording"]')
-        );
-        const marker = markers[0];
-        const video = document.getElementById('filmstrip-recording');
-        const progress = document.getElementById('playback-progress');
-
-        if (!(marker instanceof HTMLButtonElement) || !(video instanceof HTMLVideoElement) || !(progress instanceof HTMLInputElement)) {
-          return null;
-        }
-
-        marker.click();
-
-        return {
-          markerCount: markers.length,
-          videoControls: video.controls,
-          videoControlsAttribute: video.hasAttribute('controls'),
-          progressId: progress.id
-        };
-      })()
-    `);
-
-      if (!snapshot || snapshot.videoControls || snapshot.videoControlsAttribute) {
-        return null;
-      }
-
-      return snapshot;
-    },
-    timeoutMs,
-    250,
-    "Player recording marker or unified progress controls not found"
-  );
-
-  let lastReadySnapshot = null;
-  const ready = await waitFor(
-    async () => {
-      const snapshot = await playerClient.evaluate(`
-      (() => {
-        const video = document.getElementById('filmstrip-recording');
-        const progress = document.getElementById('playback-progress');
-        const meta = (document.getElementById('filmstrip-meta')?.textContent ?? '').trim();
-
-        if (!(video instanceof HTMLVideoElement) || !(progress instanceof HTMLInputElement)) {
-          return null;
-        }
-
-        return {
-          currentSrc: video.currentSrc,
-          hidden: video.hidden,
-          readyState: video.readyState,
-          currentTime: video.currentTime,
-          progressValue: progress.value,
-          progressMax: progress.max,
-          meta,
-          videoControls: video.controls,
-          videoControlsAttribute: video.hasAttribute('controls')
-        };
-      })()
-    `);
-
-      if (!snapshot || snapshot.videoControls || snapshot.videoControlsAttribute) {
-        return null;
-      }
-
-      lastReadySnapshot = snapshot;
-
-      if (snapshot.meta.includes("Failed to decode screen recording.")) {
-        return {
-          ...snapshot,
-          decodeFailed: true
-        };
-      }
-
-      if (snapshot.hidden || !snapshot.currentSrc || snapshot.readyState < 1) {
-        return null;
-      }
-
-      return snapshot;
-    },
-    timeoutMs,
-    250,
-    () =>
-      `Player video did not load recording metadata${
-        lastReadySnapshot ? `; lastSnapshot=${JSON.stringify(lastReadySnapshot)}` : ""
-      }`
-  );
-
-  if (ready.decodeFailed) {
-    return {
-      ok: false,
-      reason: "recording-video-decode-failed",
-      prepared,
-      ready
-    };
-  }
-
-  const moved = await playerClient.evaluate(`
-    (() => {
-      const video = document.getElementById('filmstrip-recording');
-      const progress = document.getElementById('playback-progress');
-
-      if (!(video instanceof HTMLVideoElement) || !(progress instanceof HTMLInputElement)) {
-        return null;
-      }
-
-      const before = video.currentTime;
-      const max = Number(progress.max);
-      const current = Number(progress.value);
-      const next = Number.isFinite(max) && Number.isFinite(current)
-        ? Math.min(max, current + 1000)
-        : current;
-
-      if (Number.isFinite(next)) {
-        progress.value = String(next);
-        progress.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-
-      return {
-        before,
-        next,
-        current,
-        progressMax: progress.max
-      };
-    })()
-  `);
-
-  let lastSyncSnapshot = moved;
-  const synced = await waitFor(
-    async () => {
-      const snapshot = await playerClient.evaluate(`
-      (() => {
-        const video = document.getElementById('filmstrip-recording');
-        const progress = document.getElementById('playback-progress');
-        const meta = (document.getElementById('filmstrip-meta')?.textContent ?? '').trim();
-
-        if (!(video instanceof HTMLVideoElement) || !(progress instanceof HTMLInputElement)) {
-          return null;
-        }
-
-        return {
-          currentTime: video.currentTime,
-          currentSrc: video.currentSrc,
-          hidden: video.hidden,
-          readyState: video.readyState,
-          progressValue: progress.value,
-          progressMax: progress.max,
-          meta,
-          videoControls: video.controls,
-          videoControlsAttribute: video.hasAttribute('controls')
-        };
-      })()
-    `);
-
-      if (!snapshot || snapshot.videoControls || snapshot.videoControlsAttribute) {
-        return null;
-      }
-
-      lastSyncSnapshot = snapshot;
-
-      if (typeof snapshot.currentTime !== "number" || snapshot.currentTime < 0.2) {
-        return null;
-      }
-
-      return snapshot;
-    },
-    timeoutMs,
-    250,
-    () =>
-      `Player video did not sync after moving the unified playback progress bar${
-        lastSyncSnapshot ? `; lastSnapshot=${JSON.stringify(lastSyncSnapshot)}` : ""
-      }`
-  );
-
-  return {
-    ok: true,
-    prepared,
-    ready,
-    moved,
-    synced
-  };
-}
-
-async function verifyPlayerProgressHoverResponse(playerClient, timeoutMs) {
-  const hoverReady = await waitFor(
-    async () => {
-      const snapshot = await playerClient.evaluate(`
-      (() => {
-        const markers = Array.from(
-          document.querySelectorAll('#playback-markers button[data-marker-kind="network"]')
-        );
-        const hover = document.getElementById('progress-hover');
-        const response = document.getElementById('progress-hover-response');
-        const body = document.getElementById('progress-hover-response-body');
-        const toggle = document.getElementById('progress-hover-response-toggle');
-        const copy = document.getElementById('progress-hover-response-copy');
-        const progress = document.getElementById('playback-progress');
-        const key = '__wbHoverProbeIndex';
-        const step = '__wbHoverProbeStep';
-        const emptyPreviewKey = '__wbHoverEmptyPreviewCount';
-
-        if (!hover || !response || !body || !toggle || !copy) {
-          return null;
-        }
-
-        let markerIndex = null;
-
-        if (markers.length > 0) {
-          const index =
-            typeof window[key] === 'number' && Number.isFinite(window[key]) ? window[key] : 0;
-          markerIndex = Math.abs(Math.trunc(index)) % markers.length;
-          window[key] = markerIndex + 1;
-          const marker = markers[markerIndex];
-
-          if (marker) {
-            const rect = marker.getBoundingClientRect();
-            marker.dispatchEvent(
-              new PointerEvent('pointermove', {
-                bubbles: true,
-                pointerType: 'mouse',
-                clientX: rect.left + Math.max(1, rect.width / 2),
-                clientY: rect.top + Math.max(1, rect.height / 2)
-              })
-            );
-          }
-        } else if (progress) {
-          const rawStep =
-            typeof window[step] === 'number' && Number.isFinite(window[step]) ? window[step] : 1;
-          const ratio = ((Math.abs(Math.trunc(rawStep)) % 9) + 1) / 10;
-          window[step] = rawStep + 1;
-          const rect = progress.getBoundingClientRect();
-          progress.dispatchEvent(
-            new PointerEvent('pointermove', {
-              bubbles: true,
-              pointerType: 'mouse',
-              clientX: rect.left + ratio * rect.width,
-              clientY: rect.top + Math.max(1, rect.height / 2)
-            })
-          );
-        }
-
-        if (hover.hidden || response.hidden) {
-          return null;
-        }
-
-        const text = (body.textContent ?? '').trim();
-
-        if (text.length === 0) {
-          const emptyPreviewCount =
-            typeof window[emptyPreviewKey] === 'number' && Number.isFinite(window[emptyPreviewKey])
-              ? window[emptyPreviewKey] + 1
-              : 1;
-          window[emptyPreviewKey] = emptyPreviewCount;
-
-          if (emptyPreviewCount >= 8) {
-            return {
-              markerIndex,
-              copyEnabled: !copy.disabled,
-              toggleEnabled: !toggle.disabled,
-              toggleText: (toggle.textContent ?? '').trim(),
-              copyText: (copy.textContent ?? '').trim(),
-              textLength: 0,
-              emptyPreview: true
-            };
-          }
-
-          return null;
-        }
-
-        window[emptyPreviewKey] = 0;
-
-        return {
-          markerIndex,
-          copyEnabled: !copy.disabled,
-          toggleEnabled: !toggle.disabled,
-          toggleText: (toggle.textContent ?? '').trim(),
-          copyText: (copy.textContent ?? '').trim(),
-          textLength: text.length
-        };
-      })()
-    `);
-
-      return snapshot ?? null;
-    },
-    timeoutMs,
-    250,
-    "Hover response preview not found on progress markers"
-  );
-
-  if (hoverReady.emptyPreview) {
-    return {
-      ok: true,
-      markerIndex: hoverReady.markerIndex,
-      toggleEnabled: hoverReady.toggleEnabled,
-      copyEnabled: hoverReady.copyEnabled,
-      skipped: "response-preview-empty"
-    };
-  }
-
-  if (!hoverReady.copyEnabled) {
-    return {
-      ok: true,
-      markerIndex: hoverReady.markerIndex,
-      toggleEnabled: hoverReady.toggleEnabled,
-      copyEnabled: false,
-      skipped: "response-body-not-captured"
-    };
-  }
-
-  let toggled = null;
-
-  if (hoverReady.toggleEnabled) {
-    const toggleClick = await playerClient.evaluate(`
-      (() => {
-        const toggle = document.getElementById('progress-hover-response-toggle');
-
-        if (!toggle || toggle.disabled) {
-          return { ok: false, reason: 'toggle-disabled' };
-        }
-
-        const before = (toggle.textContent ?? '').trim();
-        toggle.click();
-        return { ok: true, before };
-      })()
-    `);
-
-    if (!toggleClick?.ok) {
-      return {
-        ok: false,
-        reason: toggleClick?.reason ?? "toggle-click-failed",
-        hoverReady
-      };
-    }
-
-    toggled = await waitFor(
-      async () => {
-        const snapshot = await playerClient.evaluate(`
-        (() => {
-          const toggle = document.getElementById('progress-hover-response-toggle');
-          const body = document.getElementById('progress-hover-response-body');
-
-          if (!toggle || !body) {
-            return null;
-          }
-
-          const text = (toggle.textContent ?? '').trim();
-          return {
-            toggleText: text,
-            expanded: body.classList.contains('expanded')
-          };
-        })()
-      `);
-
-        if (!snapshot || snapshot.toggleText === toggleClick.before || !snapshot.expanded) {
-          return null;
-        }
-
-        return snapshot;
-      },
-      8_000,
-      150,
-      "Hover response toggle did not switch to expanded mode"
-    );
-  }
-
-  const copyClick = await playerClient.evaluate(`
-    (() => {
-      const copy = document.getElementById('progress-hover-response-copy');
-
-      if (!copy || copy.disabled) {
-        return { ok: false, reason: 'copy-disabled' };
-      }
-
-      copy.click();
-      return { ok: true };
-    })()
-  `);
-
-  if (!copyClick?.ok) {
-    return {
-      ok: false,
-      reason: copyClick?.reason ?? "copy-click-failed",
-      hoverReady,
-      toggled
-    };
-  }
-
-  const copied = await waitFor(
-    async () => {
-      const snapshot = await playerClient.evaluate(`
-      (() => {
-        const copy = document.getElementById('progress-hover-response-copy');
-        const feedback = document.getElementById('feedback');
-
-        if (!copy) {
-          return null;
-        }
-
-        return {
-          copyText: (copy.textContent ?? '').trim(),
-          feedback: (feedback?.textContent ?? '').trim()
-        };
-      })()
-    `);
-
-      if (!snapshot) {
-        return null;
-      }
-
-      const feedbackOk =
-        typeof snapshot.feedback === "string" &&
-        snapshot.feedback.includes("Copied response preview.");
-
-      if (snapshot.copyText !== "Copied" && !feedbackOk) {
-        return null;
-      }
-
-      return snapshot;
-    },
-    8_000,
-    150,
-    "Hover response copy action did not complete"
-  );
-
-  return {
-    ok: true,
-    markerIndex: hoverReady.markerIndex,
-    initialToggleText: hoverReady.toggleText,
-    toggleEnabled: hoverReady.toggleEnabled,
-    copyEnabled: true,
-    toggled,
-    copied
-  };
-}
-
 async function waitForFile(path, timeoutMs) {
   return waitFor(
     async () => {
@@ -4153,6 +3262,11 @@ async function rebuildArchiveFromDataUrl(dataUrl, outputPath) {
 }
 
 async function cleanup() {
+  if (state.realisticSite) {
+    await state.realisticSite.close().catch(() => undefined);
+    state.realisticSite = null;
+  }
+
   if (state.browserClient) {
     state.browserClient.close();
     state.browserClient = null;
@@ -4184,12 +3298,16 @@ async function cleanup() {
     }
   }
 
-  await terminateChromeProcess(state.chromeProcess);
+  const chromeProcess = state.chromeProcess;
+  await terminateChromeProcess(chromeProcess);
 
   state.chromeProcess = null;
   state.baseUrl = null;
 
   if (state.logStream) {
+    // Chrome's helper processes can outlive it and keep writing to the shared pipes.
+    chromeProcess?.stdout?.unpipe(state.logStream);
+    chromeProcess?.stderr?.unpipe(state.logStream);
     await new Promise((resolve) => {
       state.logStream.end(resolve);
     });

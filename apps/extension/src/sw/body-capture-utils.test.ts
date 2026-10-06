@@ -5,6 +5,7 @@ import { DEFAULT_REDACTION_PROFILE } from "@webblackbox/protocol";
 import {
   applyBodyUrlFilters,
   isInlineRequestBodyAllowed,
+  isMimeAllowed,
   resolveFullBodyCaptureRule,
   resolveLiteBodyCaptureRule,
   transformResponseBodyForCapture
@@ -44,7 +45,7 @@ describe("body-capture utils", () => {
         },
         resolveRule
       )
-    ).toBe(false);
+    ).toBe("filtered");
     expect(
       isInlineRequestBodyAllowed(
         {
@@ -55,7 +56,46 @@ describe("body-capture utils", () => {
         resolveRule
       )
     ).toBe(true);
+    expect(
+      isInlineRequestBodyAllowed(
+        {
+          eventType: "network.request",
+          url: "https://app.example.com/upload",
+          mimeType: "application/octet-stream"
+        },
+        resolveRule
+      )
+    ).toBe("mime-not-allowed");
     expect(isInlineRequestBodyAllowed({ eventType: "network.ws.frame" }, resolveRule)).toBe(true);
+  });
+
+  it("allows a request body whose Content-Type header was sent twice", () => {
+    const resolveRule = (url: string, mimeType: string | undefined) =>
+      resolveFullBodyCaptureRule(
+        { sampling: { bodyCaptureMaxBytes: 64 * 1024 }, sitePolicies: [] },
+        url,
+        mimeType
+      );
+
+    expect(
+      isInlineRequestBodyAllowed(
+        {
+          eventType: "network.request",
+          url: "https://app.example.com/api/save",
+          mimeType: "application/json, application/json"
+        },
+        resolveRule
+      )
+    ).toBe(true);
+  });
+
+  it("matches the MIME allowlist against a normalized content type", () => {
+    const allowlist = ["application/json", "text/*"];
+
+    expect(isMimeAllowed(allowlist, "application/json, application/json")).toBe(true);
+    expect(isMimeAllowed(allowlist, "Application/JSON; charset=utf-8")).toBe(true);
+    expect(isMimeAllowed(allowlist, "text/plain, application/octet-stream")).toBe(true);
+    expect(isMimeAllowed(allowlist, "application/octet-stream, application/json")).toBe(false);
   });
 
   it("disables full-mode body capture when matching policy denies body capture", () => {
