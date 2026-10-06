@@ -43,3 +43,35 @@ export function collectBlobHashesFromUnknown(value: unknown, output: Set<string>
     }
   }
 }
+
+export function normalizeBlobHashes(values: unknown): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const output = new Set<string>();
+
+  for (const value of values) {
+    if (typeof value === "string" && SHA256_HEX_PATTERN.test(value)) {
+      output.add(value);
+    }
+  }
+
+  return [...output];
+}
+
+export function mergeBlobHashes(...sources: unknown[]): string[] {
+  const output = new Set<string>();
+
+  for (const source of sources) {
+    for (const hash of normalizeBlobHashes(source)) {
+      output.add(hash);
+    }
+  }
+
+  return [...output];
+}
+
+export function normalizeTrackingSid(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
