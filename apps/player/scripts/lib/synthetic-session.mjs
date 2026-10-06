@@ -619,7 +619,8 @@ export async function createPlainArchive(session = buildSyntheticSession()) {
   zip.file("index/inv.json", JSON.stringify(indexes.invertedIndex));
 
   for (const blob of session.blobs) {
-    const extension = blob.mime === "image/png" ? "png" : "json";
+    const extension =
+      blob.mime === "image/png" ? "png" : blob.mime === "video/webm" ? "webm" : "json";
     zip.file(`blobs/sha256-${blob.hash}.${extension}`, Buffer.from(blob.bytes));
   }
 

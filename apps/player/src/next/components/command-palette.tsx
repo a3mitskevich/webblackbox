@@ -6,14 +6,15 @@ import { useDeferredValue, useMemo, useState } from "react";
 import { formatOffset } from "../../core/format.js";
 import { searchPalette } from "../../core/palette-search.js";
 import { nextThemePreference } from "../../core/preferences.js";
-import { PLAYER_LOCALES, type PlayerI18n } from "../../lib/i18n.js";
+import { PLAYER_LOCALES, type PlayerI18n, type PlayerLocale } from "../../lib/i18n.js";
 import { compactText } from "../../lib/text.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import type { PlayerController } from "../controller.js";
 import { describeFeedEvent } from "../features/feed/feed-view.js";
 import { openGenerate } from "../features/generate/api.js";
 import { GENERATE_MENU_ENTRIES } from "../features/generate/generate-menu.js";
-import { generateMessages } from "../features/generate/messages.js";
+import { generateMessages, type GenerateMessageKey } from "../features/generate/messages.js";
+import { buildVideoEntries, saveVideos } from "../features/generate/video-download.js";
 import { eventTitle, shortPath } from "../features/inspector/inspector-text.js";
 import { RAIL_TAB_ORDER } from "../features/registry.js";
 import type { LoadedArchive, PlayerState } from "../state.js";
@@ -92,6 +93,7 @@ function buildCommands(
         openGenerate(controller.store, { kind: entry.kind })
       )
     ),
+    ...buildVideoCommands(archive, locale, i18n),
     command("about", i18n.tn("aboutRecording"), "info", () => controller.setArchiveInfoOpen(true)),
     ...(firstError
       ? [
@@ -119,6 +121,36 @@ function buildCommands(
     command("reset-layout", i18n.tn("resetLayout"), "layout", () => controller.resetLayout()),
     ...always
   ];
+}
+
+/** "Download the tab video" commands: the entries of the Generate menu that can run. */
+function buildVideoCommands(
+  archive: LoadedArchive,
+  locale: PlayerLocale,
+  i18n: PlayerI18n
+): PaletteItem[] {
+  const t = (key: GenerateMessageKey, values?: Record<string, string | number>) =>
+    generateMessages.translate(locale, key, values);
+
+  return buildVideoEntries(archive, t, i18n)
+    .filter((entry) => !entry.disabled)
+    .map((entry) => {
+      const [segment] = entry.segments;
+      const label =
+        entry.segments.length > 1
+          ? t("videoCommandAll", { count: entry.segments.length })
+          : entry.id === "video"
+            ? t("videoCommand", { detail: entry.detail })
+            : t("videoCommandPart", { part: segment?.part ?? 1, detail: entry.detail });
+
+      return {
+        id: `cmd-${entry.id}`,
+        label,
+        detail: "",
+        icon: "download",
+        run: () => void saveVideos(archive, entry.segments, locale)
+      };
+    });
 }
 
 function filterCommands(commands: readonly PaletteItem[], query: string): PaletteItem[] {

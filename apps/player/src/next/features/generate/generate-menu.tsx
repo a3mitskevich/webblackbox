@@ -20,6 +20,7 @@ import { openGenerate, type GenerateKind } from "./api.js";
 import { buildBugReport } from "./generators.js";
 import { generateMessages, type GenerateMessageKey } from "./messages.js";
 import { formatRangeLabel } from "./range.js";
+import { VideoMenuItems } from "./video-download.js";
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.5, absoluteStrokeWidth: true, "aria-hidden": true };
 
@@ -57,7 +58,8 @@ export const GENERATE_MENU_ENTRIES: readonly MenuEntry[] = [
 
 /**
  * Header "Generate ▾" (Base UI `Menu`): opens a generator dialog for the timeline range (or the
- * whole session), and copies the bug report in one step (the classic triage shortcut).
+ * whole session), copies the bug report in one step (the classic triage shortcut) and downloads
+ * the clean tab video.
  */
 export function GenerateMenu() {
   const controller = useController();
@@ -127,6 +129,8 @@ export function GenerateMenu() {
               <ClipboardCopy {...ICON_PROPS} />
               {t("itemCopyBugReport")}
             </Menu.Item>
+            <Menu.Separator className="menu-sep" />
+            <VideoMenuItems archive={archive} />
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>

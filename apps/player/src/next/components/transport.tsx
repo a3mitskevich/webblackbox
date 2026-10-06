@@ -2,6 +2,7 @@ import { useId } from "react";
 
 import { formatClock } from "../../core/format.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
+import { VideoTransportButton } from "../features/generate/video-download.js";
 import { PLAYBACK_RATES } from "../state.js";
 import { Hint } from "./hint.js";
 import { Icon } from "./icon.js";
@@ -103,6 +104,7 @@ export function Transport() {
         className="hide-narrow"
         testId="follow"
       />
+      <VideoTransportButton />
       <span id={speedId} className="visually-hidden">
         {i18n.tn("playbackSpeed")}
       </span>

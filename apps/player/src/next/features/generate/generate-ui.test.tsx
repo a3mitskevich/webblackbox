@@ -66,7 +66,9 @@ describe("Generate menu", () => {
       "HAR file…",
       "GitHub issue…",
       "Jira issue…",
-      "Copy bug report"
+      "Copy bug report",
+      // The synthetic recording has no tab video: the entry says so (video-download.test.tsx).
+      "Download videoThis recording has no tab video"
     ]);
     fireEvent.click(within(menu).getByTestId("generate-har"));
     expect(generateSlice.select(store.getState()).request).toEqual({ kind: "har" });

@@ -2,6 +2,8 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { downloadTabVideo } from "./video-download.scenario.mjs";
+
 const POLL_MS = 100;
 const TIMEOUT_MS = 10_000;
 
@@ -170,6 +172,7 @@ export default {
   scenarios: [
     { name: "Playwright test for a range set with [ and ], copied", run: playwrightForRange },
     { name: "bug report preview (highlighted Markdown)", run: bugReport },
-    { name: "download the HAR file", run: harDownload }
+    { name: "download the HAR file", run: harDownload },
+    { name: "download the clean tab video: a WebM that plays and seeks", run: downloadTabVideo }
   ]
 };
