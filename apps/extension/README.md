@@ -33,7 +33,7 @@ The extension consists of multiple main components:
 - Manages CDP debugger connections via `@webblackbox/cdp-router`
 - Instantiates `WebBlackboxRecorder` for event normalization
 - Routes events between content scripts, CDP, and the pipeline
-- Handles session lifecycle (start, stop, freeze, export)
+- Handles session lifecycle (start, stop, incident alerts, export)
 - Captures storage snapshots, including cookies, through CDP storage commands
 - Manages the offscreen document lifecycle
 
@@ -76,8 +76,8 @@ The extension consists of multiple main components:
 - Delete any profile (presets and `Default` included; not policy profiles) and "Restore recommended profiles"; recording needs at least one profile
 - Site rules that pick a profile (rules to a deleted profile are flagged and skipped), JSON import/export with a diff preview, redaction sandbox
 - Runtime profile overview for shipped `lite` / `full` modes
-- Sampling cadence and ring-buffer configuration
-- Freeze-on-error and performance budget controls
+- Sampling cadence configuration
+- Incident alerts (flag uncaught errors / broken budgets) and performance budget controls
 - Network body capture byte cap
 - Redaction rule management
 - Screenshot cadence tuning
@@ -175,6 +175,7 @@ Build entries:
 - `pnpm e2e:profile:full-capture` checks that the Full capture preset, chosen explicitly on a host without rules, records planted secrets (console, storage, URL token, headers, bodies, password field, WebSocket payload) and the raw DOM inside the encrypted archive, keeps doing so after the tab moves to another host, and that neither the secrets nor the site appear in the archive bytes.
 - `pnpm e2e:realworld` and `pnpm e2e:realworld:ci` run the real-world stability matrix across lite/full startup paths, reload recovery, iframe/child-target capture, downloads/uploads, large response previews, export, and player replay. Use `pnpm e2e:realworld:quick` for the reduced local smoke slice.
 - `pnpm e2e:memory:full` runs a synthetic long-session full-mode stress case and samples JS heap usage for the target page, service worker, and offscreen document.
+- `pnpm e2e:memory:full` and the fullchain runs (including `pnpm e2e:completeness:full`) also print the bytes that crossed the SW ↔ offscreen port (`Port traffic`): the JSON size per direction and per op, and how many wire bytes each byte of binary payload cost. They fail when a binary payload costs more than base64 plus a small envelope. The worker counts only while `globalThis.__WEBBLACKBOX_PORT_TRAFFIC__ = true`.
 - `pnpm e2e:isolation:full` records two tabs in full mode at the same time (cross-site, with an iframe, a worker and a popup in one tab, then same-site) and checks in each decrypted archive that the tab's own child-target activity is there and no other tab's events are.
 - `pnpm e2e:perf:lite` runs a lite-mode A/B stress matrix that now covers same-page request/hover pressure, real document navigation, iframe-heavy interaction, and contenteditable typing before comparing baseline vs active-recording budgets.
 - `pnpm e2e:perf:lite:ci` runs a reduced version of the same lite perf matrix so CI can gate regressions without paying the full local-runtime cost.
@@ -218,7 +219,10 @@ When a freeze condition is detected (uncaught JS error / unhandled rejection, or
 1. Recorder evaluates freeze policy
 2. Service worker receives freeze notification
 3. Notification is debounced to avoid UI thrash under repeated failures
-4. Session keeps recording until the user explicitly stops/exports
+4. The alert shows as an ERR badge on the toolbar icon, on the page indicator and as an incident line in the popup
+5. Session keeps recording until the user explicitly stops/exports; nothing is trimmed or preserved by a freeze
+
+The extension keeps no in-memory ring buffer (`ringBufferMinutes: 0`): the pipeline stores every event, so an in-memory copy would only cost service worker memory.
 
 ## Configuration
 

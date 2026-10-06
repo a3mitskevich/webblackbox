@@ -68,9 +68,7 @@ describe("profile form model", () => {
         excludeUrls: ["*/auth/*"]
       },
       visual: "screenshots",
-      sampling: { scrollHz: 9 },
-      // Export rules are no longer edited: every archive is encrypted.
-      export: base.export
+      sampling: { scrollHz: 9 }
     });
     expect(next.redaction).toMatchObject({
       contentRedaction: true,

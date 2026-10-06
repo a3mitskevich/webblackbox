@@ -161,8 +161,11 @@ describe("isBroadcastDeliveredToPort", () => {
     expect(isBroadcastDeliveredToPort("sw.recording-status", PORT_NAMES.offscreen)).toBe(true);
   });
 
-  it("delivers other broadcasts to every port", () => {
+  it("delivers other broadcasts to every port but the offscreen document", () => {
     expect(isBroadcastDeliveredToPort("sw.session-list", PORT_NAMES.content)).toBe(true);
     expect(isBroadcastDeliveredToPort("sw.session-list", PORT_NAMES.popup)).toBe(true);
+    expect(isBroadcastDeliveredToPort("sw.session-list", PORT_NAMES.offscreen)).toBe(false);
+    expect(isBroadcastDeliveredToPort("sw.export-status", PORT_NAMES.offscreen)).toBe(false);
+    expect(isBroadcastDeliveredToPort("sw.freeze", PORT_NAMES.offscreen)).toBe(false);
   });
 });

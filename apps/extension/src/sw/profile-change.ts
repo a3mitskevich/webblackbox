@@ -176,15 +176,14 @@ function isSameValue(left: unknown, right: unknown): boolean {
 
 /**
  * Profile settings the recorder config does not carry: body URL filters and MIME allowlist,
- * pointer, source map and export rules. Everything else (categories, redaction, sampling, recorder) is compared
+ * pointer and source map rules. Everything else (categories, redaction, sampling, recorder) is compared
  * as the config it renders to, so pinning a value the session already ran with is no change.
  */
 function toSettingsOutsideConfig(profile: RecordingProfile): Record<string, unknown> {
   return {
     network: profile.network,
     pointer: profile.pointer,
-    sourceMaps: profile.sourceMaps,
-    export: profile.export
+    sourceMaps: profile.sourceMaps
   };
 }
 

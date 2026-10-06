@@ -1,11 +1,7 @@
 import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 import { describe, expect, it } from "vitest";
 
-import {
-  MODE_PRODUCT_PROFILES,
-  applyModeProductBoundary,
-  shouldInjectPageHooksForMode
-} from "./mode-profile.js";
+import { applyModeProductBoundary, resolveModeBaseConfig } from "./mode-profile.js";
 
 describe("mode-profile", () => {
   it("keeps lite on the lightweight runtime boundary", () => {
@@ -68,12 +64,15 @@ describe("mode-profile", () => {
     expect(next.capturePolicy?.categories.cdp).toBe("full");
   });
 
-  it("injects page hooks for both shipped capture modes", () => {
-    expect(shouldInjectPageHooksForMode("lite")).toBe(true);
-    expect(shouldInjectPageHooksForMode("full")).toBe(true);
-  });
+  it.each(["lite", "full"] as const)(
+    "keeps the %s base config's ring buffer and perf freeze triggers off once the boundary applies",
+    (mode) => {
+      const next = applyModeProductBoundary(mode, resolveModeBaseConfig(mode));
 
-  it("documents only the shipped runtime profiles", () => {
-    expect(Object.keys(MODE_PRODUCT_PROFILES).sort()).toEqual(["full", "lite"]);
-  });
+      expect(next.freezeOnNetworkFailure).toBe(false);
+      expect(next.freezeOnLongTaskSpike).toBe(false);
+      expect(next.freezeOnError).toBe(true);
+      expect(next.ringBufferMinutes).toBe(0);
+    }
+  );
 });

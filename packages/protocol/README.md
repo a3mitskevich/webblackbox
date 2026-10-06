@@ -16,15 +16,15 @@
 
 ---
 
-The foundational protocol package for WebBlackbox. Defines all event types, message formats, configuration schemas, and validation logic shared across the entire system.
+The foundational protocol package for WebBlackbox. Defines all event types, configuration schemas, and validation logic shared across the entire system.
 
 ## Overview
 
 This package provides:
 
-- **Constants** — Event types, message types, capture modes, codecs, freeze reasons
+- **Constants** — Event types, capture modes, codecs, freeze reasons
 - **TypeScript Types** — All data structures used across the system
-- **Zod Schemas** — Runtime validation for events, messages, configs, and archive manifests
+- **Zod Schemas** — Runtime validation for events, configs, and archive manifests
 - **ID Generators** — Deterministic and random ID creation for sessions, events, actions, and chunks
 - **Default Configuration** — Recommended recorder defaults
 
@@ -200,7 +200,6 @@ All types have corresponding Zod schemas for runtime validation. Import them fro
 import {
   validateEvent,
   validateEventData,
-  validateMessage,
   eventEnvelopeSchema,
   recorderConfigSchema,
   exportManifestSchema,
@@ -268,22 +267,6 @@ import { DEFAULT_EXPORT_POLICY, DEFAULT_RECORDER_CONFIG } from "@webblackbox/pro
 
 `DEFAULT_RECORDER_CONFIG` is a shared baseline. Runtime products may apply product-specific
 overrides for sampling or freeze policies, but should document those overrides explicitly.
-
-## Message Types
-
-Inter-component communication uses typed messages:
-
-| Message              | Direction          | Purpose                  |
-| -------------------- | ------------------ | ------------------------ |
-| `CTRL.START_SESSION` | SW → Pipeline      | Start recording session  |
-| `CTRL.STOP_SESSION`  | SW → Pipeline      | Stop recording session   |
-| `CTRL.FREEZE`        | Recorder → SW      | Freeze notification      |
-| `CTRL.EXPORT`        | UI → SW            | Export request           |
-| `EVT.BATCH`          | SW → Pipeline      | Batch of recorded events |
-| `PIPE.BLOB_PUT`      | Pipeline → Storage | Store binary blob        |
-| `PIPE.CHUNK_PUT`     | Pipeline → Storage | Store event chunk        |
-| `PIPE.BUILD_INDEX`   | Pipeline → Indexer | Build search indexes     |
-| `PIPE.EXPORT_DONE`   | Pipeline → SW      | Export complete          |
 
 ## License
 

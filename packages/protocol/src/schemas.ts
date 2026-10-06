@@ -240,7 +240,7 @@ export const capturePolicySchema = z
 export const recorderConfigSchema = z
   .object({
     mode: captureModeSchema,
-    ringBufferMinutes: z.number().int().positive(),
+    ringBufferMinutes: z.number().int().nonnegative(),
     freezeOnError: z.boolean(),
     freezeOnNetworkFailure: z.boolean(),
     freezeOnLongTaskSpike: z.boolean(),

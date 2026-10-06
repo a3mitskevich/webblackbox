@@ -25,8 +25,6 @@ export type BadgeKind = "idle" | "rec" | "alert";
 
 type ButtonVariant = "brand" | "accent" | "muted" | "surface" | "danger";
 
-const DEFAULT_RING_BUFFER_MINUTES = 10;
-
 export function createPopupHeader(options: {
   t: Translate;
   version: string;
@@ -144,33 +142,6 @@ export function createStateLine(text: string, incident: string | null): HTMLElem
   return line;
 }
 
-export type RingUsage = { usedMinutes: number; capacityMinutes: number; windowLabel: string };
-
-export function describeRingBufferUsage(
-  session: SessionListItem,
-  now: number,
-  format: Pick<PopupFormatters, "t" | "formatNumber">
-): RingUsage {
-  const capacityMinutes = Math.max(
-    1,
-    Number.isFinite(session.ringBufferMinutes)
-      ? Number(session.ringBufferMinutes)
-      : DEFAULT_RING_BUFFER_MINUTES
-  );
-  const endedAt = typeof session.stoppedAt === "number" ? session.stoppedAt : now;
-  const elapsedMinutes = Math.max(0, (endedAt - session.startedAt) / 60_000);
-  const usedMinutes = Math.min(capacityMinutes, elapsedMinutes);
-
-  return {
-    usedMinutes,
-    capacityMinutes,
-    windowLabel: format.t("popupRingBufferWindow", {
-      used: format.formatNumber(usedMinutes, 1),
-      capacity: format.formatNumber(capacityMinutes, 1)
-    })
-  };
-}
-
 function createStats(
   session: SessionListItem,
   format: PopupFormatters,
@@ -236,24 +207,9 @@ export function createRecordingPanel(options: {
     return createOtherTabRecordingRow(session, now, format);
   }
 
-  const ring = describeRingBufferUsage(session, now, format);
-  const meter = el("progress", {
-    className: "wb-popup__buffer-meter",
-    attrs: { "aria-label": t("popupRingBuffer"), "aria-valuetext": ring.windowLabel }
-  });
-  meter.max = Math.round(ring.capacityMinutes * 100);
-  meter.value = Math.round(ring.usedMinutes * 100);
-
   return el("section", { className: "wb-panel wb-panel--live wb-popup__live" }, [
     panelHead(t("popupRecordingTitle"), sessionMeta(session, now, format)),
     createStats(session, format, { compact: false }),
-    el("div", { className: "wb-popup__buffer" }, [
-      el("p", { className: "wb-popup__buffer-label" }, [
-        el("span", { text: t("popupRingBuffer") }),
-        el("strong", { text: ring.windowLabel })
-      ]),
-      meter
-    ]),
     el("div", { className: "wb-popup__row" }, [
       actionButton(t("popupMarker"), "marker", "surface", { iconName: "marker" }),
       actionButton(t("popupStop"), "stop", "danger", { iconName: "stop" })
