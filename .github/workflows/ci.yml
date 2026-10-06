@@ -91,6 +91,8 @@ jobs:
             needsChrome: true
           - surface: full-completeness
             command: pnpm --filter @webblackbox/extension e2e:completeness:full
+          - surface: full-reload
+            command: pnpm --filter @webblackbox/extension e2e:full:reload
             needsChrome: true
           - surface: full-memory
             command: pnpm --filter @webblackbox/extension e2e:memory:full:ci

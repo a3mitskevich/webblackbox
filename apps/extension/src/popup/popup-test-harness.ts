@@ -61,6 +61,8 @@ export function installChromeStub(
     sendMessage?: ReturnType<typeof vi.fn>;
     tabsSendMessage?: ReturnType<typeof vi.fn>;
     onQuery?: () => void | Promise<void>;
+    /** `chrome.storage.local` contents; without it the stub has no storage at all. */
+    storage?: Record<string, unknown>;
   } = {}
 ): ChromeStub {
   const query = vi.fn(async () => {
@@ -73,6 +75,20 @@ export function installChromeStub(
     url: details.url
   }));
   const tabsSendMessage = options.tabsSendMessage ?? vi.fn(async () => undefined);
+  const stored = options.storage;
+  const storage = stored
+    ? {
+        local: {
+          get: vi.fn(async (keys?: string | string[]) => {
+            const wanted = keys === undefined ? Object.keys(stored) : [keys].flat();
+            return Object.fromEntries(
+              wanted.filter((key) => key in stored).map((key) => [key, stored[key]])
+            );
+          }),
+          set: vi.fn(async () => undefined)
+        }
+      }
+    : undefined;
 
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
@@ -84,7 +100,8 @@ export function installChromeStub(
         getManifest: vi.fn(() => ({ version: "0.1.1" })),
         ...(options.sendMessage ? { sendMessage: options.sendMessage } : {})
       },
-      tabs: { create: tabsCreate, query, sendMessage: tabsSendMessage }
+      tabs: { create: tabsCreate, query, sendMessage: tabsSendMessage },
+      ...(storage ? { storage } : {})
     }
   });
 
