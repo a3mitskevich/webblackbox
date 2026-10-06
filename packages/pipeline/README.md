@@ -22,7 +22,7 @@ The event processing pipeline for WebBlackbox. Handles chunking, indexing, blob 
 - **FlightRecorderPipeline** — Main pipeline orchestrating the full event processing lifecycle
 - **EventChunker** — Groups events into size-bounded chunks with codec support
 - **EventIndexer** — Builds time-based, request-based, and inverted text search indexes on demand from stored chunks
-- **Codec** — NDJSON chunk codec support for `none`, `gzip`, `br`, and `zst`
+- **Codec** — NDJSON chunk codec support for `none` (the default), `gzip`, `br`, and `zst`; a codec the runtime lacks falls back to `none` with a warning
 - **Archive Export** — Creates `.webblackbox` ZIP archives, always AES-GCM encrypted (`createWebBlackboxArchive`), and reads them back (`readWebBlackboxArchive`)
 - **PipelineStorage** — Abstract storage interface with in-memory (`MemoryPipelineStorage`) and IndexedDB (`IndexedDbPipelineStorage`) implementations, plus an encrypting wrapper (`EncryptedPipelineStorage`); the storage classes are also available from the `@webblackbox/pipeline/storage` subpath
 - **IndexedDB Quota Recovery** — Indexed storage evicts oldest sessions on quota pressure (best-effort)

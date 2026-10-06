@@ -75,7 +75,7 @@ Rotation pattern:
 Headers:
 
 - `content-type: application/octet-stream`
-- `x-webblackbox-filename: <optional>`: only its `.zip` / `.webblackbox` extension is kept; the stored name is `webblackbox-share-<id>.<ext>`
+- `x-webblackbox-filename: <optional>`: only its `.zip` / `.webblackbox` extension is kept; the record's download name is `webblackbox-share-<first 12 characters of the id>.<ext>` (`.webblackbox` unless the name ends in `.zip`)
 - `x-webblackbox-share-summary: <required URL-encoded JSON public summary computed client-side>`: without a summary whose privacy scanner ran before encryption, the upload is rejected with `422`
 - `x-webblackbox-share-ttl-ms: <optional requested TTL, clamped between 1 second and WEBBLACKBOX_SHARE_MAX_TTL_MS>`
 - `x-webblackbox-api-key: <key>` (or `authorization: Bearer <key>`): required when API keys are configured

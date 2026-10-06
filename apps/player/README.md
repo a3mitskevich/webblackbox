@@ -53,7 +53,7 @@ From the repo root, `pnpm player` does both (build, then serve on port 4177).
 - `__PLAYER_VERSION__` from `package.json`, source maps next to every chunk;
 - no `eval`/`Function`/WebAssembly and no runtime-injected `<style>`: the CSP is `script-src 'self'; style-src 'self'` (no `'unsafe-inline'`), CSS ships as files and fonts are never inlined as `data:` URIs (`e2e:player` scans the build and fails on any CSP violation).
 
-`pnpm bundle:size` (repo root) checks the entry chunk and the total of all JS and CSS files against `bundle-size/budgets.json`.
+`pnpm bundle:size` (repo root) checks the growth of the entry chunk `main.js` against the base branch's build (`delta` entries in `bundle-size/budgets.json`: more than 8% and more than 2 KB fails); it has no absolute Player budget and does not check other chunks or CSS.
 
 ## E2E
 
@@ -154,7 +154,7 @@ The Player opens archive formats 1 and 2 through `@webblackbox/player-sdk`, whic
 
 From the header "Generate" menu or the command palette, for the selected time range or the whole session:
 
-- Playwright test, and Playwright test with mocks (recorded responses served by `page.route`)
+- Playwright test, and Playwright test with mocks (recorded responses served by `context.route`)
 - Markdown bug report (also copied in one step)
 - HAR
 - GitHub and Jira issue payloads

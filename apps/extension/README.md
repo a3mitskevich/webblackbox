@@ -34,7 +34,7 @@ The extension consists of multiple main components:
 - Instantiates `WebBlackboxRecorder` for event normalization
 - Routes events between content scripts, CDP, and the pipeline
 - Handles session lifecycle (start, stop, freeze, export)
-- Captures storage snapshots, including cookies, through CDP storage commands
+- In `full`, captures storage snapshots, including cookies (`Network.getCookies`), through CDP
 - Manages the offscreen document lifecycle
 
 #### Content Script (`content.js`)
@@ -51,7 +51,7 @@ The extension consists of multiple main components:
 
 - Web-accessible resource injected into the page context
 - Intercepts console API calls (log, warn, error, etc.)
-- Monitors storage operations (localStorage, sessionStorage, IndexedDB, cookies)
+- Monitors storage operations (localStorage, sessionStorage, IndexedDB); cookie snapshots come from the content script (`document.cookie`) and, in `full`, from CDP
 - Communicates with the content script via `window.postMessage`
 
 #### Offscreen Document
@@ -76,14 +76,16 @@ The extension consists of multiple main components:
 #### Options Page (`options.html`)
 
 - Full recorder configuration UI (these general fields edit the `Default` profile)
-- Recording profiles: presets (read-only, duplicate to edit), capture level matrix, redaction / unmask lists, body filters, export requirements
+- Recording profiles: presets (read-only, duplicate to edit), capture level matrix, redaction / unmask lists, body filters, source maps, local retention of unexported recordings
 - Delete any profile (presets and `Default` included; not policy profiles) and "Restore recommended profiles"; recording needs at least one profile
-- Site rules that pick a profile (rules to a deleted profile are flagged and skipped), JSON import/export with a diff preview, redaction sandbox
+- Site rules that pick a profile (rules to a deleted profile are flagged and skipped), redaction sandbox
+- Pointer & input: pointer and scroll sampling
 - Sensitivity: masking rules (blocked selectors, header names, body keys)
 - Performance & sampling: page injection mode (see [Page injection](#page-injection)), the reload offer on Start, ring buffer and freeze-on-error, sampling cadence, screenshot cadence and the network body capture byte cap
 - Budgets: performance budget warnings and auto-freeze on breach
 - Export & encryption: archive size cap and recent window, and the [Player URL](../../docs/ENTERPRISE_ADMIN.md#player-url) used by "Export and open in Player" (empty by default, which hides that action)
 - Language: `Auto` (Chrome's language), English, Russian or Simplified Chinese
+- Import / Export: profiles and rules as JSON, with a diff preview
 
 #### Sessions Page (`sessions.html`)
 
@@ -109,8 +111,8 @@ How it works:
 - On Start, `content.js` is injected into every frame of the tab. While a tab is recorded, each frame it commits (reload, navigation, an iframe added later) gets the script as soon as `webNavigation.onCommitted` reports it (`injectImmediately`). That is early, but unlike `document_start` it is not guaranteed to run before the page's own scripts.
 - `content.js` runs once per frame: a second copy (registered plus injected) exits without touching the first, and the bundle is wrapped in its own scope so the second run cannot reset the running copy's state.
 - Tab and navigation listeners are attached only while something records, so idle navigations do not wake the service worker in either mode.
-- The store-safe build has no persistent host access, so it always injects on Start.
-- `<all_urls>` stays in both modes: `webRequest` (lite network baseline), `scripting.executeScript`, `registerContentScripts` and `captureVisibleTab` need host access.
+- The store-safe build has no persistent host access, so it always injects on Start. It also has no `webNavigation`, so frames a recorded tab commits later (reload, navigation, a new iframe) do not get the script there.
+- `<all_urls>` stays in both modes: `webRequest` (lite network baseline), `scripting.executeScript` and `registerContentScripts` need host access.
 
 Idle cost, measured with `pnpm e2e:injection:idle` (50 tabs, each a page with one iframe, headless Chrome 153):
 
@@ -125,21 +127,21 @@ Idle cost, measured with `pnpm e2e:injection:idle` (50 tabs, each a page with on
 
 ## Permissions
 
-| Permission      | Purpose                                                                                             |
-| --------------- | --------------------------------------------------------------------------------------------------- |
-| `debugger`      | CDP access for network, runtime, and page events                                                    |
-| `tabs`          | Tab information and URL access, other tabs of the recorded site                                     |
-| `scripting`     | Register the content script, or inject it on Start                                                  |
-| `storage`       | Extension settings, the per-browser-session at-rest key and stopped-session snapshots               |
-| `alarms`        | Delete stopped, unexported recordings when their retention ends                                     |
-| `offscreen`     | Pipeline processing in background                                                                   |
-| `tabCapture`    | Optional tab video in the Full engine                                                               |
-| `webRequest`    | Network request monitoring                                                                          |
-| `webNavigation` | Re-inject the content script into frames a recorded tab commits                                     |
-| `downloads`     | Archive file download                                                                               |
-| `<all_urls>`    | Host access for content script registration and injection, `webRequest` and screenshots on any page |
+| Permission      | Purpose                                                                               |
+| --------------- | ------------------------------------------------------------------------------------- |
+| `debugger`      | CDP access for network, runtime, and page events                                      |
+| `tabs`          | Tab information and URL access, other tabs of the recorded site                       |
+| `scripting`     | Register the content script, or inject it on Start                                    |
+| `storage`       | Extension settings, the per-browser-session at-rest key and stopped-session snapshots |
+| `alarms`        | Delete stopped, unexported recordings when their retention ends                       |
+| `offscreen`     | Pipeline processing in background                                                     |
+| `tabCapture`    | Optional tab video in the Full engine                                                 |
+| `webRequest`    | Network request monitoring                                                            |
+| `webNavigation` | Re-inject the content script into frames a recorded tab commits                       |
+| `downloads`     | Archive file download                                                                 |
+| `<all_urls>`    | Host access for content script registration and injection, `webRequest`               |
 
-This is the default (`dev`) build. The `store-safe` build (`node scripts/build-extension.mjs --profile store-safe`) requests `activeTab`, `alarms`, `downloads`, `offscreen`, `scripting`, `storage` and `tabCapture` only: no `debugger` (so no Full engine), `tabs`, `webRequest`, `webNavigation` or host permissions.
+This is the default (`dev`) build. The `store-safe` build (`node scripts/build-extension.mjs --profile store-safe`, after a `pnpm build` that writes the bundles) requests `activeTab`, `alarms`, `downloads`, `offscreen`, `scripting`, `storage` and `tabCapture` only: no `debugger` (so no Full engine), `tabs`, `webRequest`, `webNavigation` or host permissions.
 
 ## Keyboard Shortcuts
 
@@ -212,7 +214,7 @@ Build entries:
 2. Service worker resolves the profile (explicit choice or site rules), creates the session, initializes the recorder and, in `full` mode, attaches the CDP debugger; with "Reload and Start" it reloads the tab only once capture is live
 3. `content.js` is already running in every frame (registered at `document_start`) or, with injection on Start only, is injected into every frame of the tab now; frames the tab commits later get it as they commit
 4. Injected content capture begins streaming user events and DOM summaries
-5. In `lite` mode, injected script captures console/network/storage events
+5. In `lite` mode, the injected script captures console and storage events (its fetch/XHR hooks are off; network comes from the `webRequest` baseline)
 6. In `full` mode, CDP provides network, runtime exception, and page navigation events; `lite` uses a `webRequest` network baseline instead
 7. Service worker normalizes all events through the recorder
 8. Normalized events are batched and sent to the offscreen pipeline
@@ -249,7 +251,7 @@ The extension uses `@webblackbox/protocol`'s `RecorderConfig` for all settings. 
   - hot listeners, observers, and page-side capture loops stay inactive until recording is enabled, even when `content.js` is loaded at `document_start` (the default page injection mode)
 - `full`: same perf-freeze disable + stricter sampling/body-capture limits
   - page-side heavy capture loops (SnapDOM screenshots, outerHTML snapshots, storage snapshots) are skipped to reduce main-thread impact
-  - `injected` fetch/xhr/console patching is not enabled (CDP is the primary source in full mode)
+  - `injected` console patching is not enabled (CDP is the primary source in full mode); fetch/XHR hooks are off in both modes
   - screenshot/trace artifacts are still captured from the SW/CDP pipeline path
 
 Body capture sizing note:
@@ -263,7 +265,7 @@ The SW ↔ offscreen pipeline path also uses ingest batching with chunked drain 
 
 Users can still tune other settings through the Options page.
 
-Recording profiles sit on top of this: the popup's engine switch picks the transport (`lite` / `full`), unless the profile needs the Full engine and locks it, and the profile chosen in the popup (or by a site rule) decides capture levels, redaction, sampling, body filters, visual capture, source maps, local retention and export requirements. Presets: `Lite`, `Full`, `QA`, `Full capture`, plus the editable `Default` and your own profiles. See [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#recording-profiles) and [docs/PRIVACY.md](../../docs/PRIVACY.md#recording-profiles).
+Recording profiles sit on top of this: the popup's engine switch picks the transport (`lite` / `full`), unless the profile needs the Full engine and locks it, and the profile chosen in the popup (or by a site rule) decides capture levels, redaction, sampling, body filters, visual capture, source maps and local retention. Every export is encrypted and the privacy scanner only reports, whatever a profile's `export` block says. Presets: `Lite`, `Full`, `QA`, `Full capture`, plus the editable `Default` and your own profiles. See [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#recording-profiles) and [docs/PRIVACY.md](../../docs/PRIVACY.md#recording-profiles).
 
 ## Requirements
 

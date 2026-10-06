@@ -47,7 +47,7 @@ pnpm build
 ### Record with the Chrome extension
 
 1. Open `chrome://extensions/`, enable `Developer mode`, click `Load unpacked` and select `apps/extension/build`.
-2. Open the tab you want to test and click the WebBlackbox toolbar icon. Pick a recording profile, or leave `Auto (site rules)` so your site rules choose one, check the `Lite` / `Full` engine and press `Start`. The popup offers to reload the page right after the recording starts, so it captures the page load from scratch.
+2. Open the tab you want to test and click the WebBlackbox toolbar icon. Pick a recording profile, or leave `Auto (site rules)` so your site rules choose one, check the `Lite` / `Full` engine and press `Start`. The popup then offers to reload the page: the recording starts first and the page reloads after it, so the page load is captured from scratch.
 3. Reproduce the issue. `Marker` (or Ctrl/Cmd + Shift + M) flags the moment.
 4. Press `Stop`, then `Export` with a passphrase of at least 8 characters. Every archive is encrypted; there is no plaintext export. The Sessions page lists, filters and bulk-exports the recordings kept in this browser.
 
@@ -90,7 +90,7 @@ Point the extension at it: options page → `Export & encryption` → `Player UR
 - **Two engines.** `Lite` records page-side signals plus a browser-side network baseline, with minimal overhead. `Full` drives the Chrome DevTools Protocol for network (with bodies), navigation, runtime and screenshots. A profile that asks for something only `Full` can record (bodies, screenshots, tab video, whole console messages, CDP) locks the engine to `Full`. A recording stops if its profile changes after Start.
 - **Page reload offer.** Start asks whether to reload the page (`Reload and Start` / `Start Without Reload`), in both engines: the recording starts first, then the page reloads, so its first requests, scripts and early errors are captured. The question can be turned off in the options.
 - **Content script on demand.** A setting decides whether the extension's small content script runs in every page from `document_start` (the default, so pages a recorded tab loads later have it before their own code) or is injected only into the tab where a recording starts (nothing runs in pages you are not recording).
-- **Encrypted at rest.** Recordings kept in the browser are encrypted with a per-browser-session key held in `chrome.storage.session`. They are kept until the browser closes (or the extension reloads) or their retention ends; export what you want to keep.
+- **Encrypted at rest.** Recordings kept in the browser are encrypted with a per-browser-session key held in `chrome.storage.session`. A stopped recording that was not exported is deleted after 10 minutes by default (5 for `Full capture`; each profile sets its own time, up to 24 hours), and a successful export deletes the local copy by default. Closing the browser or reloading the extension loses the key, so nothing outlives the browser session; export what you want to keep.
 - **Exports are always encrypted.** AES-GCM with a PBKDF2-derived key (600,000 iterations) from a passphrase of at least 8 characters. Archive format 2 keeps only a minimal plaintext envelope (format version and encryption parameters); the full manifest is encrypted. Archives in the older format 1 still open.
 - **Masking is a tool, not a guarantee.** Each profile's redaction rules (blocked and unmasked selectors, header and body masking, URL stripping) hide what you choose, on a best-effort basis. The passphrase and the encryption are what protect a recording. A privacy scanner reports findings after an export without blocking it. See [Privacy Model](docs/PRIVACY.md).
 
@@ -102,10 +102,10 @@ Point the extension at it: options page → `Export & encryption` → `Player UR
 - **Other tabs of the site.** A snapshot of the recorded site's other tabs at start and their changes during the recording (opened, navigated, activated, closed, …), shown in the Player, the MCP tools and the bug report.
 - **Recording profiles and site rules**, with fine-grained sensitivity per category and export safeguards (see above).
 - **Russian locale.** The extension and the Player speak English, Russian and Simplified Chinese, with locale-aware formatting.
-- **The Player, rewritten in React.** Activity feed, network panel (headers, bodies with highlighting, WebSocket conversation view), console, storage, performance, session compare, element inspector, other tabs, code generators (curl, fetch, HAR, Playwright, bug report), command palette, keyboard shortcuts, download of the recorded tab video as a plain file, live language switch, light and dark themes, strict CSP.
+- **The Player, rewritten in React.** Activity feed, network panel (headers, bodies with highlighting, WebSocket conversation view), console, storage, performance, session compare, event inspector, other tabs, code generators (curl, fetch, HAR, Playwright, bug report), command palette, keyboard shortcuts, download of the recorded tab video as a plain file, live language switch, light and dark themes, strict CSP.
 - **MCP server hardening.** Archive content is marked as untrusted in tool results, and `--allow-dir` limits the directories the server may read archives from.
-- **Share server trust boundaries.** Forwarded headers are read only from configured trusted proxies, keyless loopback access is decided from the socket peer, a `Host` allowlist guards against DNS rebinding, the Player confirms `?share=` links to unknown origins, and audit events are written before the response is sent.
-- **Hardening across the stack.** Typed keys in editable and password fields are not recorded, body values and base64 bodies are masked, the recorder allowlists CDP Network fields, the Player SDK caps and validates untrusted archives on load, and generated replay code quotes archive values.
+- **Share server trust boundaries.** Forwarded headers are read only from configured trusted proxies, keyless loopback access is decided from the socket peer, a `Host` allowlist guards against DNS rebinding (always in keyless mode, opt-in with API keys), the Player confirms `?share=` links to unknown origins, and audit events are written before the response is sent.
+- **Hardening across the stack.** Typed keys in editable fields are kept only when the profile records inputs, and keys typed into password fields only when content masking is off (as in `Full capture`), body values and base64 bodies are masked, the recorder allowlists CDP Network fields, the Player SDK caps and validates untrusted archives on load, and generated replay code quotes archive values.
 
 ## What It Captures
 
@@ -134,12 +134,13 @@ A `.webblackbox` file is a ZIP archive (format 2) containing:
 
 - `manifest.json`: the plaintext envelope, only the format version and the encryption parameters
 - `meta/manifest.json`: the export metadata (encrypted)
+- `privacy/manifest.json`: the effective capture policy, per-category summaries and privacy scanner results (encrypted)
 - chunked NDJSON event streams
 - time, request and text indexes
 - content-addressed blobs for screenshots, tab video, DOM snapshots, captured bodies and source maps
 - integrity hashes for verification
 
-Everything except the envelope and the integrity hashes is encrypted with AES-GCM under a PBKDF2-derived key. The Player, the Player SDK and the MCP server read both format 2 and the older format 1.
+The contents of every file except the envelope and the integrity hashes are encrypted with AES-GCM under a PBKDF2-derived key; file names (chunk ids, blob hashes with their type extension) stay readable in the ZIP directory. The Player, the Player SDK and the MCP server read both format 2 and the older format 1.
 
 ## Documentation
 

@@ -174,8 +174,9 @@ Changesets is configured (`.changeset/config.json`, `pnpm changeset`, `pnpm vers
 Notes:
 
 - The extension manifest is generated at build time with the version from `apps/extension/package.json`, so there is nothing to sync.
+- This fork publishes no releases, so the two release workflows below are inherited from upstream and are not used here; they are described for completeness.
 - Publishing a GitHub release runs `.github/workflows/release.yml`: lint, typecheck, test and build, then `pnpm release` (`changeset publish`) publishes the npm packages with npm trusted publishing.
-- `.github/workflows/release-assets.yml` uploads the Chrome extension ZIP to the release and deploys the hosted Player to GitHub Pages.
+- `.github/workflows/release-assets.yml` uploads the Chrome extension ZIP to the release and deploys the Player to GitHub Pages (see [apps/player/README.md](apps/player/README.md) for the `--site-url` caveat).
 
 ## Architecture Touchpoints
 

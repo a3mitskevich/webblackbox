@@ -7,7 +7,7 @@ This document describes the high-level architecture of WebBlackbox, the design d
 WebBlackbox is a three-tier core system with an optional collaboration tier:
 
 1. **Recording Tier** — A Chrome extension (or the embeddable `webblackbox` lite SDK) captures events from multiple sources
-2. **Processing Tier** — A pipeline chunks, compresses, indexes, and archives events
+2. **Processing Tier** — A pipeline chunks, indexes, encrypts and archives events
 3. **Playback Tier** — A Player SDK, the React Player UI and the MCP server provide analysis and visualization
 4. **Collaboration Tier (optional)** — `share-server` stores uploaded archives and emits redacted secondary indexes for share links
 
@@ -196,9 +196,9 @@ The recorder evaluates freeze conditions on every event:
 - **Error freeze** — Uncaught JavaScript exceptions or unhandled promise rejections
 - **Network freeze** — 3 failed requests within 10 seconds
 - **Performance freeze** — Long tasks of 200ms or more
-- **Manual freeze** — User-triggered markers (Ctrl+Shift+M)
+- **Marker freeze** — User-triggered markers (Ctrl/Cmd+Shift+M), reason `marker`
 
-When a freeze is triggered, the ring buffer contents are preserved, providing full context around the issue. The extension turns the network and performance freezes off in both modes (`applyModeProductBoundary` in `apps/extension/src/shared/mode-profile.ts`); error and marker freezes stay on.
+When a freeze is triggered, the ring buffer contents are preserved, providing full context around the issue. The extension turns the network and performance freezes off in both modes (`applyModeProductBoundary` in `apps/extension/src/shared/mode-profile.ts`); the marker freeze is always on, and the error freeze is on by default (`freezeOnError`, which the options and profiles can turn off).
 
 ## Processing Architecture
 
@@ -207,7 +207,7 @@ When a freeze is triggered, the ring buffer contents are preserved, providing fu
 Events are grouped into size-bounded chunks (default: 512KB). Each chunk is:
 
 1. Serialized as NDJSON (newline-delimited JSON)
-2. Encoded with chunk codecs (`none`, `gzip`, `br`, `zst`)
+2. Encoded with the pipeline's chunk codec: `none` by default, which the extension and the lite SDK keep, so their archives hold plain NDJSON (the ZIP itself is written with `STORE`); `gzip`, `br` and `zst` are available and fall back to `none` when the runtime lacks them
 3. Hashed with SHA-256 for integrity
 4. Stored with metadata (timestamps, event count, byte length)
 
@@ -217,7 +217,7 @@ Events inside a chunk stay in arrival order, which is **not** `mono` order: page
 
 Three indexes are built for efficient querying:
 
-1. **Time Index** — Maps timestamp ranges to chunks for O(log n) time-based lookup
+1. **Time Index** — Maps timestamp ranges to chunks, so a time-range query decodes only the chunks that overlap it
 2. **Request Index** — Maps network request IDs to event IDs for request tracing
 3. **Inverted Index** — Maps searchable terms to event IDs for full-text search
 
@@ -333,7 +333,7 @@ Each context is its own tsup entry (`sw`, `content`, `content-agent`, `offscreen
 - Sensitive headers are redacted before entering the pipeline
 - Content masking follows each profile's redaction rules (best effort, no guarantee): body keys and value patterns, blocked selectors, header/cookie/query/storage rules, and the optional built-in heuristics; `contentRedaction: false` records content as captured
 - Every archive is encrypted with AES-GCM
-- In the extension, everything in the pipeline IndexedDB (chunks, blobs, indexes, integrity, session metadata) is encrypted with AES-GCM under a per-browser-session key held only in `chrome.storage.session`; the offscreen document imports it non-extractable. A new key (browser or extension restart) deletes the database. Stopped recordings survive service worker restarts: a snapshot in `chrome.storage.session` lets a new worker rebuild them, and a `chrome.alarms` alarm deletes them when their retention ends. See [PRIVACY.md](PRIVACY.md#local-storage).
+- In the extension, everything in the pipeline IndexedDB (chunks, blobs, indexes, integrity, session metadata) is encrypted with AES-GCM under a per-browser-session key held only in `chrome.storage.session`; the offscreen document imports it non-extractable. A new key (browser or extension restart) makes older sessions unreadable, and the offscreen document deletes them before it uses the storage. Stopped recordings survive service worker restarts: a snapshot in `chrome.storage.session` lets a new worker rebuild them, and a `chrome.alarms` alarm deletes them when their retention ends. See [PRIVACY.md](PRIVACY.md#local-storage).
 
 ### Encryption Details
 
@@ -346,5 +346,5 @@ Each context is its own tsup entry (`sw`, `content`, `content-agent`, `offscreen
 ### Permission Model
 
 - The default (`dev`) build requests `debugger` for CDP access and `<all_urls>` host access, which `webRequest`, `scripting.executeScript`, the dynamic content script registration and `captureVisibleTab` need
-- The `store-safe` build profile drops `debugger` and persistent host access and uses `activeTab`, so the content script is injected only on Start
+- The `store-safe` build profile drops `debugger`, `tabs`, `webRequest`, `webNavigation` and persistent host access and uses `activeTab`, so the content script is injected only on Start, and that build has no Full CDP capture and no Lite `webRequest` network baseline, and the other-tabs context cannot read other tabs' addresses and titles
 - Users must explicitly grant permissions during installation
