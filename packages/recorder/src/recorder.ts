@@ -1,6 +1,7 @@
 import {
   DEFAULT_CAPTURE_POLICY,
   EventIdFactory,
+  type BodySkipReason,
   type CapturePolicy,
   type FreezeReason,
   type PrivacyClassification,
@@ -10,6 +11,7 @@ import {
 } from "@webblackbox/protocol";
 
 import { ActionSpanTracker } from "./action-span.js";
+import { BrowserInternalNetworkFilter } from "./browser-internal-network.js";
 import { applyErrorTextPolicy } from "./error-text-policy.js";
 import { FreezePolicy } from "./freeze.js";
 import { sanitizeKeydownPayload } from "./keydown-privacy.js";
@@ -30,9 +32,10 @@ export type RecorderHooks = {
   onFreeze?: (reason: FreezeReason, event: WebBlackboxEvent) => void;
   /**
    * Extra gate for inline body text the `body-allowlist` policy would keep (request `postData`,
-   * WebSocket preview, SSE `data`), e.g. site policies. Returning false keeps only sizes.
+   * WebSocket preview, SSE `data`), e.g. site policies. Returning false or a skip reason keeps
+   * only sizes; a dropped request body is marked with `request.postDataSkipped`.
    */
-  shouldKeepInlineNetworkBody?: (context: InlineNetworkBodyContext) => boolean;
+  shouldKeepInlineNetworkBody?: (context: InlineNetworkBodyContext) => boolean | BodySkipReason;
 };
 
 export class WebBlackboxRecorder {
@@ -43,6 +46,9 @@ export class WebBlackboxRecorder {
   private readonly actionSpanTracker: ActionSpanTracker;
 
   private readonly freezePolicy: FreezePolicy;
+
+  // Extension and browser-internal requests are never the recorded app's traffic.
+  private readonly browserInternalNetworkFilter = new BrowserInternalNetworkFilter();
 
   private readonly pluginContext: RecorderPluginContext;
 
@@ -74,7 +80,10 @@ export class WebBlackboxRecorder {
 
     const normalized = this.normalizer.normalize(nextRawEvent);
 
-    if (!normalized) {
+    if (
+      !normalized ||
+      this.browserInternalNetworkFilter.shouldDrop(normalized.eventType, normalized.payload)
+    ) {
       return {};
     }
 
