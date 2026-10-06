@@ -1,0 +1,205 @@
+/* Storage rail tab (R4). Scoped to .st*; tokens from styles/next.css. */
+.st-tools {
+  flex-wrap: wrap;
+}
+.st-tools .field {
+  flex: 1 1 180px;
+}
+.st-state {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 16px;
+}
+.st-note {
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.st-note.bad {
+  color: var(--bad);
+}
+.st-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12.5px;
+}
+.st-table th {
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--line-2);
+  color: var(--ink-3);
+  font-weight: 500;
+  text-align: left;
+}
+.st-table th:first-child {
+  width: 34%;
+}
+.st-table th:last-child {
+  width: 22%;
+}
+.st-table td {
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--line-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+.st-table td.key {
+  font-weight: 600;
+}
+.st-table tr.recent {
+  background: var(--warn-soft);
+}
+.st-table td.flags {
+  white-space: normal;
+}
+.st-table .tag,
+.st-row .tag {
+  display: inline-block;
+  margin: 0 4px 2px 0;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--line-2);
+  color: var(--ink-2);
+  font: 11px var(--mono);
+}
+.st-tools ~ * .linklike,
+.st-state .linklike {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+.st-idb {
+  padding: 4px 0;
+}
+.st-db h4 {
+  margin: 10px 14px 4px;
+  font-size: 13px;
+}
+.st-store .store-name {
+  margin: 6px 14px 2px;
+  font-size: 12.5px;
+}
+.st-log {
+  font-size: 12.5px;
+}
+.st-row {
+  display: grid;
+  grid-template-columns: 52px 74px 82px minmax(0, 0.9fr) minmax(0, 1.4fr);
+  gap: 8px;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px 0 6px;
+  border-bottom: 1px solid var(--line-2);
+  cursor: pointer;
+}
+.st-row:hover {
+  background: var(--surface-2);
+}
+.st-row time {
+  font: 12px var(--mono);
+  color: var(--ink-3);
+  text-align: right;
+}
+.st-row .area {
+  justify-self: start;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: var(--line-2);
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+.st-row .area-cookie {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.st-row .area-idb {
+  background: var(--ws-soft);
+  color: var(--ws);
+}
+.st-row .op {
+  color: var(--ink-2);
+}
+.st-row .key,
+.st-row .val {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-row .key {
+  font-weight: 600;
+}
+.st-row .val {
+  color: var(--ink-3);
+}
+.st-row.future,
+.st-row.future .key {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.st-row.cur {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--playhead);
+}
+.st-details-body {
+  padding: 8px 14px 14px;
+  overflow: auto;
+  font-size: 12.5px;
+}
+.st-details-body .muted {
+  margin: 0 0 6px;
+}
+.st-value {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font: 12px/1.5 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow: auto;
+}
+.st-value.del {
+  background: var(--bad-soft);
+}
+.st-value .ins {
+  background: color-mix(in srgb, var(--ok) 22%, transparent);
+}
+.st-value .del {
+  background: var(--bad-soft);
+  text-decoration: line-through;
+}
+.st-value .elided {
+  color: var(--ink-3);
+}
+.st-fields {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.st-fields .fd {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+.st-fields .path {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.st-fields .fd-added {
+  color: var(--ok);
+}
+.st-fields .fd-removed {
+  color: var(--bad);
+}

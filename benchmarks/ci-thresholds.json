@@ -15,5 +15,13 @@
     "blobPutLatencyGrowthMax": 2,
     "defaultExportMaxMs": 12000,
     "defaultExportPeakRssMaxMb": 600
+  },
+  "player": {
+    "minEvents": 50000,
+    "openMaxMs": 1500,
+    "modelBuildMaxMs": 4000,
+    "derivationsMaxMs": 1500,
+    "tickP95MaxMs": 4,
+    "renderTickP95MaxMs": 100
   }
 }

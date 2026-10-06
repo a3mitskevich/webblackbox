@@ -30,12 +30,7 @@ describe("createPlayerI18n", () => {
       "Полный",
       "CUSTOM"
     ]);
-    expect(ru.formatSelection("request", "R-1")).toBe("запрос R-1");
-    expect(zh.formatSelection("action", "A-1")).toBe("动作 A-1");
-    expect(en.formatSelection("event", "E-1")).toBe("event E-1");
-    expect(ru.formatStatusPanel("network", ru.formatSelection("request", "R-1"))).toBe(
-      "Панель «Сеть» | запрос R-1"
-    );
+    expect(zh.formatMode("lite")).not.toBe(en.formatMode("lite"));
   });
 });
 

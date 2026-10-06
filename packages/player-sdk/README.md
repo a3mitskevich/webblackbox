@@ -293,6 +293,19 @@ const harJson = player.exportHar();
 const harPartial = player.exportHar({ monoStart: 0, monoEnd: 30000 });
 ```
 
+### Tab Video
+
+```typescript
+// One segment per recordingId (a restarted recording adds a part), in start order
+const [segment] = player.getScreenRecordings();
+// { recordingId, part, durationMs, size, mime, chunkCount, missingChunks: [], ... }
+
+// The chunks joined in order; Chrome's live WebM gets a Duration and Cues so players seek
+const video = await player.getScreenRecordingBlob(segment.recordingId);
+// { bytes, mime: "video/webm;codecs=vp9", durationMs, seekable: true }
+// Missing chunks throw ScreenRecordingIncompleteError (error.missing lists each index)
+```
+
 ### Bug Report
 
 ```typescript

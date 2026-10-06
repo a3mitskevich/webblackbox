@@ -8,7 +8,7 @@ export function prefixValue(prefix: number[], index: number): number {
 }
 
 export function upperBoundByMono<T>(
-  items: T[],
+  items: readonly T[],
   mono: number,
   pickMono: (item: T) => number
 ): number {
@@ -35,7 +35,7 @@ export function upperBoundByMono<T>(
 }
 
 export function lowerBoundByMono<T>(
-  items: T[],
+  items: readonly T[],
   mono: number,
   pickMono: (item: T) => number
 ): number {

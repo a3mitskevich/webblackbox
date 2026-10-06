@@ -1,0 +1,106 @@
+/* Share (R4): the header menu and dialogs. Scoped to .share*; tokens from styles/next.css. */
+.share-menu-layer {
+  z-index: 40;
+}
+.share-menu {
+  min-width: 240px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  outline: 0;
+}
+.share-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+  outline: 0;
+}
+.share-menu-item[data-highlighted] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.share-menu-item[data-disabled] {
+  color: var(--ink-3);
+  cursor: default;
+}
+.share-form {
+  gap: 10px;
+}
+.share-preflight {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line));
+  border-radius: 9px;
+  background: var(--warn-soft);
+  font-size: 12.5px;
+}
+.share-preflight h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.share-preflight ul,
+.share-samples {
+  margin: 0;
+  padding-left: 18px;
+}
+.share-samples {
+  margin-top: 6px;
+}
+.share-samples li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+.share-samples .tag {
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 11px;
+}
+.share-samples code {
+  font: 11.5px var(--mono);
+}
+.share-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.share-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+}
+.share-progress progress {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.share-result {
+  display: flex;
+  gap: 8px;
+}
+.share-result .text-input {
+  flex: 1;
+}
+.share-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bad-soft);
+  color: var(--bad);
+  font: 12.5px var(--mono);
+  overflow-wrap: anywhere;
+}
