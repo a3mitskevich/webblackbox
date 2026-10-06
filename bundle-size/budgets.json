@@ -14,9 +14,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 160200,
-      "maxGzipBytes": 39800,
-      "note": "Combined integration of the 8 open PRs and #21 on main, measured 155,484 / 38,623 B (+3%): #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, #16's tabs context and #21's capture completeness report."
+      "maxBytes": 199000,
+      "maxGzipBytes": 49500,
+      "note": "Combined integration of the 8 open PRs and #21 on main, measured 155,484 / 38,623 B: #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, #16's tabs context and #21's capture completeness report. Player rewrite (PR #20) R2 third-party classifier and problem grouping, R4 console entries, storage state, perf series and endpoint alignment (R4 alone +11.7 KB / +3.6 KB gzip minified): measured 193,085 / 47,968 B (+3%)."
     },
     {
       "path": "apps/player/build/main.js",
@@ -27,9 +27,9 @@
     {
       "dir": "apps/player/build",
       "extensions": [".js", ".css"],
-      "maxBytes": 1250000,
-      "maxGzipBytes": 370000,
-      "note": "All Player JS and CSS files of the Vite build (classic UI, React UI, React, Zod, SDK; gzip summed per file). Stage V measured 1,024,386 / 307,809 B; the React UI chunk grew by 215 KB / 70 KB gzip with the vetted libraries (Base UI Dialog/Tabs/Tooltip/CSPProvider 51.8 KB gzip, react-resizable-panels 19.8 KB, @tanstack/react-virtual 7.8 KB, lucide-react 26 icons 4.2 KB, react-hotkeys-hook 2.6 KB, react-error-boundary 0.6 KB). Budget = +20% (the same headroom as the former single-bundle budget); later stages raise it with a note naming the library."
+      "maxBytes": 2000000,
+      "maxGzipBytes": 545000,
+      "note": "All Player JS and CSS files of the Vite build (classic UI, React UI, React, Zod, SDK; gzip summed per file). Stage V measured 1,024,386 / 307,809 B; the React UI chunk grew by 215 KB / 70 KB gzip with the vetted libraries (Base UI Dialog/Tabs/Tooltip/CSPProvider 51.8 KB gzip, react-resizable-panels 19.8 KB, @tanstack/react-virtual 7.8 KB, lucide-react 26 icons 4.2 KB, react-hotkeys-hook 2.6 KB, react-error-boundary 0.6 KB). Budget = +20% (the same headroom as the former single-bundle budget); later stages raise it with a note naming the library. R4 measured 1,817,390 / 493,472 B (+10%), all in lazy chunks: Shiki fine-grained (core 35.1 KB, JavaScript regex engine 20.1 KB, JavaScript and TypeScript grammars 16.2 + 15.7 KB, GitHub light/dark themes 5.2 KB gzip; loaded with the first console source snippet), uPlot 21.9 KB (Perf tab), jsdiff 3.5 KB and microdiff 0.5 KB (Storage and Compare tabs), Base UI Menu/Popover, and the Console, Storage, Tabs, Perf, Compare and Share panels (~30 KB)."
     },
     {
       "path": "apps/extension/build/sw.js",
