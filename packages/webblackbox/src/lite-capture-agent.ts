@@ -20,11 +20,6 @@ import {
   isPageEventKeptInFullMode
 } from "./capture-scope.js";
 import {
-  INJECTED_MESSAGE_SOURCE,
-  INJECTED_RAW_EVENT_TYPES,
-  type InjectedCaptureWindowMessage
-} from "./injected-hooks.js";
-import {
   SCRIPT_SOURCE_MAP_RAW_TYPE,
   startScriptSourceMapScanner
 } from "./script-source-map-scanner.js";
@@ -47,6 +42,7 @@ import {
   EVENT_BUFFER_SOFT_LIMIT,
   LiteEventBuffer
 } from "./lite-event-buffer.js";
+import { installInjectedBridgeListener } from "./lite-injected-bridge.js";
 import { LiteInputCapture } from "./lite-input-capture.js";
 import {
   installPerformanceObservers,
@@ -101,8 +97,6 @@ const LONG_TASK_PRESSURE_EXTENDED_COOLDOWN_MS = 3_000;
 const RAF_PRESSURE_COOLDOWN_MS = 1_400;
 const MUTATION_DETAIL_RECORD_LIMIT = 160;
 const MUTATION_DETAIL_BUFFER_LIMIT = 240;
-const INJECTED_RAW_EVENT_TYPE_SET: ReadonlySet<string> = new Set(INJECTED_RAW_EVENT_TYPES);
-
 const FULL_MODE_SKIPPED_RAW_TYPES = new Set([
   "scroll",
   "mutation",
@@ -372,68 +366,6 @@ export class LiteCaptureAgent {
     this.hasCapturedScreenshot = false;
   }
 
-  private installInjectedMessageBridge(): void {
-    this.listen(window, "message", (event: MessageEvent<unknown>) => {
-      if (event.source !== window) {
-        return;
-      }
-
-      const data = event.data as InjectedCaptureWindowMessage | undefined;
-
-      if (!data || data.source !== INJECTED_MESSAGE_SOURCE) {
-        return;
-      }
-
-      // Page scripts share the window with the injected hooks and can post look-alike
-      // messages; once the host set a session nonce, unstamped messages are forgeries.
-      if (this.injectedBridgeNonce !== null && data.nonce !== this.injectedBridgeNonce) {
-        return;
-      }
-
-      if (data.kind === "capture-event" && typeof data.rawType === "string") {
-        this.queueInjectedRawEvent(data);
-        return;
-      }
-
-      if (data.kind === "capture-events" && Array.isArray(data.events)) {
-        for (const item of data.events) {
-          if (item && typeof item.rawType === "string") {
-            this.queueInjectedRawEvent(item);
-          }
-        }
-
-        return;
-      }
-
-      if (data.kind === "marker") {
-        this.emitMarker(typeof data.message === "string" ? data.message : "Marker");
-      }
-    });
-  }
-
-  private queueInjectedRawEvent(event: {
-    rawType: string;
-    payload?: Record<string, unknown>;
-    t?: number;
-    mono?: number;
-  }): void {
-    // Only raw types the hooks emit. Script records ("script") make the extension fetch source
-    // maps, so they come from the scanner only, never from page-world messages.
-    if (!INJECTED_RAW_EVENT_TYPE_SET.has(event.rawType)) {
-      return;
-    }
-
-    this.queueRawEvent({
-      source: "content",
-      rawType: event.rawType,
-      tabId: this.tabId,
-      sid: this.sid,
-      t: typeof event.t === "number" ? event.t : Date.now(),
-      mono: typeof event.mono === "number" ? event.mono : monotonicTime(),
-      payload: event.payload ?? {}
-    });
-  }
-
   private installPerformanceCapture(): void {
     installPerformanceObservers({
       mode: () => this.mode,
@@ -632,7 +564,14 @@ export class LiteCaptureAgent {
       this.installPerformanceCapture();
     }
 
-    this.installInjectedMessageBridge();
+    installInjectedBridgeListener({
+      listen: (target, type, listener, options) => this.listen(target, type, listener, options),
+      nonce: () => this.injectedBridgeNonce,
+      queueRawEvent: (event) => this.queueRawEvent(event),
+      emitMarker: (message) => this.emitMarker(message),
+      tabId: () => this.tabId,
+      sid: () => this.sid
+    });
     this.captureInstalled = true;
     this.emitLifecycleEvent("visibilitychange", { state: document.visibilityState });
   }
