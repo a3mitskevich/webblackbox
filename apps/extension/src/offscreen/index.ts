@@ -1,4 +1,4 @@
-import { FlightRecorderPipeline } from "@webblackbox/pipeline";
+import { createArchiveBlobSink, FlightRecorderPipeline } from "@webblackbox/pipeline";
 import type {
   CapturePolicy,
   PrivacyScannerResult,
@@ -305,6 +305,8 @@ async function processPipelineRequest(message: OffscreenPipelineRequest): Promis
       session: message.session,
       storage,
       maxChunkBytes: 512 * 1024,
+      // NDJSON compresses several times over: smaller chunks at rest and in the archive.
+      chunkCodec: "gzip",
       redactionProfile: message.redactionProfile,
       capturePolicy: message.capturePolicy
     });
@@ -371,7 +373,9 @@ async function processPipelineRequest(message: OffscreenPipelineRequest): Promis
   }
 
   if (message.op === "exportDownload") {
-    const exported = await pipeline.exportBundle({
+    // Streamed into Blob segments: the archive never sits in the page as one array.
+    const archive = createArchiveBlobSink();
+    const exported = await pipeline.exportArchive(archive.sink, {
       passphrase: message.passphrase,
       includeScreenshots: message.includeScreenshots,
       includeScreenRecordings: message.includeScreenRecordings,
@@ -380,7 +384,7 @@ async function processPipelineRequest(message: OffscreenPipelineRequest): Promis
     });
     return downloadExportedBundle(
       exported.fileName,
-      exported.bytes,
+      archive.toBlob("application/zip"),
       exported.integrity,
       exported.privacyManifest.scanner
     );
@@ -796,7 +800,7 @@ function normalizePositiveNumber(value: unknown): number | undefined {
 
 async function downloadExportedBundle(
   fileName: string,
-  bytes: Uint8Array,
+  blob: Blob,
   integrity: unknown,
   privacyScanner: PrivacyScannerResult
 ): Promise<{
@@ -806,20 +810,13 @@ async function downloadExportedBundle(
   integrity: unknown;
   privacyScanner: PrivacyScannerResult;
 }> {
-  const blobPart: BlobPart =
-    bytes.byteOffset === 0 &&
-    bytes.byteLength === bytes.buffer.byteLength &&
-    bytes.buffer instanceof ArrayBuffer
-      ? bytes.buffer
-      : Uint8Array.from(bytes);
-  const blob = new Blob([blobPart], { type: "application/zip" });
   const downloadUrl = URL.createObjectURL(blob);
 
   scheduleObjectUrlRevoke(downloadUrl);
 
   return {
     fileName,
-    sizeBytes: bytes.byteLength,
+    sizeBytes: blob.size,
     downloadUrl,
     integrity,
     privacyScanner

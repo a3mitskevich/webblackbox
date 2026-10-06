@@ -90,6 +90,8 @@ export class WebBlackboxLiteSdk {
       session: this.session,
       storage: this.storage,
       maxChunkBytes: options.maxChunkBytes,
+      // Falls back to "none" per chunk where CompressionStream is unavailable.
+      chunkCodec: "gzip",
       redactionProfile: this.config.redaction,
       capturePolicy: this.config.capturePolicy
     });
