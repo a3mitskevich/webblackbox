@@ -61,6 +61,9 @@ const FeedRow = memo(function FeedRow({
 }: FeedRowProps) {
   const { item } = entry;
   const text = useMemo(() => describeFeedItem(item, context), [item, context]);
+  const repeatHint = entry.expanded
+    ? context.t("collapseRepeats")
+    : context.t("expandRepeats", { count: entry.count });
   const classes = [
     "fi",
     `tone-${text.tone}`,
@@ -100,14 +103,12 @@ const FeedRow = memo(function FeedRow({
           {text.code !== null ? <span className="code mono">{text.code}</span> : null}
           {entry.count > 1 ? (
             // Not a button inside the option (axe nested-interactive): the pointer clicks it,
-            // the keyboard opens and closes the group with → / ← on the row.
+            // the keyboard opens and closes the group with → / ← on the row. The hidden text
+            // tells screen readers whether the group is open (aria-expanded is not allowed on an
+            // option).
             <span
               className="rep"
-              title={
-                entry.expanded
-                  ? context.t("collapseRepeats")
-                  : context.t("expandRepeats", { count: entry.count })
-              }
+              title={repeatHint}
               onClick={(event) => {
                 event.stopPropagation();
                 onToggle(item.eventId);
@@ -115,6 +116,7 @@ const FeedRow = memo(function FeedRow({
               data-testid="repeat-toggle"
             >
               {context.t("repeatCount", { count: entry.count })}
+              <span className="visually-hidden"> ({repeatHint})</span>
             </span>
           ) : null}
           {text.lead ? <span className="lead">{text.lead}</span> : null}
