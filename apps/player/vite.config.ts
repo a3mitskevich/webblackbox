@@ -12,8 +12,9 @@ const playerVersion =
     : "0.0.0";
 
 /**
- * Dev server only: React refresh injects an inline preamble script and HMR talks over ws:, which
- * the production policy (script-src 'self') forbids. Production builds keep index.html as is.
+ * Dev server only: React refresh injects an inline preamble script, HMR talks over ws: and Vite
+ * injects CSS modules as <style> elements, which the production policy (script-src 'self',
+ * style-src 'self') forbids. Production builds keep index.html as is.
  */
 function devContentSecurityPolicy(): Plugin {
   return {
