@@ -53,7 +53,6 @@ async function mount(options: { requestSave?: () => Promise<boolean> } = {}) {
     chromeApi,
     t,
     locale: "en",
-    legacyOptionsKey: "webblackbox.options",
     enterprisePolicyKey: "enterprisePolicy",
     ...(options.requestSave ? { requestSave: options.requestSave } : {})
   });

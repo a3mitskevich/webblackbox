@@ -1,7 +1,7 @@
 /**
  * Whether Start asks to reload the page first ("Start with page reload" / "Start without
  * reload"), in both engines. A popup preference under its own storage key: it is not a recorder
- * setting, so it stays out of `webblackbox.options` (folded into the Default profile).
+ * setting, so it stays out of the recording profiles.
  */
 
 export const START_RELOAD_OFFER_STORAGE_KEY = "webblackbox.startReloadOffer";

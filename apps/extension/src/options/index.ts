@@ -1,5 +1,3 @@
-import { DEFAULT_RECORDER_CONFIG, type RecorderConfig } from "@webblackbox/protocol";
-
 import { getChromeApi } from "../shared/chrome-api.js";
 import {
   CONTENT_INJECTION_STORAGE_KEY,
@@ -14,11 +12,11 @@ import {
   saveExtensionLocalePreference,
   type ExtensionLocalePreference
 } from "../shared/i18n.js";
+import { ENTERPRISE_POLICY_STORAGE_KEY } from "../shared/options-storage.js";
 import {
-  ENTERPRISE_POLICY_STORAGE_KEY,
-  migrateStoredRecorderConfig
-} from "../shared/options-storage.js";
-import { normalizePerformanceBudget } from "../shared/performance-budget.js";
+  normalizePerformanceBudget,
+  PERFORMANCE_BUDGET_STORAGE_KEY
+} from "../shared/performance-budget.js";
 import {
   loadManagedPlayerUrl,
   normalizePlayerUrl,
@@ -28,13 +26,16 @@ import {
   normalizeStartReloadOffer,
   START_RELOAD_OFFER_STORAGE_KEY
 } from "../shared/start-reload-offer.js";
-import { PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
+import { PROFILES_STORAGE_KEY, type RecordingProfilesStore } from "../shared/profiles/model.js";
 import {
   applyDefaultProfileToGeneralForm,
+  applyGeneralFormToDefaultProfile,
+  createDefaultProfilesStore,
   parseProfilesStore,
   serializeProfilesStore,
-  syncDefaultProfileWithLegacyOptions
+  type GeneralFormFields
 } from "../shared/profiles/storage.js";
+import { migrateSettingsStorage } from "../shared/settings-migration.js";
 import { el } from "../shared/ui/dom.js";
 import {
   fieldGroup,
@@ -49,12 +50,12 @@ import {
   findField,
   isArchiveChanged,
   isInjectionChanged,
+  isPerformanceBudgetChanged,
   isPlayerUrlChanged,
+  isRecorderFieldsChanged,
   isStartReloadOfferChanged,
-  isStoredOptionsChanged,
-  normalizeOptionsConfig,
   resetGeneralSection,
-  toStoredOptionsPayload,
+  toGeneralFormFields,
   type GeneralDraft,
   type GeneralSectionId
 } from "./general-model.js";
@@ -73,7 +74,6 @@ import {
 import { installSectionLeaveGuard } from "./leave-guard.js";
 import { mountProfilesEditor, type ProfilesEditorHandle } from "./profiles-editor.js";
 
-const STORAGE_KEY = "webblackbox.options";
 const GENERAL_SECTIONS: readonly GeneralSectionId[] = [
   "sensitivity",
   "pointer",
@@ -121,6 +121,14 @@ if (root) {
 
 async function bootstrap(container: HTMLElement): Promise<void> {
   const shell = createSettingsShell(t, extensionVersion);
+  // The service worker migrates at its start too; whichever runs first wins, the other finds the
+  // settings current. Waiting here keeps the page from showing (and saving over) v1 values.
+  const migration = await migrateSettingsStorage(chromeApi?.storage?.local);
+
+  if (migration.status === "failed") {
+    throw new Error(migration.error);
+  }
+
   const loaded = await loadGeneralDraft();
   const generalHosts = Object.fromEntries(
     GENERAL_SECTIONS.map((section) => [section, el("div")])
@@ -160,7 +168,6 @@ async function bootstrap(container: HTMLElement): Promise<void> {
       chromeApi,
       t,
       locale,
-      legacyOptionsKey: STORAGE_KEY,
       enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY,
       onChange: () => refreshSaveBar(page),
       requestSave: () => saveAndConfirm(page),
@@ -298,7 +305,8 @@ async function applyManagedGeneralValues(page: PageState): Promise<void> {
 
 function isDirty(page: PageState): boolean {
   return (
-    isStoredOptionsChanged(page.draft, page.baseline) ||
+    isRecorderFieldsChanged(page.draft, page.baseline) ||
+    isPerformanceBudgetChanged(page.draft, page.baseline) ||
     isArchiveChanged(page.draft, page.baseline) ||
     isInjectionChanged(page.draft, page.baseline) ||
     isStartReloadOfferChanged(page.draft, page.baseline) ||
@@ -352,9 +360,9 @@ function refreshSaveBar(page: PageState): void {
 }
 
 /**
- * Saves the general options, the archive preferences and the profiles store. The profiles store
- * is only written when the editor itself changed something; otherwise a general save only syncs
- * an existing store's Default profile, as before (no store is created behind the user's back).
+ * Saves the general settings, the archive preferences and the profiles store. The general form's
+ * recorder fields live in the Default profile: they are folded into the editor's draft when the
+ * editor has changes of its own (one store write), else written into the stored profiles.
  */
 async function saveAll(page: PageState): Promise<void> {
   if (!page.editorReady || page.errors.size > 0 || page.saving) {
@@ -366,38 +374,39 @@ async function saveAll(page: PageState): Promise<void> {
 
   try {
     const editor = await page.editorReady;
-    const generalChanged = isStoredOptionsChanged(page.draft, page.baseline);
+    const recorderChanged = isRecorderFieldsChanged(page.draft, page.baseline);
+    const budgetChanged = isPerformanceBudgetChanged(page.draft, page.baseline);
     const archiveChanged = isArchiveChanged(page.draft, page.baseline);
     const injectionChanged = isInjectionChanged(page.draft, page.baseline);
     const startReloadOfferChanged = isStartReloadOfferChanged(page.draft, page.baseline);
     const playerUrlChanged = isPlayerUrlChanged(page.draft, page.baseline);
     const profilesChanged = editor.isDirty();
-    // Nothing is written when the profiles draft cannot be saved, so a failed Save never leaves
-    // the general options ahead of the Default profile they are folded into.
+    // Nothing is written when the profiles draft cannot be saved.
     const validation = profilesChanged ? editor.validate() : { ok: true as const };
 
     if (!validation.ok) {
       throw new Error(validation.error);
     }
 
-    if (generalChanged) {
-      const payload = toStoredOptionsPayload(page.draft);
+    if (budgetChanged) {
+      // The service worker reads this key when a recording starts.
+      await chromeApi?.storage?.local.set({
+        [PERFORMANCE_BUDGET_STORAGE_KEY]: normalizePerformanceBudget(page.draft.performanceBudget)
+      });
+      page.baseline = { ...page.baseline, performanceBudget: page.draft.performanceBudget };
+    }
+
+    if (recorderChanged) {
+      const form = toGeneralFormFields(page.draft);
       // What the form showed: only the fields that differ from it are copied into Default.
-      const shown = toStoredOptionsPayload(page.baseline);
-      await chromeApi?.storage?.local.set({ [STORAGE_KEY]: payload });
-      page.baseline = {
-        ...page.draft,
-        archive: page.baseline.archive,
-        injection: page.baseline.injection,
-        startReloadOffer: page.baseline.startReloadOffer,
-        playerUrl: page.baseline.playerUrl
-      };
+      const shown = toGeneralFormFields(page.baseline);
 
       if (profilesChanged) {
-        // The editor's draft must not write the old Default values back on its save.
-        editor.applyGeneralOptions(payload, shown);
+        // Saved with the editor's draft below, which must not write the old Default values back.
+        editor.applyGeneralOptions(form, shown);
       } else {
-        await syncSavedProfilesWithGeneralOptions(payload, shown);
+        await saveGeneralFormToProfiles(form, shown);
+        await editor.reload();
       }
     }
 
@@ -407,8 +416,10 @@ async function saveAll(page: PageState): Promise<void> {
       if (!result.ok) {
         throw new Error(result.error);
       }
-    } else if (generalChanged) {
-      await editor.reload();
+    }
+
+    if (recorderChanged) {
+      page.baseline = { ...page.baseline, recorderConfig: page.draft.recorderConfig };
     }
 
     if (archiveChanged && !saveExportPolicyPrefs(page.draft.archive)) {
@@ -465,23 +476,24 @@ function cancelAll(page: PageState): void {
   refreshSaveBar(page);
 }
 
-/** Once profiles are saved, the general form shows the Default profile's matching fields. */
+/** The general form shows the Default profile's matching fields. */
 async function loadGeneralDraft(): Promise<GeneralDraft> {
   const values = await chromeApi?.storage?.local.get([
-    STORAGE_KEY,
     PROFILES_STORAGE_KEY,
+    PERFORMANCE_BUDGET_STORAGE_KEY,
     CONTENT_INJECTION_STORAGE_KEY,
     START_RELOAD_OFFER_STORAGE_KEY,
     PLAYER_URL_STORAGE_KEY
   ]);
-  const legacy = toLegacyGeneralFields(values?.[STORAGE_KEY]);
-  const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
+  const defaults = createDefaultGeneralDraft();
 
   return {
-    ...legacy,
-    recorderConfig: parsed
-      ? applyDefaultProfileToGeneralForm(legacy.recorderConfig, parsed.store)
-      : legacy.recorderConfig,
+    ...defaults,
+    recorderConfig: applyDefaultProfileToGeneralForm(
+      defaults.recorderConfig,
+      loadStoredProfiles(values?.[PROFILES_STORAGE_KEY])
+    ),
+    performanceBudget: normalizePerformanceBudget(values?.[PERFORMANCE_BUDGET_STORAGE_KEY]),
     archive: loadExportPolicyPrefs(),
     injection: normalizeContentInjectionMode(values?.[CONTENT_INJECTION_STORAGE_KEY]),
     startReloadOffer: normalizeStartReloadOffer(values?.[START_RELOAD_OFFER_STORAGE_KEY]),
@@ -489,47 +501,28 @@ async function loadGeneralDraft(): Promise<GeneralDraft> {
   };
 }
 
-function toLegacyGeneralFields(
-  stored: unknown
-): Omit<GeneralDraft, "archive" | "injection" | "startReloadOffer" | "playerUrl"> {
-  if (!stored || typeof stored !== "object") {
-    const defaults = createDefaultGeneralDraft();
-    return {
-      recorderConfig: defaults.recorderConfig,
-      performanceBudget: defaults.performanceBudget
-    };
-  }
-
-  const record = migrateStoredRecorderConfig(
-    stored as Partial<RecorderConfig> & { optionsVersion?: unknown; performanceBudget?: unknown }
-  );
-
-  return {
-    recorderConfig: normalizeOptionsConfig({
-      ...DEFAULT_RECORDER_CONFIG,
-      ...record,
-      sampling: { ...DEFAULT_RECORDER_CONFIG.sampling, ...(record.sampling ?? {}) },
-      redaction: { ...DEFAULT_RECORDER_CONFIG.redaction, ...(record.redaction ?? {}) }
-    }),
-    performanceBudget: normalizePerformanceBudget(record.performanceBudget)
-  };
+/**
+ * The stored profiles, or the store recording uses without one (also in place of a corrupt store,
+ * which the profiles editor reports and its own save replaces too).
+ */
+function loadStoredProfiles(raw: unknown): RecordingProfilesStore {
+  return parseProfilesStore(raw)?.store ?? createDefaultProfilesStore();
 }
 
-/** Once profiles are saved, the general form edits the Default profile's matching fields. */
-async function syncSavedProfilesWithGeneralOptions(
-  payload: unknown,
-  shown: unknown
+/** Writes the general form's changed fields into the stored Default profile. */
+async function saveGeneralFormToProfiles(
+  form: GeneralFormFields,
+  shown: GeneralFormFields
 ): Promise<void> {
   const values = await chromeApi?.storage?.local.get(PROFILES_STORAGE_KEY);
-  const parsed = parseProfilesStore(values?.[PROFILES_STORAGE_KEY]);
-
-  if (!parsed) {
-    return;
-  }
 
   await chromeApi?.storage?.local.set({
     [PROFILES_STORAGE_KEY]: serializeProfilesStore(
-      syncDefaultProfileWithLegacyOptions(parsed.store, payload, shown)
+      applyGeneralFormToDefaultProfile(
+        loadStoredProfiles(values?.[PROFILES_STORAGE_KEY]),
+        form,
+        shown
+      )
     )
   });
 }

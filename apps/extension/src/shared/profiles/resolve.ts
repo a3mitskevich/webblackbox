@@ -36,8 +36,6 @@ export type ProfileSelection = {
   rule?: { id: string; name?: string };
   /** Effective profile captures more than the standard Full ceiling (informational). */
   extended: boolean;
-  /** Effective profile is the v1-derived Default (no v2 store yet). */
-  legacy: boolean;
 };
 
 /** What lands in `meta.config.profile` and therefore in the archive. */
@@ -86,7 +84,6 @@ export function selectRecordingProfile(input: {
   }
 
   const source: ProfileSelectionSource = explicit ? "explicit" : ruleProfile ? "rule" : "default";
-  const legacy = state.legacy && profile.id === DEFAULT_PROFILE_ID;
   const ruleInfo =
     ruleProfile && rule ? { id: rule.id, ...(rule.name ? { name: rule.name } : {}) } : undefined;
 
@@ -94,8 +91,7 @@ export function selectRecordingProfile(input: {
     profile,
     source,
     ...(ruleInfo ? { rule: ruleInfo } : {}),
-    extended: !legacy && isExtendedCaptureProfile(profile),
-    legacy
+    extended: isExtendedCaptureProfile(profile)
   };
 }
 
@@ -136,8 +132,8 @@ export function listEnterpriseCappedCategories(
 
 /**
  * Turns a profile into the recorder config for a transport. The profile is rendered as a v1
- * options record and run through the same merge + mode boundary as before profiles, so the
- * migrated Default profile reproduces today's config exactly.
+ * options record and run through the same merge + mode boundary as before profiles, so a Default
+ * profile migrated from v1 options reproduces the config those options gave exactly.
  */
 export function buildProfileRecorderConfig(input: {
   mode: CaptureMode;

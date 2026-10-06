@@ -1,7 +1,6 @@
 import { type CaptureMode, type RecorderConfig } from "@webblackbox/protocol";
 
 import { applyModeProductBoundary } from "./mode-profile.js";
-import { migrateStoredRecorderConfig } from "./options-storage.js";
 
 export function resolveModeRecorderConfig(
   mode: CaptureMode,
@@ -14,22 +13,20 @@ export function resolveModeRecorderConfig(
     return applyModeProductBoundary(mode, baseConfig);
   }
 
-  const migrated = migrateStoredRecorderConfig(stored);
-
   const mergedConfig: RecorderConfig = {
     ...baseConfig,
-    ...migrated,
+    ...stored,
     mode,
     sampling: {
       ...baseConfig.sampling,
-      ...(asRecord(migrated.sampling) ?? {})
+      ...(asRecord(stored.sampling) ?? {})
     },
     redaction: {
       ...baseConfig.redaction,
-      ...(asRecord(migrated.redaction) ?? {})
+      ...(asRecord(stored.redaction) ?? {})
     },
-    sitePolicies: Array.isArray(migrated.sitePolicies)
-      ? (migrated.sitePolicies as RecorderConfig["sitePolicies"])
+    sitePolicies: Array.isArray(stored.sitePolicies)
+      ? (stored.sitePolicies as RecorderConfig["sitePolicies"])
       : baseConfig.sitePolicies
   };
 

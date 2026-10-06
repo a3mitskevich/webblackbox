@@ -1,3 +1,6 @@
+/** `chrome.storage.local` key of the performance budget (formerly part of v1 options). */
+export const PERFORMANCE_BUDGET_STORAGE_KEY = "webblackbox.performanceBudget";
+
 export type PerformanceBudgetConfig = {
   lcpWarnMs: number;
   requestWarnMs: number;

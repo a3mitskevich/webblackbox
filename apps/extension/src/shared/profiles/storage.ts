@@ -7,7 +7,6 @@ import {
   type SiteCapturePolicy
 } from "@webblackbox/protocol";
 
-import { migrateStoredRecorderConfig } from "../options-storage.js";
 import { completeCaptureCategories } from "./categories.js";
 import {
   DEFAULT_PROFILE_ID,
@@ -50,8 +49,6 @@ export type ParsedProfilesStore = {
 /** Everything the service worker and UI need to pick a profile. */
 export type ProfilesState = {
   store: RecordingProfilesStore;
-  /** No v2 store yet: Default is derived from v1 options on every read (today's behaviour). */
-  legacy: boolean;
   /** Built-ins, enterprise-managed and user profiles, in display order. */
   catalog: RecordingProfile[];
   /** Managed rules first, then user rules. */
@@ -73,20 +70,29 @@ export const EMPTY_MANAGED_PROFILES: ManagedProfilesPolicy = {
 
 /**
  * Turns the v1 `webblackbox.options` record into the v2 store with a single "Default" profile.
- * The profile keeps every v1 knob that changed recording (sampling, redaction, ring buffer,
- * freeze-on-error, site body policies, capture policy) so recording stays identical.
+ * The profile keeps every v1 knob that changed recording (sampling, redaction, freeze-on-error,
+ * site body policies, capture policy) so recording stays identical. Only the one-time settings
+ * migration reads v1 options.
  */
 export function migrateLegacyOptionsToProfiles(legacyOptions: unknown): RecordingProfilesStore {
   return {
+    ...createDefaultProfilesStore(),
+    profiles: [profileFromOptionsRecord(legacyOptions)]
+  };
+}
+
+/** The store a browser without saved profiles records with: the Default profile alone. */
+export function createDefaultProfilesStore(): RecordingProfilesStore {
+  return {
     schemaVersion: PROFILES_SCHEMA_VERSION,
     defaultProfileId: DEFAULT_PROFILE_ID,
-    profiles: [migrateLegacyDefaultProfile(legacyOptions)],
+    profiles: [createDefaultProfile()],
     rules: [],
     extendedCaptureHosts: []
   };
 }
 
-/** Redaction fields the legacy general settings form shows and edits. */
+/** Redaction fields the general settings form shows and edits. */
 const GENERAL_FORM_REDACTION_KEYS = [
   "blockedSelectors",
   "redactHeaders",
@@ -94,35 +100,35 @@ const GENERAL_FORM_REDACTION_KEYS = [
   "hashSensitiveValues"
 ] as const;
 
-type GeneralFormFields = {
+/** What the general settings form edits on the Default profile. */
+export type GeneralFormFields = {
   freezeOnError: boolean;
   sampling: object;
   redaction: Pick<RecordingProfile["redaction"], (typeof GENERAL_FORM_REDACTION_KEYS)[number]>;
 };
 
 /**
- * Mirrors the legacy general settings form (sampling, freeze-on-error and the
- * redaction lists it shows) onto the Default profile, so that form keeps working after profiles
- * have been saved. Only the fields the form edits are copied: categories, cookie names and every
- * profile-only setting stay as the profile has them.
+ * Saves the general settings form (sampling, freeze-on-error and the redaction lists it shows)
+ * into the Default profile. Only the fields the form edits are copied: categories, cookie names
+ * and every profile-only setting stay as the profile has them.
  */
-export function syncDefaultProfileWithLegacyOptions(
+export function applyGeneralFormToDefaultProfile(
   store: RecordingProfilesStore,
-  legacyOptions: unknown,
+  form: GeneralFormFields,
   /**
    * The values the form showed before this save. When given, only the fields the user changed are
    * copied: saving untouched fields must not pin generic defaults over the mode's own values.
    */
-  shownOptions?: unknown
+  shownForm?: GeneralFormFields
 ): RecordingProfilesStore {
-  const migrated = migrateLegacyDefaultProfile(legacyOptions);
-  const shown = shownOptions === undefined ? undefined : migrateLegacyDefaultProfile(shownOptions);
+  const saved = profileFromOptionsRecord(form);
+  const shown = shownForm === undefined ? undefined : profileFromOptionsRecord(shownForm);
   const formRedaction = pickChangedEntries(
-    pickFormRedaction(migrated.redaction),
+    pickFormRedaction(saved.redaction),
     shown && pickFormRedaction(shown.redaction)
   );
-  const sampling = pickChangedEntries(migrated.sampling, shown?.sampling);
-  const recorder = pickChangedEntries(migrated.recorder, shown?.recorder);
+  const sampling = pickChangedEntries(saved.sampling, shown?.sampling);
+  const recorder = pickChangedEntries(saved.recorder, shown?.recorder);
 
   return {
     ...store,
@@ -158,8 +164,8 @@ function pickChangedEntries<T extends object>(next: T, previous: T | undefined):
 }
 
 /**
- * The general settings form's values with the Default profile's current ones filled in, so the
- * form shows (and saves back) what the profiles editor last saved instead of stale v1 options.
+ * The general settings form's values with the Default profile's current ones filled in: the form
+ * shows (and saves back) what the Default profile records with.
  */
 export function applyDefaultProfileToGeneralForm<TForm extends GeneralFormFields>(
   form: TForm,
@@ -273,24 +279,23 @@ export function restoreRecommendedProfiles(store: RecordingProfilesStore): Recor
 }
 
 /**
- * Resolves the effective profiles state from raw storage values. Never throws: a corrupt v2
- * store falls back to the v1-derived Default profile and reports `corrupt-store`.
+ * Resolves the effective profiles state from raw storage values. Never throws: without a store,
+ * or with a corrupt one (reported as `corrupt-store`), the Default profile records with today's
+ * defaults.
  */
 export function resolveProfilesState(input: {
   rawProfilesStore: unknown;
-  rawLegacyOptions: unknown;
   managed?: ManagedProfilesPolicy;
 }): ProfilesState {
   const managed = input.managed ?? EMPTY_MANAGED_PROFILES;
   const parsed = parseProfilesStore(input.rawProfilesStore);
   const issues: ProfilesStoreIssue[] = [...managed.issues];
-  const legacy = parsed === null;
 
   if (parsed === null && input.rawProfilesStore !== undefined && input.rawProfilesStore !== null) {
     issues.push({ kind: "corrupt-store", message: "Stored profiles failed validation." });
   }
 
-  const store = parsed?.store ?? migrateLegacyOptionsToProfiles(input.rawLegacyOptions);
+  const store = parsed?.store ?? createDefaultProfilesStore();
   issues.push(...(parsed?.issues ?? []));
 
   const [ownProfiles, builtIns] = splitStoreProfiles(store);
@@ -309,7 +314,6 @@ export function resolveProfilesState(input: {
     store: catalogIds.has(store.defaultProfileId)
       ? store
       : { ...store, defaultProfileId: fallbackDefaultId },
-    legacy,
     catalog,
     rules: [...managed.rules, ...store.rules],
     issues
@@ -530,19 +534,19 @@ function splitStoreProfiles(
   return [all.slice(0, store.profiles.length), all.slice(store.profiles.length)];
 }
 
-function migrateLegacyDefaultProfile(legacyOptions: unknown): RecordingProfile {
+/** A Default profile from an options-shaped record (v1 options or the general settings form). */
+function profileFromOptionsRecord(options: unknown): RecordingProfile {
   const fallback = createDefaultProfile();
-  const record = asRecord(legacyOptions);
+  const record = asRecord(options);
 
   if (!record) {
     return fallback;
   }
 
-  const migrated = migrateStoredRecorderConfig(record);
-  const basePolicy = capturePolicySchema.safeParse(migrated.capturePolicy);
+  const basePolicy = capturePolicySchema.safeParse(record.capturePolicy);
   const redaction = redactionProfileSchema.safeParse({
     ...DEFAULT_REDACTION_PROFILE,
-    ...(asRecord(migrated.redaction) ?? {})
+    ...(asRecord(record.redaction) ?? {})
   });
   const candidate: RecordingProfile = {
     ...fallback,
@@ -551,13 +555,11 @@ function migrateLegacyDefaultProfile(legacyOptions: unknown): RecordingProfile {
     ),
     redaction: redaction.success ? redaction.data : fallback.redaction,
     unmaskSelectors: redaction.success ? [...(redaction.data.unmaskSelectors ?? [])] : [],
-    sampling: pickValidSampling(migrated.sampling),
+    sampling: pickValidSampling(record.sampling),
     recorder: {
-      ...(typeof migrated.freezeOnError === "boolean"
-        ? { freezeOnError: migrated.freezeOnError }
-        : {})
+      ...(typeof record.freezeOnError === "boolean" ? { freezeOnError: record.freezeOnError } : {})
     },
-    sitePolicies: pickValidSitePolicies(migrated.sitePolicies),
+    sitePolicies: pickValidSitePolicies(record.sitePolicies),
     ...(basePolicy.success ? { basePolicy: basePolicy.data } : {})
   };
   const validated = recordingProfileSchema.safeParse(candidate);
