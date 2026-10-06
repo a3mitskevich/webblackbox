@@ -3,6 +3,12 @@
 const LINEAR_INPUT_FACTOR = 8;
 /** Well above linear growth (8-11x) plus shared-runner noise, well below quadratic (>= 56x). */
 export const LINEAR_GROWTH_LIMIT = 32;
+
+/**
+ * Hang-only bound for a growth-ratio test. Several timed runs, repeated over the limit, take
+ * seconds on a loaded runner, past vitest's 5 s default; no assertion depends on this value.
+ */
+export const GROWTH_TEST_TIMEOUT_MS = 60_000;
 /** Inputs are doubled so each run takes long enough for timer noise not to matter. */
 const BASE_SCALE = 2;
 /**

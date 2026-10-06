@@ -7,7 +7,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { sanitizeCss, serializeRawDom } from "./raw-dom-snapshot.js";
-import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
+import {
+  growthRatio,
+  LINEAR_GROWTH_LIMIT,
+  GROWTH_TEST_TIMEOUT_MS
+} from "./test-support/linear-growth.js";
 
 const OPTIONS = { blockedSelectors: [".secret"], keepInputValues: true };
 const BACKSLASH = "\\";
@@ -372,7 +376,7 @@ describe("raw DOM corpus: text", () => {
     expect(html).not.toContain("DSD1SECRET");
   });
 
-  it("stays linear on large hostile pages", () => {
+  it("stays linear on large hostile pages", { timeout: GROWTH_TEST_TIMEOUT_MS }, () => {
     // Each input goes into style text, a text node and an attribute value.
     const hostile: Array<[string, (scale: number) => string]> = [
       ["?a", (scale) => "?a".repeat(5_000 * scale)],
