@@ -39,7 +39,7 @@
   "optionsNavTransfer": "Import / Export",
   "optionsSensitivityHint": "What is masked before data leaves the page. Applies to the Default profile.",
   "optionsPointerHint": "How often pointer and scroll movement is sampled.",
-  "optionsSamplingHint": "Where the extension runs, buffer length and capture cadence; lower values cost less CPU.",
+  "optionsSamplingHint": "Where the extension runs, when it flags incidents and how often it captures; lower values cost less CPU.",
   "optionsBudgetsHint": "Warn when a page breaks these performance limits.",
   "optionsExportHint": "Limits for exported archives and the Player they are opened in.",
   "optionsLanguageHint": "Interface language.",

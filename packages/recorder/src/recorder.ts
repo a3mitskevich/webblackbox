@@ -46,7 +46,8 @@ export type RecorderHooks = {
 export class WebBlackboxRecorder {
   private readonly idFactory = new EventIdFactory();
 
-  private readonly ringBuffer: EventRingBuffer;
+  // Absent when `ringBufferMinutes` is 0: a host that persists every event needs no copy.
+  private readonly ringBuffer: EventRingBuffer | null;
 
   private readonly actionSpanTracker: ActionSpanTracker;
 
@@ -68,7 +69,8 @@ export class WebBlackboxRecorder {
     }),
     private readonly plugins: RecorderPlugin[] = []
   ) {
-    this.ringBuffer = new EventRingBuffer(config.ringBufferMinutes);
+    this.ringBuffer =
+      config.ringBufferMinutes > 0 ? new EventRingBuffer(config.ringBufferMinutes) : null;
     this.actionSpanTracker = new ActionSpanTracker(config.sampling.actionWindowMs);
     this.freezePolicy = new FreezePolicy(config);
     this.pluginContext = {
@@ -181,7 +183,7 @@ export class WebBlackboxRecorder {
       return {};
     }
 
-    this.ringBuffer.push(pluginEvent);
+    this.ringBuffer?.push(pluginEvent);
 
     this.hooks.onEvent?.(pluginEvent);
 
@@ -215,15 +217,15 @@ export class WebBlackboxRecorder {
   }
 
   public snapshotRingBuffer(): WebBlackboxEvent[] {
-    return this.ringBuffer.snapshot();
+    return this.ringBuffer?.snapshot() ?? [];
   }
 
   public clearRingBuffer(): void {
-    this.ringBuffer.clear();
+    this.ringBuffer?.clear();
   }
 
   public getBufferedEventCount(): number {
-    return this.ringBuffer.size();
+    return this.ringBuffer?.size() ?? 0;
   }
 
   private applyRawPlugins(raw: RawRecorderEvent): RawRecorderEvent | null {

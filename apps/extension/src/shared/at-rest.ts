@@ -1,3 +1,7 @@
+import { base64ToBytes } from "./base64.js";
+
+export { base64ToBytes, bytesToBase64 } from "./base64.js";
+
 /**
  * Shared contract for at-rest encryption of the offscreen pipeline's IndexedDB: the database
  * name and the message that hands the per-browser-session key from the service worker (the only
@@ -46,21 +50,6 @@ export function isBase64Key(value: unknown): value is string {
   } catch {
     return false;
   }
-}
-
-export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-
-  return btoa(binary);
-}
-
-export function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
 export function bytesToHex(bytes: Uint8Array): string {
