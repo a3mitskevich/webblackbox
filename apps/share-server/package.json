@@ -10,7 +10,7 @@
     "build": "tsup src/index.ts src/archive-analysis-worker.ts --format esm --clean",
     "e2e:share": "pnpm --filter @webblackbox/player-sdk build && pnpm build && node scripts/e2e-share-flow.mjs",
     "start": "node dist/index.js",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint src scripts --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
