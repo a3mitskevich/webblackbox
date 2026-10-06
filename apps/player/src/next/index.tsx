@@ -10,7 +10,7 @@ import { RAIL_TAB_REGISTRY } from "./features/registry.js";
 import { createInitialState } from "./state.js";
 import { createStore } from "./store.js";
 
-/** Mounts the React player (`?ui=next`) into `root`. */
+/** Mounts the Player into `root`. */
 export function mountNextPlayer(root: HTMLElement): void {
   const locale = detectPlayerLocale();
   applyPlayerDocumentLocale(locale);

@@ -216,17 +216,6 @@ export function Header({ searchRef }: HeaderProps) {
           <Icon name="keyboard" />
         </button>
       </Hint>
-      <Hint label={i18n.tn("classicPlayer")}>
-        <a
-          className="btn hide-narrow"
-          href={classicPlayerHref()}
-          aria-label={i18n.tn("classicPlayer")}
-          data-testid="classic-link"
-        >
-          <Icon name="back" />
-          <span className="lbl">{i18n.tn("classicPlayer")}</span>
-        </a>
-      </Hint>
       {archive ? <GenerateMenu /> : null}
       <ShareButton />
       <ArchiveInput className="btn primary" label={i18n.tn("openArchive")} hideLabelWhenNarrow />
@@ -240,15 +229,4 @@ function hostOf(origin: string): string {
   } catch {
     return origin;
   }
-}
-
-/** The same page without `?ui=next` (the hash is kept). */
-function classicPlayerHref(): string {
-  if (typeof window === "undefined") {
-    return "./";
-  }
-
-  const url = new URL(window.location.href);
-  url.searchParams.delete("ui");
-  return `${url.pathname}${url.search}${url.hash}`;
 }

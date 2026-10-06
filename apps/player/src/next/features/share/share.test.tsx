@@ -53,7 +53,7 @@ describe("share links", () => {
     const settings = memorySettings();
     const page = "https://player.example.test";
 
-    expect(decideShareLink(`${page}/?ui=next`, page, settings)).toEqual({ kind: "none" });
+    expect(decideShareLink(`${page}/?lang=en`, page, settings)).toEqual({ kind: "none" });
     expect(decideShareLink(`${page}/?share=share-abc1`, page, settings)).toEqual({
       kind: "trusted",
       reference: "share-abc1",
@@ -417,11 +417,7 @@ describe("Share in the header", () => {
   });
 
   it("asks before opening a ?share= link to an unknown server", async () => {
-    window.history.replaceState(
-      null,
-      "",
-      "/?ui=next&share=https%3A%2F%2Fevil.example.net%2Fshare%2Fx1"
-    );
+    window.history.replaceState(null, "", "/?share=https%3A%2F%2Fevil.example.net%2Fshare%2Fx1");
     renderPlayer();
 
     expect(await screen.findByTestId("share-untrusted")).toHaveTextContent(
@@ -432,7 +428,7 @@ describe("Share in the header", () => {
   });
 
   it("opens a ?share= link to the default server at once", async () => {
-    window.history.replaceState(null, "", "/?ui=next&share=share-abc1");
+    window.history.replaceState(null, "", "/?share=share-abc1");
     const fetch = vi.fn(async () => ({
       ok: true,
       status: 200,

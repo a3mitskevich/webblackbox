@@ -1,10 +1,11 @@
 # Player rewrite in React — feature parity
 
-The Player is being rewritten in React (design direction **B · Replay**, `design/player/PROPOSAL.md`).
-The new UI ships behind `?ui=next` until stage R5, when it becomes the only UI and the imperative
-`src/main.ts` and the static `src/shell.tsx` are deleted.
+The Player was rewritten in React (design direction **B · Replay**, `design/player/PROPOSAL.md`).
+The new UI shipped behind `?ui=next` until stage R5, which made it the only UI: the imperative
+`src/main.ts` (now a bootstrap that mounts the React player) and the static `src/shell.tsx` are
+deleted, and a leftover `?ui=next` in a link is ignored.
 
-This file lists **every feature of the classic Player** (walked from `src/main.ts`, `src/shell.tsx`,
+This file lists **every feature of the classic Player** (walked from the classic `src/main.ts`, `src/shell.tsx`,
 `src/lib/*` and `scripts/e2e-playback-regression.mjs`) and the stage that re-implements it in React,
 plus the new features the redesign adds. Every stage updates this file; R5 checks every row or
 records why it was dropped.
@@ -137,7 +138,7 @@ Status: ✅ done in React · ⏳ planned for the stage · ➖ dropped (reason gi
 | Player version and GitHub repo link in the toolbar | `shell.tsx`                                              | R5    | ⏳ header menu                                                                                                                                                                                                                                                                   |
 | GitHub Pages build / deploy                        | `scripts/prepare-pages-build.mjs`, `deploy-gh-pages.mjs` | R1    | ✅ unchanged contract (`build/index.html`, `build/main.js`); V: Vite 8 build, code-split chunks under `build/assets/`                                                                                                                                                            |
 | Example iframe pages                               | `public/examples/*`                                      | —     | ✅ unchanged static assets                                                                                                                                                                                                                                                       |
-| Classic e2e (`e2e:playback`)                       | `scripts/e2e-playback-regression.mjs`                    | R5    | ⏳ rewritten for the React UI; R1 adds `e2e:player-next`; V: per-feature scenario files (`features/<f>/<f>.e2e.mjs`) and the CSP guard                                                                                                                                           |
+| Classic e2e (`e2e:playback`)                       | `scripts/e2e-playback-regression.mjs`                    | R5    | ✅ deleted with the classic UI; `e2e:player` (R1 `e2e:player-next`, renamed in R5): shell + per-feature scenarios and the CSP guard, all pages under the real policy; extension e2e use `data-testid` hooks only                                                                 |
 
 ## New in the redesign
 

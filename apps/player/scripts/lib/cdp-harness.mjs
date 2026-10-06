@@ -1,6 +1,5 @@
 // Shared Chrome/CDP plumbing for player e2e scripts: a static server for the built player,
 // Chrome launch with retries, a minimal CDP client and polling helpers (Node 22+, no deps).
-// Extracted from e2e-playback-regression.mjs, which keeps its own copy until R5 rewrites it.
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { constants, createWriteStream } from "node:fs";

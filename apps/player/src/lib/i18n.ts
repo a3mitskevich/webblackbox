@@ -4,7 +4,6 @@ import EN_MESSAGES from "./locales/en.json" with { type: "json" };
 import RU_MESSAGES from "./locales/ru.json" with { type: "json" };
 import ZH_CN_MESSAGES from "./locales/zh-CN.json" with { type: "json" };
 import type { PointerLaneKind } from "./pointer-overlay.js";
-import type { StackViewMessages } from "./stack-view.js";
 import { readStoredText, writeStoredText } from "./storage.js";
 
 export type PlayerLocale = "en" | "ru" | "zh-CN";
@@ -50,6 +49,24 @@ export type NumberStyle = { fractionDigits?: number; signed?: boolean; percent?:
 const MS_PER_SECOND = 1000;
 const BYTES_PER_KB = 1024;
 const BYTES_PER_MB = BYTES_PER_KB * 1024;
+
+/** Strings of the source-map stack view. */
+export type StackViewMessages = {
+  heading: string;
+  showOriginal: string;
+  showRaw: string;
+  loadMapFiles: string;
+  loadMapFolder: string;
+  symbolServerPlaceholder: string;
+  symbolServerApply: string;
+  /** `{count}` is replaced with the number of loaded files. */
+  mapsLoaded: string;
+  resolving: string;
+  noMap: string;
+  noMapping: string;
+  mapError: string;
+  invalidSymbolServer: string;
+};
 
 type PlayerMessages = {
   pageTitlePlayer: string;
@@ -378,7 +395,7 @@ type PlayerMessages = {
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;
-  /** Strings of the React player (`?ui=next`). */
+  /** Strings of the React player. */
   next: NextMessages;
 };
 

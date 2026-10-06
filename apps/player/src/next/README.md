@@ -1,15 +1,14 @@
-# React player (`?ui=next`)
+# The Player UI (React)
 
-The Player rewrite in React (stages R1–R5, one MR). It mounts when the page URL has `?ui=next`;
-the classic UI (`src/main.ts`) stays the default until R5. This file is the map for the stages
-that build features in parallel (R2, R3, R4): **each stage works inside its own feature folder**
-and touches shared files only with small, additive edits.
+The Player is React only (rewritten in stages R1–R5, PR #20); `src/main.ts` mounts it. This file
+is the map of the UI: **each feature works inside its own feature folder** and touches shared files
+only with small, additive edits.
 
 ## Layout
 
 | Path                                  | What lives there                                                                           |
 | ------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `index.tsx`                           | `mountNextPlayer`: store, controller, `createRoot`, the stylesheet import                  |
+| `index.tsx`                           | `mountNextPlayer` (called by `src/main.ts`): store, controller, `createRoot`, the CSS      |
 | `app.tsx`                             | App shell: header, stage column, rail, dialogs; `CSPProvider`, tooltip provider, splitters |
 | `state.ts`, `store.ts`, `context.tsx` | The one external store (`useSyncExternalStore`), `usePlayerState`, `useI18n`               |
 | `controller.ts`                       | Everything that is not rendering: open/decrypt, playback clock, seeking, selection         |
@@ -19,14 +18,14 @@ and touches shared files only with small, additive edits.
 | `features/<feature>/`                 | One folder per feature, owned by one stage (see below)                                     |
 | `styles/next.css`                     | The hand-written token sheet (Replay mockups), self-hosted Onest and JetBrains Mono        |
 
-Non-UI logic shared with the classic player lives in `src/core/*` and `src/lib/*`. Archive data
-comes only from `@webblackbox/player-sdk`; new derived data belongs in the SDK, with tests.
+Non-UI logic lives in `src/core/*` and `src/lib/*`. Archive data comes only from
+`@webblackbox/player-sdk`; new derived data belongs in the SDK, with tests.
 
 ## Build
 
 Vite 8 (`vite.config.ts`). `pnpm --filter @webblackbox/player dev` starts the dev server with HMR
-(open `http://localhost:4177/?ui=next`); `build` writes `build/`. The React player is its own
-chunk, loaded only for `?ui=next`, with its CSS as a file. A feature can split further:
+(open `http://localhost:4177/`); `build` writes `build/`. The entry chunk is the app shell; React,
+Zod and the SDK are named chunks and the CSS ships as files. A feature can split further:
 
 ```tsx
 // features/compare/index.ts — the panel and its libraries (jsdiff, microdiff) load on first use
@@ -52,8 +51,9 @@ Tailwind is not part of the build (see the stage V summary on PR #20).
 | Highlighted code, JSON tree, hex dump        | `features/network/{code-view,viewers}.tsx`                          | Shiki (JS regex engine) loads as its own chunk; R5 may move them to components                               |
 
 Other libraries are vetted in `LIBRARIES.md` (Shiki with the JavaScript regex engine, uPlot,
-jsdiff, microdiff, uFuzzy, TanStack Table). Never inject `<style>` (no runtime CSS-in-JS), never
-`eval`/`new Function`/WebAssembly, no `innerHTML`/`dangerouslySetInnerHTML`.
+jsdiff, microdiff, uFuzzy, TanStack Table). Never inject `<style>` (the CSP has no `style-src
+'unsafe-inline'`), never `eval`/`new Function`/WebAssembly, no `innerHTML`/`dangerouslySetInnerHTML`
+and no hand-built DOM (`src/no-dom-rendering.test.ts` fails on them).
 
 ## Extension points
 
@@ -95,8 +95,7 @@ export const networkFeature: PlayerFeature = {
 };
 ```
 
-Until a stage lands, its tabs show `placeholderPanel(...)` ("arrives in a later stage"). A new
-tab id is the only shared edit: add it to `RAIL_TABS` (`src/core/url-hash.ts`) — the registry
+A new tab id is the only shared edit: add it to `RAIL_TABS` (`src/core/url-hash.ts`) — the registry
 test checks that every id there is registered exactly once.
 
 ### 3. Strings (EN / RU / 中文)
@@ -152,9 +151,9 @@ Slices survive opening another archive; reset what must not.
 
 ### 5. e2e scenarios
 
-`e2e:player-next` runs the shell scenarios (`scripts/e2e-next/shell.mjs`), then every
-`features/<feature>/<feature>.e2e.mjs`, then a pass under a CSP without `style-src
-'unsafe-inline'`. A scenario file:
+`e2e:player` runs the shell scenarios (`scripts/e2e-next/shell.mjs`), then every
+`features/<feature>/<feature>.e2e.mjs`, then proves the CSP guard is live (an injected probe
+`<style>` must be reported). A scenario file:
 
 ```js
 export default {
@@ -177,10 +176,10 @@ The context (`createScenarioContext` in `scripts/lib/next-e2e.mjs`) has `client`
 `openSynthetic`, `snapshot`, `waitForSnapshot`, `waitForSelector`, `press` (physical keys),
 `click`, `hover`, `dragBy`, `evaluate`, `setViewport`, `testId`, `assert` and `sleep`. Drive the UI
 only through `data-testid` hooks; check archive data correctness in player-sdk tests, not here.
-`openSynthetic` serves every scenario page under the strict style policy (no `style-src
-'unsafe-inline'`), so a panel that injects a `<style>` fails the run.
-`WB_E2E_NEXT_FEATURES=network pnpm --filter @webblackbox/player e2e:player-next` runs only
-your feature's scenarios (the shell scenarios and the CSP passes always run); a name without a
+Every page runs under the Player CSP (no `style-src 'unsafe-inline'`), so a panel that injects a
+`<style>` reports a violation and fails the run.
+`WB_E2E_PLAYER_FEATURES=network pnpm --filter @webblackbox/player e2e:player` runs only
+your feature's scenarios (the shell scenarios and the CSP guard always run); a name without a
 scenario file, or no scenario files at all, fails the run.
 
 ## Shared files: allowed edits

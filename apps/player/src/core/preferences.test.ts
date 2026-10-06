@@ -6,7 +6,6 @@ import {
   nextThemePreference,
   parseThemePreference,
   readThemePreference,
-  resolvePlayerUi,
   resolveTheme,
   storeThemePreference,
   THEME_STORAGE_KEY
@@ -37,15 +36,5 @@ describe("theme preference", () => {
     expect(resolveTheme("system", false)).toBe("light");
     expect(resolveTheme("light", true)).toBe("light");
     expect(resolveTheme("dark", false)).toBe("dark");
-  });
-});
-
-describe("resolvePlayerUi", () => {
-  it("opens the React player only with the flag", () => {
-    expect(resolvePlayerUi("?ui=next")).toBe("next");
-    expect(resolvePlayerUi("?lang=ru&ui=NEXT")).toBe("next");
-    expect(resolvePlayerUi("?ui=react")).toBe("next");
-    expect(resolvePlayerUi("?ui=classic")).toBe("classic");
-    expect(resolvePlayerUi("")).toBe("classic");
   });
 });

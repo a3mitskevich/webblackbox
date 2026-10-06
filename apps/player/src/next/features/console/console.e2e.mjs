@@ -1,4 +1,4 @@
-// e2e:player-next scenarios of the console feature (R4), picked up by scripts/e2e-player-next.mjs.
+// e2e:player scenarios of the console feature (R4), picked up by scripts/e2e-player.mjs.
 // Driven only through data-testid hooks; archive data correctness is covered by player-sdk tests.
 
 const POLL_MS = 100;

@@ -5,7 +5,6 @@ import {
   buildPointerLaneMarks,
   buildRippleMarks,
   projectOverlayPoint,
-  renderRippleSvg,
   toOverlayActions
 } from "./pointer-overlay.js";
 
@@ -64,18 +63,6 @@ describe("pointer overlay model", () => {
 
     expect(projectOverlayPoint(frame, 800, 450)).toEqual({ x: 400, y: 300 });
     expect(projectOverlayPoint(frame, 0, 0)).toEqual({ x: 0, y: 75 });
-  });
-
-  it("renders labelled ripples and escapes labels", () => {
-    const svg = renderRippleSvg(
-      [{ mono: 0, kind: "right", x: 10, y: 10, progress: 0 }],
-      { width: 100, height: 100, sourceWidth: 100, sourceHeight: 100 },
-      () => "<right>"
-    );
-
-    expect(svg).toContain('class="preview-ripple preview-ripple-right"');
-    expect(svg).toContain("&lt;right&gt;");
-    expect(svg).not.toContain("<right>");
   });
 
   it("adds rage and dead clicks to the lane and keeps the most telling mark per slot", () => {

@@ -1,8 +1,7 @@
-// The Player's Content-Security-Policy lives in the `<meta http-equiv>` of `index.html`. These
-// helpers derive the two variants the build and the e2e need from that single source:
-// - the dev server policy (Vite's React refresh preamble is an inline module script, HMR uses ws:);
-// - the strict policy without `style-src 'unsafe-inline'`, which the React player must already
-//   satisfy so that R5 can drop it (no runtime-injected <style> elements).
+// The Player's Content-Security-Policy lives in the `<meta http-equiv>` of `index.html`. The
+// production policy has no 'unsafe-inline' anywhere (no inline scripts, no runtime-injected
+// <style>); only the Vite dev server relaxes it (React refresh preamble, HMR websocket and the CSS
+// Vite injects as <style> elements during development).
 
 const CSP_META_PATTERN = /(<meta\s+http-equiv="Content-Security-Policy"\s+content=")([^"]*)(")/u;
 
@@ -45,17 +44,16 @@ function addSource(sources, source) {
   return sources.includes(source) ? sources : [...sources, source];
 }
 
-/** Dev server only: allow the inline React refresh preamble and the HMR websocket. */
+/**
+ * Dev server only: allow the inline React refresh preamble, the HMR websocket and the CSS that
+ * Vite injects as <style> elements in development (the build ships CSS files instead).
+ */
 export function devCsp(policy) {
   const withScript = mapDirective(policy, "script-src", (sources) =>
     addSource(sources, "'unsafe-inline'")
   );
-  return mapDirective(withScript, "connect-src", (sources) => addSource(sources, "ws:"));
-}
-
-/** The policy without `style-src 'unsafe-inline'`: injected <style> elements are blocked. */
-export function strictStyleCsp(policy) {
-  return mapDirective(policy, "style-src", (sources) =>
-    sources.filter((source) => source !== "'unsafe-inline'")
+  const withStyle = mapDirective(withScript, "style-src", (sources) =>
+    addSource(sources, "'unsafe-inline'")
   );
+  return mapDirective(withStyle, "connect-src", (sources) => addSource(sources, "ws:"));
 }

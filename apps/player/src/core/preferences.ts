@@ -5,9 +5,6 @@ export type ThemePreference = "system" | "light" | "dark";
 
 export type ResolvedTheme = "light" | "dark";
 
-/** Which player UI to mount: the classic imperative UI (default until R5) or the React one. */
-export type PlayerUi = "classic" | "next";
-
 export const THEME_STORAGE_KEY = "webblackbox.player.theme";
 
 const THEME_ORDER: readonly ThemePreference[] = ["system", "light", "dark"];
@@ -36,10 +33,4 @@ export function resolveTheme(preference: ThemePreference, prefersDark: boolean):
   }
 
   return preference;
-}
-
-/** `?ui=next` (or `?ui=react`) opens the React player; anything else keeps the classic one. */
-export function resolvePlayerUi(search: string): PlayerUi {
-  const value = new URLSearchParams(search).get("ui")?.trim().toLowerCase();
-  return value === "next" || value === "react" ? "next" : "classic";
 }

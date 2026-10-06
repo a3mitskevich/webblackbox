@@ -1,4 +1,4 @@
-// e2e:player-next scenarios of the compare feature (R4), picked up by scripts/e2e-player-next.mjs.
+// e2e:player scenarios of the compare feature (R4), picked up by scripts/e2e-player.mjs.
 // Session B is the synthetic recording with one regressed endpoint, written next to the artifacts.
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";

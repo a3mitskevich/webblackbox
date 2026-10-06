@@ -1,4 +1,4 @@
-// e2e:player-next scenarios of the feed feature (picked up by scripts/e2e-player-next.mjs): the
+// e2e:player scenarios of the feed feature (picked up by scripts/e2e-player.mjs): the
 // Activity feed (action → consequences, filters, repeats, follow) and the problems strip. Each
 // scenario gets a context with the CDP client and data-testid helpers (createScenarioContext in
 // scripts/lib/next-e2e.mjs).

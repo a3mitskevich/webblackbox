@@ -1,4 +1,4 @@
-// Shared helpers of e2e:player-next: CDP input and reads through `data-testid` hooks only.
+// Shared helpers of e2e:player: CDP input and reads through `data-testid` hooks only.
 // Feature scenario files (`src/next/features/<feature>/<feature>.e2e.mjs`) receive them in the
 // scenario context (see createScenarioContext), so they never import this file.
 import { access, readdir, readFile, writeFile } from "node:fs/promises";
@@ -6,7 +6,6 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { sleep, waitFor } from "./cdp-harness.mjs";
-import { parseCsp, readCsp, serializeCsp, strictStyleCsp, withCsp } from "./csp-policy.mjs";
 import { SYNTHETIC_PASSPHRASE } from "./synthetic-session.mjs";
 
 export const testId = (id) => `[data-testid="${id}"]`;
@@ -15,7 +14,7 @@ export async function navigate(client, url) {
   await client.send("Page.navigate", { url });
   await waitFor(
     async () =>
-      (await client.evaluate(`Boolean(document.querySelector('${testId("player-next")}'))`))
+      (await client.evaluate(`Boolean(document.querySelector('${testId("player")}'))`))
         ? true
         : null,
     20_000,
@@ -245,7 +244,7 @@ export async function verifyBuildOutput(dir) {
 
   const stylesheets = assets.filter((name) => name.endsWith(".css"));
   assert(forbidden.length === 0, "The build contains code the CSP forbids", forbidden);
-  assert(stylesheets.length >= 2, "Expected CSS files for the classic and the React UI", assets);
+  assert(stylesheets.length >= 1, "Expected the player CSS as files", assets);
   assert(scripts.length > 2, "Expected a code-split build (entry + lazy chunks)", scripts);
   return { scripts: scripts.length, stylesheets: stylesheets.length };
 }
@@ -299,9 +298,9 @@ export async function hover(client, selector) {
   await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y });
 }
 
-/** Opens a fresh page of the React player with the synthetic encrypted archive loaded. */
+/** Opens a fresh page of the player with the synthetic encrypted archive loaded. */
 export async function openSyntheticArchive(client, { origin, archivePath, hash = "", query = "" }) {
-  await navigateFresh(client, `${origin}/?ui=next&lang=en${query}${hash}`);
+  await navigateFresh(client, `${origin}/?lang=en${query}${hash}`);
   await openEncrypted(client, archivePath, SYNTHETIC_PASSPHRASE);
 }
 
@@ -329,15 +328,10 @@ export function createScenarioContext({ client, origin, archivePath, artifactsDi
     hover: (selector) => hover(client, selector),
     dragBy: (selector, dx, dy) => dragBy(client, selector, dx, dy),
     setViewport: (width, height) => setViewport(client, width, height),
-    // Feature panels bring their own markup and libraries: every scenario page is served under
-    // the strict style policy, so a panel that injects a <style> fails the run.
+    // Every page runs under the Player CSP (no `style-src 'unsafe-inline'`), so a panel that
+    // injects a <style> reports a violation and fails the run.
     openSynthetic: (options = {}) =>
-      openSyntheticArchive(client, {
-        origin,
-        archivePath,
-        ...options,
-        query: `${STRICT_CSP_QUERY}${options.query ?? ""}`
-      })
+      openSyntheticArchive(client, { origin, archivePath, ...options })
   };
 }
 
@@ -365,7 +359,7 @@ export async function findFeatureScenarioFiles(featuresDir) {
 /**
  * Imports the scenario files and checks their shape:
  * `export default { feature: "<folder>", scenarios: [{ name, run(ctx) }] }`.
- * `only` (WB_E2E_NEXT_FEATURES="feed,network") keeps just those features.
+ * `only` (WB_E2E_PLAYER_FEATURES="feed,network") keeps just those features.
  */
 export async function loadFeatureScenarios(files, only = null) {
   const wanted = only
@@ -407,7 +401,7 @@ export async function loadFeatureScenarios(files, only = null) {
 
   if (unknown.length > 0) {
     throw new Error(
-      `WB_E2E_NEXT_FEATURES names features without scenarios: ${unknown.map((name) => `"${name}"`).join(", ")}`
+      `WB_E2E_PLAYER_FEATURES names features without scenarios: ${unknown.map((name) => `"${name}"`).join(", ")}`
     );
   }
 
@@ -416,51 +410,4 @@ export async function loadFeatureScenarios(files, only = null) {
   }
 
   return suites;
-}
-
-/** Marker in a page URL that makes `enableStrictStyleCsp` rewrite the page's policy. */
-export const STRICT_CSP_QUERY = "&csp=strict";
-
-/**
- * Serves pages whose URL carries `csp=strict` with the Player CSP minus `style-src
- * 'unsafe-inline'` (rewritten in flight with the Fetch domain; the build is not touched), so any
- * runtime-injected `<style>` shows up as a violation before R5 tightens the real policy.
- */
-export async function enableStrictStyleCsp(client) {
-  client.on("Fetch.requestPaused", (params) => {
-    void rewritePolicy(client, params);
-  });
-  await client.send("Fetch.enable", {
-    patterns: [{ urlPattern: "*csp=strict*", resourceType: "Document", requestStage: "Response" }]
-  });
-}
-
-/** `'report-sample'` allows nothing; it makes the violation report carry the blocked text. */
-function withReportSample(policy) {
-  return serializeCsp(
-    parseCsp(policy).map(([name, sources]) =>
-      name === "style-src" ? [name, [...sources, "'report-sample'"]] : [name, sources]
-    )
-  );
-}
-
-async function rewritePolicy(client, params) {
-  try {
-    const { body, base64Encoded } = await client.send("Fetch.getResponseBody", {
-      requestId: params.requestId
-    });
-    const html = base64Encoded ? Buffer.from(body, "base64").toString("utf8") : body;
-    const strict = withCsp(html, withReportSample(strictStyleCsp(readCsp(html))));
-    await client.send("Fetch.fulfillRequest", {
-      requestId: params.requestId,
-      responseCode: params.responseStatusCode ?? 200,
-      responseHeaders: (params.responseHeaders ?? []).filter(
-        (header) => header.name.toLowerCase() !== "content-length"
-      ),
-      body: Buffer.from(strict, "utf8").toString("base64")
-    });
-  } catch (error) {
-    console.error("Strict CSP rewrite failed:", error instanceof Error ? error.message : error);
-    await client.send("Fetch.continueRequest", { requestId: params.requestId }).catch(() => {});
-  }
 }

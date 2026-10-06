@@ -1,7 +1,7 @@
 // Synthetic session shaped like a real Full-capture archive (anonymized hosts): an error page and
 // reload, hash routes, a lobby click that triggers 401s on /gw/bff/*, SignalR WebSockets, console
 // errors, third-party failures, other tabs of the site and three drawn screenshots.
-// Used by the player unit tests (plain archive) and by e2e-player-next (encrypted archive).
+// Used by the player unit tests (plain archive) and by e2e-player (encrypted archive).
 import { createHash } from "node:crypto";
 
 import JSZip from "jszip";
