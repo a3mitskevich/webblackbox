@@ -15,6 +15,8 @@ const failing = () => ({
     throw new Error("storage unavailable");
   })
 });
+// Chrome can hold storage.managed back while a page opened at browser start keeps loading.
+const pending = () => ({ get: vi.fn(() => new Promise<Record<string, unknown>>(() => undefined)) });
 
 describe("player URL setting", () => {
   it.each([
@@ -102,5 +104,22 @@ describe("player URL setting", () => {
       url: "",
       managed: false
     });
+  });
+
+  it("goes on with the local value when the managed policy does not answer", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const local = area({ [PLAYER_URL_STORAGE_KEY]: "https://local.example.com/" });
+      const setting = loadPlayerUrlSetting({ local, managed: pending() });
+      const managedUrl = loadManagedPlayerUrl(pending());
+
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await expect(setting).resolves.toEqual({ url: "https://local.example.com/", managed: false });
+      await expect(managedUrl).resolves.toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

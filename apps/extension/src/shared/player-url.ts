@@ -1,4 +1,7 @@
-import { readManagedEnterprisePolicy } from "./options-storage.js";
+import {
+  createBoundedManagedPolicyReader,
+  readManagedEnterprisePolicy
+} from "./options-storage.js";
 
 /**
  * Address of the Player that "Export and open in Player" opens (the organization's self-hosted
@@ -10,6 +13,12 @@ import { readManagedEnterprisePolicy } from "./options-storage.js";
 
 export const PLAYER_URL_STORAGE_KEY = "webblackbox.playerUrl";
 export const PLAYER_URL_POLICY_KEY = "playerUrl";
+
+/**
+ * How long an extension page waits for the managed policy before it goes on without it, as the
+ * service worker does on Start (see `createBoundedManagedPolicyReader`).
+ */
+const MANAGED_POLICY_READ_TIMEOUT_MS = 3_000;
 
 /** Plain http is only accepted for a Player served from this computer. */
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1"]);
@@ -73,9 +82,15 @@ export function resolvePlayerUrl(local: unknown, managed: string): PlayerUrlSett
     : { url: normalizePlayerUrl(local), managed: false };
 }
 
-/** The policy's Player URL, or "" when unset, invalid or unavailable. Never throws. */
+/**
+ * The policy's Player URL, or "" when unset, invalid or unavailable (also when the policy has not
+ * answered after `MANAGED_POLICY_READ_TIMEOUT_MS`). Never throws.
+ */
 export async function loadManagedPlayerUrl(managed: StorageAreaLike | undefined): Promise<string> {
-  const policy = await readManagedEnterprisePolicy(managed);
+  const readPolicy = createBoundedManagedPolicyReader(() => readManagedEnterprisePolicy(managed), {
+    timeoutMs: MANAGED_POLICY_READ_TIMEOUT_MS
+  });
+  const policy = await readPolicy();
   return normalizePlayerUrl(policy?.[PLAYER_URL_POLICY_KEY]);
 }
 
