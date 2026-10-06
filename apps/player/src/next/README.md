@@ -38,17 +38,20 @@ Tailwind is not part of the build (see the stage V summary on PR #20).
 
 ## Building blocks (use these, do not hand-roll)
 
-| Need                                         | Use                                                                 | Notes                                                                                                        |
-| -------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Long list or table                           | `components/virtual-list.tsx` (`@tanstack/react-virtual`)           | `measureElement` for variable rows                                                                           |
-| Dialog                                       | `components/modal-dialog.tsx` (Base UI `Dialog`)                    | Name it with `<DialogTitle>`; focus returns to the opener                                                    |
-| Tooltip                                      | `components/hint.tsx` (Base UI `Tooltip`)                           | Instead of `title` on icon buttons                                                                           |
-| Tabs, menus, popovers, toasts, toggle groups | `@base-ui/react/*`                                                  | The app root has `CSPProvider disableStyleElements`                                                          |
-| Icon                                         | `components/icon.tsx` (`lucide-react`)                              | Add a name to `ICONS`; features ask for the player's names                                                   |
-| Splitter                                     | `components/split-layout.tsx` (`react-resizable-panels`)            | `ListDetailsSplit name="network"` persists per name (`detailsPercent` sets the default); `F` widens the rail |
-| A panel that can fail or load lazily         | `components/panel-boundary.tsx` (`react-error-boundary` + Suspense) | Rail tab panels already run inside one                                                                       |
-| Keyboard                                     | `core/keymap.ts` + `hooks.ts` (`react-hotkeys-hook`)                | Physical keys (work on a Russian layout)                                                                     |
-| Highlighted code, JSON tree, hex dump        | `features/network/{code-view,viewers}.tsx`                          | Shiki (JS regex engine) loads as its own chunk; R5 may move them to components                               |
+| Need                                         | Use                                                                  | Notes                                                                                                        |
+| -------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Long list or table                           | `components/virtual-list.tsx` (`@tanstack/react-virtual`)            | `measureElement` for variable rows                                                                           |
+| Dialog                                       | `components/modal-dialog.tsx` (Base UI `Dialog`)                     | Name it with `<DialogTitle>`; focus returns to the opener                                                    |
+| Tooltip                                      | `components/hint.tsx` (Base UI `Tooltip`)                            | Instead of `title` on icon buttons                                                                           |
+| Tabs, menus, popovers, toasts, toggle groups | `@base-ui/react/*`                                                   | The app root has `CSPProvider disableStyleElements`                                                          |
+| Icon                                         | `components/icon.tsx` (`lucide-react`)                               | Add a name to `ICONS`; features ask for the player's names                                                   |
+| Splitter                                     | `components/split-layout.tsx` (`react-resizable-panels`)             | `ListDetailsSplit name="network"` persists per name (`detailsPercent` sets the default); `F` widens the rail |
+| A panel that can fail or load lazily         | `components/panel-boundary.tsx` (`react-error-boundary` + Suspense)  | Rail tab panels already run inside one                                                                       |
+| Keyboard                                     | `core/keymap.ts` + `hooks.ts` (`react-hotkeys-hook`)                 | Physical keys (work on a Russian layout)                                                                     |
+| Highlighted code, JSON tree, hex dump        | `features/network/{code-view,viewers}.tsx`                           | Shiki (JS regex engine, GitHub high-contrast themes) loads as its own chunk; import `viewers.css` with them  |
+| Open a generator from anywhere               | `features/generate/api.ts` (`openGenerate(store, { kind, range })`)  | Without `range` the dialog starts from the timeline range (`state.range`), `range: null` = whole session     |
+| Time range of the timeline                   | `core/time-range.ts`, `state.range`, `controller.setRange/markRange` | Lists narrow to it with `isInRange` (Activity, Network, Console)                                             |
+| Accessibility check                          | `scripts/e2e-next/tools.mjs` (axe-core in `e2e:player`)              | Serious / critical WCAG 2.2 A/AA findings fail the run                                                       |
 
 Other libraries are vetted in `LIBRARIES.md` (Shiki with the JavaScript regex engine, uPlot,
 jsdiff, microdiff, uFuzzy, TanStack Table). Never inject `<style>` (the CSP has no `style-src
@@ -69,7 +72,7 @@ and no hand-built DOM (`src/no-dom-rendering.test.ts` fails on them).
 | `features/perf/`      | R4    | Perf charts                                                                                |
 | `features/compare/`   | R4    | Compare + regressions (lazy)                                                               |
 | `features/share/`     | R4    | Share links                                                                                |
-| `features/inspector/` | R5    | Event inspector                                                                            |
+| `features/inspector/` | R5    | Event inspector (lazy; the stage outline comes from `useInspectedTarget`)                  |
 | `features/generate/`  | R5    | Playwright / bug report / HAR / GitHub / Jira (lazy)                                       |
 
 Each folder has an `index.ts` that exports its `PlayerFeature`. All ten are already listed in
