@@ -82,6 +82,7 @@ import { formatTabsContextReport, readTabsContext } from "./tabs-context.js";
 export * from "./activity-feed.js";
 export * from "./compare-endpoints.js";
 export * from "./console-entries.js";
+export * from "./event-inspection.js";
 export * from "./perf-series.js";
 export * from "./playwright-actions.js";
 export * from "./problems.js";
