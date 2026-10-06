@@ -79,7 +79,7 @@ const FeedRow = memo(function FeedRow({
       role="option"
       id={`evt-${item.eventId}`}
       aria-selected={selected}
-      aria-expanded={entry.count > 1 ? entry.expanded : undefined}
+      data-expanded={entry.count > 1 ? entry.expanded : undefined}
       className={classes}
       style={{ transform: `translateY(${start}px)` }}
       onClick={() => onSelect(item.eventId)}
@@ -99,11 +99,11 @@ const FeedRow = memo(function FeedRow({
         <div className="t1">
           {text.code !== null ? <span className="code mono">{text.code}</span> : null}
           {entry.count > 1 ? (
-            <button
-              type="button"
-              tabIndex={-1}
+            // Not a button inside the option (axe nested-interactive): the pointer clicks it,
+            // the keyboard opens and closes the group with → / ← on the row.
+            <span
               className="rep"
-              aria-label={
+              title={
                 entry.expanded
                   ? context.t("collapseRepeats")
                   : context.t("expandRepeats", { count: entry.count })
@@ -115,7 +115,7 @@ const FeedRow = memo(function FeedRow({
               data-testid="repeat-toggle"
             >
               {context.t("repeatCount", { count: entry.count })}
-            </button>
+            </span>
           ) : null}
           {text.lead ? <span className="lead">{text.lead}</span> : null}
           {text.subject ? (
@@ -136,12 +136,11 @@ const FeedRow = memo(function FeedRow({
         ) : null}
       </div>
       {selected ? (
-        // Enter opens the inspector from the keyboard; this is the pointer's way in.
-        <button
-          type="button"
-          tabIndex={-1}
+        // The pointer's way into the inspector; the keyboard has Enter. Not a button inside the
+        // option (axe nested-interactive), so screen readers hear one row, not two controls.
+        <span
           className="btn small icon-only inspect"
-          aria-label={context.t("inspect")}
+          aria-hidden="true"
           title={context.t("inspect")}
           onClick={(event) => {
             event.stopPropagation();
@@ -150,7 +149,7 @@ const FeedRow = memo(function FeedRow({
           data-testid="row-inspect"
         >
           <Icon name="info" />
-        </button>
+        </span>
       ) : null}
     </div>
   );

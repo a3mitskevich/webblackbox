@@ -6,6 +6,7 @@ import { readThemePreference } from "../core/preferences.js";
 import { applyPlayerDocumentLocale, detectPlayerLocale } from "../lib/i18n.js";
 import { App } from "./app.js";
 import { createPlayerController, type PlayerController } from "./controller.js";
+import { eventTitle } from "./features/inspector/inspector-text.js";
 import { RAIL_TAB_REGISTRY } from "./features/registry.js";
 import { createInitialState } from "./state.js";
 import { createStore } from "./store.js";
@@ -20,7 +21,8 @@ export function mountNextPlayer(root: HTMLElement): void {
     stepItems: (state) => {
       const stepItems = RAIL_TAB_REGISTRY.get(state.tab)?.stepItems;
       return state.archive && stepItems ? stepItems(state.archive, state) : null;
-    }
+    },
+    describeEvent: eventTitle
   });
 
   createRoot(root).render(<App controller={controller} />);

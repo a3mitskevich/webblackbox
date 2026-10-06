@@ -257,11 +257,14 @@ describe("React player", () => {
   it("opens the Base UI dialog as a modal and returns focus to its opener", async () => {
     const { controller } = renderPlayer();
     await openArchive(controller);
-    const opener = screen.getByTestId("shortcuts-button");
+    const opener = screen.getByTestId("player-menu");
     opener.focus();
 
     act(() => {
       fireEvent.click(opener);
+    });
+    act(() => {
+      fireEvent.click(screen.getByTestId("menu-shortcuts"));
     });
     const dialog = screen.getByRole("dialog", { name: "Keyboard shortcuts" });
     expect(dialog).toHaveAttribute("data-testid", "shortcuts-dialog");

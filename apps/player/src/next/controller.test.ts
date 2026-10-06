@@ -261,6 +261,18 @@ describe("playback", () => {
     expect(store.getState().playheadMono).toBe(minMono);
   });
 
+  it("names jumps with the injected event description", async () => {
+    const { store, controller } = await loaded({
+      describeEvent: (_archive, event) => `described ${event.id}`
+    });
+
+    controller.stepError(1);
+    const selected = store.getState().selection?.id;
+    expect(store.getState().announcement).toMatch(
+      new RegExp(`^Error 1 of \\d+: described ${selected}, `)
+    );
+  });
+
   it("keeps a timeline range inside the recording; [ and ] move its ends to the playhead", async () => {
     const { store, controller } = await loaded();
     const { minMono, maxMono } = store.getState().archive?.model ?? { minMono: 0, maxMono: 0 };

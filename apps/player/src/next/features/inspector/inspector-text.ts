@@ -1,6 +1,10 @@
 import type { EventPhraseVerb } from "@webblackbox/player-sdk";
+import { extractRequestId, type WebBlackboxEvent } from "@webblackbox/protocol";
 
-import type { PlayerI18n } from "../../../lib/i18n.js";
+import type { PlayerI18n, PlayerLocale } from "../../../lib/i18n.js";
+import { readEventSummaryText } from "../../../lib/signal-text.js";
+import type { LoadedArchive } from "../../state.js";
+import { describeFeedEvent } from "../feed/feed-view.js";
 import type { Inspection } from "./inspector-model.js";
 import type { InspectorMessageKey, InspectorTranslate } from "./messages.js";
 
@@ -125,4 +129,29 @@ function describeOutcome(
   }
 
   return reaction && !reaction.mutated ? t("outcomeNoReaction") : "";
+}
+
+/**
+ * A one-line title for any event: the Activity feed's wording when the feed has the event, the
+ * request (`401 GET …/casino-user`) for network events, else the type and a summary.
+ */
+export function eventTitle(
+  archive: LoadedArchive,
+  event: WebBlackboxEvent,
+  locale: PlayerLocale
+): string {
+  const row = describeFeedEvent(archive, event.id, locale);
+
+  if (row) {
+    return [row.code, row.lead, row.subject].filter(Boolean).join(" ");
+  }
+
+  const reqId = extractRequestId(event);
+  const entry = reqId ? archive.model.waterfallByReqId.get(reqId) : undefined;
+
+  if (entry) {
+    return [entry.status ?? "", entry.method, shortPath(entry.url)].filter(Boolean).join(" ");
+  }
+
+  return `${event.type} ${readEventSummaryText(event)}`.trim();
 }

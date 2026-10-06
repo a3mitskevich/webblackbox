@@ -347,7 +347,7 @@ const ActionsRow = memo(function ActionsRow({ archive }: LaneProps) {
   return (
     <div className="tl-row">
       <span className="tl-label">{i18n.tn("actionsLane")}</span>
-      <div className="tl-track" data-testid="lane-actions">
+      <div className="tl-track marks" data-testid="lane-actions">
         {view.actionMarks.map((mark) => {
           const event = model.eventById.get(mark.eventId);
           const label = `${mark.triggerType ?? mark.actId} · ${formatOffset(mark.mono - model.minMono, locale)}`;
@@ -380,7 +380,7 @@ const PointerRow = memo(function PointerRow({ archive, lanes }: ExpandedLaneProp
   return (
     <div className="tl-row">
       <span className="tl-label">{i18n.tn("pointerLane")}</span>
-      <div className="tl-track" data-testid="lane-pointer">
+      <div className="tl-track marks" data-testid="lane-pointer">
         {lanes.pointer.map((mark) => {
           const label = i18n.tn("pointerMark", {
             label: mark.label,
@@ -421,7 +421,7 @@ const FilmstripRow = memo(function FilmstripRow({ archive, lanes }: ExpandedLane
   return (
     <div className="tl-row">
       <span className="tl-label">{i18n.tn("filmstripLane")}</span>
-      <div className="tl-track" data-testid="lane-filmstrip">
+      <div className="tl-track marks" data-testid="lane-filmstrip">
         {lanes.filmstrip.map((frame) => {
           const label = i18n.tn("filmstripFrame", {
             time: formatOffset(frame.mono - model.minMono, locale)

@@ -217,7 +217,7 @@
   font: 600 11.5px var(--mono);
   cursor: pointer;
 }
-.feed .fi[aria-expanded="true"] .rep {
+.feed .fi[data-expanded="true"] .rep {
   border-color: var(--accent);
   color: var(--accent);
 }

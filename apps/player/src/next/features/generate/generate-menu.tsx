@@ -84,7 +84,7 @@ export function GenerateMenu() {
     <Menu.Root>
       <Menu.Trigger className="btn" aria-label={t("menuLabel")} data-testid="generate-button">
         <CodeXml {...ICON_PROPS} />
-        <span className="lbl hide-narrow">{t("generate")}</span>
+        <span className="hide-narrow">{t("generate")}</span>
         <ChevronDown {...ICON_PROPS} size={14} />
       </Menu.Trigger>
       <Menu.Portal>

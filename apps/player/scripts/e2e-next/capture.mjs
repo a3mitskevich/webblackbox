@@ -11,6 +11,7 @@ import {
   press,
   screenshot,
   setViewport,
+  waitForSelector,
   waitForSnapshot
 } from "../lib/next-e2e.mjs";
 import { SYNTHETIC_PASSPHRASE } from "../lib/synthetic-session.mjs";
@@ -45,9 +46,25 @@ export async function captureScreenshots(client, origin, archivePath, outDir) {
         await client.evaluate("document.fonts.ready");
         await sleep(400);
         shots.push(await screenshot(client, outDir, `player-${width}-${theme}-${lang}.png`));
+
+        // The event inspector on the lobby click, its target outlined on the frame.
+        await navigateFresh(
+          client,
+          `${origin}/?lang=${lang}#t=10.80&sel=act:A-000002&tab=activity`
+        );
+        await openEncrypted(client, archivePath, SYNTHETIC_PASSPHRASE);
+        await waitForSnapshot(client, (value) => value.media === "screenshot", "No frame");
+        await client.evaluate(`document.querySelector('[data-testid="event-list"]').focus()`);
+        await press(client, "Enter", { code: "Enter", keyCode: 13 });
+        await waitForSelector(client, '[data-testid="target-frame"]', 8_000, "No target outline");
+        await client.evaluate("document.fonts.ready");
+        await sleep(400);
+        shots.push(await screenshot(client, outDir, `inspector-${width}-${theme}-${lang}.png`));
       }
     }
   }
+
+  shots.push(...(await captureTools(client, origin, archivePath, outDir)));
 
   await setViewport(client, 390, 844);
   await client.send("Emulation.setEmulatedMedia", {
@@ -108,4 +125,54 @@ export async function verifyRealArchive(client, origin, archivePath, passphrase,
     firstError: error.live.slice(0, 120),
     screenshot: shot
   };
+}
+
+/** One 1440 light EN shot of each R5 tool: lanes + range, palette, About, Generate. */
+async function captureTools(client, origin, archivePath, outDir) {
+  const shots = [];
+  const click = (id) => client.evaluate(`document.querySelector('[data-testid="${id}"]').click()`);
+  const open = async (hash) => {
+    await setViewport(client, 1440, 900);
+    await client.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-color-scheme", value: "light" }]
+    });
+    await navigateFresh(client, `${origin}/?lang=en${hash}`);
+    await openEncrypted(client, archivePath, SYNTHETIC_PASSPHRASE);
+    await waitForSnapshot(client, (value) => value.media === "screenshot", "No frame");
+  };
+
+  await open("#t=10.89&sel=req:90080.1706");
+  await click("expand-lanes");
+  await press(client, "ArrowLeft", { code: "ArrowLeft" });
+  await press(client, "ArrowLeft", { code: "ArrowLeft" });
+  await press(client, "[", { code: "BracketLeft" });
+  await press(client, "ArrowRight", { code: "ArrowRight" });
+  await press(client, "ArrowRight", { code: "ArrowRight" });
+  await press(client, "ArrowRight", { code: "ArrowRight" });
+  await press(client, "]", { code: "BracketRight" });
+  await sleep(400);
+  shots.push(await screenshot(client, outDir, "lanes-range-1440-light-en.png"));
+
+  await press(client, "k", { code: "KeyK", modifiers: 2 });
+  await waitForSelector(client, '[data-testid="command-palette"]', 8_000, "No palette");
+  await client.send("Input.insertText", { text: "casino" });
+  await sleep(500);
+  shots.push(await screenshot(client, outDir, "palette-1440-light-en.png"));
+  await press(client, "Escape", { code: "Escape", keyCode: 27 });
+
+  await open("#t=10.89");
+  await click("session");
+  await waitForSelector(client, '[data-testid="archive-info"]', 8_000, "No About dialog");
+  await sleep(400);
+  shots.push(await screenshot(client, outDir, "about-1440-light-en.png"));
+  await press(client, "Escape", { code: "Escape", keyCode: 27 });
+
+  await open("#t=10.89");
+  await click("generate-button");
+  await waitForSelector(client, '[data-testid="generate-playwright"]', 8_000, "No menu");
+  await click("generate-playwright");
+  await waitForSelector(client, '[data-testid="generate-preview"]', 8_000, "No preview");
+  await sleep(800);
+  shots.push(await screenshot(client, outDir, "generate-1440-light-en.png"));
+  return shots;
 }

@@ -99,7 +99,7 @@
   --surface-2: #f6f8fa;
   --ink: #162032;
   --ink-2: #465264;
-  --ink-3: #6b7689;
+  --ink-3: #5f6a7d;
   --line: #dce1e8;
   --line-2: #e9edf2;
   --accent: #2b59e0;
@@ -969,12 +969,12 @@ button.sess:hover .sess-title {
 }
 .chapters {
   position: relative;
-  height: 22px;
+  height: 24px;
 }
 .chapter {
   position: absolute;
   top: 0;
-  height: 22px;
+  height: 24px;
   min-width: 4px;
   margin: 0;
   background: var(--surface-2);
@@ -1011,24 +1011,42 @@ button.sess:hover .sess-title {
 .tick.ws {
   background: var(--ws);
 }
-.act {
+/* Marks are 24 px targets (WCAG 2.2 2.5.8) around a smaller drawn glyph. */
+.tl-track.marks {
+  height: 24px;
+}
+.act,
+.pmark,
+.film {
   position: absolute;
-  top: 1px;
-  width: 14px;
-  height: 14px;
-  margin-left: -7px;
+  top: 0;
+  width: 24px;
+  height: 24px;
+  margin-left: -12px;
   padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.act::before,
+.pmark::before,
+.film::before {
+  content: "";
+  position: absolute;
+  box-sizing: border-box;
+}
+.act::before {
+  inset: 5px;
   border-radius: 50%;
   background: var(--surface);
   border: 2px solid var(--ink-2);
-  cursor: pointer;
 }
-.act-navigation {
+.act-navigation::before {
   border-color: var(--nav);
   border-radius: 3px;
   transform: rotate(45deg) scale(0.8);
 }
-.act.cur {
+.act.cur::before {
   border-color: var(--accent);
   background: var(--accent);
 }
@@ -1154,43 +1172,32 @@ button.sess:hover .sess-title {
   border-radius: 3px;
 }
 /* Pointer lane marks: plain clicks, other buttons, gestures, rage / dead clicks. */
-.pmark {
-  position: absolute;
-  top: 3px;
-  width: 10px;
-  height: 10px;
-  margin-left: -5px;
-  padding: 0;
+.pmark::before {
+  inset: 7px;
   border-radius: 50%;
   border: 2px solid var(--fx-click);
   background: var(--surface);
-  cursor: pointer;
 }
-.pmark-alt {
+.pmark-alt::before {
   border-style: dashed;
 }
-.pmark-gesture {
+.pmark-gesture::before {
   border-radius: 2px;
 }
-.pmark-problem {
+.pmark-problem::before {
   border-color: var(--bad);
   background: var(--bad);
 }
 /* Filmstrip: one frame button per screenshot. */
-.film {
-  position: absolute;
-  top: 1px;
-  width: 6px;
-  height: 14px;
-  margin-left: -3px;
-  padding: 0;
+.film::before {
+  inset: 5px 9px;
   border: 1px solid var(--ink-3);
   border-radius: 1px;
   background: var(--surface-2);
-  cursor: pointer;
 }
-.film:hover,
-.pmark:hover {
+.film:hover::before,
+.pmark:hover::before,
+.act:hover::before {
   border-color: var(--accent);
 }
 

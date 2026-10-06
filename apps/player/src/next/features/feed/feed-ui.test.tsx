@@ -156,7 +156,7 @@ describe("activity feed filters", () => {
     act(() => {
       fireEvent.click(toggle);
     });
-    expect(head).toHaveAttribute("aria-expanded", "true");
+    expect(head).toHaveAttribute("data-expanded", "true");
     expect(rowIds().length).toBeGreaterThan(before);
 
     act(() => {

@@ -64,6 +64,11 @@ export type PlayerControllerOptions = {
    * back to the Activity events.
    */
   stepItems?: (state: PlayerState) => readonly ListStepItem[] | null;
+  /**
+   * How a jump names an event in the live region ("401 GET …/casino-user"); defaults to the type
+   * and a short summary of its data.
+   */
+  describeEvent?: (archive: LoadedArchive, event: WebBlackboxEvent, locale: PlayerLocale) => string;
 };
 
 export type SeekStep = "step" | "large-step" | "frame";
@@ -164,10 +169,17 @@ export function createPlayerController(
     update({ ...patch, playheadMono: clampMono(mono, bounds(archive)) });
   };
 
+  const labelOf = (event: WebBlackboxEvent, archive: LoadedArchive): string =>
+    compactText(
+      options.describeEvent
+        ? options.describeEvent(archive, event, store.getState().locale)
+        : `${event.type} ${readEventSummaryText(event)}`.trim(),
+      ANNOUNCE_LABEL_MAX
+    );
+
   const describe = (event: WebBlackboxEvent, archive: LoadedArchive): string => {
     const time = formatOffset(event.mono - archive.model.minMono, store.getState().locale);
-    const summary = compactText(readEventSummaryText(event), ANNOUNCE_LABEL_MAX);
-    return i18n().tn("announceSeek", { label: `${event.type} ${summary}`.trim(), time });
+    return i18n().tn("announceSeek", { label: labelOf(event, archive), time });
   };
 
   const selectEvent = (event: WebBlackboxEvent, announcement?: string): void => {
@@ -480,7 +492,7 @@ export function createPlayerController(
       }
 
       const time = formatOffset(next.mono - archive.model.minMono, state.locale);
-      const label = compactText(`${next.type} ${readEventSummaryText(next)}`, ANNOUNCE_LABEL_MAX);
+      const label = labelOf(next, archive);
       selectEvent(
         next,
         i18n().tn("announceError", {

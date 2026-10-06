@@ -1,6 +1,7 @@
 import type { ActionConsequence } from "@webblackbox/player-sdk";
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 
+import "../network/viewers.css";
 import "./inspector.css";
 
 import { formatOffset } from "../../../core/format.js";
@@ -13,7 +14,7 @@ import { useFeatureI18n } from "../messages.js";
 import { CodeView } from "../network/code-view.js";
 import { CopyButton } from "../network/copy-button.js";
 import { inspectSelection, type Inspection } from "./inspector-model.js";
-import { describeInspection, shortPath } from "./inspector-text.js";
+import { describeInspection, eventTitle, shortPath } from "./inspector-text.js";
 import { inspectorMessages, type InspectorTranslate } from "./messages.js";
 
 const BUTTON_KEYS = {
@@ -333,8 +334,11 @@ function InspectorBody({ inspection }: { inspection: Inspection }) {
     () => (archive ? describeFeedEvent(archive, event.id, locale) : null),
     [archive, event.id, locale]
   );
+  const title = useMemo(
+    () => (archive ? eventTitle(archive, event, locale) : event.type),
+    [archive, event, locale]
+  );
   const summary = describeInspection(inspection, t, i18n);
-  const title = row ? [row.code, row.lead, row.subject].filter(Boolean).join(" ") : event.type;
   const meta = [
     event.type,
     formatOffset(inspection.offsetMs, locale),

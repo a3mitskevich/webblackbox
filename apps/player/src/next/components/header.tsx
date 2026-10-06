@@ -115,7 +115,7 @@ export function Header({ searchRef }: HeaderProps) {
           <button
             type="button"
             className="sess"
-            aria-label={`${hostOf(meta.origin)} · ${subtitle} · ${i18n.tn("aboutRecording")}`}
+            aria-haspopup="dialog"
             onClick={() => controller.setArchiveInfoOpen(true)}
             data-testid="session"
           >
@@ -203,30 +203,6 @@ export function Header({ searchRef }: HeaderProps) {
           data-theme-preference={theme}
         >
           <Icon name={THEME_ICONS[theme]} />
-        </button>
-      </Hint>
-      {archive ? (
-        <Hint label={i18n.tn("resetLayout")}>
-          <button
-            type="button"
-            className="btn icon-only hide-narrow"
-            aria-label={i18n.tn("resetLayout")}
-            onClick={() => controller.resetLayout()}
-            data-testid="reset-layout"
-          >
-            <Icon name="layout" />
-          </button>
-        </Hint>
-      ) : null}
-      <Hint label={i18n.tn("shortcuts")}>
-        <button
-          type="button"
-          className="btn icon-only hide-narrow"
-          aria-label={i18n.tn("shortcuts")}
-          onClick={() => controller.setShortcutsOpen(true)}
-          data-testid="shortcuts-button"
-        >
-          <Icon name="keyboard" />
         </button>
       </Hint>
       {archive ? <GenerateMenu /> : null}

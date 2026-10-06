@@ -14,7 +14,7 @@ function readFeed(ctx) {
         thirdParty: row.dataset.thirdParty === "true",
         future: row.dataset.future === "true",
         className: row.className,
-        expanded: row.getAttribute("aria-expanded"),
+        expanded: row.dataset.expanded ?? null,
         text: row.textContent
       })),
       chips: all("problem-chip").map((chip) => ({

@@ -40,8 +40,8 @@ export function loadHighlighter(): Promise<HighlighterCore> {
     import("shiki/engine/javascript"),
     import("shiki/langs/javascript.mjs"),
     import("shiki/langs/typescript.mjs"),
-    import("shiki/themes/github-light.mjs"),
-    import("shiki/themes/github-dark.mjs")
+    import("shiki/themes/github-light-high-contrast.mjs"),
+    import("shiki/themes/github-dark-high-contrast.mjs")
   ]).then(([core, engine, javascript, typescript, light, dark]) =>
     core.createHighlighterCoreSync({
       themes: [light.default, dark.default],
@@ -67,7 +67,7 @@ export async function highlightLines(
   const core = await loadHighlighter();
   const result = core.codeToTokens(code, {
     lang: language,
-    themes: { light: "github-light", dark: "github-dark" }
+    themes: { light: "github-light-high-contrast", dark: "github-dark-high-contrast" }
   });
 
   return result.tokens.map((line) =>

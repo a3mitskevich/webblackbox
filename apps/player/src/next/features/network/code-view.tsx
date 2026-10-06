@@ -115,7 +115,11 @@ export function CodeView({ text, language, testId, inline = false }: CodeViewPro
         </p>
       ) : null}
       {inline ? (
-        <div className="ncode">{lines.map((_, index) => renderLine(index))}</div>
+        // Scrolls sideways when lines are long: keyboard users reach it (axe
+        // scrollable-region-focusable).
+        <div className="ncode" role="region" tabIndex={0} aria-label={t("codeLabel")}>
+          {lines.map((_, index) => renderLine(index))}
+        </div>
       ) : (
         <VirtualList
           className="ncode"

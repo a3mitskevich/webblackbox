@@ -7,14 +7,14 @@ import json from "shiki/langs/json.mjs";
 import markdown from "shiki/langs/markdown.mjs";
 import shellscript from "shiki/langs/shellscript.mjs";
 import xml from "shiki/langs/xml.mjs";
-import githubDark from "shiki/themes/github-dark.mjs";
-import githubLight from "shiki/themes/github-light.mjs";
+import githubDark from "shiki/themes/github-dark-high-contrast.mjs";
+import githubLight from "shiki/themes/github-light-high-contrast.mjs";
 
 import type { CodeLanguage } from "./body.js";
 
 /**
  * Shiki, fine-grained (LIBRARIES.md): the JavaScript regex engine (no WebAssembly, no `eval`),
- * static grammars and both GitHub themes. This module is only reached through a dynamic import,
+ * static grammars and both GitHub high-contrast themes (WCAG AA on the code background). This module is only reached through a dynamic import,
  * so it ships in its own chunk and loads the first time a body is highlighted.
  */
 
@@ -45,7 +45,7 @@ function getHighlighter(): HighlighterCore {
 export function highlightLines(code: string, language: HighlightLanguage): CodeToken[][] {
   const result = getHighlighter().codeToTokens(code, {
     lang: language,
-    themes: { light: "github-light", dark: "github-dark" },
+    themes: { light: "github-light-high-contrast", dark: "github-dark-high-contrast" },
     defaultColor: false
   });
 

@@ -7,7 +7,6 @@ import { formatOffset } from "../../core/format.js";
 import { searchPalette } from "../../core/palette-search.js";
 import { nextThemePreference } from "../../core/preferences.js";
 import { PLAYER_LOCALES, type PlayerI18n } from "../../lib/i18n.js";
-import { readEventSummaryText } from "../../lib/signal-text.js";
 import { compactText } from "../../lib/text.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import type { PlayerController } from "../controller.js";
@@ -15,7 +14,7 @@ import { describeFeedEvent } from "../features/feed/feed-view.js";
 import { openGenerate } from "../features/generate/api.js";
 import { GENERATE_MENU_ENTRIES } from "../features/generate/generate-menu.js";
 import { generateMessages } from "../features/generate/messages.js";
-import { shortPath } from "../features/inspector/inspector-text.js";
+import { eventTitle, shortPath } from "../features/inspector/inspector-text.js";
 import { RAIL_TAB_ORDER } from "../features/registry.js";
 import type { LoadedArchive, PlayerState } from "../state.js";
 import { shallowEqual } from "../store.js";
@@ -153,9 +152,7 @@ function eventItems(
     }
 
     const row = describeFeedEvent(archive, id, locale);
-    const label = row
-      ? [row.code, row.lead, row.subject].filter(Boolean).join(" ")
-      : `${event.type} ${readEventSummaryText(event)}`;
+    const label = eventTitle(archive, event, locale);
 
     return [
       {

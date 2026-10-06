@@ -481,13 +481,12 @@ export async function verifyDialogsAndHints(client) {
   );
   await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 2, y: 600 });
 
-  await client.evaluate(`document.querySelector('${testId("shortcuts-button")}').focus()`);
+  // The sheet opens from the player menu (⋯); Enter on the trigger opens the menu.
+  await client.evaluate(`document.querySelector('${testId("player-menu")}').focus()`);
   await press(client, "Enter", { code: "Enter", keyCode: 13 });
-  await waitForSnapshot(
-    client,
-    (value) => value.shortcuts,
-    "Enter on the button did not open the sheet"
-  );
+  await waitForSelector(client, testId("menu-shortcuts"), 5_000, "Enter did not open the menu");
+  await client.evaluate(`document.querySelector('${testId("menu-shortcuts")}').click()`);
+  await waitForSnapshot(client, (value) => value.shortcuts, "The menu item did not open the sheet");
   await press(client, "Escape", { code: "Escape", keyCode: 27 });
   await waitForSnapshot(client, (value) => !value.shortcuts, "Esc did not close the sheet");
   const after = await waitFor(
@@ -497,11 +496,11 @@ export async function verifyDialogsAndHints(client) {
         styles: document.querySelectorAll("style").length,
         titles: document.querySelectorAll('${testId("header")} button[title]').length
       })`);
-      return value.focused === "shortcuts-button" ? value : null;
+      return value.focused === "player-menu" ? value : null;
     },
     5_000,
     100,
-    "Focus did not return to the shortcuts button"
+    "Focus did not return to the player menu"
   );
   assert(after.styles === 0, "A component injected a <style> element", after);
   assert(after.titles === 0, "Header buttons still carry native title tooltips", after);
@@ -562,7 +561,9 @@ export async function verifySplitters(client, { origin, archivePath }) {
     restored
   });
 
-  await client.evaluate(`document.querySelector('${testId("reset-layout")}').click()`);
+  await client.evaluate(`document.querySelector('${testId("player-menu")}').click()`);
+  await waitForSelector(client, testId("menu-reset-layout"), 5_000, "The player menu did not open");
+  await client.evaluate(`document.querySelector('${testId("menu-reset-layout")}').click()`);
   const reset = await waitFor(
     async () => {
       const width = await railWidth();
