@@ -34,7 +34,11 @@ const FORM: ProfileFormValues = {
   includeUrls: "",
   excludeUrls: "*/auth/*",
   mousemoveHz: "",
-  visual: "screenshots"
+  visual: "screenshots",
+  deleteAfterExport: true,
+  unexportedRetentionMinutes: "10",
+  sourceMaps: "embed",
+  sourceMapMaxBytes: "1048576"
 };
 
 describe("profile form model", () => {
@@ -96,6 +100,32 @@ describe("profile form model", () => {
     expect(applyProfileFormValues(base, { ...FORM, visual: "" }).visual).toBeUndefined();
   });
 
+  it("sets, clamps and clears the source map option", () => {
+    const base = createDefaultProfile();
+
+    expect(applyProfileFormValues(base, FORM).sourceMaps).toEqual({
+      mode: "embed",
+      maxMapBytes: 1_048_576
+    });
+    expect(
+      applyProfileFormValues(base, { ...FORM, sourceMaps: "metadata", sourceMapMaxBytes: "" })
+        .sourceMaps
+    ).toEqual({ mode: "metadata" });
+    expect(
+      applyProfileFormValues(base, { ...FORM, sourceMapMaxBytes: "999999999999" }).sourceMaps
+        ?.maxMapBytes
+    ).toBe(32 * 1024 * 1024);
+
+    const withMaps = { ...base, sourceMaps: { mode: "off" as const } };
+
+    expect(
+      applyProfileFormValues(withMaps, { ...FORM, sourceMaps: "" }).sourceMaps
+    ).toBeUndefined();
+    expect(
+      applyProfileFormValues(withMaps, { ...FORM, sourceMaps: "bogus" }).sourceMaps
+    ).toBeUndefined();
+  });
+
   it("builds rules with only the conditions that were filled in", () => {
     expect(
       ruleFromFormValues({
@@ -151,5 +181,32 @@ describe("profile form model", () => {
     const { id } = duplicateIntoStore(store, createDefaultProfile());
 
     expect(id).toBe("profile-4");
+  });
+
+  it("keeps the local data block absent until the form departs from the defaults", () => {
+    const base = createDefaultProfile();
+
+    expect(applyProfileFormValues(base, FORM)).not.toHaveProperty("localData");
+    expect(applyProfileFormValues(base, { ...FORM, deleteAfterExport: false }).localData).toEqual({
+      deleteAfterExport: false,
+      unexportedRetentionMinutes: 10
+    });
+    expect(
+      applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "5000" }).localData
+    ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 1440 });
+  });
+
+  it("keeps an explicit local data block, and its retention when the field is cleared", () => {
+    const base = {
+      ...createDefaultProfile(),
+      localData: { deleteAfterExport: true, unexportedRetentionMinutes: 5 }
+    };
+
+    expect(
+      applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "" }).localData
+    ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 5 });
+    expect(
+      applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "0" }).localData
+    ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 1 });
   });
 });

@@ -124,6 +124,13 @@ const profileSchema = {
         encryption: { type: "string", enum: ["required", "optional"] },
         privacyScanner: { type: "string", enum: ["block", "warn"] }
       }
+    },
+    localData: {
+      type: "object",
+      properties: {
+        deleteAfterExport: { type: "boolean" },
+        unexportedRetentionMinutes: { type: "integer", minimum: 1, maximum: 1440 }
+      }
     }
   }
 };

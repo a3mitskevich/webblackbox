@@ -2,6 +2,7 @@ import {
   DEFAULT_CAPTURE_POLICY,
   EventIdFactory,
   isContentRedactionEnabled,
+  stripUnreadablePointerDetail,
   type BodySkipReason,
   type CapturePolicy,
   type FreezeReason,
@@ -98,7 +99,16 @@ export class WebBlackboxRecorder {
       this.config.capturePolicy
     );
     // Inline bodies skip key/value redaction: they get value masking under the body policy instead.
-    const detached = detachInlineNetworkBody(normalized.eventType, policyPayload);
+    const detached = detachInlineNetworkBody(
+      normalized.eventType,
+      // The capture agent already follows the policy; this keeps a stale page script from
+      // bypassing it.
+      stripUnreadablePointerDetail(
+        normalized.eventType,
+        policyPayload,
+        this.config.capturePolicy ?? DEFAULT_CAPTURE_POLICY
+      )
+    );
     const shouldKeepBody = this.hooks.shouldKeepInlineNetworkBody;
     // The single masking switch of the recorder: with `contentRedaction: false` the payload is
     // kept as captured (categories still decide below what may be recorded at all).

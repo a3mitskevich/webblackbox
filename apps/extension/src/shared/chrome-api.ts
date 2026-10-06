@@ -101,6 +101,14 @@ export type ChromeApi = {
   i18n?: {
     getUILanguage(): string;
   };
+  /** Persisted timers: they fire after the service worker was stopped and restarted. */
+  alarms?: {
+    create(name: string, alarmInfo: { when: number }): Promise<void> | void;
+    clear(name: string): Promise<boolean> | void;
+    onAlarm: {
+      addListener(callback: (alarm: { name: string }) => void): void;
+    };
+  };
   offscreen?: {
     createDocument(options: {
       url: string;
@@ -130,6 +138,9 @@ export type ChromeApi = {
       addListener(callback: (port: PortLike) => void): void;
     };
     onInstalled: {
+      addListener(callback: () => void): void;
+    };
+    onStartup?: {
       addListener(callback: () => void): void;
     };
     onMessage: {
@@ -235,6 +246,13 @@ export type ChromeApi = {
         keys?: string[] | string | Record<string, unknown> | null
       ): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
+      remove?(keys: string | string[]): Promise<void>;
+    };
+    /** In-memory area: cleared when the browser exits or the extension reloads. */
+    session?: {
+      get(keys: string): Promise<Record<string, unknown>>;
+      set(items: Record<string, unknown>): Promise<void>;
+      setAccessLevel?(options: { accessLevel: "TRUSTED_CONTEXTS" }): Promise<void>;
     };
     managed?: {
       get(

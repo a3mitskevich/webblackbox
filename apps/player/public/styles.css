@@ -835,6 +835,48 @@ input[type="file"],
   background: #8e24aa;
 }
 
+.pointer-lane {
+  position: relative;
+  height: 10px;
+  margin: 3px 4px 0;
+  border-radius: 999px;
+  background: var(--sys-color-surface1);
+}
+
+.pointer-lane[hidden] {
+  display: none;
+}
+
+.pointer-lane-mark {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 10px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.pointer-lane-mark-click {
+  background: #1a73e8;
+}
+
+.pointer-lane-mark-alt {
+  background: #8e24aa;
+}
+
+.pointer-lane-mark-gesture {
+  background: #00897b;
+}
+
+.pointer-lane-mark-problem {
+  width: 6px;
+  background: var(--sys-color-error);
+}
+
 .progress-playhead {
   position: absolute;
   top: 0;
@@ -1690,6 +1732,115 @@ input[type="file"],
   color: var(--sys-color-on-surface-subtle);
 }
 
+.signal-origin {
+  margin-left: 6px;
+  color: var(--sys-color-on-tonal-container);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.stack-view {
+  border-bottom: 1px solid var(--sys-color-divider);
+  padding: 4px 8px 6px;
+  max-height: 45%;
+  overflow: auto;
+}
+
+.stack-view[hidden] {
+  display: none;
+}
+
+.stack-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.stack-heading {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.stack-load {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--sys-color-primary);
+}
+
+.stack-load input {
+  display: none;
+}
+
+.stack-symbol-server {
+  flex: 1;
+  min-width: 140px;
+  font-size: 11px;
+}
+
+.stack-status {
+  margin: 4px 0;
+  font-size: 11px;
+  color: var(--sys-color-on-surface-subtle);
+}
+
+.stack-status:empty {
+  display: none;
+}
+
+.stack-frames {
+  margin: 0;
+  padding-left: 18px;
+  font-family: var(--mono-font-family);
+  font-size: 11px;
+}
+
+.stack-frame {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.stack-frame-name {
+  font-weight: 600;
+}
+
+.stack-frame-location {
+  color: var(--sys-color-on-tonal-container);
+}
+
+.stack-frame-source,
+.stack-frame-note {
+  margin-left: 6px;
+  color: var(--sys-color-on-surface-subtle);
+  font-size: 10px;
+}
+
+.stack-frame-unmapped .stack-frame-raw {
+  color: var(--sys-color-on-surface-subtle);
+}
+
+.stack-snippet {
+  margin: 2px 0 6px;
+  padding: 4px 6px;
+  background: var(--sys-color-surface1);
+  border: 1px solid var(--sys-color-divider);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.stack-snippet-line.is-hit {
+  background: var(--sys-color-error-container);
+}
+
+.stack-snippet-number {
+  display: inline-block;
+  min-width: 3ch;
+  margin-right: 8px;
+  color: var(--sys-color-on-surface-subtle);
+  text-align: right;
+}
+
 .signal-expandable {
   display: block;
 }
@@ -2224,6 +2375,43 @@ input[type="file"],
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.preview-ripple {
+  fill: none;
+  stroke: #1a73e8;
+  stroke-width: 2.5;
+}
+
+.preview-ripple-right,
+.preview-ripple-middle {
+  stroke: #8e24aa;
+}
+
+.preview-ripple-hold {
+  stroke: #f9ab00;
+  stroke-width: 4;
+}
+
+.preview-ripple-drag,
+.preview-ripple-dnd {
+  stroke: #00897b;
+}
+
+.preview-drag-path {
+  stroke: #00897b;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.preview-ripple-label {
+  fill: #ffffff;
+  stroke: rgba(17, 24, 39, 0.85);
+  stroke-width: 3;
+  paint-order: stroke;
+  font:
+    600 11px/1 "IBM Plex Sans",
+    sans-serif;
 }
 
 .preview-trail-point {

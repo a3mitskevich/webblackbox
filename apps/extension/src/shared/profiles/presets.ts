@@ -5,6 +5,7 @@ import {
 } from "@webblackbox/protocol";
 
 import { completeCaptureCategories, type CaptureCategories } from "./categories.js";
+import { FULL_CAPTURE_LOCAL_DATA_SETTINGS } from "./local-data.js";
 import {
   BUILT_IN_PROFILE_ID_PREFIX,
   DEFAULT_PROFILE_ID,
@@ -142,6 +143,7 @@ const QA_PRESET = createBaseProfile({
     includeUrls: [],
     excludeUrls: []
   },
+  sourceMaps: { mode: "embed" },
   export: {
     encryption: "required",
     privacyScanner: "block"
@@ -192,10 +194,12 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
     drag: true,
     wheel: true
   },
+  sourceMaps: { mode: "embed" },
   export: {
     encryption: "required",
     privacyScanner: "block"
-  }
+  },
+  localData: { ...FULL_CAPTURE_LOCAL_DATA_SETTINGS }
 });
 
 /** Read-only presets, in display order. */

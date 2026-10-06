@@ -1,5 +1,8 @@
 import type { NetworkCacheSource, PrivacyViolationSubject } from "@webblackbox/player-sdk";
 
+import type { StackViewMessages } from "./stack-view.js";
+import type { PointerLaneKind } from "./pointer-overlay.js";
+
 import { readStoredText, writeStoredText } from "./storage.js";
 
 export type PlayerLocale = "en" | "zh-CN";
@@ -26,7 +29,8 @@ type NetworkType =
   | "other";
 
 type CompareSignal = "regressed" | "stable" | "new" | "missing";
-type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action" | "tabs";
+type MarkerKind = "error" | "network" | "screenshot" | "recording" | "action" | "pointer" | "tabs";
+type PointerRippleKind = "double" | "right" | "middle" | "hold" | "drag" | "dnd";
 type SortDirection = "asc" | "desc";
 type SelectionKind = "action" | "event" | "request";
 
@@ -299,6 +303,9 @@ type PlayerMessages = {
   screenshotPointerMarker: string;
   pointerReasonActionClick: string;
   pointerReasonMove: string;
+  pointerLaneLabel: string;
+  pointerKinds: Record<PointerLaneKind, string>;
+  pointerRippleLabels: Record<PointerRippleKind, string>;
   networkInitiatorDirect: string;
   networkInitiatorActionNumber: string;
   networkStatusPending: string;
@@ -328,6 +335,7 @@ type PlayerMessages = {
   compareSignals: Record<CompareSignal, string>;
   panels: Record<PanelKey, string>;
   sortDirections: Record<SortDirection, string>;
+  stackView: StackViewMessages;
 };
 
 export const PLAYER_LOCALE_STORAGE_KEY = "webblackbox.player.locale";
@@ -616,6 +624,30 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     screenshotPointerMarker: "Pointer marker: ({x}, {y})",
     pointerReasonActionClick: "action:click",
     pointerReasonMove: "pointer:move",
+    pointerLaneLabel: "Pointer actions",
+    pointerKinds: {
+      click: "Click",
+      double: "Double click",
+      right: "Right click",
+      middle: "Middle click",
+      hold: "Long press",
+      drag: "Drag",
+      dnd: "Drag and drop",
+      wheel: "Wheel",
+      zoom: "Ctrl+wheel zoom",
+      hover: "Hover",
+      selection: "Text selection",
+      rage: "Rage click",
+      dead: "Dead click"
+    },
+    pointerRippleLabels: {
+      double: "double",
+      right: "right",
+      middle: "middle",
+      hold: "hold",
+      drag: "drag",
+      dnd: "drop"
+    },
     networkInitiatorDirect: "(direct)",
     networkInitiatorActionNumber: "action #{index}",
     networkStatusPending: "(pending)",
@@ -636,6 +668,7 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       screenshot: "screenshot",
       recording: "recording",
       action: "action",
+      pointer: "pointer",
       tabs: "other tab"
     },
     privacyHiddenByProfile: "Hidden by profile: {what}",
@@ -691,6 +724,21 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       stable: "stable",
       new: "new",
       missing: "missing"
+    },
+    stackView: {
+      heading: "Stack trace",
+      showOriginal: "Show original",
+      showRaw: "Show raw",
+      loadMapFiles: "Load .map files",
+      loadMapFolder: "Load maps folder",
+      symbolServerPlaceholder: "Symbol server URL (maps by file name)",
+      symbolServerApply: "Use",
+      mapsLoaded: "{count} source map file(s) loaded.",
+      resolving: "Resolving original sources…",
+      noMap: "no source map",
+      noMapping: "no mapping at this position",
+      mapError: "source map error",
+      invalidSymbolServer: "Symbol server URL must be http(s)."
     },
     panels: {
       timeline: "Timeline",
@@ -984,6 +1032,30 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
     screenshotPointerMarker: "指针标记：({x}, {y})",
     pointerReasonActionClick: "动作:点击",
     pointerReasonMove: "指针:移动",
+    pointerLaneLabel: "指针操作",
+    pointerKinds: {
+      click: "点击",
+      double: "双击",
+      right: "右键点击",
+      middle: "中键点击",
+      hold: "长按",
+      drag: "拖动",
+      dnd: "拖放",
+      wheel: "滚轮",
+      zoom: "Ctrl+滚轮缩放",
+      hover: "悬停",
+      selection: "文本选择",
+      rage: "狂点",
+      dead: "无响应点击"
+    },
+    pointerRippleLabels: {
+      double: "双击",
+      right: "右键",
+      middle: "中键",
+      hold: "长按",
+      drag: "拖动",
+      dnd: "放下"
+    },
     networkInitiatorDirect: "（直接）",
     networkInitiatorActionNumber: "动作 #{index}",
     networkStatusPending: "（等待中）",
@@ -1004,6 +1076,7 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       screenshot: "截图",
       recording: "录屏",
       action: "动作",
+      pointer: "指针",
       tabs: "其他标签页"
     },
     privacyHiddenByProfile: "已被配置隐藏：{what}",
@@ -1058,6 +1131,21 @@ const PLAYER_MESSAGES: Record<PlayerLocale, PlayerMessages> = {
       stable: "稳定",
       new: "新增",
       missing: "缺失"
+    },
+    stackView: {
+      heading: "堆栈",
+      showOriginal: "显示源码位置",
+      showRaw: "显示原始堆栈",
+      loadMapFiles: "加载 .map 文件",
+      loadMapFolder: "加载 map 文件夹",
+      symbolServerPlaceholder: "符号服务器 URL（按文件名获取 map）",
+      symbolServerApply: "使用",
+      mapsLoaded: "已加载 {count} 个 source map 文件。",
+      resolving: "正在解析源码位置…",
+      noMap: "无 source map",
+      noMapping: "该位置无映射",
+      mapError: "source map 错误",
+      invalidSymbolServer: "符号服务器 URL 必须是 http(s)。"
     },
     panels: {
       timeline: "时间线",
@@ -1157,6 +1245,11 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
   const formatScopeTag = (scope: "main" | "iframe"): string =>
     scope === "iframe" ? messages.scopeTagIframe : messages.scopeTagMain;
   const formatMarkerKind = (kind: MarkerKind): string => messages.markerKinds[kind];
+  const formatPointerKind = (kind: PointerLaneKind): string => messages.pointerKinds[kind];
+  const formatPointerRipple = (kind: string): string | null =>
+    kind in messages.pointerRippleLabels
+      ? messages.pointerRippleLabels[kind as PointerRippleKind]
+      : null;
   const formatNetworkType = (type: NetworkType): string => messages.networkTypes[type];
   const formatHiddenByProfile = (subject: PrivacyViolationSubject): string =>
     t("privacyHiddenByProfile", { what: messages.privacySubjects[subject] });
@@ -1274,6 +1367,8 @@ export function createPlayerI18n(locale: PlayerLocale = "en") {
     formatPanelLabel,
     formatScopeTag,
     formatMarkerKind,
+    formatPointerKind,
+    formatPointerRipple,
     formatNetworkType,
     formatHiddenByProfile,
     formatCompareSignal,
