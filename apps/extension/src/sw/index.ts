@@ -4,18 +4,12 @@ import {
   createSessionId,
   BODY_REDACTION_TOKEN,
   DEFAULT_CAPTURE_POLICY,
-  DEFAULT_EXPORT_POLICY,
   DEFAULT_POINTER_CAPTURE_OPTIONS,
   DEFAULT_RECORDER_CONFIG,
-  assertExportPassphrase,
-  isValidExportPassphrase,
-  normalizeExportPassphrase,
   sanitizeUrlForPrivacy,
   type CapturePolicy,
   type CaptureMode,
-  type ExportPolicy,
   type PointerCaptureOptions,
-  type PrivacyScannerResult,
   type SessionMetadata,
   type WebBlackboxEvent
 } from "@webblackbox/protocol";
@@ -37,7 +31,6 @@ import {
 import { CONTENT_INJECTION_STORAGE_KEY } from "../shared/content-injection.js";
 import {
   PORT_NAMES,
-  type ExportPrivacyWarning,
   type ExtensionInboundMessage,
   type ExtensionOutboundMessage,
   type FullModeVisualCapture,
@@ -46,7 +39,6 @@ import {
 } from "../shared/messages.js";
 import {
   OFFSCREEN_CONNECT_REQUEST_KIND,
-  type PipelineExportDownloadResult,
   type SwPipelineStatusMessage
 } from "../shared/offscreen-messages.js";
 import {
@@ -65,7 +57,6 @@ import {
 import { SCRIPT_RAW_TYPE } from "./source-maps.js";
 import { resolveStartEngine } from "../shared/profiles/engine.js";
 import type { ProfilesState } from "../shared/profiles/storage.js";
-import { resolveLocalDataSettings } from "../shared/profiles/local-data.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
   createBoundedManagedPolicyReader,
@@ -106,6 +97,7 @@ import {
   injectContentScriptIntoFrame,
   isInjectableFrameUrl
 } from "./content-injection.js";
+import { createSessionExportController } from "./export-session.js";
 import {
   createFullCdpController,
   readContentScriptRecord,
@@ -179,22 +171,6 @@ import {
 } from "./tabs-context/tracker.js";
 import { resolveUiActionTabId } from "./ui-action-target.js";
 
-type ExportAuditEvent = {
-  schemaVersion: 1;
-  timestamp: string;
-  sid: string;
-  mode: CaptureMode;
-  outcome: "ok" | "error";
-  encrypted: boolean;
-  includeScreenshots: boolean;
-  includeScreenRecordings: boolean;
-  maxArchiveBytes: number;
-  recentWindowMs: number;
-  sizeBytes?: number;
-  downloadId?: number;
-  error?: string;
-};
-
 type RecordingSampling = {
   mousemoveHz: number;
   scrollHz: number;
@@ -249,8 +225,6 @@ const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
 const FULL_DEFAULT_BODY_MIME_ALLOWLIST = [...DEFAULT_BODY_MIME_ALLOWLIST, "image/svg+xml"];
 const ACTIVE_SESSION_STORAGE_KEY = "webblackbox.runtime.sessions";
 const SESSION_ANNOTATIONS_STORAGE_KEY = "webblackbox.runtime.sessionAnnotations";
-const EXPORT_AUDIT_STORAGE_KEY = "webblackbox.audit.exports";
-const EXPORT_AUDIT_MAX_EVENTS = 200;
 const STOP_DRAIN_CONTENT_RAW_TYPES = new Set([
   "snapshot",
   "localStorageSnapshot",
@@ -388,6 +362,17 @@ const stoppedSessionLifecycle: StoppedSessionLifecycleController = createStopped
   sweepStoredSessions: (shouldDelete) =>
     sweepPipelineSessions(new IndexedDbPipelineStorage(PIPELINE_DB_NAME), shouldDelete),
   bootedAt: SERVICE_WORKER_BOOTED_AT
+});
+const sessionExport = createSessionExportController({
+  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
+  stopSession,
+  flushBufferedPipelineEvents,
+  attachStoppedPipeline: (runtime) => stoppedSessionLifecycle.attachStoppedPipeline(runtime),
+  disposeStoppedSession: (runtime) => stoppedSessionLifecycle.disposeStoppedSession(runtime),
+  enqueueWithResult,
+  downloads: chromeApi?.downloads,
+  auditStorageArea: chromeApi?.storage?.local,
+  broadcast
 });
 let offscreenDocumentReady: Promise<void> | null = null;
 
@@ -732,11 +717,11 @@ async function handleInboundMessage(
   }
 
   if (message.kind === "ui.export") {
-    return exportSession(
+    return sessionExport.exportSession(
       message.sid,
       message.passphrase,
       message.saveAs,
-      resolveExportPolicy(message.policy)
+      sessionExport.resolveExportPolicy(message.policy)
     );
   }
 
@@ -1255,123 +1240,6 @@ async function stopSession(tabId: number): Promise<void> {
   await stoppedSessionLifecycle.rememberStoppedSession(runtime);
 }
 
-async function exportSession(
-  sid: string,
-  passphrase: string | undefined,
-  saveAs = true,
-  policy: ExportPolicy = DEFAULT_EXPORT_POLICY
-): Promise<
-  | { ok: true; fileName: string; privacyWarning?: ExportPrivacyWarning }
-  | { ok: false; error: string }
-> {
-  const runtime = sessionRegistry.getBySid(sid);
-
-  if (!runtime) {
-    const error = "Session not found for export.";
-    console.warn("[WebBlackbox] export ignored; unknown session", sid);
-    broadcast({
-      kind: "sw.export-status",
-      sid,
-      ok: false,
-      error
-    });
-    return {
-      ok: false,
-      error
-    };
-  }
-
-  const effectivePolicy = resolveSessionExportPolicy(runtime, policy);
-  // Every archive is encrypted, whatever the profile; whitespace around it is not part of it.
-  const encryptionPassphrase = normalizeExportPassphrase(passphrase);
-
-  try {
-    // Before stopping the session: a refused export leaves the recording running.
-    assertExportPassphrase(encryptionPassphrase);
-
-    if (!runtime.stoppedAt) {
-      await stopSession(runtime.tabId);
-    }
-
-    await flushBufferedPipelineEvents(runtime);
-    await stoppedSessionLifecycle.attachStoppedPipeline(runtime);
-
-    const exported = await enqueueWithResult(runtime, async () => {
-      return runtime.pipeline.exportAndDownload({
-        passphrase: encryptionPassphrase,
-        includeScreenshots: effectivePolicy.includeScreenshots,
-        includeScreenRecordings: effectivePolicy.includeScreenRecordings,
-        maxArchiveBytes: effectivePolicy.maxArchiveBytes,
-        recentWindowMs: effectivePolicy.recentWindowMs
-      });
-    });
-
-    await downloadExportedBundle(exported, saveAs);
-    const privacyWarning = buildExportPrivacyWarning(exported.privacyScanner);
-    await appendExportAuditEvent({
-      schemaVersion: 1,
-      timestamp: new Date().toISOString(),
-      sid,
-      mode: runtime.mode,
-      outcome: "ok",
-      encrypted: true,
-      includeScreenshots: effectivePolicy.includeScreenshots,
-      includeScreenRecordings: effectivePolicy.includeScreenRecordings,
-      maxArchiveBytes: effectivePolicy.maxArchiveBytes,
-      recentWindowMs: effectivePolicy.recentWindowMs,
-      sizeBytes: exported.sizeBytes,
-      downloadId: exported.downloadId
-    });
-    broadcast({
-      kind: "sw.export-status",
-      sid,
-      ok: true,
-      fileName: exported.fileName,
-      privacyWarning
-    });
-
-    // The profile decides whether the local copy goes now or waits out its retention.
-    if (
-      runtime.stoppedAt &&
-      resolveLocalDataSettings(runtime.profile.selection.profile).deleteAfterExport
-    ) {
-      await stoppedSessionLifecycle.disposeStoppedSession(runtime);
-    }
-
-    return {
-      ok: true,
-      fileName: exported.fileName,
-      privacyWarning
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await appendExportAuditEvent({
-      schemaVersion: 1,
-      timestamp: new Date().toISOString(),
-      sid,
-      mode: runtime.mode,
-      outcome: "error",
-      encrypted: isValidExportPassphrase(encryptionPassphrase),
-      includeScreenshots: effectivePolicy.includeScreenshots,
-      includeScreenRecordings: effectivePolicy.includeScreenRecordings,
-      maxArchiveBytes: effectivePolicy.maxArchiveBytes,
-      recentWindowMs: effectivePolicy.recentWindowMs,
-      error: redactOperationalMessage(message)
-    });
-    console.warn("[WebBlackbox] export failed", error);
-    broadcast({
-      kind: "sw.export-status",
-      sid,
-      ok: false,
-      error: message
-    });
-    return {
-      ok: false,
-      error: message
-    };
-  }
-}
-
 /**
  * Resolves the profile for a tab from the current store, rules and page signals; null when no
  * profile exists.
@@ -1621,21 +1489,6 @@ async function acknowledgeProfileCancel(sid: string): Promise<void> {
   await refreshActionBadge();
   // A later worker restores the acknowledged notice, not the unread one.
   await stoppedSessionLifecycle.rememberStoppedSession(runtime);
-}
-
-function resolveSessionExportPolicy(runtime: SessionRuntime, policy: ExportPolicy): ExportPolicy {
-  if (runtime.mode !== "full" || !runtime.config.capturePolicy) {
-    return policy;
-  }
-
-  // A mid-session switch must not drop visuals recorded while an earlier profile allowed them.
-  const { visualsCaptured } = runtime.profile;
-
-  return {
-    ...policy,
-    includeScreenshots: visualsCaptured.screenshots,
-    includeScreenRecordings: visualsCaptured.screenRecordings
-  };
 }
 
 /**
@@ -2153,50 +2006,6 @@ function normalizeOptionalSamplingInterval(candidate: unknown, fallback: number)
   return Math.max(250, Math.round(value));
 }
 
-function resolveExportPolicy(value: unknown): ExportPolicy {
-  const row = asRecord(value);
-  const includeScreenshots =
-    typeof row?.includeScreenshots === "boolean"
-      ? row.includeScreenshots
-      : DEFAULT_EXPORT_POLICY.includeScreenshots;
-  const includeScreenRecordings =
-    typeof row?.includeScreenRecordings === "boolean"
-      ? row.includeScreenRecordings
-      : DEFAULT_EXPORT_POLICY.includeScreenRecordings;
-
-  return {
-    includeScreenshots,
-    includeScreenRecordings,
-    maxArchiveBytes: normalizeExportBoundedInt(
-      row?.maxArchiveBytes,
-      DEFAULT_EXPORT_POLICY.maxArchiveBytes,
-      64 * 1024,
-      5 * 1024 * 1024 * 1024
-    ),
-    recentWindowMs: normalizeExportBoundedInt(
-      row?.recentWindowMs,
-      DEFAULT_EXPORT_POLICY.recentWindowMs,
-      1 * 60 * 1000,
-      30 * 24 * 60 * 60 * 1000
-    )
-  };
-}
-
-function normalizeExportBoundedInt(
-  candidate: unknown,
-  fallback: number,
-  min: number,
-  max: number
-): number {
-  const value = asFiniteNumber(candidate);
-
-  if (value === null || value <= 0) {
-    return fallback;
-  }
-
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
-
 function toStatusPointer(runtime: SessionRuntime): PointerCaptureOptions {
   return { ...DEFAULT_POINTER_CAPTURE_OPTIONS, ...runtime.config.pointer };
 }
@@ -2217,30 +2026,6 @@ function toStatusSampling(runtime: SessionRuntime): RecordingSampling {
       runtime.config.capturePolicy?.categories.network === "body-allowlist"
         ? normalizeBodyCaptureMaxBytesUtil(sampling.bodyCaptureMaxBytes, 0)
         : 0
-  };
-}
-
-function buildExportPrivacyWarning(
-  scanner: PrivacyScannerResult | undefined
-): ExportPrivacyWarning | undefined {
-  if (scanner?.status !== "blocked" || scanner.findings.length === 0) {
-    return undefined;
-  }
-
-  const findings = scanner.findings.slice(0, 8).map((finding) => ({
-    kind: finding.kind,
-    path: finding.path,
-    matchCount: finding.matchCount
-  }));
-  const summary = findings
-    .slice(0, 5)
-    .map((finding) => `${finding.kind} in ${finding.path}`)
-    .join(", ");
-
-  return {
-    findingCount: scanner.findings.length,
-    summary,
-    findings
   };
 }
 
@@ -2472,23 +2257,6 @@ async function teardownCaptureInstrumentation(runtime: SessionRuntime): Promise<
   }
 
   await fullCdp.cleanupCdpInstrumentation(runtime, runtime.cdpRouter);
-}
-
-async function downloadExportedBundle(
-  exported: PipelineExportDownloadResult,
-  saveAs: boolean
-): Promise<void> {
-  if (!chromeApi?.downloads?.download) {
-    throw new Error("Downloads API is unavailable in service worker context.");
-  }
-
-  const downloadId = await chromeApi.downloads.download({
-    url: exported.downloadUrl,
-    filename: `webblackbox/${exported.fileName}`,
-    saveAs
-  });
-
-  exported.downloadId = downloadId;
 }
 
 function toSessionListItem(runtime: SessionRuntime): SessionListItem {
@@ -2937,30 +2705,6 @@ async function persistRuntimeState(): Promise<void> {
   await chromeApi.storage.local.set({
     [ACTIVE_SESSION_STORAGE_KEY]: sessions
   });
-}
-
-async function appendExportAuditEvent(event: ExportAuditEvent): Promise<void> {
-  if (!chromeApi?.storage?.local?.get || !chromeApi.storage.local.set) {
-    return;
-  }
-
-  const values = await chromeApi.storage.local.get(EXPORT_AUDIT_STORAGE_KEY);
-  const current = Array.isArray(values[EXPORT_AUDIT_STORAGE_KEY])
-    ? (values[EXPORT_AUDIT_STORAGE_KEY] as unknown[])
-    : [];
-  const events = [...current.slice(-EXPORT_AUDIT_MAX_EVENTS + 1), event];
-
-  await chromeApi.storage.local.set({
-    [EXPORT_AUDIT_STORAGE_KEY]: events
-  });
-}
-
-function redactOperationalMessage(message: string): string {
-  return message
-    .replaceAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[redacted-email]")
-    .replaceAll(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [redacted-token]")
-    .replaceAll(/\b(?:https?|file):\/\/[^\s)]+/gi, "[redacted-url]")
-    .slice(0, 240);
 }
 
 async function restoreRuntimeState(): Promise<void> {
