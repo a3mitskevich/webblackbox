@@ -1,3 +1,5 @@
+import { toBufferSource } from "./archive-crypto.js";
+
 function toUint8Array(input: ArrayBuffer | Uint8Array | string): Uint8Array {
   if (typeof input === "string") {
     return new TextEncoder().encode(input);
@@ -8,17 +10,6 @@ function toUint8Array(input: ArrayBuffer | Uint8Array | string): Uint8Array {
   }
 
   return new Uint8Array(input);
-}
-
-/** Hashes archive files of tens of MB: a view over an ordinary buffer is digested without a copy. */
-function toBufferSource(data: Uint8Array): Uint8Array<ArrayBuffer> {
-  if (data.buffer instanceof ArrayBuffer) {
-    return data as Uint8Array<ArrayBuffer>;
-  }
-
-  const copy = new Uint8Array(data.byteLength);
-  copy.set(data);
-  return copy;
 }
 
 export async function sha256Hex(input: ArrayBuffer | Uint8Array | string): Promise<string> {
