@@ -114,10 +114,18 @@ function planProfilesStore(
 
   return {
     [PROFILES_STORAGE_KEY]: serializeProfilesStore(migrateLegacyOptionsToProfiles(legacy)),
-    ...(rawStore !== undefined && rawStore !== null
-      ? { [REJECTED_PROFILES_STORAGE_KEY]: rawStore }
-      : {})
+    ...keepRejectedProfilesStore(rawStore)
   };
+}
+
+/**
+ * What to write next to a new profiles store so a stored one that failed validation is kept
+ * aside under `REJECTED_PROFILES_STORAGE_KEY` instead of being lost; empty for a valid or no store.
+ */
+export function keepRejectedProfilesStore(rawStore: unknown): Record<string, unknown> {
+  return rawStore !== undefined && rawStore !== null && !parseProfilesStore(rawStore)
+    ? { [REJECTED_PROFILES_STORAGE_KEY]: rawStore }
+    : {};
 }
 
 function planPerformanceBudget(

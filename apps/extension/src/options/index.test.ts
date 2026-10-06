@@ -449,6 +449,19 @@ describe("options page", () => {
     );
   });
 
+  it("keeps a corrupt profiles store aside when a General save replaces it", async () => {
+    const corrupt = { schemaVersion: 2, profiles: "garbage", rules: 42 };
+    const storage = installChromeStub({ [PROFILES_KEY]: corrupt });
+    await importOptionsModule();
+
+    typeNumber("scrollHz", "30");
+    saveButton().click();
+    await flush();
+
+    expect(storedDefaultProfile(storage.data)?.sampling).toEqual({ scrollHz: 30 });
+    expect(storage.data["webblackbox.profiles.rejected"]).toEqual(corrupt);
+  });
+
   it("saves the performance budget under its own key, apart from the profiles", async () => {
     const storage = installChromeStub({ [BUDGET_KEY]: { lcpWarnMs: 3000 } });
     await importOptionsModule();

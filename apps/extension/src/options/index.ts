@@ -35,7 +35,7 @@ import {
   serializeProfilesStore,
   type GeneralFormFields
 } from "../shared/profiles/storage.js";
-import { migrateSettingsStorage } from "../shared/settings-migration.js";
+import { keepRejectedProfilesStore, migrateSettingsStorage } from "../shared/settings-migration.js";
 import { el } from "../shared/ui/dom.js";
 import {
   fieldGroup,
@@ -515,15 +515,14 @@ async function saveGeneralFormToProfiles(
   shown: GeneralFormFields
 ): Promise<void> {
   const values = await chromeApi?.storage?.local.get(PROFILES_STORAGE_KEY);
+  const rawStore = values?.[PROFILES_STORAGE_KEY];
 
   await chromeApi?.storage?.local.set({
     [PROFILES_STORAGE_KEY]: serializeProfilesStore(
-      applyGeneralFormToDefaultProfile(
-        loadStoredProfiles(values?.[PROFILES_STORAGE_KEY]),
-        form,
-        shown
-      )
-    )
+      applyGeneralFormToDefaultProfile(loadStoredProfiles(rawStore), form, shown)
+    ),
+    // A store that failed validation is replaced here, as the profiles editor's save does.
+    ...keepRejectedProfilesStore(rawStore)
   });
 }
 
