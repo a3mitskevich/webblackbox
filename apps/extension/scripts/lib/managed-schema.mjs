@@ -18,7 +18,8 @@ export const MANAGED_CATEGORY_LEVELS = {
   indexedDb: ["off", "counts-only", "names-only", "allow"],
   cookies: ["off", "count-only", "names-only", "allow"],
   cdp: ["off", "safe-subset", "full"],
-  heapProfiles: ["off", "lab-only"]
+  heapProfiles: ["off", "lab-only"],
+  tabsContext: ["off", "metadata", "allow"]
 };
 
 const stringList = (description) => ({

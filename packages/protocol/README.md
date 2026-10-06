@@ -36,13 +36,15 @@ npm install @webblackbox/protocol
 
 ## Event Types
 
-WebBlackbox currently defines 57 event types, organized by category:
+WebBlackbox currently defines 64 event types, organized by category:
 
 ### Meta Events
 
 - `meta.session.start` — Session initialization with URL, title, viewport, and permissions
 - `meta.session.end` — Session termination
 - `meta.config` — Configuration snapshot
+- `meta.tabs.snapshot` — Other tabs of the recorded site (same origin, or same registrable domain) at session start, after a profile switch or after the recorded tab moves to another origin
+- `meta.tabs.change` — One of those tabs opened, entered or left the site, navigated, was activated/deactivated, updated or closed (`tabsContext` capture category: `off`, `metadata` = ids, origins and flags, `allow` = also paths and titles)
 
 ### System Events
 

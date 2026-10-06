@@ -12,6 +12,7 @@ What WebBlackbox does guarantee is that **every exported archive is encrypted** 
 By default, WebBlackbox records metadata needed to debug a session:
 
 - user action metadata, not raw typed values
+- other tabs of the recorded site that are open in parallel: tab and window ids, origin, same-origin/same-site relation, active/focused/incognito/discarded flags and timestamps, not their paths or titles
 - network method, status, type, timing, and sanitized URL shape
 - console metadata, not raw free-form payloads
 - storage counts, not values or key names
@@ -24,10 +25,20 @@ By default, WebBlackbox does not collect raw input values, DOM text, screenshots
 What the extension records is decided by the recording profile in effect. The `Default` profile keeps the defaults above unchanged; read-only presets raise them:
 
 - `Lite` / `Full`: the defaults above on each transport (Full adds CDP screenshots).
-- `QA`: console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots. Content masking stays on (QA debugs real sites with the default rules).
+- `QA`: console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots, paths and titles of other tabs of the site. Content masking stays on (QA debugs real sites with the default rules).
 - `Full capture`: everything above plus input values and keys, storage values, the raw DOM (the page HTML), all textual bodies up to 1 MiB, optional tab video and 60 Hz pointer sampling, **recorded raw**: content masking is off and no blocked selectors are kept.
 - The other presets do not record the raw DOM; a duplicated profile can set `dom` to `allow`.
 - Any profile can be deleted, the `Default` profile and the presets included; "Restore recommended profiles" in Options brings back the deleted ones. Recording needs at least one profile: with none left, the popup asks for one and links to Options → Profiles. Profiles from the enterprise policy (`managed:*`) cannot be deleted by the user. Site rules that point at a deleted profile are kept, flagged in Options, and skipped until the profile exists again.
+
+## Parallel Tabs
+
+Many bugs come from several tabs of one site (shared storage and cookies, a logout in another tab, session conflicts, BroadcastChannel, a shared service worker). The `tabsContext` category records the other tabs of the recorded site: a snapshot when recording starts and every change while it runs (opened, navigated onto or off the site, navigated within it, activated or deactivated, closed).
+
+- `off`: nothing. `metadata` (Default, Lite, Full): ids, origin, relation, flags and timestamps. `allow` (QA, Full capture): also each tab's path and query and its title. `allow` makes a user profile extended.
+- Paths go through the profile's URL rules (with the built-in heuristics: no query, ids templated) and titles through its `dom` value patterns and credential masking; with masking off both are recorded as-is.
+- Tabs of other sites are never recorded, not even their URL when a related tab navigates away (the change keeps the tab's last state on the site). The recorded tab itself is not listed.
+- "Same site" is the registrable domain (eTLD+1) without the full Public Suffix List: the last two labels, or three under a country second level (`co.uk`, `com.au`) or a listed hosting suffix (`github.io`, `vercel.app`, ...). Ports and schemes do not matter; IP addresses and single-label hosts such as `localhost` only match themselves. A host under a multi-label suffix missing from the list is grouped too broadly; its origin still shows.
+- The extension listens to tab events only while a session records tabs, and collapses bursts (250 ms) instead of polling.
 
 ## Redaction Rules
 

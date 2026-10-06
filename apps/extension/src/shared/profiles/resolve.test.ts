@@ -152,7 +152,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     }
   });
 
-  it("QA records console text, 256 KiB JSON bodies and screenshots, but not the raw DOM", () => {
+  it("QA records console text, 256 KiB JSON bodies, screenshots and other tabs' paths, but not the raw DOM", () => {
     const config = buildProfileRecorderConfig({
       mode: "full",
       profile: preset(BUILT_IN_PROFILE_IDS.qa),
@@ -165,7 +165,8 @@ describe("buildProfileRecorderConfig — presets", () => {
       console: "allow",
       network: "body-allowlist",
       screenshots: "allow",
-      cdp: "safe-subset"
+      cdp: "safe-subset",
+      tabsContext: "allow"
     });
     expect(config.sampling.bodyCaptureMaxBytes).toBe(256 * 1024);
     expect(config.redaction).toEqual(DEFAULT_REDACTION_PROFILE);
@@ -190,7 +191,8 @@ describe("buildProfileRecorderConfig — presets", () => {
       indexedDb: "allow",
       cookies: "allow",
       cdp: "full",
-      heapProfiles: "off"
+      heapProfiles: "off",
+      tabsContext: "allow"
     });
     expect(config.sampling.mousemoveHz).toBe(60);
     expect(config.sampling.bodyCaptureMaxBytes).toBe(1024 * 1024);
@@ -265,6 +267,41 @@ describe("buildProfileRecorderConfig — presets", () => {
 
     expect(fullCapture.pointer).toEqual({ hover: true, drag: true, wheel: true });
     expect(defaults.pointer).toEqual({ hover: false, drag: false, wheel: false });
+  });
+
+  it("treats other tabs' paths and titles as extended capture and records them on any host", () => {
+    const fullCopy = duplicateProfile(preset(BUILT_IN_PROFILE_IDS.full), { id: "tabs" });
+    const tabs = {
+      ...fullCopy,
+      categories: { ...fullCopy.categories, tabsContext: "allow" as const }
+    };
+
+    expect(fullCopy.categories.tabsContext).toBe("metadata");
+    expect(isExtendedCaptureProfile(tabs)).toBe(true);
+    expect(
+      isExtendedCaptureProfile({
+        ...fullCopy,
+        categories: { ...fullCopy.categories, tabsContext: "off" }
+      })
+    ).toBe(false);
+
+    const selection = selectRecordingProfile({
+      state: v2State({ profiles: [createDefaultProfile(), tabs] }),
+      page: { url: "https://elsewhere.test/" },
+      requestedProfileId: "tabs"
+    });
+
+    expect(selection).toMatchObject({ source: "explicit", extended: true });
+    expect(selection?.profile.categories.tabsContext).toBe("allow");
+  });
+
+  it("caps other tabs' details with the enterprise tabsContext cap", () => {
+    const config = applyEnterprisePolicyToRecorderConfig(
+      buildProfileRecorderConfig({ mode: "full", profile: preset(BUILT_IN_PROFILE_IDS.qa) }),
+      normalizeEnterprisePolicy({ dataCategoryCaps: { tabsContext: "off" } })
+    );
+
+    expect(config.capturePolicy?.categories.tabsContext).toBe("off");
   });
 
   it("keeps the lite transport boundary: no page-side bodies even for QA", () => {

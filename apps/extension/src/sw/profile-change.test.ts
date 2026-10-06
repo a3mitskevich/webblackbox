@@ -262,6 +262,20 @@ describe("detectProfileChange", () => {
     );
   });
 
+  it("reports an edit of the parallel tabs level", () => {
+    const mine = qaCopy();
+    const edited = {
+      ...mine,
+      categories: { ...mine.categories, tabsContext: "metadata" as const }
+    };
+    const started = snapshot(select(state({ profiles: [createDefaultProfile(), mine] }), "mine"));
+    const next = snapshot(select(state({ profiles: [createDefaultProfile(), edited] }), "mine"));
+
+    expect(detectProfileChange({ started, next, startedProfileExists: true })).toBe(
+      "profile-edited"
+    );
+  });
+
   it("reports an enterprise policy change that caps the running profile", () => {
     const selection = select(state(), BUILT_IN_PROFILE_IDS.fullCapture);
     const started = snapshot(selection);

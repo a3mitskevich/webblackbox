@@ -5,7 +5,11 @@ import type {
   EVENT_LEVELS,
   FREEZE_REASONS,
   MESSAGE_TYPES,
+  RELATED_TAB_CHANGE_KINDS,
+  RELATED_TAB_RELATIONS,
   STORAGE_SNAPSHOT_MODES,
+  TABS_CONTEXT_LEVELS,
+  TABS_SNAPSHOT_REASONS,
   WEBBLACKBOX_EVENT_TYPES
 } from "./constants.js";
 import type { PointerCaptureOptions } from "./pointer.js";
@@ -23,6 +27,62 @@ export type MessageType = (typeof MESSAGE_TYPES)[number];
 export type FreezeReason = (typeof FREEZE_REASONS)[number];
 
 export type StorageSnapshotMode = (typeof STORAGE_SNAPSHOT_MODES)[number];
+
+export type TabsContextLevel = (typeof TABS_CONTEXT_LEVELS)[number];
+
+export type RelatedTabRelation = (typeof RELATED_TAB_RELATIONS)[number];
+
+export type RelatedTabChangeKind = (typeof RELATED_TAB_CHANGE_KINDS)[number];
+
+export type TabsSnapshotReason = (typeof TABS_SNAPSHOT_REASONS)[number];
+
+/**
+ * Another browser tab of the recorded site, as seen by the extension. `path` and `title` are
+ * only recorded at the `allow` level (and go through the session's URL and value-pattern rules).
+ */
+export type RelatedTabInfo = {
+  /** Chrome tab id (the recorded tab's id is the envelope `tab`). */
+  tabId: number;
+  windowId: number;
+  relation: RelatedTabRelation;
+  origin: string;
+  path?: string;
+  title?: string;
+  /** Active tab of its window. */
+  active: boolean;
+  /** Active in the focused window: the tab the user was looking at. */
+  focused: boolean;
+  incognito: boolean;
+  discarded?: boolean;
+  frozen?: boolean;
+  /** Tab that opened this one (the recorded tab or another related tab). */
+  openerTabId?: number;
+  /** Epoch ms when the extension first saw the tab on the site during this session. */
+  firstSeenAt: number;
+  /** Chrome's `lastAccessed` (epoch ms), when available. */
+  lastAccessed?: number;
+};
+
+/** `meta.tabs.snapshot`: every related tab at one moment. */
+export type TabsSnapshotPayload = {
+  reason: TabsSnapshotReason;
+  level: Exclude<TabsContextLevel, "off">;
+  /** Origin of the recorded tab the relations are computed against. */
+  origin: string;
+  /** Registrable domain (eTLD+1, or the host for IPs and single-label hosts). */
+  site: string;
+  tabs: RelatedTabInfo[];
+};
+
+/** `meta.tabs.change`: one related tab changed. */
+export type TabsChangePayload = {
+  change: RelatedTabChangeKind;
+  level: Exclude<TabsContextLevel, "off">;
+  /** State after the change; for `left` and `closed`, the last state on the site. */
+  tab: RelatedTabInfo;
+  /** Related tabs open after the change. */
+  openCount: number;
+};
 
 export type BodySkipReason = (typeof BODY_SKIP_REASONS)[number];
 
@@ -190,6 +250,8 @@ export type CapturePolicy = {
     cookies: "off" | "count-only" | "names-only" | "allow";
     cdp: "off" | "safe-subset" | "full";
     heapProfiles: "off" | "lab-only";
+    /** Other tabs of the recorded site; absent = `metadata` (policies written before it existed). */
+    tabsContext?: TabsContextLevel;
   };
   redaction: RedactionProfile;
   encryption: {

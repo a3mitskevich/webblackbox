@@ -69,6 +69,7 @@ export {
   type ArchiveLoadLimits
 } from "./archive-limits.js";
 
+import { formatTabsContextReport, readTabsContext } from "./tabs-context.js";
 import { buildPlaywrightActionLines, selectPlaywrightActions } from "./playwright-actions.js";
 import {
   buildPointerTimeline,
@@ -81,6 +82,7 @@ import {
 export * from "./playwright-actions.js";
 export * from "./pointer-insights.js";
 export * from "./recording-profile.js";
+export * from "./tabs-context.js";
 export * from "./source-map.js";
 export * from "./stack-trace.js";
 export * from "./symbolicate.js";
@@ -1762,6 +1764,8 @@ export class WebBlackboxPlayer {
 
     const heading = options.title ?? "WebBlackbox Bug Report";
     const derived = this.buildDerived(options.range);
+    // The whole session: what was open in parallel does not depend on the selected range.
+    const tabsContext = readTabsContext(this.query());
     const pointerSignals = detectPointerSignals(scoped);
     const notCaptured = this.getNetworkWaterfall(options.range)
       .filter((entry) => entry.responseBodySkip || entry.requestBodySkipReason)
@@ -1777,6 +1781,9 @@ export class WebBlackboxPlayer {
       `- Action Spans: ${derived.actionSpans.length}`,
       `- Errors: ${derived.totals.errors}`,
       `- Requests: ${derived.totals.requests}`,
+      "",
+      "## Parallel Tabs",
+      ...formatTabsContextReport(tabsContext, maxItems),
       "",
       "## Markers",
       markers.length === 0

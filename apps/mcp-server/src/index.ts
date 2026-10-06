@@ -97,7 +97,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "session_summary",
-    "Open an archive and return session-level summary metrics and top issues.",
+    "Open an archive and return session-level summary metrics, top issues and the other tabs of the recorded site that were open in parallel.",
     sessionSummaryInput,
     async ({ path, passphrase, slowRequestMs, topN }) => {
       return toTextPayload(

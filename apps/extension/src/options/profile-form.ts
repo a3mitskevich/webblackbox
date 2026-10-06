@@ -43,7 +43,8 @@ const CATEGORY_LABELS: Record<CaptureCategoryKey, ExtensionMessageKey> = {
   indexedDb: "optionsCategoryIndexedDb",
   cookies: "optionsCategoryCookies",
   cdp: "optionsCategoryCdp",
-  heapProfiles: "optionsCategoryHeapProfiles"
+  heapProfiles: "optionsCategoryHeapProfiles",
+  tabsContext: "optionsCategoryTabsContext"
 };
 
 const LEVEL_LABELS: Record<string, ExtensionMessageKey> = {
