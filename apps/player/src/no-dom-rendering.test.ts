@@ -16,7 +16,10 @@ const HTML_PROPERTIES = new Set([
   "insertAdjacentHTML",
   "insertAdjacentElement",
   "insertAdjacentText",
-  "createContextualFragment"
+  "createContextualFragment",
+  "setHTMLUnsafe",
+  "parseHTMLUnsafe",
+  "parseFromString"
 ]);
 const DOCUMENT_BUILDERS = new Set([
   "createElement",
@@ -26,7 +29,23 @@ const DOCUMENT_BUILDERS = new Set([
   "write",
   "writeln"
 ]);
-const DOM_INSERTION = new Set(["appendChild", "insertBefore", "replaceChild", "replaceChildren"]);
+// `append` / `before`… are also names of non-DOM methods (URLSearchParams.append): such a call
+// needs an ALLOWED entry with its reason.
+const DOM_INSERTION = new Set([
+  "appendChild",
+  "insertBefore",
+  "replaceChild",
+  "replaceChildren",
+  "append",
+  "prepend",
+  "before",
+  "after",
+  "replaceWith"
+]);
+/** Objects whose builders count as `document.*`: `document`, `x.document`, `x.ownerDocument`. */
+const DOCUMENT_NAMES = new Set(["document", "ownerDocument"]);
+/** Constructors that parse HTML strings into nodes. */
+const HTML_PARSERS = new Set(["DOMParser"]);
 const TEXT_PROPERTIES = new Set(["textContent", "innerText", "outerText", "nodeValue"]);
 
 /**
@@ -66,6 +85,59 @@ function objectOf(node: ts.Node): ts.Expression | null {
     : null;
 }
 
+function isDocument(node: ts.Expression | null | undefined): boolean {
+  if (!node) {
+    return false;
+  }
+
+  const name = ts.isIdentifier(node) ? node.text : nameOf(node);
+  return name !== null && DOCUMENT_NAMES.has(name);
+}
+
+function isAssignment(node: ts.Node): boolean {
+  return (
+    ts.isBinaryExpression(node.parent) &&
+    node.parent.left === node &&
+    node.parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  );
+}
+
+/**
+ * Names that write DOM through other shapes: `{ innerHTML }` / `{ textContent: s }` object
+ * literals (`Object.assign(node, …)`), `const { createElement } = document` and
+ * `new DOMParser()`.
+ */
+function indirectHit(node: ts.Node): string | null {
+  if (
+    (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) &&
+    (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
+    (HTML_PROPERTIES.has(node.name.text) || TEXT_PROPERTIES.has(node.name.text))
+  ) {
+    return `{${node.name.text}}`;
+  }
+
+  if (
+    ts.isBindingElement(node) &&
+    ts.isObjectBindingPattern(node.parent) &&
+    ts.isVariableDeclaration(node.parent.parent) &&
+    isDocument(node.parent.parent.initializer)
+  ) {
+    const name = (node.propertyName ?? node.name).getText();
+    return DOCUMENT_BUILDERS.has(name) ? `document.${name}` : null;
+  }
+
+  if (
+    ts.isNewExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    HTML_PARSERS.has(node.expression.text)
+  ) {
+    return `new ${node.expression.text}`;
+  }
+
+  return null;
+}
+
 /** Every forbidden construct in `source`, as `"<construct>@<line>"`. */
 export function findDomRendering(fileName: string, source: string): string[] {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
@@ -77,12 +149,9 @@ export function findDomRendering(fileName: string, source: string): string[] {
     const name = nameOf(node);
 
     if (name !== null) {
-      const object = objectOf(node);
-      const onDocument = object !== null && ts.isIdentifier(object) && object.text === "document";
-
       if (HTML_PROPERTIES.has(name)) {
         hits.push(`${name}@${at(node)}`);
-      } else if (onDocument && DOCUMENT_BUILDERS.has(name)) {
+      } else if (isDocument(objectOf(node)) && DOCUMENT_BUILDERS.has(name)) {
         hits.push(`document.${name}@${at(node)}`);
       } else if (
         DOM_INSERTION.has(name) &&
@@ -90,15 +159,15 @@ export function findDomRendering(fileName: string, source: string): string[] {
         node.parent.expression === node
       ) {
         hits.push(`${name}@${at(node)}`);
-      } else if (
-        TEXT_PROPERTIES.has(name) &&
-        ts.isBinaryExpression(node.parent) &&
-        node.parent.left === node &&
-        node.parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        node.parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-      ) {
+      } else if (TEXT_PROPERTIES.has(name) && isAssignment(node)) {
         hits.push(`${name}=@${at(node)}`);
       }
+    }
+
+    const indirect = indirectHit(node);
+
+    if (indirect !== null) {
+      hits.push(`${indirect}@${at(node)}`);
     }
 
     if (ts.isJsxAttribute(node) && node.name.getText(file) === "dangerouslySetInnerHTML") {
@@ -140,7 +209,15 @@ describe("no innerHTML / manual DOM rendering in the Player", () => {
       "parent.replaceChildren();",
       "label.textContent = text;",
       "label.textContent;",
-      "const view = <div dangerouslySetInnerHTML={{ __html: html }} />;"
+      "const view = <div dangerouslySetInnerHTML={{ __html: html }} />;",
+      'const el = node.ownerDocument.createElement("style");',
+      "document.head.append(el);",
+      "window.document.createTextNode(text);",
+      "const { createElement } = document;",
+      "Object.assign(el, { textContent: css });",
+      'new DOMParser().parseFromString(html, "text/html");',
+      "node.setHTMLUnsafe(html);",
+      "node.after(other);"
     ].join("\n");
 
     expect(findDomRendering("planted.tsx", planted)).toEqual([
@@ -152,7 +229,16 @@ describe("no innerHTML / manual DOM rendering in the Player", () => {
       "appendChild@8",
       "replaceChildren@9",
       "textContent=@10",
-      "dangerouslySetInnerHTML@12"
+      "dangerouslySetInnerHTML@12",
+      "document.createElement@13",
+      "append@14",
+      "document.createTextNode@15",
+      "document.createElement@16",
+      "{textContent}@17",
+      "parseFromString@18",
+      "new DOMParser@18",
+      "setHTMLUnsafe@19",
+      "after@20"
     ]);
   });
 
