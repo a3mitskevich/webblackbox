@@ -72,6 +72,7 @@ import {
 import type { ProfilesState } from "../shared/profiles/storage.js";
 import {
   applyEnterprisePolicyToRecorderConfig,
+  createBoundedManagedPolicyReader,
   ENTERPRISE_POLICY_STORAGE_KEY,
   getSessionStartBlockReason,
   isEnterpriseOriginAllowed,
@@ -548,6 +549,8 @@ const STOP_DRAIN_ACK_TIMEOUT_MS = 3_000;
 const CDP_ARTIFACT_TIMEOUT_MS = 5_000;
 // Priming a live child session takes milliseconds; see primeChildSession.
 const CHILD_SESSION_PRIME_TIMEOUT_MS = 5_000;
+// Chrome can hold `storage.managed` reads back while the browser starts; see the reader.
+const ENTERPRISE_POLICY_READ_TIMEOUT_MS = 3_000;
 const CDP_HEAP_SNAPSHOT_TIMEOUT_MS = 8_000;
 const SCREEN_RECORDING_OFFSCREEN_SOURCE = "tab";
 
@@ -569,6 +572,15 @@ const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
   {
     portWaitMs: OFFSCREEN_PORT_READY_TIMEOUT_MS,
     pollMs: OFFSCREEN_PORT_READY_WAIT_MS
+  }
+);
+const readEnterprisePolicy = createBoundedManagedPolicyReader(
+  () => readManagedEnterprisePolicy(chromeApi?.storage?.managed),
+  {
+    timeoutMs: ENTERPRISE_POLICY_READ_TIMEOUT_MS,
+    onTimeout: () => {
+      console.warn("[WebBlackbox] enterprise policy not available yet; continuing without it");
+    }
   }
 );
 const orphanedOffscreenCleanup = closeOrphanedOffscreenDocument().catch((error) => {
@@ -5087,9 +5099,7 @@ function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture
 }
 
 async function loadEnterprisePolicy(): Promise<EnterpriseRecorderPolicy> {
-  return normalizeEnterprisePolicy(
-    (await readManagedEnterprisePolicy(chromeApi?.storage?.managed)) ?? {}
-  );
+  return normalizeEnterprisePolicy((await readEnterprisePolicy()) ?? {});
 }
 
 function withSessionCapturePolicy(
