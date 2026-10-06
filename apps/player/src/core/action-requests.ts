@@ -3,10 +3,28 @@ import { isProblemRequest, type ActionConsequenceRequest } from "@webblackbox/pl
 
 import type { ArchiveModel } from "./archive-model.js";
 
+/** An action span's members, as `WebBlackboxPlayer.buildDerived()` reports them. */
+export type ActionSpanMembers = { actId: string; eventIds: readonly string[] };
+
+/** What an action is made of: its events and every request among them. */
+export type ActionContents = {
+  events: WebBlackboxEvent[];
+  requests: ActionConsequenceRequest[];
+};
+
+export type ActionRequestCounts = { requests: number; failed: number };
+
+type ActionArchive = {
+  player: { buildDerived(): { actionSpans: readonly ActionSpanMembers[] } };
+  model: Pick<ArchiveModel, "eventById" | "waterfallByReqId">;
+};
+
+const contentsCache = new WeakMap<ActionArchive, ReadonlyMap<string, ActionContents>>();
+
 /**
- * Every request of an action, from its own events (`ref.act`): deduplicated, in start order, with
- * the waterfall's error text. The action timeline keeps only the first few requests, so the feed
- * row ("6 requests · 5 failed") and the inspector both count from this list.
+ * Every request of an action, from its own events: deduplicated, in start order, with the
+ * waterfall's error text. The action timeline keeps only the first few requests, so the feed row
+ * ("6 requests · 5 failed") and the inspector both count from this list.
  */
 export function collectActionRequests(
   model: Pick<ArchiveModel, "waterfallByReqId">,
@@ -39,7 +57,32 @@ export function collectActionRequests(
   return requests.sort((left, right) => left.startMono - right.startMono);
 }
 
-/** The problems strip's rule (an HTTP error or a failure that is not a cancellation). */
+/**
+ * Events and requests of every action, explicit (`ref.act`) and inferred by the SDK
+ * (`derived:<trigger>`: a trigger without `ref.act` and what followed it), built once per archive.
+ */
+export function actionContentsOf(archive: ActionArchive): ReadonlyMap<string, ActionContents> {
+  const cached = contentsCache.get(archive);
+
+  if (cached) {
+    return cached;
+  }
+
+  const { model } = archive;
+  const contents = new Map(
+    archive.player.buildDerived().actionSpans.map((span) => {
+      const events = span.eventIds.flatMap((id) => {
+        const event = model.eventById.get(id);
+        return event ? [event] : [];
+      });
+      return [span.actId, { events, requests: collectActionRequests(model, events) }] as const;
+    })
+  );
+  contentsCache.set(archive, contents);
+  return contents;
+}
+
+/** The problems strip's rule: an HTTP error, or a failure that is not a cancellation. */
 function isFailedRequest(request: ActionConsequenceRequest): boolean {
   return isProblemRequest({
     ...request,
@@ -48,41 +91,8 @@ function isFailedRequest(request: ActionConsequenceRequest): boolean {
   });
 }
 
-export type ActionRequestCounts = { requests: number; failed: number };
-
-/**
- * Request and failure counts per action id, built in one pass over the archive. Failures follow
- * the problems strip: an HTTP error or a network failure, not a cancellation (`ERR_ABORTED`).
- */
 export function countActionRequests(
-  model: Pick<ArchiveModel, "events" | "waterfallByReqId">
-): Map<string, ActionRequestCounts> {
-  const eventsByAct = new Map<string, WebBlackboxEvent[]>();
-
-  for (const event of model.events) {
-    const actId = event.ref?.act;
-
-    if (!actId) {
-      continue;
-    }
-
-    // A local index being built: appending keeps the pass linear on 50k-event archives.
-    const list = eventsByAct.get(actId);
-
-    if (list) {
-      list.push(event);
-    } else {
-      eventsByAct.set(actId, [event]);
-    }
-  }
-
-  return new Map(
-    [...eventsByAct].map(([actId, events]) => {
-      const requests = collectActionRequests(model, events);
-      return [
-        actId,
-        { requests: requests.length, failed: requests.filter(isFailedRequest).length }
-      ];
-    })
-  );
+  requests: readonly ActionConsequenceRequest[]
+): ActionRequestCounts {
+  return { requests: requests.length, failed: requests.filter(isFailedRequest).length };
 }

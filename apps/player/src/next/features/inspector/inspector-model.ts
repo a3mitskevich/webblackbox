@@ -18,7 +18,7 @@ import {
 
 import type { TimeRange } from "../../../core/time-range.js";
 import type { Selection } from "../../../core/navigation.js";
-import { collectActionRequests } from "../../../core/action-requests.js";
+import { actionContentsOf } from "../../../core/action-requests.js";
 import type { ArchiveModel } from "../../../core/archive-model.js";
 import { lowerBoundByMono } from "../../../lib/range.js";
 import { resolveSelectedEventId } from "../../controller.js";
@@ -68,7 +68,6 @@ export type Inspection = {
 };
 
 type ArchiveIndex = {
-  eventsByAct: Map<string, WebBlackboxEvent[]>;
   actionByTrigger: Map<string, ActionTimelineEntry>;
   actionById: Map<string, ActionTimelineEntry>;
 };
@@ -85,22 +84,6 @@ function indexOf(archive: LoadedArchive): ArchiveIndex {
     return cached;
   }
 
-  const eventsByAct = new Map<string, WebBlackboxEvent[]>();
-
-  for (const event of archive.model.events) {
-    const actId = event.ref?.act;
-
-    if (actId) {
-      const list = eventsByAct.get(actId);
-
-      if (list) {
-        list.push(event);
-      } else {
-        eventsByAct.set(actId, [event]);
-      }
-    }
-  }
-
   const actionByTrigger = new Map<string, ActionTimelineEntry>();
   const actionById = new Map<string, ActionTimelineEntry>();
 
@@ -109,7 +92,7 @@ function indexOf(archive: LoadedArchive): ArchiveIndex {
     actionById.set(action.actId, action);
   }
 
-  const index = { eventsByAct, actionByTrigger, actionById };
+  const index = { actionByTrigger, actionById };
   indexCache.set(archive, index);
   return index;
 }
@@ -242,14 +225,15 @@ function buildInspection(archive: LoadedArchive, event: WebBlackboxEvent): Inspe
   const action =
     triggered ?? (event.ref?.act ? index.actionById.get(event.ref.act) : undefined) ?? null;
   const chapter = chapterAt(archive, event.mono);
-  const actionEvents = triggered ? (index.eventsByAct.get(triggered.actId) ?? []) : [];
+  // The action's own events, also for actions the SDK inferred (no `ref.act`).
+  const contents = triggered ? actionContentsOf(archive).get(triggered.actId) : undefined;
   const consequences = triggered
     ? summarizeActionConsequences({
         startMono: triggered.startMono,
         triggerEventId: event.id,
         endMono: triggered.endMono,
-        events: actionEvents,
-        requests: collectActionRequests(model, actionEvents),
+        events: contents?.events ?? [],
+        requests: contents?.requests ?? [],
         maxItems: MAX_CONSEQUENCES
       })
     : null;

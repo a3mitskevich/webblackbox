@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { loadSyntheticArchive } from "../next/features/test-archive.js";
 import type { LoadedArchive } from "../next/state.js";
-import { collectActionRequests, countActionRequests } from "./action-requests.js";
+import { actionContentsOf, collectActionRequests, countActionRequests } from "./action-requests.js";
 
 let archive: LoadedArchive;
 
@@ -12,7 +12,8 @@ beforeAll(async () => {
 
 describe("action requests", () => {
   it("counts every request of an action, beyond the action timeline's first five", () => {
-    const counts = countActionRequests(archive.model).get("A-000002");
+    const contents = actionContentsOf(archive).get("A-000002");
+    const counts = countActionRequests(contents?.requests ?? []);
     const timeline = archive.model.actionTimeline.find((action) => action.actId === "A-000002");
 
     expect(counts).toEqual({ requests: 6, failed: 5 });
@@ -43,13 +44,31 @@ describe("action requests", () => {
       failed: true,
       errorText: "net::ERR_ABORTED"
     });
-    const model = { ...archive.model, waterfallByReqId };
-    expect(countActionRequests(model).get("A-000002")).toEqual({ requests: 6, failed: 5 });
+    expect(countActionRequests(collectActionRequests({ waterfallByReqId }, events))).toEqual({
+      requests: 6,
+      failed: 5
+    });
 
     waterfallByReqId.set(entry.reqId, { ...entry, failed: true, errorText: "net::ERR_FAILED" });
-    expect(countActionRequests({ ...archive.model, waterfallByReqId }).get("A-000002")).toEqual({
+    expect(countActionRequests(collectActionRequests({ waterfallByReqId }, events))).toEqual({
       requests: 6,
       failed: 6
     });
+  });
+
+  it("covers actions the SDK inferred from a trigger without ref.act", () => {
+    const derived = archive.model.actionTimeline.find(
+      (action) => action.actId.startsWith("derived:") && action.requests.length > 0
+    );
+
+    if (!derived) {
+      throw new Error("the synthetic archive has no inferred action with requests");
+    }
+
+    const contents = actionContentsOf(archive).get(derived.actId);
+    expect(contents?.events.length).toBeGreaterThan(0);
+    expect(contents?.requests.map((request) => request.reqId)).toEqual(
+      expect.arrayContaining(derived.requests.map((request) => request.reqId))
+    );
   });
 });

@@ -12,7 +12,11 @@ import {
   type RouteChapterKind
 } from "@webblackbox/player-sdk";
 
-import { countActionRequests, type ActionRequestCounts } from "../../../core/action-requests.js";
+import {
+  actionContentsOf,
+  countActionRequests,
+  type ActionRequestCounts
+} from "../../../core/action-requests.js";
 import { resolveRequestScope, resolveScopeByEventId } from "../../../core/filters.js";
 import type { PlayerLocale } from "../../../lib/i18n.js";
 import { matchesScopeFilter, type EventScope, type ScopeFilter } from "../../../lib/scope.js";
@@ -167,7 +171,12 @@ function buildFeedData(archive: LoadedArchive): FeedData {
     curated,
     all: () => (all ??= selectActivityItems(input, "all")),
     actionById: new Map(model.actionTimeline.map((action) => [action.actId, action])),
-    actionRequests: countActionRequests(model),
+    actionRequests: new Map(
+      [...actionContentsOf(archive)].map(([actId, contents]) => [
+        actId,
+        countActionRequests(contents.requests)
+      ])
+    ),
     streams: streamStatsOf(archive),
     navigationKinds: new Map(
       chapters.flatMap((chapter) => (chapter.eventId ? [[chapter.eventId, chapter.kind]] : []))

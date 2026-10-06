@@ -92,6 +92,20 @@ describe("inspector model", () => {
     expect(inspectSelection(archive, { kind: "action", id: "A-000002" })).toBe(inspection);
   });
 
+  it("counts the requests of an action the SDK inferred (a trigger without ref.act)", () => {
+    const derived = archive.model.actionTimeline.find(
+      (action) => action.actId.startsWith("derived:") && action.requests.length > 0
+    );
+
+    if (!derived) {
+      throw new Error("the synthetic archive has no inferred action with requests");
+    }
+
+    const inspection = inspectSelection(archive, { kind: "event", id: derived.triggerEventId });
+    expect(inspection?.isTrigger).toBe(true);
+    expect(inspection?.consequences?.requests).toBeGreaterThanOrEqual(derived.requests.length);
+  });
+
   it("words the summary in the reader's language", () => {
     const inspection = inspectSelection(archive, { kind: "event", id: lobbyClick().id });
 
