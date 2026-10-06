@@ -58,7 +58,7 @@
   "itemDownloadVideoPart": "下载视频，第 {part} 段",
   "itemDownloadVideoAll": "下载全部视频片段（{count}）",
   "videoDetail": "{duration} · {size}",
-  "videoPartDetail": "{from} – {to} · {size}",
+  "videoPartDetail": "{from} – {to} · {duration} · {size}",
   "videoNoneLite": "Lite 录制不录制标签页视频",
   "videoNone": "此录制没有标签页视频",
   "videoNoneFailed": "标签页视频录制失败：{error}",

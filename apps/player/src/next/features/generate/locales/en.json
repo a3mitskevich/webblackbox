@@ -58,7 +58,7 @@
   "itemDownloadVideoPart": "Download video, part {part}",
   "itemDownloadVideoAll": "Download all video parts ({count})",
   "videoDetail": "{duration} · {size}",
-  "videoPartDetail": "{from} – {to} · {size}",
+  "videoPartDetail": "{from} – {to} · {duration} · {size}",
   "videoNoneLite": "Lite recordings do not record the tab video",
   "videoNone": "This recording has no tab video",
   "videoNoneFailed": "The tab video failed to record: {error}",

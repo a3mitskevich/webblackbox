@@ -57,6 +57,7 @@ function segmentDetail(
   return t("videoPartDetail", {
     from: formatClock(segment.startMono - minMono, i18n.locale),
     to: formatClock(segment.endMono - minMono, i18n.locale),
+    duration: i18n.formatSeconds(segment.durationMs),
     size
   });
 }
@@ -110,10 +111,14 @@ export function buildVideoEntries(
 
   if (source.complete.length > 1) {
     const size = source.complete.reduce((total, segment) => total + segment.size, 0);
+    const durationMs = source.complete.reduce((total, segment) => total + segment.durationMs, 0);
     entries.push({
       id: "video-all",
       label: t("itemDownloadVideoAll", { count: source.complete.length }),
-      detail: i18n.formatByteSize(size),
+      detail: t("videoDetail", {
+        duration: i18n.formatSeconds(durationMs),
+        size: i18n.formatByteSize(size)
+      }),
       disabled: false,
       segments: source.complete,
       icon: Files,

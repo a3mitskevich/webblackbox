@@ -190,7 +190,7 @@ describe("Download video", () => {
 
     const menu = await openGenerateMenu();
     expect(within(menu).getByTestId("generate-video-part-1-detail")).toHaveTextContent(
-      /^0:01\.00 – 0:05\.0\d · 9 B$/
+      /^0:01\.00 – 0:05\.0\d · \d+\.\d\ds · 9 B$/
     );
     expect(within(menu).getByTestId("generate-video-part-2")).toHaveTextContent(
       "Download video, part 2"
@@ -204,6 +204,9 @@ describe("Download video", () => {
     );
     expect(within(menu).getByTestId("generate-video-all")).toHaveTextContent(
       "Download all video parts (2)"
+    );
+    expect(within(menu).getByTestId("generate-video-all-detail")).toHaveTextContent(
+      /^\d+\.\d\ds · 18 B$/
     );
     fireEvent.click(within(menu).getByTestId("generate-video-all"));
 

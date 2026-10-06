@@ -58,7 +58,7 @@
   "itemDownloadVideoPart": "Скачать видео, часть {part}",
   "itemDownloadVideoAll": "Скачать все части видео ({count})",
   "videoDetail": "{duration} · {size}",
-  "videoPartDetail": "{from} – {to} · {size}",
+  "videoPartDetail": "{from} – {to} · {duration} · {size}",
   "videoNoneLite": "Lite-запись не записывает видео вкладки",
   "videoNone": "В этой записи нет видео вкладки",
   "videoNoneFailed": "Видео вкладки не записалось: {error}",
