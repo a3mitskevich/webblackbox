@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { compileLinearRegex } from "./linear-regex.js";
-import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
+import {
+  growthRatio,
+  LINEAR_GROWTH_LIMIT,
+  cpuTimeMs,
+  GROWTH_TEST_TIMEOUT_MS
+} from "./test-support/linear-growth.js";
 
 describe("compileLinearRegex", () => {
   it("rejects patterns that need backtracking", () => {
@@ -35,48 +40,68 @@ describe("compileLinearRegex", () => {
     expect(compileLinearRegex("ab|bc")?.replaceAll("xabcx", "#")).toBe("x#x");
   });
 
-  it("stays linear when a long alternative keeps an attempt alive after every match", () => {
-    const regex = compileLinearRegex("x\\w*y|x");
-    const ratio = growthRatio((scale) => {
-      const text = "x".repeat(2_000 * scale);
+  it(
+    "stays linear when a long alternative keeps an attempt alive after every match",
+    { timeout: GROWTH_TEST_TIMEOUT_MS },
+    () => {
+      const regex = compileLinearRegex("x\\w*y|x");
+      const ratio = growthRatio((scale) => {
+        const text = "x".repeat(2_000 * scale);
 
-      return () => regex?.replaceAll(text, "#");
-    });
+        return () => regex?.replaceAll(text, "#");
+      });
 
-    expect(regex?.replaceAll("xxx", "#")).toBe("#");
-    expect(ratio).toBeLessThan(LINEAR_GROWTH_LIMIT);
-  });
+      expect(regex?.replaceAll("xxx", "#")).toBe("#");
+      expect(ratio).toBeLessThan(LINEAR_GROWTH_LIMIT);
+    }
+  );
 
-  it("masks the whole text instead of stalling when a scan runs out of budget", () => {
-    const regex = compileLinearRegex("[a-z]{250}x");
-    const text = "b".repeat(200_000);
-    const started = performance.now();
+  it(
+    "masks the whole text instead of stalling when a scan runs out of budget",
+    { timeout: GROWTH_TEST_TIMEOUT_MS },
+    () => {
+      const regex = compileLinearRegex("[a-z]{250}x");
+      const text = "b".repeat(200_000);
+      let masked: string | undefined;
+      let matched: boolean | undefined;
+      const cpuMs = cpuTimeMs(() => {
+        masked = regex?.replaceAll(text, "#");
+        matched = regex?.test(text);
+      });
 
-    expect(regex?.replaceAll(text, "#")).toBe("#");
-    expect(regex?.test(text)).toBe(true);
-    expect(performance.now() - started).toBeLessThan(5_000);
-    expect(regex?.replaceAll("b".repeat(300), "#")).toBe("b".repeat(300));
-  });
+      expect(masked).toBe("#");
+      expect(matched).toBe(true);
+      expect(cpuMs).toBeLessThan(5_000);
+      expect(regex?.replaceAll("b".repeat(300), "#")).toBe("b".repeat(300));
+    }
+  );
 
-  it("counts the states visited at every position, not only the live threads", () => {
-    // Every alternative dies on `^` after the first position: few threads, much closure work.
-    const regex = compileLinearRegex(
-      Array.from({ length: 150 }, (_, index) => `^abc${index}`).join("|")
-    );
-    const text = "z".repeat(1_000_000);
-    const started = performance.now();
+  it(
+    "counts the states visited at every position, not only the live threads",
+    { timeout: GROWTH_TEST_TIMEOUT_MS },
+    () => {
+      // Every alternative dies on `^` after the first position: few threads, much closure work.
+      const regex = compileLinearRegex(
+        Array.from({ length: 150 }, (_, index) => `^abc${index}`).join("|")
+      );
+      const text = "z".repeat(1_000_000);
+      let masked: string | undefined;
+      const cpuMs = cpuTimeMs(() => {
+        masked = regex?.replaceAll(text, "#");
+      });
 
-    expect(regex?.replaceAll(text, "#")).toBe("#");
-    expect(performance.now() - started).toBeLessThan(5_000);
-    expect(regex?.replaceAll("abc7 zz", "#")).toBe("# zz");
-  });
+      expect(masked).toBe("#");
+      expect(cpuMs).toBeLessThan(5_000);
+      expect(regex?.replaceAll("abc7 zz", "#")).toBe("# zz");
+    }
+  );
 
   it("rejects programs above the requested size", () => {
     expect(compileLinearRegex("[a-z]{300}", { maxProgramSize: 256 })).toBeNull();
     expect(compileLinearRegex("[a-z]{30}", { maxProgramSize: 256 })).not.toBeNull();
   });
 
-  it("stays linear on catastrophic patterns", () => {
+  it("stays linear on catastrophic patterns", { timeout: GROWTH_TEST_TIMEOUT_MS }, () => {
     const regex = compileLinearRegex("(a+)+$");
     const ratio = growthRatio((scale) => {
       const text = `${"a".repeat(2_000 * scale)}!`;
