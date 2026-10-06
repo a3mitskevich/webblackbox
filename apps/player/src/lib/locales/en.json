@@ -169,6 +169,7 @@
     "recordingLane": "Video",
     "tabsLane": "Tabs",
     "expandLanes": "Expand lanes",
+    "collapseLanes": "Collapse lanes",
     "expandLanesHint": "Show every lane: navigation, console, storage, pointer, screenshots, video, tabs",
     "filmstripFrame": "Screenshot at {time}",
     "pointerMark": "{label} at {time}",

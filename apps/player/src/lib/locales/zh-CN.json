@@ -169,6 +169,7 @@
     "recordingLane": "视频",
     "tabsLane": "标签页",
     "expandLanes": "展开所有轨道",
+    "collapseLanes": "收起轨道",
     "expandLanesHint": "显示所有轨道：导航、控制台、存储、指针、截图、视频、标签页",
     "filmstripFrame": "{time} 的截图",
     "pointerMark": "{time} 的{label}",

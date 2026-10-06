@@ -107,7 +107,7 @@ function buildCommands(
         controller.setTab(tab.id)
       )
     ),
-    command("lanes", i18n.tn("expandLanes"), "lanes", () =>
+    command("lanes", i18n.tn(state.lanesExpanded ? "collapseLanes" : "expandLanes"), "lanes", () =>
       controller.setLanesExpanded(!state.lanesExpanded)
     ),
     command("range-start", i18n.tn("cmdMarkStart"), "lanes", () => controller.markRange("start")),

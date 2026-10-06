@@ -169,6 +169,7 @@
     "recordingLane": "Видео",
     "tabsLane": "Вкладки",
     "expandLanes": "Все дорожки",
+    "collapseLanes": "Свернуть дорожки",
     "expandLanesHint": "Показать все дорожки: навигация, консоль, хранилища, указатель, скриншоты, видео, вкладки",
     "filmstripFrame": "Скриншот на {time}",
     "pointerMark": "{label} на {time}",

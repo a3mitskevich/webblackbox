@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createPlainArchive } from "../../../scripts/lib/synthetic-session.mjs";
@@ -56,6 +56,39 @@ describe("Command palette", () => {
     fireEvent.click(item);
     expect(screen.queryByTestId("command-palette")).not.toBeInTheDocument();
     expect(generateSlice.select(store.getState()).request?.kind).toBe("playwright-mocks");
+  });
+
+  it("runs the highlighted command with ArrowDown and Enter", async () => {
+    const { store, controller } = await renderPlayer();
+
+    act(() => controller.setPaletteOpen(true));
+    const palette = await screen.findByTestId("command-palette");
+    const input = within(palette).getByTestId("palette-input");
+    // The first command is highlighted on open; ArrowDown moves to the second one.
+    const [, second] = await within(palette).findAllByTestId("palette-item");
+    expect(second).toHaveTextContent("Playwright test with mocks…");
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    await waitFor(() => expect(second).toHaveAttribute("data-highlighted"));
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(screen.queryByTestId("command-palette")).not.toBeInTheDocument());
+    expect(generateSlice.select(store.getState()).request?.kind).toBe("playwright-mocks");
+  });
+
+  it("offers to collapse the lanes once they are expanded", async () => {
+    const { store, controller } = await renderPlayer();
+
+    act(() => controller.setLanesExpanded(true));
+    act(() => controller.setPaletteOpen(true));
+    const palette = await screen.findByTestId("command-palette");
+    fireEvent.change(within(palette).getByTestId("palette-input"), {
+      target: { value: "lanes" }
+    });
+    const item = await within(palette).findByText("Collapse lanes");
+    expect(within(palette).queryByText("Expand lanes")).not.toBeInTheDocument();
+    fireEvent.click(item);
+    expect(store.getState().lanesExpanded).toBe(false);
   });
 
   it("finds requests by URL and opens them in the Network tab", async () => {
