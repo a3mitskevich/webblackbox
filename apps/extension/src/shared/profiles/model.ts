@@ -9,7 +9,7 @@ import {
   type SamplingProfile,
   type SiteCapturePolicy
 } from "@webblackbox/protocol";
-import { z } from "zod";
+import * as z from "zod";
 
 import { CAPTURE_CATEGORY_LEVELS, type CaptureCategories } from "./categories.js";
 import { compileTitleRegex } from "./title-regex.js";
