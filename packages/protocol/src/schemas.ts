@@ -20,7 +20,7 @@ import {
   userPointerPressDataSchema,
   userSelectionDataSchema,
   userWheelDataSchema
-} from "./pointer.js";
+} from "./pointer-schemas.js";
 
 const recordStringUnknown = z.record(z.string(), z.unknown());
 
