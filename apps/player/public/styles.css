@@ -831,6 +831,48 @@ input[type="file"],
   background: var(--sys-color-yellow);
 }
 
+.pointer-lane {
+  position: relative;
+  height: 10px;
+  margin: 3px 4px 0;
+  border-radius: 999px;
+  background: var(--sys-color-surface1);
+}
+
+.pointer-lane[hidden] {
+  display: none;
+}
+
+.pointer-lane-mark {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 10px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.pointer-lane-mark-click {
+  background: #1a73e8;
+}
+
+.pointer-lane-mark-alt {
+  background: #8e24aa;
+}
+
+.pointer-lane-mark-gesture {
+  background: #00897b;
+}
+
+.pointer-lane-mark-problem {
+  width: 6px;
+  background: var(--sys-color-error);
+}
+
 .progress-playhead {
   position: absolute;
   top: 0;
@@ -2318,6 +2360,43 @@ input[type="file"],
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.preview-ripple {
+  fill: none;
+  stroke: #1a73e8;
+  stroke-width: 2.5;
+}
+
+.preview-ripple-right,
+.preview-ripple-middle {
+  stroke: #8e24aa;
+}
+
+.preview-ripple-hold {
+  stroke: #f9ab00;
+  stroke-width: 4;
+}
+
+.preview-ripple-drag,
+.preview-ripple-dnd {
+  stroke: #00897b;
+}
+
+.preview-drag-path {
+  stroke: #00897b;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.preview-ripple-label {
+  fill: #ffffff;
+  stroke: rgba(17, 24, 39, 0.85);
+  stroke-width: 3;
+  paint-order: stroke;
+  font:
+    600 11px/1 "IBM Plex Sans",
+    sans-serif;
 }
 
 .preview-trail-point {

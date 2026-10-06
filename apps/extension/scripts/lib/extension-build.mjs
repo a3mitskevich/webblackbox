@@ -31,6 +31,8 @@ const STATIC_PUBLIC_FILES = [
   "popup.html",
   "sessions.html",
   "styles.css",
+  "options.css",
+  "sessions.css",
   "icon"
 ];
 const REQUIRED_BUILD_FILES = [
@@ -50,6 +52,8 @@ const REQUIRED_BUILD_FILES = [
   "sessions.html",
   "sessions.js",
   "styles.css",
+  "options.css",
+  "sessions.css",
   "sw.js",
   "icon/16.png",
   "icon/32.png",
@@ -64,6 +68,7 @@ export const EXTENSION_MANIFEST_PROFILES = ["dev", "store-safe"];
 // and persistent host access comes from `<all_urls>`, so neither `cookies`
 // nor `activeTab` belongs in the dev/enterprise permission set.
 const DEV_PERMISSIONS = [
+  "alarms",
   "debugger",
   "downloads",
   "offscreen",
@@ -75,6 +80,7 @@ const DEV_PERMISSIONS = [
 ];
 const STORE_SAFE_PERMISSIONS = [
   "activeTab",
+  "alarms",
   "downloads",
   "offscreen",
   "scripting",

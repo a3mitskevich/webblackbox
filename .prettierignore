@@ -5,3 +5,4 @@ coverage
 pnpm-lock.yaml
 docs/api/
 apps/extension/e2e-demo/vendor/
+apps/extension/e2e-baselines/

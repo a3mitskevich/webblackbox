@@ -1458,8 +1458,7 @@ async function probeExtensionPopup(urlBase, extensionId, timeoutMs) {
         const snapshot = await popupClient.evaluate(`
           (() => {
             const title = (document.querySelector('.wb-popup__title')?.textContent ?? '').trim();
-            const hasStartLite = Boolean(document.querySelector("[data-action='start-lite']"));
-            const hasStartFull = Boolean(document.querySelector("[data-action='start-full']"));
+            const hasStart = Boolean(document.querySelector("[data-action='start']"));
             const runtimeId =
               typeof chrome === "object" &&
               chrome !== null &&
@@ -1471,8 +1470,7 @@ async function probeExtensionPopup(urlBase, extensionId, timeoutMs) {
 
             return {
               title,
-              hasStartLite,
-              hasStartFull,
+              hasStart,
               runtimeId
             };
           })()
@@ -1481,8 +1479,7 @@ async function probeExtensionPopup(urlBase, extensionId, timeoutMs) {
         const isPopupReady =
           snapshot &&
           snapshot.title === "WebBlackbox" &&
-          snapshot.hasStartLite === true &&
-          snapshot.hasStartFull === true &&
+          snapshot.hasStart === true &&
           snapshot.runtimeId === extensionId;
 
         return isPopupReady ? snapshot : null;
@@ -1936,17 +1933,23 @@ async function startSessionFromPopup(popupClient, mode, expectedUrl, useUiAction
   if (useUiActions) {
     const expression = `
       (async () => {
-        const selector = ${JSON.stringify(mode === "lite" ? "[data-action='start-lite']" : "[data-action='start-full']")};
-        const button = document.querySelector(selector);
+        const selector = "[data-action='start']";
         const visualCapture = ${JSON.stringify(visualCapture)};
-        const tabLine =
-          Array.from(document.querySelectorAll('p'))
-            .map((line) => (line.textContent ?? '').trim())
-            .find((line) => line.startsWith('Tab:')) ?? null;
+        const tabLine = (document.querySelector('.wb-popup__tab')?.textContent ?? '').trim() || null;
         const statusLine =
-          Array.from(document.querySelectorAll('p'))
-            .map((line) => (line.textContent ?? '').trim())
-            .find((line) => line.startsWith('Status:')) ?? null;
+          (document.querySelector('.wb-popup__state')?.textContent ?? '').trim() || null;
+        const engineInput = document.querySelector(
+          'input[name="capture-mode"][value=${JSON.stringify(mode)}]'
+        );
+
+        if (!(engineInput instanceof HTMLInputElement)) {
+          return { ok: false, reason: 'engine-option-not-found', selector, tabLine, statusLine };
+        }
+
+        // Picking the engine re-renders the start panel; query the button afterwards.
+        engineInput.checked = true;
+        engineInput.dispatchEvent(new Event('change', { bubbles: true }));
+        const button = document.querySelector(selector);
 
         if (!(button instanceof HTMLButtonElement)) {
           return { ok: false, reason: 'start-button-not-found', selector, tabLine, statusLine };
@@ -3113,8 +3116,7 @@ async function waitForPopupUiReady(popupClient, timeoutMs) {
     async () => {
       const snapshot = await popupClient.evaluate(`
         (() => {
-          const startLite = document.querySelector("[data-action='start-lite']");
-          const startFull = document.querySelector("[data-action='start-full']");
+          const start = document.querySelector("[data-action='start']");
           const hasChromeRuntime =
             typeof chrome === "object" &&
             chrome !== null &&
@@ -3123,9 +3125,8 @@ async function waitForPopupUiReady(popupClient, timeoutMs) {
             typeof chrome.runtime.id === "string";
 
           return {
-            ready: Boolean(startLite && startFull && hasChromeRuntime),
-            hasStartLite: Boolean(startLite),
-            hasStartFull: Boolean(startFull),
+            ready: Boolean(start && hasChromeRuntime),
+            hasStart: Boolean(start),
             hasChromeRuntime
           };
         })()

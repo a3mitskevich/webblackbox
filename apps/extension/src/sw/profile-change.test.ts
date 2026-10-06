@@ -191,6 +191,22 @@ describe("detectProfileChange", () => {
     ).toBeNull();
   });
 
+  it("reports an edit of the profile's pointer streams or pointer rate", () => {
+    const mine = qaCopy();
+    const started = snapshot(select(state({ profiles: [createDefaultProfile(), mine] }), "mine"));
+    const next = (profile: typeof mine) =>
+      snapshot(select(state({ profiles: [createDefaultProfile(), profile] }), "mine"));
+    const hoverToggled = { ...mine, pointer: { ...mine.pointer, hover: !mine.pointer.hover } };
+    const fasterPointer = { ...mine, pointer: { ...mine.pointer, mousemoveHz: 50 } };
+
+    expect(
+      detectProfileChange({ started, next: next(hoverToggled), startedProfileExists: true })
+    ).toBe("profile-edited");
+    expect(
+      detectProfileChange({ started, next: next(fasterPointer), startedProfileExists: true })
+    ).toBe("profile-edited");
+  });
+
   it("keeps recording when a General settings save pins the values Default already ran with", () => {
     const started = snapshot(select(state()));
     // Options saves the whole normalized config: every sampling and recorder value gets pinned.

@@ -1,6 +1,7 @@
 import type {
   CapturePolicy,
   ExportPolicy,
+  PointerCaptureOptions,
   HashesManifest,
   RecorderConfig,
   SessionMetadata
@@ -34,6 +35,8 @@ export type LiteCaptureState = {
    * bridge messages without this nonce are dropped.
    */
   injectedBridgeNonce?: string;
+  /** Optional pointer streams (hover / drag / wheel); absent = all off. */
+  pointer?: Partial<PointerCaptureOptions>;
 };
 
 /**

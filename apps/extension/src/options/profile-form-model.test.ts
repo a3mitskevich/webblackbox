@@ -35,6 +35,8 @@ const FORM: ProfileFormValues = {
   excludeUrls: "*/auth/*",
   mousemoveHz: "",
   visual: "screenshots",
+  deleteAfterExport: true,
+  unexportedRetentionMinutes: "10",
   sourceMaps: "embed",
   sourceMapMaxBytes: "1048576"
 };
@@ -179,5 +181,32 @@ describe("profile form model", () => {
     const { id } = duplicateIntoStore(store, createDefaultProfile());
 
     expect(id).toBe("profile-4");
+  });
+
+  it("keeps the local data block absent until the form departs from the defaults", () => {
+    const base = createDefaultProfile();
+
+    expect(applyProfileFormValues(base, FORM)).not.toHaveProperty("localData");
+    expect(applyProfileFormValues(base, { ...FORM, deleteAfterExport: false }).localData).toEqual({
+      deleteAfterExport: false,
+      unexportedRetentionMinutes: 10
+    });
+    expect(
+      applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "5000" }).localData
+    ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 1440 });
+  });
+
+  it("keeps an explicit local data block, and its retention when the field is cleared", () => {
+    const base = {
+      ...createDefaultProfile(),
+      localData: { deleteAfterExport: true, unexportedRetentionMinutes: 5 }
+    };
+
+    expect(
+      applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "" }).localData
+    ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 5 });
+    expect(
+      applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "0" }).localData
+    ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 1 });
   });
 });

@@ -142,7 +142,14 @@ export function buildProfileRecorderConfig(input: {
     toLegacyOptionsRecord(profile)
   );
 
-  return applyFullModeVisualCapture(config, mode, profile.visual ?? input.visualCapture);
+  return {
+    ...applyFullModeVisualCapture(config, mode, profile.visual ?? input.visualCapture),
+    pointer: {
+      hover: profile.pointer.hover,
+      drag: profile.pointer.drag,
+      wheel: profile.pointer.wheel
+    }
+  };
 }
 
 /** v1-shaped options record equivalent to a profile (only the keys the merge reads). */

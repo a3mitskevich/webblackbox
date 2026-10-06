@@ -3,6 +3,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type PortMessageHandler = (message: unknown) => void;
+const DEFAULT_EXPORT_POLICY = {
+  includeScreenshots: false,
+  includeScreenRecordings: false,
+  maxArchiveBytes: 100 * 1024 * 1024,
+  recentWindowMs: 20 * 60 * 1000
+};
 const EXPORT_PRIVACY_WARNING = {
   findingCount: 1,
   summary: "jwt in event:E-2",
@@ -164,7 +170,8 @@ describe("sessions page rendering", () => {
       kind: "ui.export",
       sid: "sid-export",
       passphrase: " session-secret ",
-      saveAs: false
+      saveAs: false,
+      policy: DEFAULT_EXPORT_POLICY
     });
   });
 

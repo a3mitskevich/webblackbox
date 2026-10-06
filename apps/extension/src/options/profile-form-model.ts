@@ -11,11 +11,18 @@ import {
   type CaptureCategories
 } from "../shared/profiles/categories.js";
 import {
+  isDefaultLocalDataSettings,
+  resolveLocalDataSettings
+} from "../shared/profiles/local-data.js";
+import {
   MAX_BODY_CAPTURE_BYTES,
   MAX_MOUSEMOVE_HZ,
   MAX_SOURCE_MAP_BYTES,
   MAX_RULE_PRIORITY,
+  MAX_UNEXPORTED_RETENTION_MINUTES,
   MIN_RULE_PRIORITY,
+  MIN_UNEXPORTED_RETENTION_MINUTES,
+  type ProfileLocalDataSettings,
   type ProfileRule,
   type ProfileSourceMapMode,
   type ProfileVisualCapture,
@@ -51,6 +58,8 @@ export type ProfileFormValues = {
   /** `""` = automatic (metadata in Full mode, off in Lite). */
   sourceMaps: string;
   sourceMapMaxBytes: string;
+  deleteAfterExport: boolean;
+  unexportedRetentionMinutes: string;
 };
 
 /** Raw string values of one rule row. */
@@ -168,8 +177,11 @@ export function applyProfileFormValues(
   const visual = VISUAL_VALUES.find((entry) => entry === values.visual);
   const sourceMapMode = SOURCE_MAP_MODES.find((entry) => entry === values.sourceMaps);
   const sourceMapMaxBytes = parseOptionalInt(values.sourceMapMaxBytes, 1, MAX_SOURCE_MAP_BYTES);
+  const localData = localDataFromFormValues(profile, values);
   const withoutVisual = Object.fromEntries(
-    Object.entries(profile).filter(([key]) => key !== "visual" && key !== "sourceMaps")
+    Object.entries(profile).filter(
+      ([key]) => key !== "visual" && key !== "localData" && key !== "sourceMaps"
+    )
   ) as RecordingProfile;
 
   return {
@@ -203,6 +215,7 @@ export function applyProfileFormValues(
       ...(mousemoveHz !== undefined ? { mousemoveHz } : {})
     },
     ...(visual ? { visual } : {}),
+    ...(localData ? { localData } : {}),
     ...(sourceMapMode
       ? {
           sourceMaps: {
@@ -212,6 +225,27 @@ export function applyProfileFormValues(
         }
       : {})
   };
+}
+
+/**
+ * The form always shows the effective local data settings. A profile that never set them keeps
+ * the block absent (the defaults) until the form departs from the defaults.
+ */
+function localDataFromFormValues(
+  profile: RecordingProfile,
+  values: ProfileFormValues
+): ProfileLocalDataSettings | undefined {
+  const next: ProfileLocalDataSettings = {
+    deleteAfterExport: values.deleteAfterExport,
+    unexportedRetentionMinutes:
+      parseOptionalInt(
+        values.unexportedRetentionMinutes,
+        MIN_UNEXPORTED_RETENTION_MINUTES,
+        MAX_UNEXPORTED_RETENTION_MINUTES
+      ) ?? resolveLocalDataSettings(profile).unexportedRetentionMinutes
+  };
+
+  return profile.localData || !isDefaultLocalDataSettings(next) ? next : undefined;
 }
 
 export function ruleFromFormValues(values: RuleFormValues): ProfileRule {
@@ -248,6 +282,49 @@ export function ruleFromFormValues(values: RuleFormValues): ProfileRule {
   };
 }
 
+/** Highest priority first; ties keep list order (the order the engine evaluates them in). */
+export function sortRulesForDisplay(rules: readonly ProfileRule[]): ProfileRule[] {
+  return rules
+    .map((rule, index) => ({ rule, index }))
+    .sort((left, right) => right.rule.priority - left.rule.priority || left.index - right.index)
+    .map((entry) => entry.rule);
+}
+
+/** Rules in the order of `ids` (the rows on screen); rules not listed follow in display order. */
+function orderRulesByIds(rules: readonly ProfileRule[], ids: readonly string[]): ProfileRule[] {
+  const position = new Map(ids.map((id, index) => [id, index]));
+  const listed = rules
+    .filter((rule) => position.has(rule.id))
+    .sort((left, right) => (position.get(left.id) ?? 0) - (position.get(right.id) ?? 0));
+
+  return [...listed, ...sortRulesForDisplay(rules.filter((rule) => !position.has(rule.id)))];
+}
+
+/**
+ * Moves the rule at `from` to `to` in display order and renumbers priorities top to bottom, so
+ * the order on screen is the order the rules win in. `shownIds` is the order the rows are shown
+ * in; it wins over the priorities, which may hold an edit the list has not been re-sorted for.
+ */
+export function reorderRules(
+  rules: readonly ProfileRule[],
+  from: number,
+  to: number,
+  shownIds?: readonly string[]
+): ProfileRule[] {
+  const ordered = shownIds ? orderRulesByIds(rules, shownIds) : sortRulesForDisplay(rules);
+
+  if (from < 0 || from >= ordered.length || to < 0 || to >= ordered.length || from === to) {
+    return ordered;
+  }
+
+  const moved = ordered[from];
+  const without = ordered.filter((_, index) => index !== from);
+  const next = moved ? [...without.slice(0, to), moved, ...without.slice(to)] : without;
+  const step = Math.max(1, Math.min(10, Math.floor(MAX_RULE_PRIORITY / next.length)));
+
+  return next.map((rule, index) => ({ ...rule, priority: (next.length - index) * step }));
+}
+
 /** Unique id with a readable prefix, e.g. `profile-3`. */
 export function createUniqueId(prefix: string, taken: readonly string[]): string {
   let index = taken.length + 1;
@@ -280,4 +357,17 @@ export function duplicateIntoStore(
 
 function toCaptureMode(value: string, fallback: CaptureMode): CaptureMode {
   return value === "lite" || value === "full" ? value : fallback;
+}
+
+/** JSON with object keys sorted, so equal drafts compare equal as strings. */
+export function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, entry: unknown) =>
+    entry && typeof entry === "object" && !Array.isArray(entry)
+      ? Object.fromEntries(
+          Object.entries(entry as Record<string, unknown>).sort(([left], [right]) =>
+            left.localeCompare(right)
+          )
+        )
+      : entry
+  );
 }

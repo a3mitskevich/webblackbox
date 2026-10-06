@@ -34,6 +34,8 @@ export const MAX_BODY_CAPTURE_BYTES = 8 * 1024 * 1024;
 /** Default and hard cap for one source map embedded at record time. */
 export const DEFAULT_SOURCE_MAP_MAX_BYTES = 8 * 1024 * 1024;
 export const MAX_SOURCE_MAP_BYTES = 32 * 1024 * 1024;
+export const MIN_UNEXPORTED_RETENTION_MINUTES = 1;
+export const MAX_UNEXPORTED_RETENTION_MINUTES = 24 * 60;
 
 /** Visual capture a profile pins; absent = the popup's choice (today's behaviour). */
 export type ProfileVisualCapture = "none" | "screenshots" | "recording" | "both";
@@ -75,6 +77,14 @@ export type ProfileExportSettings = {
   privacyScanner: "block" | "warn";
 };
 
+/** What happens to the encrypted local copy of a recording on this device. */
+export type ProfileLocalDataSettings = {
+  /** Delete the local recording once its export has been handed to the browser's downloads. */
+  deleteAfterExport: boolean;
+  /** Minutes a stopped, unexported recording is kept before it is deleted. */
+  unexportedRetentionMinutes: number;
+};
+
 export type RecordingProfile = {
   id: string;
   name: string;
@@ -99,6 +109,8 @@ export type RecordingProfile = {
   /** Capture policy envelope migrated from v1 options (consent, context, retention); optional. */
   basePolicy?: CapturePolicy;
   export: ProfileExportSettings;
+  /** Absent = the defaults (delete after export, today's 10-minute retention). */
+  localData?: ProfileLocalDataSettings;
 };
 
 export type ProfileRuleMatch = {
@@ -225,7 +237,18 @@ export const recordingProfileSchema = z
         encryption: z.enum(["required", "optional"]),
         privacyScanner: z.enum(["block", "warn"])
       })
+      .strict(),
+    localData: z
+      .object({
+        deleteAfterExport: z.boolean(),
+        unexportedRetentionMinutes: z
+          .number()
+          .int()
+          .min(MIN_UNEXPORTED_RETENTION_MINUTES)
+          .max(MAX_UNEXPORTED_RETENTION_MINUTES)
+      })
       .strict()
+      .optional()
   })
   .strict();
 

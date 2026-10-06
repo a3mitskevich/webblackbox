@@ -13,6 +13,15 @@ import {
 } from "./constants.js";
 import { compileValuePattern } from "./redaction-rules.js";
 import { scriptSourceMapDataSchema } from "./script-schemas.js";
+import {
+  pointerCaptureOptionsSchema,
+  userClickReactionDataSchema,
+  userDragDataSchema,
+  userHoverDataSchema,
+  userPointerPressDataSchema,
+  userSelectionDataSchema,
+  userWheelDataSchema
+} from "./pointer-schemas.js";
 
 const recordStringUnknown = z.record(z.string(), z.unknown());
 
@@ -229,7 +238,8 @@ export const recorderConfigSchema = z
     sampling: samplingProfileSchema,
     redaction: redactionProfileSchema,
     capturePolicy: capturePolicySchema.optional(),
-    sitePolicies: z.array(siteCapturePolicySchema)
+    sitePolicies: z.array(siteCapturePolicySchema),
+    pointer: pointerCaptureOptionsSchema.optional()
   })
   .strict();
 
@@ -648,7 +658,15 @@ const specializedDataSchemas = {
   "storage.local.snapshot": storageSnapshotDataSchema,
   "storage.idb.snapshot": storageSnapshotDataSchema,
   "perf.vitals": perfVitalsDataSchema,
-  "sys.script": scriptSourceMapDataSchema
+  "sys.script": scriptSourceMapDataSchema,
+  "user.pointerdown": userPointerPressDataSchema,
+  "user.pointerup": userPointerPressDataSchema,
+  "user.click.reaction": userClickReactionDataSchema,
+  "user.drag.start": userDragDataSchema,
+  "user.drag.end": userDragDataSchema,
+  "user.selection": userSelectionDataSchema,
+  "user.wheel": userWheelDataSchema,
+  "user.hover": userHoverDataSchema
 } as const;
 
 export function getEventPayloadSchema(type: z.infer<typeof webBlackboxEventTypeSchema>): z.ZodType {

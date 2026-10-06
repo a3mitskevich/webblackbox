@@ -6,6 +6,8 @@ import type {
   ProfileCancelReason,
   ProfilePreviewResponse
 } from "../shared/messages.js";
+import { el } from "../shared/ui/dom.js";
+import { icon } from "../shared/ui/icons.js";
 
 /** Popup choice meaning "let the site rules pick the profile". */
 export const PROFILE_CHOICE_AUTO = "auto";
@@ -48,16 +50,17 @@ export function toStartProfileId(choice: string): string | undefined {
 /** Profile select plus a one-line explanation of what Start will record with. */
 export function createProfilePickerSection(options: ProfilePickerOptions): HTMLElement {
   const { preview, t } = options;
-  const section = document.createElement("section");
-  section.className = "wb-popup__policy wb-popup__profile";
+  const section = document.createElement("div");
+  section.className = "wb-popup__profile";
 
   const label = document.createElement("label");
-  label.className = "wb-popup__policy-title";
+  label.className = "wb-field-label";
   label.htmlFor = "wb-profile-select";
   label.textContent = t("popupProfileTitle");
 
   const select = document.createElement("select");
   select.id = "wb-profile-select";
+  select.className = "wb-input wb-select";
   select.dataset.profileSelect = "";
   select.disabled = options.disabled;
   select.append(createOption(PROFILE_CHOICE_AUTO, t("popupProfileAuto")));
@@ -71,7 +74,7 @@ export function createProfilePickerSection(options: ProfilePickerOptions): HTMLE
   select.value = knownChoice ? options.choice : PROFILE_CHOICE_AUTO;
 
   const hint = document.createElement("p");
-  hint.className = "wb-popup__hint";
+  hint.className = "wb-popup__hint wb-popup__profile-hint";
   hint.dataset.profileHint = "";
   hint.textContent = describeProfileSelection(options);
 
@@ -97,11 +100,12 @@ export function describeProfileSelection(
     ? [t("popupProfileEnterpriseCapped", { categories: selection.enterpriseCapped.join(", ") })]
     : [];
 
-  return [
-    headline,
-    ...capped,
-    t("popupProfileRecommends", { mode: options.formatMode(selection.base) })
-  ].join(" ");
+  // A profile that needs Full locks the engine switch: the hint says why instead of recommending.
+  const engine = selection.requiresFull
+    ? t("popupProfileFullOnly")
+    : t("popupProfileRecommends", { mode: options.formatMode(selection.base) });
+
+  return [headline, ...capped, engine].join(" ");
 }
 
 /** The service worker answered and no profile exists: recording needs one first. */
@@ -109,18 +113,32 @@ export function hasNoRecordingProfiles(preview: ProfilePreviewResponse | undefin
   return preview !== undefined && preview.catalog.length === 0;
 }
 
-/** "No recording profile" block with a button to the profiles section of Options. */
+/**
+ * "No recording profile" panel in the Start panel's place: what is missing and one way on, to
+ * the profiles section of Options.
+ */
 export function createProfileRequirementSection(t: Translate): HTMLElement {
-  const section = document.createElement("section");
-  section.className = "wb-popup__policy wb-popup__profile-required";
-  section.dataset.profileRequired = "";
-  section.setAttribute("role", "alert");
-  section.append(
-    createText("strong", t("popupProfileRequiredTitle")),
-    createText("p", t("popupProfileRequired")),
-    createButton(t("popupOpenProfiles"), "open-profiles")
+  return el(
+    "section",
+    {
+      className: "wb-panel wb-popup__start wb-popup__profile-required",
+      attrs: { role: "alert" },
+      dataset: { profileRequired: "" }
+    },
+    [
+      el("h2", { className: "wb-panel__title", text: t("popupProfileRequiredTitle") }),
+      el("p", { className: "wb-popup__hint", text: t("popupProfileRequired") }),
+      el(
+        "button",
+        {
+          className: "wb-btn wb-btn--brand wb-btn--block",
+          attrs: { type: "button" },
+          dataset: { action: "open-profiles" }
+        },
+        [icon("settings"), t("popupOpenProfiles")]
+      )
+    ]
   );
-  return section;
 }
 
 const CANCEL_TEXT_KEYS: Record<
@@ -166,7 +184,7 @@ export function createProfileCancelSection(
 ): HTMLElement {
   const { summary, fix } = describeProfileCancel(session.profileCancel, t);
   const section = document.createElement("section");
-  section.className = "wb-popup__policy wb-popup__profile-cancel";
+  section.className = "wb-popup__alert wb-popup__profile-cancel";
   section.dataset.profileCancel = "";
   section.setAttribute("role", "alert");
 
@@ -174,7 +192,7 @@ export function createProfileCancelSection(
   dismiss.dataset.sid = session.sid;
 
   const actions = document.createElement("div");
-  actions.className = "wb-popup__nav";
+  actions.className = "wb-popup__row";
   actions.append(createButton(t("popupOpenProfiles"), "open-profiles"), dismiss);
 
   section.append(
