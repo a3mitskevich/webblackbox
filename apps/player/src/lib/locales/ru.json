@@ -214,6 +214,7 @@
     "reasonTooLarge": "слишком большое",
     "reasonSessionLimit": "исчерпан лимит",
     "reasonBacklog": "очередь переполнена",
+    "reasonStartedBeforeCapture": "начался до записи",
     "reasonNotRetained": "браузер уже выгрузил",
     "reasonUnavailable": "браузер не отдаёт",
     "reasonFetchFailed": "ошибка чтения",

@@ -87,6 +87,7 @@
   "reason_tooLargePlain": "larger than the capture limit",
   "reason_sessionLimit": "the session's body budget was used up",
   "reason_backlog": "too many bodies were waiting to be read",
+  "reason_startedBeforeCapture": "the request started before recording began, so the browser kept no body",
   "reason_notRetained": "the browser no longer held the body",
   "reason_unavailable": "the browser does not expose this body",
   "reason_fetchFailed": "reading it failed ({detail})",

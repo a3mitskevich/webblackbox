@@ -87,6 +87,7 @@
   "reason_tooLargePlain": "超过捕获限制",
   "reason_sessionLimit": "会话的正文配额已用完",
   "reason_backlog": "等待读取的正文过多",
+  "reason_startedBeforeCapture": "请求在开始录制之前已发出，浏览器未保留正文",
   "reason_notRetained": "浏览器已不再保留该正文",
   "reason_unavailable": "浏览器不提供此正文",
   "reason_fetchFailed": "读取失败（{detail}）",

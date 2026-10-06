@@ -10,6 +10,14 @@ vi.mock("@webblackbox/pipeline", () => ({
   }
 }));
 
+// The stack's at-rest encryption (#15) waits for a key from the SW; these tests drive the pipeline directly.
+vi.mock("./at-rest-storage.js", () => ({
+  createAtRestStorageProvider: () => ({
+    acceptKey: async () => undefined,
+    getStorage: async () => ({})
+  })
+}));
+
 type PortMessageHandler = (message: unknown) => void;
 
 type PipelineResponse = {

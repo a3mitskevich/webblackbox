@@ -214,6 +214,7 @@
     "reasonTooLarge": "too large",
     "reasonSessionLimit": "budget used up",
     "reasonBacklog": "backlog",
+    "reasonStartedBeforeCapture": "started before recording",
     "reasonNotRetained": "evicted by the browser",
     "reasonUnavailable": "not exposed by the browser",
     "reasonFetchFailed": "read failed",

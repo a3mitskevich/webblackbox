@@ -45,6 +45,7 @@ const REASON_KEYS: Record<BodySkipReason, NextMessageKey> = {
   "session-limit": "reasonSessionLimit",
   backlog: "reasonBacklog",
   "not-retained": "reasonNotRetained",
+  "started-before-capture": "reasonStartedBeforeCapture",
   unavailable: "reasonUnavailable",
   "fetch-failed": "reasonFetchFailed",
   empty: "reasonEmpty"

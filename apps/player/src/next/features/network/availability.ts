@@ -73,6 +73,8 @@ export function skipReasonText(
       return t("reason_backlog");
     case "not-retained":
       return t("reason_notRetained");
+    case "started-before-capture":
+      return t("reason_startedBeforeCapture");
     case "unavailable":
       return t("reason_unavailable");
     case "fetch-failed":

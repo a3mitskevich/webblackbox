@@ -87,6 +87,7 @@
   "reason_tooLargePlain": "больше лимита записи",
   "reason_sessionLimit": "лимит тел на сессию исчерпан",
   "reason_backlog": "слишком много тел ждали чтения",
+  "reason_startedBeforeCapture": "запрос начался до старта записи, браузер не сохранил тело",
   "reason_notRetained": "браузер уже не хранил тело",
   "reason_unavailable": "браузер не отдаёт это тело",
   "reason_fetchFailed": "чтение не удалось ({detail})",
