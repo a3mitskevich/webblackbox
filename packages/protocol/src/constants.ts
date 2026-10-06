@@ -94,18 +94,6 @@ export const WEBBLACKBOX_EVENT_TYPES = [
   "perf.heap.snapshot"
 ] as const;
 
-export const MESSAGE_TYPES = [
-  "CTRL.START_SESSION",
-  "CTRL.STOP_SESSION",
-  "CTRL.FREEZE",
-  "CTRL.EXPORT",
-  "EVT.BATCH",
-  "PIPE.BLOB_PUT",
-  "PIPE.CHUNK_PUT",
-  "PIPE.BUILD_INDEX",
-  "PIPE.EXPORT_DONE"
-] as const;
-
 export const FREEZE_REASONS = ["error", "network", "marker", "perf", "manual"] as const;
 
 export const STORAGE_SNAPSHOT_MODES = ["schema-only", "sample", "full"] as const;
