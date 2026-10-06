@@ -47,6 +47,12 @@ import {
   type MutationBatchSummary
 } from "./lite-dom-snapshot.js";
 import {
+  EVENT_BUFFER_FORCE_FLUSH_SIZE,
+  EVENT_BUFFER_HARD_LIMIT,
+  EVENT_BUFFER_SOFT_LIMIT,
+  LiteEventBuffer
+} from "./lite-event-buffer.js";
+import {
   installPerformanceObservers,
   LONG_TASK_PRESSURE_THRESHOLD_MS,
   RAF_PRESSURE_GAP_MS
@@ -69,7 +75,6 @@ import {
 } from "./lite-keystrokes.js";
 import { LiteTargetPayloads, toFastTargetPayload } from "./lite-target-payload.js";
 
-const PRE_RECORDING_BUFFER_MAX = 400;
 const SCREENSHOT_MAX_DATA_URL_LENGTH = 10 * 1024 * 1024;
 const SCREENSHOT_POINTER_STALE_MS = 2_500;
 const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
@@ -104,28 +109,9 @@ const START_CAPTURE_DEFER_MS = 2_000;
 const LONG_TASK_PRESSURE_COOLDOWN_MS = 1_800;
 const LONG_TASK_PRESSURE_EXTENDED_COOLDOWN_MS = 3_000;
 const RAF_PRESSURE_COOLDOWN_MS = 1_400;
-const EVENT_BUFFER_FLUSH_DELAY_MS = 180;
-const EVENT_BUFFER_FORCE_FLUSH_SIZE = 120;
-const EVENT_BUFFER_EMIT_CHUNK_SIZE = 80;
-const EVENT_BUFFER_SOFT_LIMIT = 420;
-const EVENT_BUFFER_HARD_LIMIT = 1_200;
 const MUTATION_DETAIL_RECORD_LIMIT = 160;
 const MUTATION_DETAIL_BUFFER_LIMIT = 240;
-const PERF_LOG_FLAG = "__WEBBLACKBOX_PERF__";
 const INJECTED_RAW_EVENT_TYPE_SET: ReadonlySet<string> = new Set(INJECTED_RAW_EVENT_TYPES);
-
-const LOW_PRIORITY_RAW_TYPES = new Set([
-  "mousemove",
-  "wheel",
-  "hover",
-  "scroll",
-  "mutation",
-  "rrweb",
-  "vitals",
-  "longtask",
-  "snapshot",
-  "screenshot"
-]);
 
 const FULL_MODE_SKIPPED_RAW_TYPES = new Set([
   "scroll",
@@ -153,8 +139,6 @@ type CapturePressureStage = "none" | "soft" | "hard" | "critical";
  * It collects DOM/input/network/error/perf signals and emits buffered raw events.
  */
 export class LiteCaptureAgent {
-  private readonly eventBuffer: RawRecorderEvent[] = [];
-  private readonly preRecordingBuffer: RawRecorderEvent[] = [];
   private readonly cleanupCallbacks: Array<() => void> = [];
   private readonly frameMarker: string | undefined;
   private readonly isTopLevelFrame: boolean;
@@ -167,6 +151,10 @@ export class LiteCaptureAgent {
   private sampling: LiteCaptureSampling = { ...DEFAULT_SAMPLING };
   private capturePolicy: CapturePolicy = DEFAULT_CAPTURE_POLICY;
   private pointerOptions: PointerCaptureOptions = { ...DEFAULT_POINTER_CAPTURE_OPTIONS };
+  private readonly eventBuffer = new LiteEventBuffer({
+    emitBatch: (events) => this.options.emitBatch(events),
+    mode: () => this.mode
+  });
   private readonly targets = new LiteTargetPayloads({
     policy: () => this.capturePolicy,
     mode: () => this.mode,
@@ -200,7 +188,6 @@ export class LiteCaptureAgent {
   private indexedDbSnapshotInFlight = false;
 
   private lastDomSnapshotMono = Number.NEGATIVE_INFINITY;
-  private flushTimer = 0;
   private lastScrollTime = 0;
   private lastPointerTime = Number.NEGATIVE_INFINITY;
   private screenshotInFlight = false;
@@ -229,7 +216,6 @@ export class LiteCaptureAgent {
   private hasDomSnapshot = false;
   private hasLocalStorageSnapshot = false;
   private mutationSummary: MutationBatchSummary = createEmptyMutationSummary();
-  private droppedLowPriorityEvents = 0;
   private disposed = false;
   private readonly stopWatchingPasswordReveals: () => void;
   private pendingQuietRecoverySummary = false;
@@ -301,7 +287,7 @@ export class LiteCaptureAgent {
       this.ensureCaptureInstalled();
 
       if (!wasRecording) {
-        this.flushPreRecordingBuffer();
+        this.eventBuffer.flushPreRecordingBuffer();
       }
 
       this.ensureIndicator(this.sid, this.mode);
@@ -351,7 +337,7 @@ export class LiteCaptureAgent {
   /** Flushes the current buffered raw events immediately. */
   public flush(): void {
     this.flushPendingScrollEvent();
-    this.drainBufferedEvents();
+    this.eventBuffer.drainBufferedEvents();
   }
 
   /** Completes any in-flight screenshot and captures one final frame if none was recorded yet. */
@@ -387,17 +373,12 @@ export class LiteCaptureAgent {
     this.stopMutationAndSnapshots();
     this.removeIndicator();
 
-    if (this.flushTimer > 0) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = 0;
-    }
-
+    this.eventBuffer.cancelScheduledFlush();
     this.runCleanupCallbacks();
     this.targets.clearPendingTargetEnrichmentTimers();
     this.pointerCapture.reset();
 
-    this.eventBuffer.length = 0;
-    this.preRecordingBuffer.length = 0;
+    this.eventBuffer.clear();
     this.mutationSummary = createEmptyMutationSummary();
     this.targets.resetSelectorCache();
     this.hasCapturedScreenshot = false;
@@ -1774,28 +1755,11 @@ export class LiteCaptureAgent {
     }
 
     if (!this.recordingActive) {
-      if (shouldBufferBeforeRecording(event)) {
-        this.preRecordingBuffer.push(event);
-
-        if (this.preRecordingBuffer.length > PRE_RECORDING_BUFFER_MAX) {
-          this.preRecordingBuffer.splice(
-            0,
-            this.preRecordingBuffer.length - PRE_RECORDING_BUFFER_MAX
-          );
-        }
-      }
-
+      this.eventBuffer.bufferBeforeRecording(event);
       return;
     }
 
-    if (this.shouldDropEventForBackpressure(event)) {
-      return;
-    }
-
-    this.eventBuffer.push(event);
-    this.scheduleBufferedFlush(
-      this.eventBuffer.length >= EVENT_BUFFER_FORCE_FLUSH_SIZE ? 0 : EVENT_BUFFER_FLUSH_DELAY_MS
-    );
+    this.eventBuffer.enqueue(event);
   }
 
   private createClickPayload(event: MouseEvent): Record<string, unknown> {
@@ -1812,139 +1776,6 @@ export class LiteCaptureAgent {
       metaKey: event.metaKey,
       target: this.targets.createPointerTargetPayload(event.target, "rich")
     };
-  }
-
-  private flushPreRecordingBuffer(): void {
-    if (!this.recordingActive || this.preRecordingBuffer.length === 0) {
-      return;
-    }
-
-    this.eventBuffer.push(...this.preRecordingBuffer.splice(0, this.preRecordingBuffer.length));
-    this.scheduleBufferedFlush(0);
-  }
-
-  private flushEvents(): void {
-    if (this.flushTimer > 0) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = 0;
-    }
-
-    if (this.eventBuffer.length === 0) {
-      return;
-    }
-
-    const events = this.eventBuffer.splice(0, EVENT_BUFFER_EMIT_CHUNK_SIZE);
-
-    if (events.length > 0) {
-      this.options.emitBatch(events);
-    }
-
-    if (this.eventBuffer.length > 0) {
-      this.scheduleBufferedFlush(0);
-    }
-  }
-
-  private scheduleBufferedFlush(delayMs: number): void {
-    if (this.flushTimer > 0) {
-      if (delayMs > 0) {
-        return;
-      }
-
-      clearTimeout(this.flushTimer);
-      this.flushTimer = 0;
-    }
-
-    this.flushTimer = window.setTimeout(
-      () => {
-        this.flushEvents();
-      },
-      Math.max(0, delayMs)
-    );
-  }
-
-  private drainBufferedEvents(): void {
-    if (this.flushTimer > 0) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = 0;
-    }
-
-    if (this.eventBuffer.length === 0) {
-      return;
-    }
-
-    while (this.eventBuffer.length > 0) {
-      const events = this.eventBuffer.splice(0, EVENT_BUFFER_EMIT_CHUNK_SIZE);
-
-      if (events.length === 0) {
-        break;
-      }
-
-      this.options.emitBatch(events);
-    }
-  }
-
-  private shouldDropEventForBackpressure(event: RawRecorderEvent): boolean {
-    const buffered = this.eventBuffer.length;
-
-    if (buffered < EVENT_BUFFER_SOFT_LIMIT) {
-      return false;
-    }
-
-    if (!LOW_PRIORITY_RAW_TYPES.has(event.rawType)) {
-      return false;
-    }
-
-    if (buffered < EVENT_BUFFER_SOFT_LIMIT) {
-      return false;
-    }
-
-    if (buffered >= EVENT_BUFFER_HARD_LIMIT || this.mode === "full") {
-      if (buffered >= EVENT_BUFFER_HARD_LIMIT && this.mode !== "full") {
-        this.dropBufferedLowPriorityEvents(buffered - EVENT_BUFFER_SOFT_LIMIT + 1);
-        this.scheduleBufferedFlush(0);
-      }
-
-      this.droppedLowPriorityEvents += 1;
-
-      if (isPerfLoggingEnabled() && this.droppedLowPriorityEvents % 200 === 0) {
-        console.info("[WebBlackbox][perf] dropped low-priority events", {
-          mode: this.mode,
-          dropped: this.droppedLowPriorityEvents,
-          buffered,
-          rawType: event.rawType
-        });
-      }
-
-      return true;
-    }
-
-    return false;
-  }
-
-  private dropBufferedLowPriorityEvents(targetDropCount: number): void {
-    if (targetDropCount <= 0 || this.eventBuffer.length === 0) {
-      return;
-    }
-
-    let dropped = 0;
-    const retained: RawRecorderEvent[] = [];
-
-    for (const event of this.eventBuffer) {
-      if (dropped < targetDropCount && LOW_PRIORITY_RAW_TYPES.has(event.rawType)) {
-        dropped += 1;
-        continue;
-      }
-
-      retained.push(event);
-    }
-
-    if (dropped === 0) {
-      return;
-    }
-
-    this.eventBuffer.length = 0;
-    this.eventBuffer.push(...retained);
-    this.droppedLowPriorityEvents += dropped;
   }
 
   private ensureIndicator(sid?: string, mode?: string): void {
@@ -1997,28 +1828,6 @@ export class LiteCaptureAgent {
       target.removeEventListener(type, wrapped, options);
     });
   }
-}
-
-function isPerfLoggingEnabled(): boolean {
-  const flags = window as unknown as Record<string, unknown>;
-  return flags[PERF_LOG_FLAG] === true;
-}
-
-function shouldBufferBeforeRecording(event: RawRecorderEvent): boolean {
-  if (event.source !== "content") {
-    return false;
-  }
-
-  return (
-    event.rawType === "console" ||
-    event.rawType === "fetch" ||
-    event.rawType === "xhr" ||
-    event.rawType === "networkBody" ||
-    event.rawType === "fetchError" ||
-    event.rawType === "pageError" ||
-    event.rawType === "unhandledrejection" ||
-    event.rawType === "resourceError"
-  );
 }
 
 /** Default sanitized sampling profile used by `LiteCaptureAgent`. */
