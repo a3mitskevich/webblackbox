@@ -470,6 +470,8 @@ const LITE_DEFAULT_BODY_MIME_ALLOWLIST = [
   "application/javascript",
   "application/x-www-form-urlencoded"
 ];
+/** Full mode reads bodies through CDP whatever loaded them, so SVG images (text) are kept too. */
+const FULL_DEFAULT_BODY_MIME_ALLOWLIST = [...LITE_DEFAULT_BODY_MIME_ALLOWLIST, "image/svg+xml"];
 const LITE_BODY_REDACTED_TOKEN = "[REDACTED]";
 const LITE_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const LITE_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
@@ -2651,6 +2653,11 @@ function trackFullModeNetworkEvent(
 
   const metaKey = buildRequestMetaKey(requestId, sessionId);
 
+  if (method === "Network.requestWillBeSent") {
+    runtime.fullBodyCapture.onRequestWillBeSent(requestId, sessionId);
+    return;
+  }
+
   if (method === "Network.responseReceived") {
     const response = asRecord(payload?.response);
     upsertRequestMeta(runtime.requestMeta, metaKey, {
@@ -3601,7 +3608,7 @@ function resolveFullBodyCaptureRule(
   mimeType: string | undefined
 ): LiteBodyCaptureRule {
   return resolveFullBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-    defaultMimeAllowlist: LITE_DEFAULT_BODY_MIME_ALLOWLIST,
+    defaultMimeAllowlist: FULL_DEFAULT_BODY_MIME_ALLOWLIST,
     fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
   });
 }

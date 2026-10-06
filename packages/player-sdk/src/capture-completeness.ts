@@ -61,6 +61,12 @@ export type BodyCompleteness = {
   }>;
 };
 
+export type ResponseBodyCompleteness = BodyCompleteness & {
+  byMime: Record<string, MimeCompleteness>;
+  /** Textual `data:` URL responses: the body is the URL itself, so none is expected. */
+  dataUrls: number;
+};
+
 export type MimeCompleteness = {
   expected: number;
   captured: number;
@@ -76,7 +82,7 @@ export type CaptureCompletenessReport = {
     requests: number;
     /** Requests to extension or browser-internal URLs still in the archive. */
     internalRequests: number;
-    responseBodies: BodyCompleteness & { byMime: Record<string, MimeCompleteness> };
+    responseBodies: ResponseBodyCompleteness;
     requestBodies: BodyCompleteness;
   };
   dom: {
@@ -124,6 +130,7 @@ export const MAX_MISSING_SAMPLES = 20;
 const BODYLESS_STATUSES = new Set([101, 204, 205]);
 const BROWSER_INTERNAL_URL =
   /^(chrome-extension|moz-extension|safari-web-extension|chrome|chrome-untrusted|devtools):/i;
+const DATA_URL = /^data:/i;
 const DOM_CHANGE_EVENT_TYPES = new Set<WebBlackboxEventType>([
   "dom.snapshot",
   "dom.mutation.batch",
@@ -183,7 +190,8 @@ export function formatCaptureCompletenessReport(report: CaptureCompletenessRepor
 
   return [
     `Duration ${seconds(report.durationMs)} s; bodies requested: ${report.bodiesRequested ? "yes" : "no"}`,
-    `Response bodies: ${formatBodies(responseBodies)}`,
+    `Response bodies: ${formatBodies(responseBodies)}` +
+      (responseBodies.dataUrls > 0 ? `; ${responseBodies.dataUrls} in data: URLs` : ""),
     ...mimeLines,
     `Request bodies: ${formatBodies(requestBodies)}`,
     `Requests: ${report.network.requests} (${report.network.internalRequests} extension/internal)`,
@@ -233,12 +241,18 @@ function emptyBodies(): BodyCompleteness {
 
 function summarizeResponseBodies(
   waterfall: readonly CompletenessNetworkEntry[]
-): BodyCompleteness & { byMime: Record<string, MimeCompleteness> } {
+): ResponseBodyCompleteness {
   const summary = emptyBodies();
   const byMime: Record<string, MimeCompleteness> = {};
+  let dataUrls = 0;
 
   for (const entry of waterfall) {
     if (!expectsResponseBody(entry)) {
+      continue;
+    }
+
+    if (DATA_URL.test(entry.url)) {
+      dataUrls += 1;
       continue;
     }
 
@@ -253,7 +267,7 @@ function summarizeResponseBodies(
     byMime[mime] = { ...row, expected: row.expected + 1, [outcome]: row[outcome] + 1 };
   }
 
-  return { ...summary, byMime };
+  return { ...summary, byMime, dataUrls };
 }
 
 function summarizeRequestBodies(waterfall: readonly CompletenessNetworkEntry[]): BodyCompleteness {
