@@ -37,6 +37,9 @@ export type RealtimeStream = {
 /** Messages whose payload is read to tell the stream format (the first ones say enough). */
 const FORMAT_SAMPLE = 24;
 
+/** WebSocket opcode of a binary frame: CDP hands its payload over base64-encoded. */
+const WS_BINARY_OPCODE = 2;
+
 /**
  * Groups the realtime timeline (`getRealtimeNetworkTimeline`) by stream id. Entries without an id
  * (old page-hook archives) form one stream per protocol. Streams are ordered by their first event.
@@ -60,31 +63,50 @@ export function buildRealtimeStreams(entries: readonly RealtimeNetworkEntry[]): 
     .sort((left, right) => left.firstMono - right.firstMono);
 }
 
-/** Bytes of one message: the recorded payload length, else the kept text length. */
+/**
+ * Size of one message: the recorded payload length, else the kept text length. Both count text
+ * frames in UTF-16 characters (what CDP reports), not wire bytes. A binary frame's length counts
+ * base64 characters, so it is turned into the bytes they encode.
+ */
 export function realtimeMessageBytes(entry: RealtimeNetworkEntry): number {
-  if (typeof entry.payloadLength === "number" && Number.isFinite(entry.payloadLength)) {
-    return Math.max(0, entry.payloadLength);
-  }
+  const length =
+    typeof entry.payloadLength === "number" && Number.isFinite(entry.payloadLength)
+      ? Math.max(0, entry.payloadLength)
+      : (entry.payloadPreview?.length ?? 0);
 
-  return entry.payloadPreview?.length ?? 0;
+  return entry.opcode === WS_BINARY_OPCODE
+    ? base64Bytes(length, entry.payloadPreview ?? "")
+    : length;
 }
 
 /**
  * The archive keeps only a prefix of this message: the recorder flagged it, or (older archives
  * that cut previews without a flag) the kept text is shorter than the recorded payload length and
- * no blob holds the rest.
+ * no blob holds the rest. Binary frames and frames recorded without a preview (the recorder keeps
+ * the length of every frame but a preview only of text ones) count as cut only when flagged.
  */
 export function isRealtimePayloadCut(entry: RealtimeNetworkEntry): boolean {
   if (entry.payloadTruncated === true) {
     return true;
   }
 
-  if (entry.payloadHash || typeof entry.payloadLength !== "number") {
+  if (
+    entry.payloadHash ||
+    entry.opcode === WS_BINARY_OPCODE ||
+    entry.payloadPreview === undefined ||
+    typeof entry.payloadLength !== "number"
+  ) {
     return false;
   }
 
-  const kept = new TextEncoder().encode(entry.payloadPreview ?? "").byteLength;
-  return kept < entry.payloadLength;
+  // Both lengths are UTF-16 character counts.
+  return entry.payloadPreview.length < entry.payloadLength;
+}
+
+/** Bytes encoded by `length` base64 characters; the kept text, when whole, tells the padding. */
+function base64Bytes(length: number, text: string): number {
+  const padding = text.length === length ? (/=*$/.exec(text)?.[0].length ?? 0) : 0;
+  return Math.max(0, Math.floor((length * 3) / 4) - Math.min(2, padding));
 }
 
 function toStream(group: RealtimeNetworkEntry[]): RealtimeStream {
@@ -106,7 +128,7 @@ function toStream(group: RealtimeNetworkEntry[]): RealtimeStream {
     if (message.direction === "sent") {
       sent += 1;
       sentBytes += bytes;
-    } else {
+    } else if (isReceived(message)) {
       received += 1;
       receivedBytes += bytes;
     }
@@ -134,18 +156,23 @@ function toStream(group: RealtimeNetworkEntry[]): RealtimeStream {
   };
 }
 
+/** SSE only flows from the server; a WebSocket frame needs its recorded direction. */
+function isReceived(message: RealtimeNetworkEntry): boolean {
+  return message.direction === "received" || message.protocol === "sse";
+}
+
 function readUrl(group: RealtimeNetworkEntry[]): { url?: string } {
   const url = group.find((entry) => typeof entry.url === "string" && entry.url.length > 0)?.url;
   return url ? { url } : {};
 }
 
 function readStreamFormat(messages: RealtimeNetworkEntry[]): RealtimeStreamFormat {
-  const sample = messages.slice(0, FORMAT_SAMPLE);
-
   // One separator anywhere makes it a hub connection: cut frames lose theirs.
-  if (sample.some((entry) => entry.payloadPreview?.includes(SIGNALR_RECORD_SEPARATOR))) {
+  if (messages.some((entry) => entry.payloadPreview?.includes(SIGNALR_RECORD_SEPARATOR))) {
     return "signalr";
   }
+
+  const sample = messages.slice(0, FORMAT_SAMPLE);
 
   const formats = new Set(
     sample

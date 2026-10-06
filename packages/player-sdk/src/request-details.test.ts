@@ -1,7 +1,12 @@
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import { describe, expect, it } from "vitest";
 
-import { maskSensitiveUrl, readRequestConnection, readRequestTiming } from "./request-details.js";
+import {
+  maskSensitiveUrl,
+  readRequestConnection,
+  readRequestTiming,
+  URL_USERINFO_MARKER
+} from "./request-details.js";
 
 function event(type: string, mono: number, data: unknown): WebBlackboxEvent {
   return { v: 1, sid: "S", tab: 1, t: mono, mono, type, id: `${type}-${mono}`, data } as never;
@@ -54,6 +59,56 @@ describe("readRequestTiming", () => {
     expect(phases.wait?.[1]).toBeCloseTo(50);
     expect(phases.download?.[1]).toBeCloseTo(24);
     expect(timing.waitingMs).toBeCloseTo(76);
+  });
+
+  it("counts ResourceTiming from the last redirect hop, not the first request", () => {
+    const timing = readRequestTiming([
+      event("network.request", 0, { timestamp: REQUEST_SECONDS }),
+      event("network.request", 30, { timestamp: REQUEST_SECONDS + 0.03 }),
+      event("network.response", 60, {
+        response: {
+          timing: {
+            requestTime: REQUEST_SECONDS + 0.031,
+            sendStart: 1,
+            sendEnd: 2,
+            receiveHeadersEnd: 20
+          }
+        }
+      }),
+      event("network.finished", 70, { timestamp: REQUEST_SECONDS + 0.06 }),
+      event("network.request", 90, { timestamp: REQUEST_SECONDS + 0.09 })
+    ]);
+    const queueing = timing.phases.find((phase) => phase.name === "queueing");
+
+    expect(timing.source).toBe("resource-timing");
+    expect(queueing?.durationMs).toBeCloseTo(1);
+    expect(timing.waitingMs).toBeCloseTo(21);
+  });
+
+  it("falls back to the events when ResourceTiming starts before the request (cache, worker)", () => {
+    const timing = readRequestTiming([
+      event("network.request", 0, { timestamp: REQUEST_SECONDS }),
+      event("network.response", 4, {
+        response: {
+          timing: {
+            requestTime: REQUEST_SECONDS - 5,
+            sendStart: 0,
+            sendEnd: 0,
+            receiveHeadersEnd: 1
+          }
+        }
+      }),
+      event("network.finished", 10, { timestamp: REQUEST_SECONDS + 0.01 })
+    ]);
+
+    expect(timing).toEqual({
+      source: "events",
+      waitingMs: 4,
+      phases: [
+        { name: "wait", startMs: 0, durationMs: 4 },
+        { name: "download", startMs: 4, durationMs: 6 }
+      ]
+    });
   });
 
   it("falls back to request → response → end without ResourceTiming", () => {
@@ -155,5 +210,84 @@ describe("maskSensitiveUrl", () => {
       hiddenParams: []
     });
     expect(maskSensitiveUrl("not a url")).toEqual({ url: "not a url", hiddenParams: [] });
+    expect(maskSensitiveUrl("")).toEqual({ url: "", hiddenParams: [] });
+  });
+
+  it("hides secrets in the fragment (OAuth implicit flow) and in hash-routed queries", () => {
+    expect(
+      maskSensitiveUrl("https://a.test/cb#access_token=abc&state=1&token_type=Bearer")
+    ).toEqual({
+      url: "https://a.test/cb#access_token=…&state=1&token_type=…",
+      hiddenParams: ["access_token", "token_type"]
+    });
+    expect(maskSensitiveUrl("https://a.test/?token=1#/login?token=2&next=%2Fhome")).toEqual({
+      url: "https://a.test/?token=…#/login?token=…&next=%2Fhome",
+      hiddenParams: ["token"]
+    });
+    expect(maskSensitiveUrl("https://a.test/docs#section-2")).toEqual({
+      url: "https://a.test/docs#section-2",
+      hiddenParams: []
+    });
+  });
+
+  it("hides the userinfo of the authority", () => {
+    expect(maskSensitiveUrl("https://user:pa%40ss@a.test:8443/x?q=1")).toEqual({
+      url: "https://…@a.test:8443/x?q=1",
+      hiddenParams: [URL_USERINFO_MARKER]
+    });
+    expect(maskSensitiveUrl("wss://ghp_secret@a.test/hub")).toEqual({
+      url: "wss://…@a.test/hub",
+      hiddenParams: [URL_USERINFO_MARKER]
+    });
+    // An `@` in the path or the query is not userinfo.
+    expect(maskSensitiveUrl("https://a.test/u/@me?mail=a@b.test").url).toBe(
+      "https://a.test/u/@me?mail=a@b.test"
+    );
+  });
+
+  it("masks relative and scheme-less URLs", () => {
+    expect(maskSensitiveUrl("/hub?access_token=x&id=2")).toEqual({
+      url: "/hub?access_token=…&id=2",
+      hiddenParams: ["access_token"]
+    });
+    expect(maskSensitiveUrl("a.test/hub?sig=1")).toEqual({
+      url: "a.test/hub?sig=…",
+      hiddenParams: ["sig"]
+    });
+  });
+
+  it("catches key, authorization, bearer and one-time-password names, not words ending in key", () => {
+    const names = [
+      "access_key",
+      "AccessKey",
+      "private_key",
+      "privateKey",
+      "client-key",
+      "authorization",
+      "bearer",
+      "otp",
+      "totp",
+      "otp_code",
+      "X-Amz-Credential"
+    ];
+    const keptNames = ["keyword", "monkey", "turnkey", "hotkeys", "keys", "notpad", "spotprice"];
+    const query = (list: string[]) => list.map((name) => `${name}=v`).join("&");
+
+    expect(maskSensitiveUrl(`https://a.test/?${query(names)}`).hiddenParams).toEqual(names);
+    expect(maskSensitiveUrl(`https://a.test/?${query(keptNames)}`).hiddenParams).toEqual([]);
+  });
+
+  it("leaves everything but the secret values byte-identical", () => {
+    expect(
+      maskSensitiveUrl("https://a.test/p%C3%A4th?q=a%20b+c&plus=%2B&token=x%2By&flag&e=")
+    ).toEqual({
+      url: "https://a.test/p%C3%A4th?q=a%20b+c&plus=%2B&token=…&flag&e=",
+      hiddenParams: ["token"]
+    });
+    // Encoded names are matched decoded and listed once.
+    expect(maskSensitiveUrl("https://a.test/?api%5Fkey=1&api_key=2")).toEqual({
+      url: "https://a.test/?api%5Fkey=…&api_key=…",
+      hiddenParams: ["api_key"]
+    });
   });
 });

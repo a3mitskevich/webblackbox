@@ -44,7 +44,10 @@ export type RealtimeRecord = {
   signalrType?: number;
   /** SignalR completion or close error. */
   error?: string;
-  /** False for the last record of a cut payload: its text stops where the recording stopped. */
+  /**
+   * False when the text was not read as a whole record: the last record of a cut payload (its
+   * text stops where the recording stopped) or a malformed one. Such a record has no `value`.
+   */
   complete: boolean;
 };
 
@@ -80,6 +83,11 @@ const SIGNALR_KINDS: Record<number, RealtimeRecordKind> = {
   8: "ack",
   9: "sequence"
 };
+
+/** Top-level keys of a cut record's prefix (`readTopLevelPrefix`), each after `{` or `,`. */
+const CUT_TYPE_PATTERN = /[{,]\s*"type"\s*:\s*(\d+)/;
+const CUT_TARGET_PATTERN = /[{,]\s*"target"\s*:\s*"((?:[^"\\]|\\.)*)"/;
+const CUT_INVOCATION_ID_PATTERN = /[{,]\s*"invocationId"\s*:\s*"((?:[^"\\]|\\.)*)"/;
 
 const SERVICE_KINDS: ReadonlySet<RealtimeRecordKind> = new Set([
   "handshake",
@@ -143,18 +151,23 @@ function splitSignalrRecords(text: string, truncated: boolean): RealtimeRecord[]
     .map((part) => readSignalrRecord(part, true));
 
   if (tail.length > 0) {
-    records.push(readSignalrRecord(tail, !truncated && parseJson(tail) !== undefined));
+    records.push(readSignalrRecord(tail, !truncated));
   }
 
   return records.length > 0 ? records : [{ kind: "empty", text: "", complete: true }];
 }
 
-function readSignalrRecord(text: string, complete: boolean): RealtimeRecord {
-  const value = complete ? parseJson(text) : undefined;
+/** `whole`: the text was recorded in full, so it is parsed; unreadable text stays incomplete. */
+function readSignalrRecord(text: string, whole: boolean): RealtimeRecord {
+  const value = whole ? parseJson(text) : undefined;
   const object = asRecord(value);
 
+  if (value === undefined) {
+    return readCutSignalrRecord(text);
+  }
+
   if (!object) {
-    return readCutSignalrRecord(text, complete);
+    return { kind: "json", text, value, complete: true };
   }
 
   const signalrType = typeof object.type === "number" ? object.type : undefined;
@@ -184,12 +197,16 @@ function readUntypedKind(object: Record<string, unknown>): RealtimeRecordKind {
     : "json";
 }
 
-/** What a cut or malformed record still tells: its type and target, read from the prefix. */
-function readCutSignalrRecord(text: string, complete: boolean): RealtimeRecord {
-  const typeMatch = /"type"\s*:\s*(\d+)/.exec(text);
+/**
+ * What a cut or malformed record still tells: its type and target, read from the keys before its
+ * first nested object or array (a completion's `result` may hold a `target` of its own).
+ */
+function readCutSignalrRecord(text: string): RealtimeRecord {
+  const keys = readTopLevelPrefix(text);
+  const typeMatch = CUT_TYPE_PATTERN.exec(keys);
   const signalrType = typeMatch ? Number(typeMatch[1]) : undefined;
-  const target = /"target"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text)?.[1];
-  const invocationId = /"invocationId"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text)?.[1];
+  const target = CUT_TARGET_PATTERN.exec(keys)?.[1];
+  const invocationId = CUT_INVOCATION_ID_PATTERN.exec(keys)?.[1];
   const kind: RealtimeRecordKind =
     signalrType !== undefined
       ? (SIGNALR_KINDS[signalrType] ?? "json")
@@ -200,11 +217,38 @@ function readCutSignalrRecord(text: string, complete: boolean): RealtimeRecord {
   return {
     kind,
     text,
-    complete,
+    complete: false,
     ...(target === undefined ? {} : { target }),
     ...(invocationId === undefined ? {} : { invocationId }),
     ...(signalrType === undefined ? {} : { signalrType })
   };
+}
+
+/** An object record's text up to its first nested `{` or `[` outside strings; "" for other text. */
+function readTopLevelPrefix(text: string): string {
+  const start = text.indexOf("{");
+
+  if (start < 0 || text.slice(0, start).trim().length > 0) {
+    return "";
+  }
+
+  let inString = false;
+
+  for (let index = start + 1; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      // Skip the escaped character, then look for the closing quote.
+      index += char === "\\" ? 1 : 0;
+      inString = char !== '"';
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === "{" || char === "[") {
+      return text.slice(0, index);
+    }
+  }
+
+  return text;
 }
 
 function readPlainRecord(text: string, complete: boolean): RealtimeRecord {

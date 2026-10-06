@@ -90,7 +90,53 @@ describe("parseRealtimePayload", () => {
   it("reads unknown hub types and malformed records without throwing", () => {
     const parsed = parseRealtimePayload(`{"type":42}${RS}not json${RS}{"a":1}${RS}`);
 
-    expect(parsed.records.map((record) => record.kind)).toEqual(["json", "text", "json"]);
+    expect(parsed.records.map((record) => [record.kind, record.complete])).toEqual([
+      ["json", true],
+      // Unreadable text is not a whole record: it carries no value.
+      ["text", false],
+      ["json", true]
+    ]);
+    expect(parsed.records[1]).not.toHaveProperty("value");
+  });
+
+  it("reads a cut record's type and target from its top level only", () => {
+    const parsed = parseRealtimePayload(
+      `{"type":3,"invocationId":"1","result":{"target":"foo","type":1,"invocationId":"9",`,
+      { truncated: true, signalr: true }
+    );
+
+    expect(parsed.records).toEqual([
+      {
+        kind: "completion",
+        text: `{"type":3,"invocationId":"1","result":{"target":"foo","type":1,"invocationId":"9",`,
+        invocationId: "1",
+        signalrType: 3,
+        complete: false
+      }
+    ]);
+  });
+
+  it("does not stop the top level at braces inside strings", () => {
+    const parsed = parseRealtimePayload(`{"invocationId":"a{[b","type":1,"target":"T","argu`, {
+      truncated: true,
+      signalr: true
+    });
+
+    expect(parsed.records[0]).toMatchObject({
+      kind: "invocation",
+      invocationId: "a{[b",
+      target: "T",
+      signalrType: 1
+    });
+  });
+
+  it("keeps a whole JSON array record's value", () => {
+    expect(parseRealtimePayload(`[1,2]${RS}`).records[0]).toEqual({
+      kind: "json",
+      text: "[1,2]",
+      value: [1, 2],
+      complete: true
+    });
   });
 
   it("reads plain JSON, cut JSON and text", () => {
