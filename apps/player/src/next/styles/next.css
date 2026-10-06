@@ -1209,6 +1209,9 @@ button.sess:hover .sess-title {
 /* Rail */
 .rail {
   display: grid;
+  /* One column that never grows past the rail: a long unbreakable line (a selector, a
+     Playwright step) scrolls inside its own view instead of widening every panel. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
@@ -1254,6 +1257,7 @@ button.sess:hover .sess-title {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 .rail-panel[hidden] {
   display: none;
