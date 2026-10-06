@@ -92,6 +92,9 @@ jobs:
           - surface: full-memory
             command: pnpm --filter @webblackbox/extension e2e:memory:full:ci
             needsChrome: true
+          - surface: full-isolation
+            command: pnpm --filter @webblackbox/extension e2e:isolation:full
+            needsChrome: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
