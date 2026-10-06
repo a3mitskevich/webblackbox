@@ -17,7 +17,7 @@ import {
   capStorageValue,
   capturesPageStorageInFullMode,
   capturesRawDom,
-  isPageEventKeptInFullMode,
+  shouldPageCapture,
   STORAGE_SNAPSHOT_MAX_ITEMS,
   STORAGE_SNAPSHOT_MAX_VALUE_CHARS
 } from "./capture-scope.js";
@@ -127,16 +127,6 @@ const LOW_PRIORITY_RAW_TYPES = new Set([
   "longtask",
   "snapshot",
   "screenshot"
-]);
-
-const FULL_MODE_SKIPPED_RAW_TYPES = new Set([
-  "scroll",
-  "mutation",
-  "snapshot",
-  "screenshot",
-  "localStorageSnapshot",
-  "indexedDbSnapshot",
-  "cookieSnapshot"
 ]);
 
 // Input types whose keystrokes do not enter text (e.g. Space toggles a checkbox).
@@ -2164,11 +2154,7 @@ export class LiteCaptureAgent {
   }
 
   private queueRawEvent(event: RawRecorderEvent): void {
-    if (
-      this.mode === "full" &&
-      FULL_MODE_SKIPPED_RAW_TYPES.has(event.rawType) &&
-      !isPageEventKeptInFullMode(event.rawType, this.capturePolicy.categories)
-    ) {
+    if (!shouldPageCapture(event.rawType, this.mode, this.capturePolicy.categories)) {
       return;
     }
 

@@ -295,27 +295,8 @@ const PIPELINE_BATCH_FLUSH_MS = 120;
 /** Shortest gap between session-list pushes driven by recorded events (counters, errors). */
 const SESSION_LIST_EVENT_PUSH_INTERVAL_MS = 500;
 const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
-// Pointer samples are kept: the page samples them at the profile rate and drops them under load.
-const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
-  "scroll",
-  "mutation",
-  "snapshot",
-  "screenshot",
-  "localStorageSnapshot",
-  "indexedDbSnapshot",
-  "cookieSnapshot",
-  "networkBody",
-  "fetch",
-  "xhr",
-  "fetchError",
-  "console",
-  "pageError",
-  "unhandledrejection",
-  "resourceError",
-  "sse",
-  "notice",
-  SCRIPT_RAW_TYPE
-]);
+// Full mode's "what the page captures" decision is made once, at the source: the capture agent
+// applies `shouldPageCapture` (webblackbox/capture-scope); events that arrive here are trusted.
 const LITE_DEFAULT_BODY_MIME_ALLOWLIST = [
   "text/*",
   "application/json",
@@ -1704,10 +1685,6 @@ function ingestRawEvent(
     return;
   }
 
-  if (shouldSkipFullModeContentRawEvent(runtime, rawEvent)) {
-    return;
-  }
-
   if (rawEvent.source === "content" && rawEvent.rawType === SCRIPT_RAW_TYPE) {
     fullCdp.recordScriptSourceMap(runtime, readContentScriptRecord(rawEvent.payload));
     return;
@@ -1759,20 +1736,6 @@ function shouldAllowStopDrainContentEvent(
     rawEvent.sid === runtime.sid &&
     runtime.stopDrained !== true &&
     STOP_DRAIN_CONTENT_RAW_TYPES.has(rawEvent.rawType)
-  );
-}
-
-function shouldSkipFullModeContentRawEvent(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): boolean {
-  const categories = runtime.config.capturePolicy?.categories;
-
-  return (
-    runtime.mode === "full" &&
-    rawEvent.source === "content" &&
-    SKIPPED_FULL_MODE_CONTENT_RAW_TYPES.has(rawEvent.rawType) &&
-    !(categories && isPageEventKeptInFullMode(rawEvent.rawType, categories))
   );
 }
 
