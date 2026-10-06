@@ -4,6 +4,7 @@ import { PORT_NAMES } from "../shared/messages.js";
 import {
   classifyMessageSender,
   classifyPortSender,
+  isBroadcastDeliveredToPort,
   isInboundKindAllowed,
   type SenderTrustContext
 } from "./port-sender.js";
@@ -144,5 +145,24 @@ describe("isInboundKindAllowed", () => {
     expect(isInboundKindAllowed("content.events", "offscreen")).toBe(false);
     expect(isInboundKindAllowed("ui.start", "untrusted")).toBe(false);
     expect(isInboundKindAllowed("content.events", "untrusted")).toBe(false);
+  });
+});
+
+describe("isBroadcastDeliveredToPort", () => {
+  it("keeps a recording's status away from the content scripts of every tab", () => {
+    // A content script only follows its own tab's status (sent to that tab); a broadcast would
+    // hand it another tab's recording (sid, active/inactive).
+    expect(isBroadcastDeliveredToPort("sw.recording-status", PORT_NAMES.content)).toBe(false);
+  });
+
+  it("delivers recording status to extension pages and the offscreen document", () => {
+    expect(isBroadcastDeliveredToPort("sw.recording-status", PORT_NAMES.popup)).toBe(true);
+    expect(isBroadcastDeliveredToPort("sw.recording-status", PORT_NAMES.sessions)).toBe(true);
+    expect(isBroadcastDeliveredToPort("sw.recording-status", PORT_NAMES.offscreen)).toBe(true);
+  });
+
+  it("delivers other broadcasts to every port", () => {
+    expect(isBroadcastDeliveredToPort("sw.session-list", PORT_NAMES.content)).toBe(true);
+    expect(isBroadcastDeliveredToPort("sw.session-list", PORT_NAMES.popup)).toBe(true);
   });
 });

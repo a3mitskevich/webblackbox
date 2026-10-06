@@ -71,6 +71,10 @@ const childResult = await router.send<ResponseType>(
 
 ### Receiving Events
 
+A router delivers events and detaches only for the tabs it attached with `attach()`, child sessions
+(iframes, workers) of those tabs included. `chrome.debugger.onEvent` is global to the extension, so
+events of tabs attached by another router or by other code are ignored.
+
 ```typescript
 // Listen for CDP events
 const unsubscribe = router.onEvent((event) => {

@@ -191,7 +191,8 @@ type ExportManifest = {
 
 ## Validation
 
-All types have corresponding Zod schemas for runtime validation:
+All types have corresponding Zod schemas for runtime validation. Import them from the
+`@webblackbox/protocol/schemas` subpath:
 
 ```typescript
 import {
@@ -202,7 +203,7 @@ import {
   recorderConfigSchema,
   exportManifestSchema,
   getEventPayloadSchema
-} from "@webblackbox/protocol";
+} from "@webblackbox/protocol/schemas";
 
 // Validate a full event (envelope + payload)
 const result = validateEvent(unknownEvent);
@@ -216,6 +217,11 @@ const payloadResult = validateEventData("network.request", payload);
 // Get the schema for a specific event type
 const schema = getEventPayloadSchema("error.exception");
 ```
+
+The package root still re-exports the schemas for compatibility. The package is marked
+`"sideEffects": false` and ships one file per module, so a bundler drops the schemas (and Zod,
+~300 KB minified) from any bundle that does not use them. Code that runs inside recorded pages,
+such as the extension's `injected.js` and `content-agent.js`, must not use them.
 
 ## ID Generation
 

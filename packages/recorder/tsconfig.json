@@ -6,8 +6,8 @@
     "types": ["node", "vitest/globals"],
     "baseUrl": ".",
     "paths": {
-      "@webblackbox/protocol": ["../protocol/src/index.ts"],
-      "@webblackbox/protocol/*": ["../protocol/src/*.ts"]
+      "@webblackbox/protocol/schemas": ["../protocol/src/schemas-entry.ts"],
+      "@webblackbox/protocol": ["../protocol/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

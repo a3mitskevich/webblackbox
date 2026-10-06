@@ -547,7 +547,18 @@ export class IndexedDbPipelineStorage implements PipelineStorage {
     return row?.value;
   }
 
-  public async putBlob(blob: StoredBlob, sidHint?: string): Promise<void> {
+  // Blob writes run one at a time: each reads and rewrites the blob's reference count and the
+  // session's tracked hashes in separate transactions, so parallel puts (bodies read in parallel)
+  // lost tracked hashes and left their blobs behind when the session was deleted.
+  private blobWrites: Promise<void> = Promise.resolve();
+
+  public putBlob(blob: StoredBlob, sidHint?: string): Promise<void> {
+    const write = this.blobWrites.then(() => this.putBlobNow(blob, sidHint));
+    this.blobWrites = write.catch(() => undefined);
+    return write;
+  }
+
+  private async putBlobNow(blob: StoredBlob, sidHint?: string): Promise<void> {
     const trackingSid = normalizeTrackingSid(sidHint);
 
     if (trackingSid && (await this.hasTrackedBlobHashForSession(trackingSid, blob.hash))) {
