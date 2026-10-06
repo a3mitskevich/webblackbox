@@ -55,8 +55,15 @@ export class DefaultCdpRouter implements CdpRouter {
   private readonly transportUnsubscribe: Array<() => void>;
 
   public constructor(private readonly transport: DebuggerTransport) {
+    // The transport delivers events of every tab the extension debugs (chrome.debugger.onEvent is
+    // global), so a router only routes the tabs it attached itself. Child sessions (iframes,
+    // workers) arrive with their root tab's id and stay with that tab.
     this.transportUnsubscribe = [
       this.transport.addEventListener((event) => {
+        if (!this.sessionsByTab.has(event.tabId)) {
+          return;
+        }
+
         this.trackAttachedTargets(event);
 
         for (const listener of this.eventListeners) {
@@ -64,7 +71,9 @@ export class DefaultCdpRouter implements CdpRouter {
         }
       }),
       this.transport.addDetachListener((event) => {
-        this.sessionsByTab.delete(event.tabId);
+        if (!this.sessionsByTab.delete(event.tabId)) {
+          return;
+        }
 
         for (const listener of this.detachListeners) {
           listener(event);
