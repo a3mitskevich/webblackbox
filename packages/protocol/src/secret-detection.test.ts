@@ -8,7 +8,11 @@ import {
   redactCredentials,
   unescapeForScan
 } from "./secret-detection.js";
-import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
+import {
+  growthRatio,
+  LINEAR_GROWTH_LIMIT,
+  GROWTH_TEST_TIMEOUT_MS
+} from "./test-support/linear-growth.js";
 
 // Real formats, assembled at runtime so secret scanners do not flag this source.
 const join = (...parts: string[]): string => parts.join("");
@@ -55,7 +59,7 @@ describe("containsCredential", () => {
     }
   });
 
-  it("stays linear on adversarial runs", () => {
+  it("stays linear on adversarial runs", { timeout: GROWTH_TEST_TIMEOUT_MS }, () => {
     // Growth, not an absolute budget, so parallel load cannot fail the test.
     for (const [unit, count] of [
       ["a-eyJ", 6_000],
@@ -131,18 +135,22 @@ describe("text folding and unescaping", () => {
     expect(unescapeForScan("%7B%22token%22%3A1%7D")).toBe('{"token":1}');
   });
 
-  it("unescapes long backslash runs and splits long capital runs in linear time", () => {
-    for (const [unit, count, scan] of [
-      ["\\", 20_000, (text: string) => unescapeForScan(text)],
-      ["A", 5_000, (text: string) => mentionsSecretName(text)]
-    ] as const) {
-      const ratio = growthRatio((scale) => {
-        const text = unit.repeat(count * scale);
+  it(
+    "unescapes long backslash runs and splits long capital runs in linear time",
+    { timeout: GROWTH_TEST_TIMEOUT_MS },
+    () => {
+      for (const [unit, count, scan] of [
+        ["\\", 20_000, (text: string) => unescapeForScan(text)],
+        ["A", 5_000, (text: string) => mentionsSecretName(text)]
+      ] as const) {
+        const ratio = growthRatio((scale) => {
+          const text = unit.repeat(count * scale);
 
-        return () => scan(text);
-      });
+          return () => scan(text);
+        });
 
-      expect(ratio, unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
+        expect(ratio, unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
+      }
     }
-  });
+  );
 });
