@@ -241,6 +241,42 @@ describe("storage", () => {
     await storage.deleteSession(sid, [hash, "b".repeat(64)]);
   });
 
+  it("counts one session reference for concurrent puts of the same blob", async () => {
+    const storage = new IndexedDbPipelineStorage(createDbName());
+    const hash = "e".repeat(64);
+    const blob = createBlob(hash, Uint8Array.from([1, 2, 3]));
+
+    await storage.putSession(SESSION_A);
+    // Identical bodies read in parallel land here at the same time.
+    await Promise.all([
+      storage.putBlob(blob, SESSION_A.sid),
+      storage.putBlob(blob, SESSION_A.sid),
+      storage.putBlob(blob, SESSION_A.sid)
+    ]);
+    expect((await storage.getBlob(hash))?.refCount).toBe(1);
+
+    await storage.deleteSession(SESSION_A.sid);
+    expect(await storage.getBlob(hash)).toBeUndefined();
+  });
+
+  it("tracks every blob of concurrent puts, so deleting the session leaves none", async () => {
+    const storage = new IndexedDbPipelineStorage(createDbName());
+    const hashes = ["1", "2", "3", "4"].map((digit) => digit.repeat(64));
+
+    await storage.putSession(SESSION_A);
+    // Bodies read in parallel are stored at the same time.
+    await Promise.all(
+      hashes.map((hash, index) =>
+        storage.putBlob(createBlob(hash, Uint8Array.from([index])), SESSION_A.sid)
+      )
+    );
+    await storage.deleteSession(SESSION_A.sid);
+
+    for (const hash of hashes) {
+      expect(await storage.getBlob(hash)).toBeUndefined();
+    }
+  });
+
   it("removes sid-tracked blob refs on indexeddb deleteSession without explicit blobHashes", async () => {
     const storage = new IndexedDbPipelineStorage(createDbName());
     const sharedHash = "d".repeat(64);

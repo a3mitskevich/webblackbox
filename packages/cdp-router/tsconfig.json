@@ -6,6 +6,7 @@
     "types": ["node", "vitest/globals"],
     "baseUrl": ".",
     "paths": {
+      "@webblackbox/protocol/schemas": ["../protocol/src/schemas-entry.ts"],
       "@webblackbox/protocol": ["../protocol/src/index.ts"]
     }
   },
