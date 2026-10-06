@@ -9,25 +9,38 @@ import {
 import { DEFAULT_REDACTION_PROFILE } from "./defaults.js";
 
 const PATTERNS = DEFAULT_REDACTION_PROFILE.redactBodyPatterns;
-const LINEAR_INPUT_FACTOR = 8;
-// Well above linear growth (8x) plus noise, well below quadratic growth (64x).
-const LINEAR_GROWTH_LIMIT = 24;
+const LINEAR_INPUT_FACTOR = 16;
+// Linear growth measures ~16-26x (string building adds a little), quadratic ~256x: the limit sits
+// near their geometric mean so neither noise nor a partly-quadratic scan lands on the wrong side.
+const LINEAR_GROWTH_LIMIT = 64;
 
 function redact(value: string): ReturnType<typeof redactBodyText> {
   return redactBodyText(value, PATTERNS);
 }
 
-// The fastest of several runs: CPU contention only ever adds time, so the minimum is stable.
-function fastestRunMs(run: () => void, runs: number): number {
+// Process CPU time, not wall-clock: time spent descheduled by other load is not counted, and the
+// fastest of several runs drops GC pauses.
+function fastestRunCpuMs(run: () => void, runs: number): number {
   let fastest = Number.POSITIVE_INFINITY;
 
   for (let index = 0; index < runs; index += 1) {
-    const startedAt = performance.now();
+    const startedAt = process.cpuUsage();
     run();
-    fastest = Math.min(fastest, performance.now() - startedAt);
+    const used = process.cpuUsage(startedAt);
+    fastest = Math.min(fastest, (used.user + used.system) / 1_000);
   }
 
   return fastest;
+}
+
+// Compares growth instead of an absolute budget, so a slow or busy machine cannot fail the test.
+function redactionGrowthRatio(unit: string, smallRepeats: number): number {
+  const small = unit.repeat(smallRepeats);
+  const large = unit.repeat(smallRepeats * LINEAR_INPUT_FACTOR);
+  const smallMs = fastestRunCpuMs(() => redact(small), 7);
+  const largeMs = fastestRunCpuMs(() => redact(large), 5);
+
+  return largeMs / Math.max(smallMs, 0.05);
 }
 
 describe("redactBodyText", () => {
@@ -205,27 +218,14 @@ describe("redactBodyText", () => {
       expect(result.value).toBe("secret=$&-masked");
     });
 
-    it("stays fast on pathological input", () => {
-      const source = "token: ".repeat(150_000);
-      const startedAt = performance.now();
-      const result = redact(source);
-
-      expect(result.redacted).toBe(true);
-      expect(performance.now() - startedAt).toBeLessThan(2_000);
+    it("stays linear on pathological input", () => {
+      expect(redact("token: ".repeat(150_000)).redacted).toBe(true);
+      expect(redactionGrowthRatio("token: ", 9_375)).toBeLessThan(LINEAR_GROWTH_LIMIT);
     });
 
     it("stays linear on unclosed XML-like tags", () => {
-      // Compare growth instead of an absolute budget so parallel load cannot fail the test:
-      // 8x more input costs ~8-11x when linear and ~50-60x when every match rescans the tail.
-      const small = "<token".repeat(20_000);
-      const large = "<token".repeat(20_000 * LINEAR_INPUT_FACTOR);
-
-      expect(redact(large).redacted).toBe(false);
-
-      const smallMs = fastestRunMs(() => redact(small), 7);
-      const largeMs = fastestRunMs(() => redact(large), 3);
-
-      expect(largeMs / Math.max(smallMs, 0.05)).toBeLessThan(LINEAR_GROWTH_LIMIT);
+      expect(redact("<token".repeat(160_000)).redacted).toBe(false);
+      expect(redactionGrowthRatio("<token", 10_000)).toBeLessThan(LINEAR_GROWTH_LIMIT);
     });
   });
 

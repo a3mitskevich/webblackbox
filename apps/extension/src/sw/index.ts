@@ -85,6 +85,7 @@ import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
   classifyMessageSender,
   classifyPortSender,
+  isBroadcastDeliveredToPort,
   isInboundKindAllowed,
   type InboundSenderContext,
   type SenderTrustContext
@@ -96,6 +97,7 @@ import {
   upsertRequestMeta,
   type RequestMetaEntry
 } from "./request-meta.js";
+import { resolveRawEventSession } from "./session-routing.js";
 import {
   parseStoppedSessionRecords,
   pruneStoppedSessionRecords,
@@ -1340,9 +1342,7 @@ function hasExportPassphrase(passphrase: string | undefined): passphrase is stri
 }
 
 function ingestRawEvent(rawEvent: RawRecorderEvent): void {
-  const runtime =
-    sessionsByTab.get(rawEvent.tabId) ??
-    (typeof rawEvent.sid === "string" ? sessionsBySid.get(rawEvent.sid) : undefined);
+  const runtime = resolveRawEventSession(rawEvent, sessionsByTab, sessionsBySid);
 
   if (!runtime) {
     return;
@@ -2370,6 +2370,8 @@ async function attachCdp(runtime: SessionRuntime): Promise<void> {
     runtime.removeCdpListeners.push(unsubscribeEvent, unsubscribeDetach);
 
     await router.attach(runtime.tabId);
+    // Set before the domains are enabled: their first events already read bodies through it.
+    runtime.cdpRouter = router;
     runtime.enabledCdpSessions.clear();
     await router.enableBaseline(runtime.tabId);
     runtime.enabledCdpSessions.add("root");
@@ -4707,7 +4709,9 @@ function resolveUrlOrigin(value: string): string | null {
 
 function broadcast(message: ExtensionOutboundMessage): void {
   for (const port of connectedPorts) {
-    sendPortMessage(port, message);
+    if (isBroadcastDeliveredToPort(message.kind, port.name)) {
+      sendPortMessage(port, message);
+    }
   }
 }
 

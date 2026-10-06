@@ -140,6 +140,9 @@ jobs:
           - surface: lite-perf
             command: pnpm --filter @webblackbox/extension e2e:perf:lite:ci
             needsChrome: true
+          - surface: full-isolation
+            command: pnpm --filter @webblackbox/extension e2e:isolation:full
+            needsChrome: true
           - surface: full
             command: pnpm --filter @webblackbox/extension e2e:fullchain:full
             needsChrome: true

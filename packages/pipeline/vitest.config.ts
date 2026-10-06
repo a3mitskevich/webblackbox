@@ -1,16 +1,10 @@
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-
 import { defineConfig } from "vitest/config";
 
-const root = dirname(fileURLToPath(import.meta.url));
+import { workspaceSourceAliases } from "../../config/workspace-sources.mjs";
 
 export default defineConfig({
   resolve: {
-    alias: {
-      "@webblackbox/protocol/schemas": resolve(root, "../protocol/src/schemas-entry.ts"),
-      "@webblackbox/protocol": resolve(root, "../protocol/src/index.ts")
-    }
+    alias: workspaceSourceAliases()
   },
   test: {
     environment: "node",

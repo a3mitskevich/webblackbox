@@ -17,6 +17,8 @@ const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const delayAuditAppendPreload = resolve(appRoot, "src/test-support/delay-audit-append.mjs");
 const apiKey = "share-test-key";
 const MIN_SHARE_TTL_MS = 1_000;
+// `tsx` compiles the server on every start; on a loaded machine that alone can take seconds.
+const SERVER_READY_TIMEOUT_MS = 30_000;
 const BLOB_FIXTURE_PATH =
   "blobs/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json";
 const TEXT_BLOB_FIXTURE_PATH =
@@ -801,7 +803,7 @@ async function stopShareServer(server: RunningShareServer): Promise<void> {
 }
 
 async function waitForShareServer(server: RunningShareServer): Promise<void> {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + SERVER_READY_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
     if (server.child.exitCode !== null) {
