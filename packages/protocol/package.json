@@ -3,12 +3,17 @@
   "description": "Shared event types, schemas, IDs, and configuration defaults for the WebBlackbox ecosystem.",
   "version": "0.6.0",
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./schemas": {
+      "types": "./dist/schemas-entry.d.ts",
+      "import": "./dist/schemas-entry.js"
     }
   },
   "files": [
@@ -38,8 +43,8 @@
   "author": "unadlib",
   "license": "MIT",
   "scripts": {
-    "dev": "tsup src/index.ts --format esm --dts --watch --clean",
-    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup --watch",
+    "build": "tsup",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
