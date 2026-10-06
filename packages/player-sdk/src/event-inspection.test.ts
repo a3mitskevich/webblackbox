@@ -2,6 +2,7 @@ import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import { describe, expect, it } from "vitest";
 
 import {
+  createClickReactionLookup,
   describeEventPhrase,
   endpointPattern,
   findClickReaction,
@@ -124,6 +125,43 @@ describe("findClickReaction", () => {
     });
     expect(findClickReaction([click], click)).toBeNull();
   });
+
+  it("matches a click re-timed to wall clock by its capture mono", () => {
+    // The Player re-times events to wall clock (`normalizePlaybackEvents`); probes keep the
+    // click's capture mono.
+    const retimed = { ...click, mono: 1_700_000_000_000 };
+    const events = [
+      retimed,
+      event("E-r", "user.click.reaction", 1_700_000_000_020, {
+        clickMono: 1_000,
+        mutated: false,
+        windowMs: 1_000
+      })
+    ];
+    const captureMonoOf = (candidate: WebBlackboxEvent): number =>
+      candidate.id === click.id ? click.mono : candidate.mono;
+
+    expect(findClickReaction(events, retimed)).toBeNull();
+    expect(findClickReaction(events, retimed, { captureMonoOf })).toEqual({
+      mutated: false,
+      latencyMs: null,
+      windowMs: 1_000
+    });
+  });
+
+  it("looks clicks up in a probe index built once", () => {
+    const events = [
+      event("E-r2", "user.click.reaction", 30, { clickMono: 3_000, mutated: true, latencyMs: 4 }),
+      event("E-r1", "user.click.reaction", 20, { clickMono: 1_000.5, mutated: false }),
+      event("E-bad", "user.click.reaction", 25, { mutated: true })
+    ];
+    const lookup = createClickReactionLookup(events);
+
+    expect(lookup(click)).toEqual({ mutated: false, latencyMs: null, windowMs: null });
+    expect(lookup({ ...click, mono: 3_000 })).toMatchObject({ mutated: true, latencyMs: 4 });
+    expect(lookup({ ...click, mono: 2_000 })).toBeNull();
+    expect(createClickReactionLookup([])(click)).toBeNull();
+  });
 });
 
 describe("summarizeActionConsequences", () => {
@@ -180,6 +218,30 @@ describe("summarizeActionConsequences", () => {
     expect(summary.items[2]?.label).toBe("#/live/64");
     expect(summary.items[3]?.label).toBe("AuthError: rejected");
     expect(summary.firstFailure).toMatchObject({ reqId: "r1", status: 401, method: "GET" });
+    expect(summary.firstFailedRequest).toBe(summary.firstFailure);
+  });
+
+  it("keeps the first failed request when an error came before it", () => {
+    const summary = summarizeActionConsequences({
+      startMono: 0,
+      endMono: 500,
+      events: [event("E-err", "console.entry", 10, { level: "error", text: "boom" })],
+      // Out of order: the earliest failure on an endpoint is the one listed.
+      requests: [
+        request("late", "/chats/2", 300, { status: 401 }),
+        request("early", "/chats/1", 200, { status: 401 }),
+        request("ok", "/ok", 100)
+      ]
+    });
+
+    expect(summary.firstFailure).toMatchObject({ kind: "console-error", offsetMs: 10 });
+    expect(summary.firstFailedRequest).toMatchObject({
+      kind: "request",
+      reqId: "early",
+      offsetMs: 200,
+      count: 2
+    });
+    expect(summary.failedRequests).toBe(2);
   });
 
   it("keeps the first maxItems and says how many it left out", () => {
@@ -225,7 +287,8 @@ describe("summarizeActionConsequences", () => {
       requests: 1,
       failedRequests: 0,
       items: [],
-      firstFailure: null
+      firstFailure: null,
+      firstFailedRequest: null
     });
   });
 });

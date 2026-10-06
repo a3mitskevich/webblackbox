@@ -104,7 +104,21 @@ export type ActionConsequences = {
   hiddenItems: number;
   /** The first failed request or error (the "failing moment" of the action). */
   firstFailure: ActionConsequence | null;
+  /** The first failed request, even when an error came before it (or `maxItems` hid it). */
+  firstFailedRequest: ActionConsequence | null;
 };
+
+export type ClickReactionOptions = {
+  /**
+   * Capture-time mono of an event. Reaction probes store the click's capture mono, so a caller
+   * that re-timed the events (the Player's wall-clock fallback) passes the original values here,
+   * as for `detectPointerSignals`.
+   */
+  captureMonoOf?: (event: WebBlackboxEvent) => number;
+};
+
+/** The reaction probe of a click, or `null`; see `createClickReactionLookup`. */
+export type ClickReactionLookup = (click: WebBlackboxEvent) => ClickReaction | null;
 
 export type EventPhraseVerb =
   | "click"
@@ -204,29 +218,62 @@ export function inspectEventTarget(event: WebBlackboxEvent): InspectedTarget | n
 /** The `user.click.reaction` probe that followed a click, if the capture recorded one. */
 export function findClickReaction(
   events: readonly WebBlackboxEvent[],
-  click: WebBlackboxEvent
+  click: WebBlackboxEvent,
+  options: ClickReactionOptions = {}
 ): ClickReaction | null {
-  for (const event of events) {
-    if (event.type !== "user.click.reaction") {
-      continue;
-    }
+  return createClickReactionLookup(events, options)(click);
+}
 
-    const data = asRecord(event.data);
+/**
+ * Indexes the `user.click.reaction` probes once (sorted by the click's capture mono), so looking
+ * up many clicks does not scan every event each time.
+ */
+export function createClickReactionLookup(
+  events: readonly WebBlackboxEvent[],
+  options: ClickReactionOptions = {}
+): ClickReactionLookup {
+  const captureMonoOf = options.captureMonoOf ?? ((event: WebBlackboxEvent) => event.mono);
+  const probes: Array<{ clickMono: number; reaction: ClickReaction }> = [];
+
+  for (const event of events) {
+    const data = event.type === "user.click.reaction" ? asRecord(event.data) : null;
     const clickMono = asNumber(data?.clickMono);
 
-    if (
-      clickMono !== undefined &&
-      Math.abs(clickMono - click.mono) <= CLICK_REACTION_TOLERANCE_MS
-    ) {
-      return {
-        mutated: data?.mutated === true,
-        latencyMs: asNumber(data?.latencyMs) ?? null,
-        windowMs: asNumber(data?.windowMs) ?? null
-      };
+    if (clickMono !== undefined) {
+      probes.push({
+        clickMono,
+        reaction: {
+          mutated: data?.mutated === true,
+          latencyMs: asNumber(data?.latencyMs) ?? null,
+          windowMs: asNumber(data?.windowMs) ?? null
+        }
+      });
     }
   }
 
-  return null;
+  probes.sort((left, right) => left.clickMono - right.clickMono);
+
+  return (click) => {
+    const clickMono = captureMonoOf(click);
+    let low = 0;
+    let high = probes.length;
+
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      const probe = probes[middle];
+
+      if (probe && probe.clickMono < clickMono - CLICK_REACTION_TOLERANCE_MS) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+
+    const candidate = probes[low];
+    return candidate && Math.abs(candidate.clickMono - clickMono) <= CLICK_REACTION_TOLERANCE_MS
+      ? { ...candidate.reaction }
+      : null;
+  };
 }
 
 /**
@@ -241,8 +288,10 @@ export function summarizeActionConsequences(input: ActionConsequenceInput): Acti
   const failureByKey = new Map<string, ActionConsequence>();
   const requestEventIds = new Set<string>();
   const counts = { failed: 0, console: 0, exceptions: 0, sockets: 0, navigations: 0 };
+  // In start order, so a folded failure keeps the earliest request of its endpoint.
+  const requests = [...input.requests].sort((left, right) => left.startMono - right.startMono);
 
-  for (const request of input.requests) {
+  for (const request of requests) {
     for (const eventId of request.eventIds ?? []) {
       requestEventIds.add(eventId);
     }
@@ -314,7 +363,8 @@ export function summarizeActionConsequences(input: ActionConsequenceInput): Acti
     navigations: counts.navigations,
     items: notable.slice(0, maxItems),
     hiddenItems: Math.max(0, notable.length - maxItems),
-    firstFailure: notable.find((item) => item.failed) ?? null
+    firstFailure: notable.find((item) => item.failed) ?? null,
+    firstFailedRequest: notable.find((item) => item.kind === "request" && item.failed) ?? null
   };
 }
 
