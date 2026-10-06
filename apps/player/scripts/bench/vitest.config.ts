@@ -2,6 +2,8 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "vitest/config";
 
+import { workspaceSourceAliases } from "../../../../config/workspace-sources.mjs";
+
 const root = fileURLToPath(new URL("../..", import.meta.url));
 
 /**
@@ -10,6 +12,10 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
  */
 export default defineConfig({
   root,
+  // Sibling packages from `src/`, like the unit tests: `bench:ci` runs before `pnpm build`.
+  resolve: {
+    alias: workspaceSourceAliases()
+  },
   test: {
     include: ["scripts/bench/*.bench.tsx"],
     setupFiles: ["src/test-setup.ts"],
