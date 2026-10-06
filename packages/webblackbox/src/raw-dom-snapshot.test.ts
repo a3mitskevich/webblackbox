@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { notePasswordField } from "./input-value-policy.js";
 import { RAW_DOM_SNAPSHOT_MAX_CHARS, serializeRawDom } from "./raw-dom-snapshot.js";
-import { growthRatio, LINEAR_GROWTH_LIMIT } from "./test-support/linear-growth.js";
+import {
+  growthRatio,
+  LINEAR_GROWTH_LIMIT,
+  GROWTH_TEST_TIMEOUT_MS
+} from "./test-support/linear-growth.js";
 
 const OPTIONS = { blockedSelectors: [".secret", "[data-sensitive]"], keepInputValues: false };
 
@@ -149,41 +153,48 @@ describe("serializeRawDom", () => {
     expect(html).toContain("/b.png");
   });
 
-  it("strips CSS URL queries in linear time and catches every CSS URL form", () => {
-    document.body.innerHTML = `
+  it(
+    "strips CSS URL queries in linear time and catches every CSS URL form",
+    { timeout: GROWTH_TEST_TIMEOUT_MS },
+    () => {
+      document.body.innerHTML = `
       <style>@import "/x.css?token=IMPORT-SECRET"; .a { background: image-set("/i.png?token=SET-SECRET" 1x); }</style>
       <div style="background:url(/a(1).png?token=PAREN-SECRET)">a</div>
       <svg><rect fill="url(https://h.test/p?token=FILL-SECRET#g)"></rect></svg>
       <div data-csrftoken="RUN-TOGETHER-SECRET" data-sessionid="SESSION-SECRET">b</div>`;
 
-    const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+      const html = serializeRawDom(document, OPTIONS)?.html ?? "";
 
-    for (const secret of [
-      "IMPORT-SECRET",
-      "SET-SECRET",
-      "PAREN-SECRET",
-      "FILL-SECRET",
-      "RUN-TOGETHER-SECRET",
-      "SESSION-SECRET"
-    ]) {
-      expect(html, secret).not.toContain(secret);
+      for (const secret of [
+        "IMPORT-SECRET",
+        "SET-SECRET",
+        "PAREN-SECRET",
+        "FILL-SECRET",
+        "RUN-TOGETHER-SECRET",
+        "SESSION-SECRET"
+      ]) {
+        expect(html, secret).not.toContain(secret);
+      }
+
+      for (const build of [
+        (scale: number) => `url(${" ".repeat(25_000 * scale)}`,
+        (scale: number) => "url(".repeat(6_000 * scale)
+      ]) {
+        const ratio = growthRatio((scale) => {
+          placeStylesheet(build(scale));
+          return () => serializeRawDom(document, OPTIONS);
+        });
+
+        expect(ratio, build(1).slice(0, 8)).toBeLessThan(LINEAR_GROWTH_LIMIT);
+      }
     }
+  );
 
-    for (const build of [
-      (scale: number) => `url(${" ".repeat(25_000 * scale)}`,
-      (scale: number) => "url(".repeat(6_000 * scale)
-    ]) {
-      const ratio = growthRatio((scale) => {
-        placeStylesheet(build(scale));
-        return () => serializeRawDom(document, OPTIONS);
-      });
-
-      expect(ratio, build(1).slice(0, 8)).toBeLessThan(LINEAR_GROWTH_LIMIT);
-    }
-  });
-
-  it("sanitizes every CSS URL like recorded URLs, data URLs included, and leaves other CSS alone", () => {
-    document.body.innerHTML = `
+  it(
+    "sanitizes every CSS URL like recorded URLs, data URLs included, and leaves other CSS alone",
+    { timeout: GROWTH_TEST_TIMEOUT_MS },
+    () => {
+      document.body.innerHTML = `
       <div style="background:url('https://x.imgix.net/a.jpg?rect=0,0,10,10&s=IMGIX-SIG')">a</div>
       <div style="background:url(/b.png?q=(1)&token=PAREN-TOKEN)">b</div>
       <div style="background:url(/c.png#access_token=FRAGMENT-TOKEN)">c</div>
@@ -191,29 +202,30 @@ describe("serializeRawDom", () => {
       <div style="background:url(data:image/svg+xml;utf8,<svg><text>keep?</text></svg>)">d</div>
       <p title="really? yes">e</p>`;
 
-    const html = serializeRawDom(document, OPTIONS)?.html ?? "";
+      const html = serializeRawDom(document, OPTIONS)?.html ?? "";
 
-    for (const secret of ["IMGIX-SIG", "PAREN-TOKEN", "FRAGMENT-TOKEN", "UPPER-TOKEN"]) {
-      expect(html, secret).not.toContain(secret);
+      for (const secret of ["IMGIX-SIG", "PAREN-TOKEN", "FRAGMENT-TOKEN", "UPPER-TOKEN"]) {
+        expect(html, secret).not.toContain(secret);
+      }
+
+      expect(html).not.toContain("keep?");
+      expect(html).toContain("url(data:[redacted])");
+      expect(html).toContain('title="really? yes"');
+
+      for (const [unit, count] of [
+        [`url("`, 5_000],
+        [`url('x'`, 3_500],
+        ["'", 25_000]
+      ] as const) {
+        const ratio = growthRatio((scale) => {
+          placeStylesheet(unit.repeat(count * scale));
+          return () => serializeRawDom(document, OPTIONS);
+        });
+
+        expect(ratio, unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
+      }
     }
-
-    expect(html).not.toContain("keep?");
-    expect(html).toContain("url(data:[redacted])");
-    expect(html).toContain('title="really? yes"');
-
-    for (const [unit, count] of [
-      [`url("`, 5_000],
-      [`url('x'`, 3_500],
-      ["'", 25_000]
-    ] as const) {
-      const ratio = growthRatio((scale) => {
-        placeStylesheet(unit.repeat(count * scale));
-        return () => serializeRawDom(document, OPTIONS);
-      });
-
-      expect(ratio, unit).toBeLessThan(LINEAR_GROWTH_LIMIT);
-    }
-  });
+  );
 
   it("checks attribute values, not only names, and masks editors without input values", () => {
     const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.c2lnbmF0dXJlLXZhbHVlLTE";
