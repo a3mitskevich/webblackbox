@@ -362,14 +362,18 @@ async function processPipelineRequest(message: OffscreenPipelineRequest): Promis
   }
 
   if (message.op === "close") {
-    await stopOffscreenScreenRecording(
-      message.sid,
-      undefined,
-      message.purge === true ? "pipeline-purge" : "pipeline-close",
-      false
-    ).catch((error) => {
-      console.warn("[WebBlackbox] failed to stop offscreen screen recording", error);
-    });
+    // The tab video is normally stopped and saved at session stop; only a still-live one needs stopping.
+    if (screenRecordings.has(message.sid)) {
+      await stopOffscreenScreenRecording(
+        message.sid,
+        undefined,
+        message.purge === true ? "pipeline-purge" : "pipeline-close",
+        false
+      ).catch((error) => {
+        console.warn("[WebBlackbox] failed to stop offscreen screen recording", error);
+      });
+    }
+
     await pipeline.close({
       purge: message.purge === true
     });
