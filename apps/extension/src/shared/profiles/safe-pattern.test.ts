@@ -4,10 +4,22 @@ import { matchesGlob } from "./safe-pattern.js";
 
 const SLOW_MATCH_MS = 250;
 
-function elapsedMs(run: () => unknown): number {
-  const started = performance.now();
-  run();
-  return performance.now() - started;
+/**
+ * Fastest of a few runs in process CPU time: other load on the machine (since #27 every package's
+ * tests run at once) and a GC pause or JIT warm-up in one run do not count. Catastrophic
+ * backtracking still takes seconds.
+ */
+function elapsedMs(run: () => unknown, runs = 3): number {
+  let fastest = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < runs; index += 1) {
+    const startedAt = process.cpuUsage();
+    run();
+    const used = process.cpuUsage(startedAt);
+    fastest = Math.min(fastest, (used.user + used.system) / 1_000);
+  }
+
+  return fastest;
 }
 
 describe("matchesGlob", () => {
