@@ -2,15 +2,18 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const STORAGE_KEY = "webblackbox.options";
+const LEGACY_OPTIONS_KEY = "webblackbox.options";
+const SETTINGS_VERSION_KEY = "webblackbox.settingsVersion";
 const PROFILES_KEY = "webblackbox.profiles";
+const BUDGET_KEY = "webblackbox.performanceBudget";
 const ARCHIVE_KEY = "webblackbox.popup.export-policy";
 const INJECTION_KEY = "webblackbox.injection";
 const START_RELOAD_OFFER_KEY = "webblackbox.startReloadOffer";
 const PLAYER_URL_KEY = "webblackbox.playerUrl";
 
+/** Settings as the service worker leaves them after its start (v1 options already migrated). */
 function installChromeStub(initial: Record<string, unknown> = {}) {
-  const data: Record<string, unknown> = { ...initial };
+  const data: Record<string, unknown> = { [SETTINGS_VERSION_KEY]: 1, ...initial };
   const get = vi.fn(async (keys?: string | string[]) => {
     const wanted = keys === undefined ? Object.keys(data) : Array.isArray(keys) ? keys : [keys];
     return Object.fromEntries(wanted.filter((key) => key in data).map((key) => [key, data[key]]));
@@ -18,17 +21,83 @@ function installChromeStub(initial: Record<string, unknown> = {}) {
   const set = vi.fn(async (values: Record<string, unknown>) => {
     Object.assign(data, structuredClone(values));
   });
+  const remove = vi.fn(async (keys: string | string[]) => {
+    for (const key of Array.isArray(keys) ? keys : [keys]) {
+      Reflect.deleteProperty(data, key);
+    }
+  });
 
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
     writable: true,
     value: {
       runtime: { getManifest: () => ({ version: "9.9.9" }) },
-      storage: { local: { get, set } }
+      storage: { local: { get, set, remove } }
     }
   });
 
   return { data, set };
+}
+
+type StoredProfile = {
+  id: string;
+  sampling: Record<string, number>;
+  redaction: Record<string, unknown>;
+  recorder: Record<string, unknown>;
+  sitePolicies: unknown[];
+  categories: Record<string, string>;
+};
+
+/** A profiles store whose Default profile carries `patch` (the rest is today's defaults). */
+function storeWithDefault(patch: Record<string, unknown>): Record<string, unknown> {
+  return {
+    schemaVersion: 2,
+    defaultProfileId: "default",
+    profiles: [
+      {
+        id: "default",
+        name: "Default",
+        base: "lite",
+        categories: {
+          actions: "metadata",
+          inputs: "length-only",
+          dom: "masked",
+          screenshots: "off",
+          screenRecordings: "off",
+          console: "metadata",
+          network: "metadata",
+          storage: "counts-only",
+          indexedDb: "counts-only",
+          cookies: "count-only",
+          cdp: "off",
+          heapProfiles: "off",
+          tabsContext: "metadata"
+        },
+        redaction: {
+          redactHeaders: ["authorization"],
+          redactCookieNames: ["session"],
+          redactBodyPatterns: ["password"],
+          blockedSelectors: [".secret"],
+          hashSensitiveValues: true
+        },
+        unmaskSelectors: [],
+        network: { bodyMimeAllowlist: [], includeUrls: [], excludeUrls: [] },
+        pointer: { hover: false, drag: false, wheel: false },
+        sampling: {},
+        recorder: {},
+        sitePolicies: [],
+        ...patch
+      }
+    ],
+    rules: [],
+    extendedCaptureHosts: []
+  };
+}
+
+function storedDefaultProfile(data: Record<string, unknown>): StoredProfile | undefined {
+  return (data[PROFILES_KEY] as { profiles?: StoredProfile[] } | undefined)?.profiles?.find(
+    (profile) => profile.id === "default"
+  );
 }
 
 /** Keeps the profiles editor loading (it reads the managed policy) until the returned call. */
@@ -138,13 +207,15 @@ describe("options page", () => {
   it("renders stored list values as plain text chips instead of DOM", async () => {
     const injectedValue = `</textarea><button id="pwned">x</button>`;
     installChromeStub({
-      [STORAGE_KEY]: {
+      [PROFILES_KEY]: storeWithDefault({
         redaction: {
-          blockedSelectors: [injectedValue],
           redactHeaders: [injectedValue],
-          redactBodyPatterns: [injectedValue]
+          redactCookieNames: [],
+          redactBodyPatterns: [injectedValue],
+          blockedSelectors: [injectedValue],
+          hashSensitiveValues: true
         }
-      }
+      })
     });
 
     await importOptionsModule();
@@ -181,17 +252,13 @@ describe("options page", () => {
     saveButton().click();
     await flush();
 
-    expect(storage.data[STORAGE_KEY]).toEqual(
-      expect.objectContaining({
-        sampling: expect.objectContaining({ domFlushMs: 150 }),
-        optionsVersion: 1
-      })
-    );
+    // The recorder fields live in the Default profile: the first save creates the store.
+    expect(storedDefaultProfile(storage.data)?.sampling).toEqual({ domFlushMs: 150 });
     expect(JSON.parse(localStorage.getItem(ARCHIVE_KEY) ?? "null")).toEqual(
       expect.objectContaining({ maxArchiveMb: 256 })
     );
-    // No profiles store exists yet, and a general save must not create one.
-    expect(storage.data[PROFILES_KEY]).toBeUndefined();
+    expect(storage.data[LEGACY_OPTIONS_KEY]).toBeUndefined();
+    expect(storage.data[BUDGET_KEY]).toBeUndefined();
     expect(saveState()).toMatch(/^Saved at /);
     expect(saveButton().disabled).toBe(true);
   });
@@ -220,8 +287,8 @@ describe("options page", () => {
     await flush();
 
     expect(storage.data[INJECTION_KEY]).toBe("on-start");
-    // The general options record is not touched by this setting.
-    expect(storage.data[STORAGE_KEY]).toBeUndefined();
+    // The recording profiles are not touched by this setting.
+    expect(storage.data[PROFILES_KEY]).toBeUndefined();
     expect(saveState()).toMatch(/^Saved at /);
   });
 
@@ -255,8 +322,7 @@ describe("options page", () => {
     await flush();
 
     expect(storage.data[START_RELOAD_OFFER_KEY]).toBe(false);
-    // A popup preference, not a recorder setting: the options record and profiles stay as they are.
-    expect(storage.data[STORAGE_KEY]).toBeUndefined();
+    // A popup preference, not a recorder setting: the profiles stay as they are.
     expect(storage.data[PROFILES_KEY]).toBeUndefined();
     expect(query<HTMLInputElement>("#startReloadOffer").checked).toBe(false);
     expect(saveState()).toMatch(/^Saved at /);
@@ -313,7 +379,6 @@ describe("options page", () => {
     await flush();
 
     expect(storage.data[PLAYER_URL_KEY]).toBe("https://player.example.com/");
-    expect(storage.data[STORAGE_KEY]).toBeUndefined();
     expect(storage.data[PROFILES_KEY]).toBeUndefined();
     expect(query<HTMLInputElement>("#playerUrl").value).toBe("https://player.example.com/");
     expect(saveState()).toMatch(/^Saved at /);
@@ -356,16 +421,81 @@ describe("options page", () => {
     expect(saveState()).toBe("All changes saved");
   });
 
-  it("keeps stored settings the page does not show when saving", async () => {
-    const sitePolicies = [{ origin: "https://example.com", allowBodyCapture: true }];
-    const storage = installChromeStub({ [STORAGE_KEY]: { sitePolicies } });
+  it("keeps the Default profile's settings the page does not show when saving", async () => {
+    const sitePolicies = [
+      {
+        originPattern: "https://*.example.test",
+        mode: "full",
+        enabled: true,
+        allowBodyCapture: true,
+        bodyMimeAllowlist: ["application/json"],
+        pathAllowlist: [],
+        pathDenylist: []
+      }
+    ];
+    const storage = installChromeStub({
+      [PROFILES_KEY]: storeWithDefault({ sitePolicies, sampling: { mousemoveHz: 33 } })
+    });
+    await importOptionsModule();
+
+    expect(query<HTMLInputElement>("#mousemoveHz").value).toBe("33");
+
+    typeNumber("scrollHz", "30");
+    saveButton().click();
+    await flush();
+
+    expect(storedDefaultProfile(storage.data)).toEqual(
+      expect.objectContaining({ sitePolicies, sampling: { mousemoveHz: 33, scrollHz: 30 } })
+    );
+  });
+
+  it("keeps a corrupt profiles store aside when a General save replaces it", async () => {
+    const corrupt = { schemaVersion: 2, profiles: "garbage", rules: 42 };
+    const storage = installChromeStub({ [PROFILES_KEY]: corrupt });
     await importOptionsModule();
 
     typeNumber("scrollHz", "30");
     saveButton().click();
     await flush();
 
-    expect(storage.data[STORAGE_KEY]).toEqual(expect.objectContaining({ sitePolicies }));
+    expect(storedDefaultProfile(storage.data)?.sampling).toEqual({ scrollHz: 30 });
+    expect(storage.data["webblackbox.profiles.rejected"]).toEqual(corrupt);
+  });
+
+  it("saves the performance budget under its own key, apart from the profiles", async () => {
+    const storage = installChromeStub({ [BUDGET_KEY]: { lcpWarnMs: 3000 } });
+    await importOptionsModule();
+
+    expect(query<HTMLInputElement>("#budgetLcpWarnMs").value).toBe("3000");
+
+    typeNumber("budgetLcpWarnMs", "4000");
+    saveButton().click();
+    await flush();
+
+    expect(storage.data[BUDGET_KEY]).toEqual(expect.objectContaining({ lcpWarnMs: 4000 }));
+    expect(storage.data[PROFILES_KEY]).toBeUndefined();
+  });
+
+  it("migrates v1 options left by an older version before showing the form", async () => {
+    const storage = installChromeStub({
+      [SETTINGS_VERSION_KEY]: undefined,
+      [LEGACY_OPTIONS_KEY]: {
+        optionsVersion: 1,
+        freezeOnError: false,
+        sampling: { domFlushMs: 300 },
+        performanceBudget: { requestWarnMs: 900 }
+      }
+    });
+    await importOptionsModule();
+
+    expect(query<HTMLInputElement>("#domFlushMs").value).toBe("300");
+    expect(query<HTMLInputElement>("#budgetRequestWarnMs").value).toBe("900");
+    expect(storage.data[LEGACY_OPTIONS_KEY]).toBeUndefined();
+    expect(storage.data[SETTINGS_VERSION_KEY]).toBe(1);
+    expect(storedDefaultProfile(storage.data)).toEqual(
+      expect.objectContaining({ sampling: { domFlushMs: 300 }, recorder: { freezeOnError: false } })
+    );
+    expect(saveState()).toBe("All changes saved");
   });
 
   it("blocks saving while a field is invalid and explains why inline", async () => {
@@ -583,7 +713,7 @@ describe("options page", () => {
   });
 
   it("resets one section to defaults and discards edits with Cancel", async () => {
-    installChromeStub({ [STORAGE_KEY]: { sampling: { domFlushMs: 300 } } });
+    installChromeStub({ [PROFILES_KEY]: storeWithDefault({ sampling: { domFlushMs: 300 } }) });
     await importOptionsModule();
 
     expect(query<HTMLInputElement>("#domFlushMs").value).toBe("300");
@@ -651,7 +781,7 @@ describe("options page", () => {
       await chooseLanguage("en");
 
       expect(storage.data[LOCALE_KEY]).toBe("en");
-      expect(storage.data[STORAGE_KEY]).toBeUndefined();
+      expect(storage.data[PROFILES_KEY]).toBeUndefined();
       expect(saveState()).toBe("All changes saved");
       expect(languageNotice().hidden).toBe(true);
     });
@@ -811,9 +941,7 @@ describe("options page: unsaved changes", () => {
     await goTo("sampling");
     await choose("leave-save");
 
-    expect(storage.data[STORAGE_KEY]).toEqual(
-      expect.objectContaining({ sampling: expect.objectContaining({ scrollHz: 30 }) })
-    );
+    expect(storedDefaultProfile(storage.data)?.sampling).toEqual({ scrollHz: 30 });
     expect(shownSection()).toBe("sampling");
     expect(saveState()).toMatch(/^Saved at /);
   });
@@ -885,15 +1013,13 @@ describe("options page: unsaved changes", () => {
     await choose("leave-save");
 
     // The save waits for the editor: the general options are folded into its Default profile.
-    expect(storage.data[STORAGE_KEY]).toBeUndefined();
+    expect(storage.data[PROFILES_KEY]).toBeUndefined();
     expect(shownSection()).toBe("pointer");
 
     releaseEditor();
     await flush();
 
-    expect(storage.data[STORAGE_KEY]).toEqual(
-      expect.objectContaining({ sampling: expect.objectContaining({ scrollHz: 30 }) })
-    );
+    expect(storedDefaultProfile(storage.data)?.sampling).toEqual({ scrollHz: 30 });
     expect(shownSection()).toBe("sampling");
     expect(saveState()).toMatch(/^Saved at /);
     expect(unloadPrevented()).toBe(false);
@@ -910,9 +1036,7 @@ describe("options page: unsaved changes", () => {
     await flush();
     await choose("editor-close-save");
 
-    expect(storage.data[STORAGE_KEY]).toEqual(
-      expect.objectContaining({ sampling: expect.objectContaining({ scrollHz: 30 }) })
-    );
+    expect(storedDefaultProfile(storage.data)?.sampling).toEqual({ scrollHz: 30 });
     expect((storage.data[PROFILES_KEY] as { rules: Array<{ name?: string }> }).rules[0]?.name).toBe(
       "Stage QA"
     );

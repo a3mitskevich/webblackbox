@@ -2,7 +2,7 @@
 // WebSocket frames (a ~10 KB lobby update in, a 40 KB batch out) and an image served from the memory
 // cache. The demo page runs the scenario (`window.__wbDemo.runFidelityScenario`); this module serves
 // the socket and the cacheable image, and checks the exported archive with the built player-sdk.
-// Lite mode runs and checks only the console part (`consoleOnly`): the page hook records it.
+// `consoleOnly` runs and checks only the console part (recorded by the page hook).
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";

@@ -93,10 +93,13 @@ const recordScreenInFullMode =
   captureMode === "full" && (fullVisualCapture === "recording" || fullVisualCapture === "both");
 const captureScreenshotsInFullMode =
   captureMode === "full" && (fullVisualCapture === "screenshots" || fullVisualCapture === "both");
-const configureRecorderOptions = (process.env.WB_E2E_CONFIGURE_OPTIONS ?? "1") !== "0";
-// Needs the configured console: allow / network: body-allowlist policy and CDP capture.
+// The run records through a recording profile, as users do: Full uses the Full capture profile,
+// Lite the Default profile. `WB_E2E_CONFIGURE_OPTIONS=0` writes no profiles store at all.
+const configureRecordingProfile = (process.env.WB_E2E_CONFIGURE_OPTIONS ?? "1") !== "0";
+const E2E_PROFILE_IDS = { full: "builtin:full-capture", lite: "default" };
+const expectedProfileId = configureRecordingProfile ? E2E_PROFILE_IDS[captureMode] : "default";
 // `e2e:completeness:full`: records the realistic fixture site (lib/realistic-site.mjs) with the
-// Full capture sampling and checks that the archive holds every body the policy asked for, or says
+// Full capture profile and checks that the archive holds every body the profile asked for, or says
 // why one is missing; the demo page scenarios are skipped.
 const completenessMode = captureMode === "full" && (process.env.WB_E2E_COMPLETENESS ?? "0") === "1";
 // Full mode records script → source map references unless a profile turns them off. The
@@ -109,12 +112,11 @@ const completenessDurationMs = readPositiveInteger(
   process.env.WB_E2E_COMPLETENESS_MS,
   REALISTIC_DEFAULT_DURATION_MS
 );
-// The configured full-mode policy asks for bodies (`body-allowlist`).
-const bodiesRequested = captureMode === "full" && configureRecorderOptions;
+// Full capture asks for bodies (`body-allowlist`), console text and WebSocket payloads. Lite records
+// none of them: the Default profile keeps console metadata, and a profile asking for console text
+// or bodies starts in Full.
+const bodiesRequested = captureMode === "full" && configureRecordingProfile;
 const checkCaptureFidelity = bodiesRequested && !completenessMode;
-// Lite records console text and stacks through the page hook under the same console: allow policy.
-const checkConsoleFidelity = captureMode === "lite" && configureRecorderOptions;
-const checkAnyFidelity = checkCaptureFidelity || checkConsoleFidelity;
 const playerSdkEntry = resolve(workspaceRoot, "packages/player-sdk/dist/index.js");
 const usePopupUiActions =
   process.env.WB_E2E_USE_POPUP_UI === undefined
@@ -128,6 +130,7 @@ const e2eExportPolicy = {
   recentWindowMs: 20 * 60 * 1000
 };
 const realWorldScenario = process.env.WB_E2E_REALWORLD_SCENARIO ?? "";
+const REAL_WORLD_MARK_PATH = "/api/realworld-mark/";
 const realWorldLongRecordingMs = Number(process.env.WB_E2E_REALWORLD_LONG_MS ?? "2500");
 const realWorldLargeResponseBytes = Number(
   process.env.WB_E2E_REALWORLD_LARGE_RESPONSE_BYTES ?? "1048576"
@@ -402,11 +405,11 @@ async function main() {
       : { ok: true, mode: injectionMode };
   assert(injectionSetup.ok === true, "On-demand injection setup failed", injectionSetup);
 
-  const recorderConfigured = configureRecorderOptions
-    ? await configureE2eRecorderOptions(control, captureMode)
-    : { ok: true, skipped: "default-recorder-options" };
-  assert(recorderConfigured?.ok === true, "Failed to configure E2E recorder options", {
-    recorderConfigured,
+  const profileConfigured = configureRecordingProfile
+    ? await configureE2eRecordingProfile(control, expectedProfileId)
+    : { ok: true, skipped: "no-profiles-store" };
+  assert(profileConfigured?.ok === true, "Failed to configure the E2E recording profile", {
+    profileConfigured,
     captureMode
   });
 
@@ -514,9 +517,9 @@ async function main() {
     minifiedErrorResult
   );
 
-  const fidelityScenario = checkAnyFidelity
-    ? await runCaptureFidelityScenario(demoClient, { consoleOnly: checkConsoleFidelity })
-    : { ok: true, skipped: "needs-configured-options" };
+  const fidelityScenario = checkCaptureFidelity
+    ? await runCaptureFidelityScenario(demoClient)
+    : { ok: true, skipped: "needs-full-capture-profile" };
   assert(fidelityScenario?.ok === true, "Capture fidelity scenario failed", fidelityScenario);
 
   const realWorldResult = completenessMode
@@ -613,16 +616,13 @@ async function main() {
   const requiredEventTypes = completenessMode
     ? ["console.entry", "network.body", "network.ws.frame", "perf.vitals", "screen.screenshot"]
     : captureMode === "lite"
-      ? [
-          "user.mousemove",
-          "console.entry",
-          "network.request",
-          "dom.snapshot",
-          "storage.local.snapshot"
-        ]
+      ? // The Default profile masks the DOM: Lite takes summary snapshots only, and those are not
+        // in the archive today (the service worker stores them as blobs, which the recorder keeps
+        // only under `dom: allow`). The old v1 harness hid that by recording the raw DOM.
+        ["user.mousemove", "console.entry", "network.request", "storage.local.snapshot"]
       : !captureScreenshotsInFullMode
         ? ["user.click", "console.entry"]
-        : configureRecorderOptions
+        : configureRecordingProfile
           ? ["user.click", "screen.screenshot", "console.entry"]
           : ["user.click", "screen.screenshot", "network.request"];
   const archiveBasics = checkArchiveBasics(archive, {
@@ -635,6 +635,13 @@ async function main() {
     archiveBasics
   );
 
+  const recordedProfile = checkRecordedProfile(archive, expectedProfileId);
+  assert(
+    recordedProfile.ok,
+    "Exported archive was not recorded with the expected profile",
+    recordedProfile
+  );
+
   const archiveEvidenceResult =
     realWorldScenario && realWorldResult.archiveEvidence
       ? checkArchiveEvidence(archive, realWorldResult.archiveEvidence)
@@ -645,13 +652,12 @@ async function main() {
     archiveEvidenceResult
   );
 
-  const fidelityArchiveResult = checkAnyFidelity
+  const fidelityArchiveResult = checkCaptureFidelity
     ? await verifyCaptureFidelityArchive({
         archivePath: exportedPath,
         passphrase: exportPassphrase,
         playerSdkEntry,
-        scenario: fidelityScenario,
-        consoleOnly: checkConsoleFidelity
+        scenario: fidelityScenario
       })
     : fidelityScenario;
   assert(
@@ -790,7 +796,7 @@ async function main() {
   console.log("Full visual capture:", fullVisualCapture);
   console.log("Record screen:", recordScreenInFullMode);
   console.log("Capture screenshots:", captureScreenshotsInFullMode);
-  console.log("Recorder options:", JSON.stringify(recorderConfigured));
+  console.log("Recording profile:", JSON.stringify(recordedProfile));
   console.log(
     "Popup actions:",
     control.kind === "popup" ? (control.useUiActions ? "ui" : "runtime") : control.kind
@@ -1053,6 +1059,13 @@ async function handleApiRequest(request, response, requestUrl, tasks) {
         errorRate: 0.013
       }
     });
+    return;
+  }
+
+  // `/api/realworld-mark/<slug>`: a real-world step announced as a request, which Lite records under
+  // the Default profile (it keeps console metadata, not the text).
+  if (pathname.startsWith(REAL_WORLD_MARK_PATH) && request.method === "GET") {
+    writeJson(response, 200, { ok: true });
     return;
   }
 
@@ -1851,36 +1864,27 @@ async function listContentScriptContexts(pageClient, tracker, extensionId) {
   return found;
 }
 
-/**
- * Sampling of the configured e2e options. The completeness gate uses what the Full capture profile
- * records with (1 MiB bodies, a 30 s DOM snapshot interval, 12 s screenshots), not the fast
- * test values that hid losses: a 1 s snapshot interval and 64 KiB bodies.
- */
-function resolveE2eSampling(mode) {
-  if (completenessMode) {
-    return {
-      mousemoveHz: 60,
-      scrollHz: 10,
-      domFlushMs: 180,
-      screenshotIdleMs: 12_000,
-      snapshotIntervalMs: 30_000,
-      actionWindowMs: 1500,
-      bodyCaptureMaxBytes: 1024 * 1024
-    };
-  }
+/** Every recorder config in the archive names `profileId`, picked as the default profile. */
+function checkRecordedProfile(archive, profileId) {
+  const recorded = archive
+    .query({})
+    .filter((event) => event.type === "meta.config")
+    .map((event) => ({ id: event.data?.profile?.id ?? null, source: event.data?.profile?.source }));
 
   return {
-    mousemoveHz: 20,
-    scrollHz: 15,
-    domFlushMs: 100,
-    screenshotIdleMs: mode === "full" ? 600 : 0,
-    snapshotIntervalMs: 1000,
-    actionWindowMs: 1500,
-    bodyCaptureMaxBytes: mode === "full" ? 65536 : 32768
+    ok:
+      recorded.length > 0 &&
+      recorded.every((entry) => entry.id === profileId && entry.source === "default"),
+    profileId,
+    recorded
   };
 }
 
-async function configureE2eRecorderOptions(control, mode) {
+/**
+ * Makes `profileId` the default recording profile, so Start (from the popup or the page) records
+ * with it through the same profile path as a user's Start.
+ */
+async function configureE2eRecordingProfile(control, profileId) {
   return evaluateControl(
     control,
     `
@@ -1891,105 +1895,17 @@ async function configureE2eRecorderOptions(control, mode) {
           return { ok: false, reason: 'storage-api-unavailable' };
         }
 
-        const capturePolicy = {
-          schemaVersion: 2,
-          mode: 'lab',
-          captureContext: 'synthetic',
-          captureContextEvidenceRef: 'synthetic:e2e-fullchain',
-          consent: {
-            id: 'webblackbox-e2e-consent',
-            provenance: 'self-recording',
-            purpose: 'qa',
-            grantedBy: 'webblackbox-e2e',
-            grantedAt: new Date().toISOString()
-          },
-          unmaskPolicySource: 'extension-managed',
-          scope: {
-            tabId: 0,
-            origin: '',
-            allowedOrigins: [],
-            deniedOrigins: [],
-            includeSubframes: true,
-            stopOnOriginChange: true,
-            excludedUrlPatterns: []
-          },
-          categories: {
-            actions: 'allow',
-            inputs: 'masked',
-            dom: 'allow',
-            screenshots: ${JSON.stringify(captureScreenshotsInFullMode)} ? 'allow' : 'off',
-            screenRecordings: ${JSON.stringify(recordScreenInFullMode)} ? 'allow' : 'off',
-            console: 'allow',
-            network: 'body-allowlist',
-            storage: 'allow',
-            indexedDb: 'names-only',
-            cookies: 'names-only',
-            cdp: ${JSON.stringify(mode)} === 'full' ? 'full' : 'safe-subset',
-            heapProfiles: 'off'
-          },
-          redaction: {
-            redactHeaders: [
-              'authorization',
-              'cookie',
-              'set-cookie',
-              'proxy-authorization',
-              'x-api-key',
-              'x-auth-token',
-              'x-csrf-token',
-              'x-xsrf-token'
-            ],
-            redactCookieNames: ['token', 'session', 'auth', 'jwt', 'refresh_token', 'csrf', 'xsrf'],
-            redactBodyPatterns: [
-              'password',
-              'token',
-              'secret',
-              'otp',
-              'credential',
-              'api_key',
-              'apikey',
-              'private_key',
-              'refresh_token'
-            ],
-            blockedSelectors: [
-              '.secret',
-              '[data-sensitive]',
-              '[data-webblackbox-redact]',
-              "input[type='password']",
-              "input[name*='token']",
-              "input[name*='secret']",
-              "input[autocomplete='cc-number']"
-            ],
-            hashSensitiveValues: true
-          },
-          encryption: {
-            localAtRest: 'required',
-            archive: 'required',
-            archiveKeyEnvelope: 'passphrase'
-          },
-          retention: {
-            localTtlMs: 24 * 60 * 60 * 1000
-          }
-        };
-
         await chromeApi.storage.local.set({
-          'webblackbox.options': {
-            optionsVersion: 1,
-            mode: ${JSON.stringify(mode)},
-            freezeOnNetworkFailure: false,
-            freezeOnLongTaskSpike: false,
-            sampling: ${JSON.stringify(resolveE2eSampling(mode))},
-            capturePolicy
+          'webblackbox.profiles': {
+            schemaVersion: 2,
+            defaultProfileId: ${JSON.stringify(profileId)},
+            profiles: [],
+            rules: [],
+            extendedCaptureHosts: []
           }
         });
 
-        return {
-          ok: true,
-          mode: ${JSON.stringify(mode)},
-          cdp: capturePolicy.categories.cdp,
-          screenshots: capturePolicy.categories.screenshots,
-          screenRecordings: capturePolicy.categories.screenRecordings,
-          screenshotIdleMs: ${JSON.stringify(resolveE2eSampling(mode).screenshotIdleMs)}
-        };
+        return { ok: true, profileId: ${JSON.stringify(profileId)} };
       })()
     `
   );
@@ -2820,10 +2736,16 @@ async function runRealWorldScenarioAddons({
         longRecordingMs: 0,
         permissionDenied: false
       };
+      const markRequests = [];
       const mark = (message) => {
         const marker = '[wb-realworld] ' + message;
         result.markers.push(marker);
         console.info(marker);
+        markRequests.push(
+          fetch(${JSON.stringify(REAL_WORLD_MARK_PATH)} + marker.replace(/[^A-Za-z]+/g, '-'), {
+            cache: 'no-store'
+          }).catch(() => undefined)
+        );
         return marker;
       };
 
@@ -2936,6 +2858,7 @@ async function runRealWorldScenarioAddons({
 
         document.body.dataset.realWorldTick = String(performance.now());
         mark('long recording page ready');
+        await Promise.all(markRequests);
 
         return result;
       } catch (error) {
@@ -3093,9 +3016,10 @@ async function runRealWorldScenarioAddons({
     pointer: pointerResult,
     permission: permissionResult,
     multiTab: multiTabResult,
+    // Full records the console text too; Lite (Default profile) only the marker requests.
     archiveEvidence: {
-      markers: expectedMarkers,
-      urls: expectedUrls,
+      markers: captureMode === "full" ? expectedMarkers : [],
+      urls: [...expectedUrls, ...expectedMarkers.map(realWorldMarkUrl)],
       eventTypes: ["console.entry", "network.request"]
     },
     browserConnected: Boolean(browserClient)
@@ -3125,13 +3049,24 @@ async function performRealWorldPointerActivity(demoClient, durationMs) {
 }
 
 async function emitPageRealWorldMarker(demoClient, message) {
+  const marker = `[wb-realworld] ${message}`;
   return demoClient.evaluate(`
-    (() => {
-      const marker = ${JSON.stringify("[wb-realworld] ")} + ${JSON.stringify(message)};
-      console.info(marker);
-      return marker;
+    (async () => {
+      console.info(${JSON.stringify(marker)});
+      await fetch(${JSON.stringify(realWorldMarkUrl(marker))}, { cache: 'no-store' }).catch(
+        () => undefined
+      );
+      return ${JSON.stringify(marker)};
     })()
   `);
+}
+
+/**
+ * Path of the request a real-world marker sends: letters only, since recorded URLs keep the path
+ * but mask number-like parts of it.
+ */
+function realWorldMarkUrl(marker) {
+  return REAL_WORLD_MARK_PATH + marker.replace(/[^A-Za-z]+/g, "-");
 }
 
 async function requestFinalE2eMarkerCapture(demoClient, mode) {

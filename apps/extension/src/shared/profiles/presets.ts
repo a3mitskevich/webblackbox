@@ -94,7 +94,7 @@ export function createBaseProfile(
   };
 }
 
-/** The editable "Default" profile used when no v1 options exist. */
+/** The editable "Default" profile with today's defaults. */
 export function createDefaultProfile(): RecordingProfile {
   return createBaseProfile({
     id: DEFAULT_PROFILE_ID,

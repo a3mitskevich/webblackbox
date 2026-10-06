@@ -62,11 +62,10 @@ import {
   type SwPipelineStatusMessage
 } from "../shared/offscreen-messages.js";
 import {
-  DEFAULT_PERFORMANCE_BUDGET,
   normalizePerformanceBudget,
+  PERFORMANCE_BUDGET_STORAGE_KEY,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
-import { applyFullModeVisualCapture, resolveModeBaseConfig } from "../shared/mode-profile.js";
 import {
   capStorageValue,
   capturesPageStorageInFullMode,
@@ -110,7 +109,7 @@ import {
   readManagedEnterprisePolicy,
   type EnterpriseRecorderPolicy
 } from "../shared/options-storage.js";
-import { resolveModeRecorderConfig } from "../shared/recorder-config.js";
+import { migrateSettingsStorage } from "../shared/settings-migration.js";
 import {
   applyBodyUrlFilters,
   isMimeAllowed as isMimeAllowedUtil,
@@ -486,7 +485,6 @@ const LITE_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
 const LITE_DOM_SNAPSHOT_MAX_BYTES = 1_500 * 1024;
 const CPU_PROFILE_SAMPLE_MS = 350;
 const HEAP_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024;
-const OPTIONS_STORAGE_KEY = "webblackbox.options";
 const ACTIVE_SESSION_STORAGE_KEY = "webblackbox.runtime.sessions";
 const SESSION_ANNOTATIONS_STORAGE_KEY = "webblackbox.runtime.sessionAnnotations";
 const EXPORT_AUDIT_STORAGE_KEY = "webblackbox.audit.exports";
@@ -582,6 +580,15 @@ const STOPPED_SESSION_PURGE_RETRY_MS = 5 * 60_000;
 
 void getAtRestKey().catch((error) => {
   console.warn("[WebBlackbox] at-rest encryption key unavailable", error);
+});
+// v1 options move into the profiles store once; profile and budget reads wait for it.
+const settingsMigrated = migrateSettingsStorage(chromeApi?.storage?.local).then((result) => {
+  if (result.status === "failed") {
+    console.warn(
+      "[WebBlackbox] settings migration failed; retried at the next start",
+      result.error
+    );
+  }
 });
 const runtimeStateRestored = restoreRuntimeState().catch((error) => {
   console.warn("[WebBlackbox] failed to restore runtime state", error);
@@ -861,7 +868,7 @@ function handleRecordedFrameCommitted(details: FrameCommittedDetails): void {
 
 // Deleting or editing a profile, or a policy change, re-checks running recordings at once.
 chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
-  if (!isProfileSettingsChange(changes, areaName, { legacyOptionsKey: OPTIONS_STORAGE_KEY })) {
+  if (!isProfileSettingsChange(changes, areaName)) {
     return;
   }
 
@@ -1172,12 +1179,12 @@ async function startSession(
   // A profile that needs the Full engine never runs in Lite, whatever the caller asked for: Lite
   // would drop its bodies, socket messages and visuals without a trace. Upgrading (rather than
   // refusing) keeps the start the user asked for; the popup already shows the engine as Full.
-  const mode = resolveStartEngine(requestedMode, profileSelection);
-  const loadedRecorderConfig = await buildSessionRecorderConfig(
+  const mode = resolveStartEngine(requestedMode, profileSelection.profile);
+  const loadedRecorderConfig = buildProfileRecorderConfig({
     mode,
-    profileSelection,
-    options.visualCapture
-  );
+    profile: profileSelection.profile,
+    visualCapture: options.visualCapture
+  });
   const recorderConfig = applyEnterprisePolicyToRecorderConfig(
     withSessionCapturePolicy(loadedRecorderConfig, {
       tabId,
@@ -1566,29 +1573,11 @@ async function resolveTabProfileSelection(
   return selectRecordingProfile({ state, page, requestedProfileId: request });
 }
 
-/**
- * Recorder config for a profile on a transport. The v1-derived Default (no v2 store yet) keeps
- * the exact pre-profile code path so its output is byte-for-byte what it used to be.
- */
-async function buildSessionRecorderConfig(
-  mode: CaptureMode,
-  selection: ProfileSelection,
-  visualCapture: FullModeVisualCapture | undefined
-): Promise<typeof DEFAULT_RECORDER_CONFIG> {
-  if (selection.legacy) {
-    return applyFullModeVisualCapture(await loadRecorderConfig(mode), mode, visualCapture);
-  }
-
-  return buildProfileRecorderConfig({ mode, profile: selection.profile, visualCapture });
-}
-
-function loadSessionProfilesState(): Promise<ProfilesState> {
+async function loadSessionProfilesState(): Promise<ProfilesState> {
+  await settingsMigrated;
   return loadProfilesState(
     chromeApi,
-    {
-      legacyOptionsKey: OPTIONS_STORAGE_KEY,
-      enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY
-    },
+    { enterprisePolicyKey: ENTERPRISE_POLICY_STORAGE_KEY },
     readEnterprisePolicy
   );
 }
@@ -1620,11 +1609,10 @@ async function resolveProfilePreview(
   }
 
   // The preview renders the profile on its recommended transport to name the enterprise caps.
-  const profileConfig = await buildSessionRecorderConfig(
-    selection.profile.base,
-    selection,
-    undefined
-  );
+  const profileConfig = buildProfileRecorderConfig({
+    mode: selection.profile.base,
+    profile: selection.profile
+  });
   const effectiveConfig = applyEnterprisePolicyToRecorderConfig(
     profileConfig,
     await loadEnterprisePolicy()
@@ -1736,11 +1724,11 @@ async function buildSessionProfileSnapshot(
   selection: ProfileSelection,
   enterprisePolicy: EnterpriseRecorderPolicy
 ): Promise<SessionProfileSnapshot> {
-  const profileConfig = await buildSessionRecorderConfig(
-    runtime.mode,
-    selection,
-    runtime.profile.visualCapture
-  );
+  const profileConfig = buildProfileRecorderConfig({
+    mode: runtime.mode,
+    profile: selection.profile,
+    visualCapture: runtime.profile.visualCapture
+  });
   const effectiveConfig = applyEnterprisePolicyToRecorderConfig(
     withSessionCapturePolicy(profileConfig, {
       tabId: runtime.tabId,
@@ -5427,14 +5415,6 @@ function sendPortMessage(port: PortLike, message: ExtensionOutboundMessage): voi
   }
 }
 
-async function loadRecorderConfig(mode: CaptureMode): Promise<typeof DEFAULT_RECORDER_CONFIG> {
-  const baseConfig = resolveModeBaseConfig(mode);
-
-  const storedValues = await chromeApi?.storage?.local?.get(OPTIONS_STORAGE_KEY);
-
-  return resolveModeRecorderConfig(mode, baseConfig, storedValues?.[OPTIONS_STORAGE_KEY]);
-}
-
 function resolveFullModeVisualCapture(
   message: ExtensionInboundMessage
 ): FullModeVisualCapture | undefined {
@@ -5488,14 +5468,9 @@ function withSessionCapturePolicy(
 }
 
 async function loadPerformanceBudgetConfig(): Promise<PerformanceBudgetConfig> {
-  const storedValues = await chromeApi?.storage?.local?.get(OPTIONS_STORAGE_KEY);
-  const stored = asRecord(storedValues?.[OPTIONS_STORAGE_KEY]);
-
-  if (!stored) {
-    return { ...DEFAULT_PERFORMANCE_BUDGET };
-  }
-
-  return normalizePerformanceBudget(stored.performanceBudget);
+  await settingsMigrated;
+  const storedValues = await chromeApi?.storage?.local?.get(PERFORMANCE_BUDGET_STORAGE_KEY);
+  return normalizePerformanceBudget(storedValues?.[PERFORMANCE_BUDGET_STORAGE_KEY]);
 }
 
 async function updateSessionAnnotation(

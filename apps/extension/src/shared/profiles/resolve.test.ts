@@ -78,8 +78,7 @@ function v2State(partial: Partial<ProfilesState["store"]> = {}): ProfilesState {
       rules: [],
       extendedCaptureHosts: [],
       ...partial
-    },
-    rawLegacyOptions: undefined
+    }
   });
 }
 
@@ -410,7 +409,7 @@ describe("selectRecordingProfile", () => {
   it("falls back to the store default without rules", () => {
     const selection = selectRecordingProfile({ state: v2State(), page: { url: foreign } });
 
-    expect(selection).toMatchObject({ source: "default", extended: false, legacy: false });
+    expect(selection).toMatchObject({ source: "default", extended: false });
     expect(selection?.profile.id).toBe(DEFAULT_PROFILE_ID);
   });
 
@@ -481,24 +480,23 @@ describe("selectRecordingProfile", () => {
     }
   });
 
-  it("keeps a v1-only Default exactly as today and runs presets as chosen", () => {
-    const state = resolveProfilesState({
-      rawProfilesStore: undefined,
-      rawLegacyOptions: LEGACY_FIXTURES["harness capture policy"]
+  it("runs a Default migrated from raised v1 options as extended, and presets as chosen", () => {
+    const state = v2State({
+      profiles: migrateLegacyOptionsToProfiles(LEGACY_FIXTURES["harness capture policy"]).profiles
     });
-    const legacyDefault = selectRecordingProfile({ state, page: { url: foreign } });
+    const migratedDefault = selectRecordingProfile({ state, page: { url: foreign } });
     const qa = selectRecordingProfile({
       state,
       page: { url: foreign },
       requestedProfileId: BUILT_IN_PROFILE_IDS.qa
     });
 
-    expect(legacyDefault).toMatchObject({ legacy: true, extended: false });
-    expect(legacyDefault?.profile.categories.console).toBe("allow");
+    expect(migratedDefault).toMatchObject({ source: "default", extended: true });
+    expect(migratedDefault?.profile.categories.console).toBe("allow");
     expect(qa?.profile.id).toBe(BUILT_IN_PROFILE_IDS.qa);
   });
 
-  it("treats an edited Default above Full as extended once v2 exists", () => {
+  it("treats an edited Default above Full as extended", () => {
     const raised = {
       ...createDefaultProfile(),
       categories: { ...createDefaultProfile().categories, console: "allow" as const }

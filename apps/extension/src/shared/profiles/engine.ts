@@ -23,21 +23,7 @@ export function requiresFullEngine(profile: RecordingProfile): boolean {
   return FULL_ENGINE_ONLY.some((needsFull) => needsFull(profile));
 }
 
-/**
- * Whether Start must use Full for a selected profile. The legacy Default (v1 options, no profiles
- * saved yet) keeps today's behaviour: v1 options were always applied in either engine.
- */
-export function selectionRequiresFullEngine(selection: {
-  profile: RecordingProfile;
-  legacy: boolean;
-}): boolean {
-  return !selection.legacy && requiresFullEngine(selection.profile);
-}
-
 /** The engine a recording runs in: Full when the profile needs it, else the requested one. */
-export function resolveStartEngine(
-  requested: CaptureMode,
-  selection: { profile: RecordingProfile; legacy: boolean }
-): CaptureMode {
-  return selectionRequiresFullEngine(selection) ? "full" : requested;
+export function resolveStartEngine(requested: CaptureMode, profile: RecordingProfile): CaptureMode {
+  return requiresFullEngine(profile) ? "full" : requested;
 }
