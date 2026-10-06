@@ -2,6 +2,7 @@ import type { WebBlackboxEvent } from "@webblackbox/protocol";
 
 import { asFiniteNumber, asRecord } from "../lib/parsing.js";
 import { upperBoundByMono } from "../lib/range.js";
+import { inferEventScope } from "../lib/scope.js";
 
 /**
  * Where the recorded page sits inside a stage frame. Pointer, click and target coordinates are
@@ -83,8 +84,13 @@ function readViewportSample(event: WebBlackboxEvent): ViewportSample | null {
     return toSample(event.mono, data?.width, data?.height, data?.dpr);
   }
 
-  // An iframe's pointer event carries its frame offset and the iframe's own viewport.
-  if (VIEWPORT_POINTER_TYPES.has(event.type) && data?.frameOffset === undefined) {
+  // An iframe's pointer event reports the iframe's own viewport. A same-origin one carries its
+  // frame offset; a cross-origin one cannot read it, but is recorded in a sub-frame.
+  if (
+    VIEWPORT_POINTER_TYPES.has(event.type) &&
+    data?.frameOffset === undefined &&
+    inferEventScope(event) === "main"
+  ) {
     const viewport = asRecord(data?.viewport);
     return viewport ? toSample(event.mono, viewport.w, viewport.h, viewport.dpr) : null;
   }

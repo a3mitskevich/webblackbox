@@ -147,6 +147,16 @@ describe("viewport timeline", () => {
     expect(resolveViewportAt([], 0)).toBeNull();
   });
 
+  it("skips a cross-origin iframe's click (no frame offset, but recorded in a sub-frame)", () => {
+    const crossOrigin = {
+      ...event("user.click", 450, { x: 5, y: 5, viewport: { w: 300, h: 250, dpr: 1 } }),
+      frame: "content-frame-7"
+    };
+    const timeline = buildViewportTimeline([...events, crossOrigin]);
+    expect(timeline.map((sample) => sample.width)).toEqual([1920, 1200]);
+    expect(resolveViewportAt(timeline, 460)?.width).toBe(1200);
+  });
+
   it("reads click viewports when the archive has no resize events", () => {
     expect(
       buildViewportTimeline([
