@@ -744,10 +744,14 @@ async function cleanup() {
     }
   }
 
-  await terminateChromeProcess(state.chromeProcess);
+  const chromeProcess = state.chromeProcess;
+  await terminateChromeProcess(chromeProcess);
   state.chromeProcess = null;
 
   if (state.logStream) {
+    // Chrome's helper processes can outlive it and keep writing to the shared pipes.
+    chromeProcess?.stdout?.unpipe(state.logStream);
+    chromeProcess?.stderr?.unpipe(state.logStream);
     await new Promise((resolveEnd) => state.logStream.end(resolveEnd));
     state.logStream = null;
   }
