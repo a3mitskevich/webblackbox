@@ -103,8 +103,13 @@ type ExportPlan = {
 
 const SCREENSHOT_EVENT_TYPE: WebBlackboxEvent["type"] = "screen.screenshot";
 const SCREEN_RECORDING_EVENT_PREFIX = "screen.recording.";
-const EXPORT_OVERHEAD_RESERVE_BYTES = 2 * 1024 * 1024;
+// Headroom for the manifests and privacy manifest; indexes are estimated per chunk.
+const EXPORT_OVERHEAD_RESERVE_BYTES = 512 * 1024;
 const EXPORT_OVERHEAD_RESERVE_RATIO = 0.1;
+// When a plan is over the limit, drop a little more than the estimate says: the inverted index
+// shrinks less than proportionally (terms are shared), and each extra plan re-reads the chunks.
+const DROP_MARGIN_RATIO = 0.05;
+const DROP_MARGIN_BYTES = 64 * 1024;
 
 /**
  * Exports a stored session as a `.webblackbox` archive into `sink`, holding at most one chunk
@@ -198,6 +203,7 @@ class SessionExportSource {
     const budget = selectionBudget(this.policy.maxArchiveBytes);
     const selected: ChunkPlan[] = [];
     const selectedBlobs = new Set<string>();
+    let indexBytesPerEvent: number | null = null;
     let totalBytes = 0;
 
     for (let index = metas.length - 1; index >= 0; index -= 1) {
@@ -208,14 +214,22 @@ class SessionExportSource {
         continue;
       }
 
-      const plan = await this.prepareChunk(meta);
+      const prepared = await this.prepareChunk(meta);
 
-      if (!plan) {
+      if (!prepared) {
         continue;
       }
 
+      const { plan } = prepared;
+
       if (budget !== null) {
-        const candidateBytes = await this.selectionBytes(plan, selectedBlobs);
+        // Index size per event, sampled from the newest chunk: indexes take a large share of
+        // an archive whose chunks are compressed.
+        indexBytesPerEvent ??= estimateIndexBytesPerEvent(prepared.events);
+
+        const candidateBytes =
+          (await this.selectionBytes(plan, selectedBlobs)) +
+          Math.ceil(indexBytesPerEvent * plan.exportMeta.eventCount);
 
         if (totalBytes + candidateBytes > budget && selected.length > 0) {
           break;
@@ -369,7 +383,9 @@ class SessionExportSource {
   }
 
   /** The chunk's events kept by the policy, or null when it keeps none. */
-  private async prepareChunk(meta: ChunkTimeIndexEntry): Promise<ChunkPlan | null> {
+  private async prepareChunk(
+    meta: ChunkTimeIndexEntry
+  ): Promise<{ plan: ChunkPlan; events: WebBlackboxEvent[] } | null> {
     const chunk = await this.context.storage.getChunk(this.sid, meta.chunkId);
 
     if (!chunk) {
@@ -386,23 +402,29 @@ class SessionExportSource {
     const blobHashes = collectBlobHashesFromEvents(kept);
 
     if (kept.length === events.length) {
-      return { meta: chunk.meta, exportMeta: chunk.meta, filtered: false, blobHashes };
+      return {
+        plan: { meta: chunk.meta, exportMeta: chunk.meta, filtered: false, blobHashes },
+        events: kept
+      };
     }
 
     const encoded = await encodeChunkEvents(kept, chunk.meta.codec);
 
     return {
-      meta: chunk.meta,
-      exportMeta: {
-        ...chunk.meta,
-        ...computeChunkTimeBounds(kept, chunk.meta),
-        eventCount: kept.length,
-        byteLength: encoded.bytes.byteLength,
-        codec: encoded.codec,
-        sha256: await sha256Hex(encoded.bytes)
+      plan: {
+        meta: chunk.meta,
+        exportMeta: {
+          ...chunk.meta,
+          ...computeChunkTimeBounds(kept, chunk.meta),
+          eventCount: kept.length,
+          byteLength: encoded.bytes.byteLength,
+          codec: encoded.codec,
+          sha256: await sha256Hex(encoded.bytes)
+        },
+        filtered: true,
+        blobHashes
       },
-      filtered: true,
-      blobHashes
+      events: kept
     };
   }
 
@@ -504,6 +526,23 @@ function selectionBudget(maxArchiveBytes: number | null): number | null {
   return Math.max(0, maxArchiveBytes - reserve);
 }
 
+/** Request and inverted index bytes per event, measured on a sample of events. */
+function estimateIndexBytesPerEvent(events: WebBlackboxEvent[]): number {
+  if (events.length === 0) {
+    return 0;
+  }
+
+  const indexer = new EventIndexer();
+  indexer.addEvents(events);
+  const { request, inverted } = indexer.snapshot();
+
+  return (
+    (encodeArchiveJson(request, "compact").byteLength +
+      encodeArchiveJson(inverted, "compact").byteLength) /
+    events.length
+  );
+}
+
 /** Removes the oldest chunks until their estimated archive share covers `overshootBytes`. */
 function dropOldestChunks(plan: ExportPlan, overshootBytes: number): ChunkPlan[] {
   const blobsByHash = new Map(plan.blobs.map((blob) => [blob.hash, blob]));
@@ -517,11 +556,12 @@ function dropOldestChunks(plan: ExportPlan, overshootBytes: number): ChunkPlan[]
 
   const indexBytes = plan.requestIndexBytes.byteLength + plan.invertedIndexBytes.byteLength;
   const eventCount = Math.max(1, plan.manifest.stats.eventCount);
+  const targetBytes = overshootBytes * (1 + DROP_MARGIN_RATIO) + DROP_MARGIN_BYTES;
   let removedBytes = 0;
   let dropCount = 0;
 
   for (const chunk of plan.chunks) {
-    if (removedBytes >= overshootBytes) {
+    if (removedBytes >= targetBytes) {
       break;
     }
 
