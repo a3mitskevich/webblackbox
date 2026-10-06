@@ -1,4 +1,8 @@
-import { extractRequestIdFromPayload, type WebBlackboxEventType } from "@webblackbox/protocol";
+import {
+  extractRequestIdFromPayload,
+  isBodySkipReason,
+  type WebBlackboxEventType
+} from "@webblackbox/protocol";
 
 import { CdpCacheTracker, normalizeCdpNetworkPayload } from "./cdp-network.js";
 import { normalizeCdpExceptionPayload } from "./cdp-runtime.js";
@@ -69,6 +73,9 @@ const CONTENT_EVENT_MAP: Record<string, WebBlackboxEventType> = {
   cookieSnapshot: "storage.cookie.snapshot",
   sse: "network.sse.message"
 };
+/** Host-side raw type of a body the policy asked for but the host could not keep. */
+export const BODY_SKIPPED_RAW_TYPE = "cdp.network.body.skipped";
+const MAX_BODY_SKIP_DETAIL_CHARS = 200;
 let fallbackRequestSequence = 0;
 
 export type DefaultEventNormalizerOptions = {
@@ -141,6 +148,11 @@ export class DefaultEventNormalizer implements EventNormalizer {
         eventType,
         payload: input.payload
       };
+    }
+
+    if (input.rawType === BODY_SKIPPED_RAW_TYPE) {
+      const payload = normalizeBodySkippedPayload(asRecord(input.payload));
+      return payload ? { eventType: "network.body.skipped", payload } : null;
     }
 
     const normalized = tryNormalizeSystemEvent(input.rawType);
@@ -294,6 +306,32 @@ function normalizeContentNetworkBodyPayload(
     sampledSize: asFiniteNumber(payload?.sampledSize) ?? undefined,
     redacted: asBoolean(payload?.redacted),
     truncated: asBoolean(payload?.truncated)
+  });
+}
+
+function normalizeBodySkippedPayload(
+  payload: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  const reqId = readRequestId(payload);
+  const reason = payload?.reason;
+
+  if (!reqId || !isBodySkipReason(reason)) {
+    return null;
+  }
+
+  const size = asFiniteNumber(payload?.size);
+  const limit = asFiniteNumber(payload?.limit);
+  const detail = asString(payload?.detail);
+
+  return stripUndefined({
+    reqId,
+    requestId: reqId,
+    side: payload?.side === "request" ? "request" : "response",
+    reason,
+    mimeType: asString(payload?.mimeType) ?? undefined,
+    size: size !== null && size >= 0 ? size : undefined,
+    limit: limit !== null && limit >= 0 ? limit : undefined,
+    detail: detail ? compactText(detail, MAX_BODY_SKIP_DETAIL_CHARS) : undefined
   });
 }
 

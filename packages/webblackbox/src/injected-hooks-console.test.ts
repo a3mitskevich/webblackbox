@@ -47,10 +47,17 @@ function install(console: ConsolePolicy): void {
   });
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+// Hooks deliver events through two 0 ms timers: their emit flush, then jsdom's postMessage
+// dispatch. Waiting a fixed number of 0 ms turns keeps that FIFO order however late the event loop
+// runs, where a fixed sleep (e.g. 10 ms) can expire in the same pass as the flush under load.
+const SETTLE_TURNS = 4;
+
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < SETTLE_TURNS; turn += 1) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  }
 }
 
 function createLongText(length: number): string {
@@ -120,7 +127,7 @@ describe("injected console hook text and stack", () => {
       const text = createLongText(LONG_LINE_CHARS);
 
       console.log(text);
-      await delay(10);
+      await settle();
 
       const payload = lastEvent("console");
       expect(payload.text).toBe(text);
@@ -134,7 +141,7 @@ describe("injected console hook text and stack", () => {
       const detail = createLongText(5_000);
 
       console.log("state", { detail });
-      await delay(10);
+      await settle();
 
       const payload = lastEvent("console");
       expect((payload.args as Array<Record<string, unknown>>)[1]?.detail).toBe(detail);
@@ -145,7 +152,7 @@ describe("injected console hook text and stack", () => {
       install("allow");
 
       console.log(createLongText(CONSOLE_FULL_ENTRY_MAX_CHARS + 500), createLongText(800));
-      await delay(10);
+      await settle();
 
       const payload = lastEvent("console");
       const args = payload.args as string[];
@@ -160,7 +167,7 @@ describe("injected console hook text and stack", () => {
       const limitBefore = Error.stackTraceLimit;
 
       logErrorFromDepth(DEEP_STACK_DEPTH, "deep failure");
-      await delay(10);
+      await settle();
 
       const payload = lastEvent("console");
       const frames = readStackFrames(payload.stack);
@@ -186,7 +193,7 @@ describe("injected console hook text and stack", () => {
         Error.stackTraceLimit = limitBefore;
       }
 
-      await delay(10);
+      await settle();
 
       const frames = readStackFrames(lastEvent("console").stack);
       expect(frames.filter((frame) => frame.includes("logErrorFromDepth"))).toHaveLength(
@@ -206,7 +213,7 @@ describe("injected console hook text and stack", () => {
         errorCtor.captureStackTrace = captureStackTrace;
       }
 
-      await delay(10);
+      await settle();
 
       const frames = readStackFrames(lastEvent("console").stack);
       expect(frames.some((frame) => HOOK_FRAME_PATTERN.test(frame))).toBe(false);
@@ -228,7 +235,7 @@ describe("injected console hook text and stack", () => {
         stackApi.prepareStackTrace = previous;
       }
 
-      await delay(10);
+      await settle();
 
       const consoleEvents = captured.filter((entry) => entry.rawType === "console");
       const nested = consoleEvents.find((entry) => entry.payload.method === "warn");
@@ -241,7 +248,7 @@ describe("injected console hook text and stack", () => {
       install("allow");
 
       console.log("plain");
-      await delay(10);
+      await settle();
 
       const payload = lastEvent("console");
       expect(payload.stack).toBeUndefined();
@@ -263,7 +270,7 @@ describe("injected console hook text and stack", () => {
       window.dispatchEvent(
         new ErrorEvent("error", { message: error.message, error, lineno: 1, colno: 1 })
       );
-      await delay(10);
+      await settle();
 
       const payload = lastEvent("pageError");
       expect(payload.message).toBe(error.message);
@@ -276,7 +283,7 @@ describe("injected console hook text and stack", () => {
       const reason = createLongText(LONG_LINE_CHARS);
 
       window.dispatchEvent(createRejectionEvent(reason));
-      await delay(10);
+      await settle();
 
       expect(lastEvent("unhandledrejection").reason).toBe(reason);
     });
@@ -287,7 +294,7 @@ describe("injected console hook text and stack", () => {
       install("metadata");
 
       logErrorFromDepth(DEEP_STACK_DEPTH, createLongText(LONG_LINE_CHARS));
-      await delay(10);
+      await settle();
 
       expect(lastEvent("console")).toEqual({
         source: "injected",
@@ -301,7 +308,7 @@ describe("injected console hook text and stack", () => {
       install("sanitized");
 
       logErrorFromDepth(DEEP_STACK_DEPTH, createLongText(LONG_LINE_CHARS));
-      await delay(10);
+      await settle();
 
       const payload = lastEvent("console");
       expect(payload.text).toHaveLength(600);
@@ -316,7 +323,7 @@ describe("injected console hook text and stack", () => {
       install("sanitized");
 
       window.dispatchEvent(createRejectionEvent(createLongText(LONG_LINE_CHARS)));
-      await delay(10);
+      await settle();
 
       expect(lastEvent("unhandledrejection").reason).toHaveLength(1_200);
     });

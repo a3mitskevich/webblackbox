@@ -1,5 +1,7 @@
 import {
   maskBodyText as maskCapturedBodyText,
+  normalizeMimeType,
+  type BodySkipReason,
   type CapturePolicy,
   type RedactionRules,
   type WebBlackboxEventType
@@ -9,7 +11,10 @@ import { asRecord, asString, omitKeys } from "./normalizer-utils.js";
 
 /** Upper bound of body text inspected by the masker, so huge frames stay cheap on the hot path. */
 export const MAX_INLINE_BODY_SCAN_CHARS = 64 * 1024;
-/** Max inline request body kept on `network.request` under the `body-allowlist` policy. */
+/**
+ * Inline request body kept on `network.request` under `body-allowlist` when the profile sets no
+ * body size (`sampling.bodyCaptureMaxBytes` = 0); otherwise bodies are kept up to that many bytes.
+ */
 export const MAX_INLINE_REQUEST_BODY_CHARS = 64 * 1024;
 /**
  * Text kept from one WebSocket frame under `body-allowlist` when the profile sets no body size
@@ -41,8 +46,12 @@ export type AttachNetworkBodyOptions = {
   redaction: RedactionRules;
   /** Profile body size (`sampling.bodyCaptureMaxBytes`); caps WebSocket frames and SSE messages. */
   maxBodyBytes?: number;
-  /** Extra gate on top of `body-allowlist` (e.g. site policies); called only when a body would be kept. */
-  isBodyAllowed?: () => boolean;
+  /**
+   * Extra gate on top of `body-allowlist` (e.g. site policies); called only when a body would be
+   * kept. `true` keeps it; `false` or a reason drops it, and a dropped request body is recorded
+   * as `request.postDataSkipped` (`false` means `filtered`).
+   */
+  isBodyAllowed?: () => boolean | BodySkipReason;
 };
 
 /** What a host-side inline body gate (see `RecorderHooks.shouldKeepInlineNetworkBody`) gets to see. */
@@ -96,20 +105,30 @@ export function attachInlineNetworkBody(
     return payload;
   }
 
-  if (
-    options.capturePolicy?.categories.network !== "body-allowlist" ||
-    options.isBodyAllowed?.() === false
-  ) {
-    return body.slot === "sse"
-      ? { ...row, dataRedacted: true, dataSize: row.dataSize ?? body.text.length }
-      : payload;
+  if (options.capturePolicy?.categories.network !== "body-allowlist") {
+    return dropInlineBody(row, body);
+  }
+
+  const verdict = options.isBodyAllowed?.() ?? true;
+
+  if (verdict !== true) {
+    // The policy asked for bodies and a host rule left this one out: say so, never drop silently.
+    return body.slot === "request"
+      ? {
+          ...row,
+          request: {
+            ...asRecord(row.request),
+            postDataSkipped: verdict === false ? "filtered" : verdict
+          }
+        }
+      : dropInlineBody(row, body);
   }
 
   switch (body.slot) {
     case "request": {
       const masked = maskBodyText(
         body.text,
-        { unit: "chars", limit: MAX_INLINE_REQUEST_BODY_CHARS },
+        resolveStreamCap(options.maxBodyBytes, MAX_INLINE_REQUEST_BODY_CHARS),
         options
       );
       return {
@@ -151,6 +170,12 @@ export function attachInlineNetworkBody(
   }
 }
 
+function dropInlineBody(row: Record<string, unknown>, body: DetachedNetworkBody): unknown {
+  return body.slot === "sse"
+    ? { ...row, dataRedacted: true, dataSize: row.dataSize ?? body.text.length }
+    : row;
+}
+
 /** Builds the {@link InlineNetworkBodyContext} from the raw and the normalized payload. */
 export function readInlineNetworkBodyContext(
   eventType: WebBlackboxEventType,
@@ -164,7 +189,7 @@ export function readInlineNetworkBodyContext(
   return {
     eventType,
     url: asString(asRecord(raw?.request)?.url) ?? asString(raw?.url),
-    mimeType: contentType?.split(";")[0]?.trim().toLowerCase() || undefined
+    mimeType: normalizeMimeType(contentType)
   };
 }
 

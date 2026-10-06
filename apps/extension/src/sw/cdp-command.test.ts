@@ -14,7 +14,8 @@ describe("cdp-command", () => {
     await expect(
       withCdpCommandTimeout(Promise.reject(new Error("cdp failed")), 1_000)
     ).resolves.toEqual({
-      ok: false
+      ok: false,
+      error: "cdp failed"
     });
   });
 
@@ -27,7 +28,8 @@ describe("cdp-command", () => {
       await vi.advanceTimersByTimeAsync(250);
 
       await expect(result).resolves.toEqual({
-        ok: false
+        ok: false,
+        error: "timeout"
       });
     } finally {
       vi.useRealTimers();

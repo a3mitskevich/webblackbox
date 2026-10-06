@@ -237,6 +237,36 @@ describe("lite-materializer", () => {
     expect(result?.payload).toMatchObject({ redacted: false });
   });
 
+  it("captures a body whose Content-Type header was sent twice", async () => {
+    const config = cloneConfig();
+    config.sampling.bodyCaptureMaxBytes = 4 * 1024;
+    const putBlobMimes: string[] = [];
+
+    const result = await materializeLiteRawEvent(
+      createRawEvent("networkBody", {
+        reqId: "R-twice",
+        url: "https://example.test/api/state",
+        mimeType: "application/json, application/json",
+        encoding: "utf8",
+        body: '{"ok":true}',
+        size: 11
+      }),
+      {
+        config,
+        putBlob: async (mime) => {
+          putBlobMimes.push(mime);
+          return "hash-twice";
+        }
+      }
+    );
+
+    expect(putBlobMimes).toEqual(["application/json"]);
+    expect(result?.payload).toMatchObject({
+      contentHash: "hash-twice",
+      mimeType: "application/json"
+    });
+  });
+
   it("respects site policy deny rules for body capture", async () => {
     const config = cloneConfig();
     config.sitePolicies = [
