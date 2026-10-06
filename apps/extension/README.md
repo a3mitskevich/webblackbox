@@ -33,7 +33,7 @@ The extension consists of multiple main components:
 - Manages CDP debugger connections via `@webblackbox/cdp-router`
 - Instantiates `WebBlackboxRecorder` for event normalization
 - Routes events between content scripts, CDP, and the pipeline
-- Handles session lifecycle (start, stop, freeze, export)
+- Handles session lifecycle (start, stop, incident alerts, export)
 - Captures storage snapshots, including cookies, through CDP storage commands
 - Manages the offscreen document lifecycle
 
@@ -76,8 +76,8 @@ The extension consists of multiple main components:
 - Delete any profile (presets and `Default` included; not policy profiles) and "Restore recommended profiles"; recording needs at least one profile
 - Site rules that pick a profile (rules to a deleted profile are flagged and skipped), JSON import/export with a diff preview, redaction sandbox
 - Runtime profile overview for shipped `lite` / `full` modes
-- Sampling cadence and ring-buffer configuration
-- Freeze-on-error and performance budget controls
+- Sampling cadence configuration
+- Incident alerts (flag uncaught errors / broken budgets) and performance budget controls
 - Network body capture byte cap
 - Redaction rule management
 - Screenshot cadence tuning
@@ -218,7 +218,10 @@ When a freeze condition is detected (uncaught JS error / unhandled rejection, or
 1. Recorder evaluates freeze policy
 2. Service worker receives freeze notification
 3. Notification is debounced to avoid UI thrash under repeated failures
-4. Session keeps recording until the user explicitly stops/exports
+4. The alert shows as an ERR badge on the toolbar icon, on the page indicator and as an incident line in the popup
+5. Session keeps recording until the user explicitly stops/exports; nothing is trimmed or preserved by a freeze
+
+The extension keeps no in-memory ring buffer (`ringBufferMinutes: 0`): the pipeline stores every event, so an in-memory copy would only cost service worker memory.
 
 ## Configuration
 

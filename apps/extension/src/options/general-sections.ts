@@ -42,7 +42,7 @@ const SECTION_LAYOUT: Record<
   sampling: [
     { title: "optionsGroupInjection", fields: ["contentInjection"] },
     { title: "optionsGroupStart", fields: ["startReloadOffer"] },
-    { title: "optionsGroupBuffer", fields: ["ringBufferMinutes", "freezeOnError"] },
+    { title: "optionsGroupIncidents", fields: ["freezeOnError"] },
     {
       title: "optionsGroupSampling",
       fields: ["domFlushMs", "snapshotIntervalMs", "screenshotIdleMs", "bodyCaptureMaxBytes"]

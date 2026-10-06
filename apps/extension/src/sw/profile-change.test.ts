@@ -160,7 +160,7 @@ describe("detectProfileChange", () => {
           ...started,
           profileConfig: {
             ...profileConfig,
-            ringBufferMinutes: profileConfig.ringBufferMinutes + 1
+            freezeOnError: !profileConfig.freezeOnError
           }
         },
         startedProfileExists: true

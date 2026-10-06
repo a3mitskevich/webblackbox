@@ -344,11 +344,10 @@ async function processPipelineRequest(message: OffscreenPipelineRequest): Promis
 
   if (message.op === "ingestBatch") {
     if (!Array.isArray(message.events) || message.events.length === 0) {
-      return null;
+      return 0;
     }
 
-    await pipeline.ingestBatch(message.events);
-    return null;
+    return pipeline.ingestBatch(message.events);
   }
 
   if (message.op === "flush") {

@@ -19,7 +19,7 @@ import {
 } from "@webblackbox/protocol";
 
 import { decodeChunkEvents, encodeChunkEvents } from "./codec.js";
-import { computeChunkTimeBounds, EventChunker } from "./chunker.js";
+import { computeChunkTimeBounds, EventChunker, type FinalizedChunk } from "./chunker.js";
 import { createWebBlackboxArchive } from "./exporter.js";
 import { sha256Hex } from "./hash.js";
 import { EventIndexer } from "./indexer.js";
@@ -100,63 +100,33 @@ export class FlightRecorderPipeline {
     await this.options.storage.putSession(this.options.session);
   }
 
-  public async ingest(event: WebBlackboxEvent): Promise<void> {
+  /** Ingests one event; resolves to the UTF-8 bytes of its stored NDJSON line. */
+  public async ingest(event: WebBlackboxEvent): Promise<number> {
     assertPrivacyClassifiedEvent(event);
-    const chunk = await this.chunker.append(await this.externalizeLargePayload(event));
-
-    if (!chunk) {
-      return;
-    }
-
-    await this.persistChunk(
-      chunk.meta.chunkId,
-      chunk.meta.seq,
-      chunk.meta.codec,
-      chunk.events,
-      chunk.bytes
-    );
+    return this.appendEvent(event);
   }
 
-  public async ingestBatch(events: WebBlackboxEvent[]): Promise<void> {
-    if (events.length === 0) {
-      return;
-    }
-
+  /** Ingests events in order; resolves to the UTF-8 bytes of their stored NDJSON lines. */
+  public async ingestBatch(events: WebBlackboxEvent[]): Promise<number> {
     for (const event of events) {
       assertPrivacyClassifiedEvent(event);
     }
 
+    let bytes = 0;
+
     for (const event of events) {
-      const chunk = await this.chunker.append(await this.externalizeLargePayload(event));
-
-      if (!chunk) {
-        continue;
-      }
-
-      await this.persistChunk(
-        chunk.meta.chunkId,
-        chunk.meta.seq,
-        chunk.meta.codec,
-        chunk.events,
-        chunk.bytes
-      );
+      bytes += await this.appendEvent(event);
     }
+
+    return bytes;
   }
 
   public async flush(): Promise<void> {
     const chunk = await this.chunker.flush();
 
-    if (!chunk) {
-      return;
+    if (chunk) {
+      await this.persistChunk(chunk);
     }
-
-    await this.persistChunk(
-      chunk.meta.chunkId,
-      chunk.meta.seq,
-      chunk.meta.codec,
-      chunk.events,
-      chunk.bytes
-    );
   }
 
   public async close(options: { purge?: boolean } = {}): Promise<void> {
@@ -165,6 +135,16 @@ export class FlightRecorderPipeline {
     if (options.purge) {
       await this.options.storage.deleteSession(this.options.session.sid);
     }
+  }
+
+  private async appendEvent(event: WebBlackboxEvent): Promise<number> {
+    const appended = await this.chunker.append(await this.externalizeLargePayload(event));
+
+    if (appended.chunk) {
+      await this.persistChunk(appended.chunk);
+    }
+
+    return appended.bytes;
   }
 
   /** Large WebSocket/SSE text goes to a blob so event chunks stay small (see `stream-payload.ts`). */
@@ -600,30 +580,13 @@ export class FlightRecorderPipeline {
     };
   }
 
-  private async persistChunk(
-    chunkId: string,
-    seq: number,
-    codec: (typeof CHUNK_CODECS)[number],
-    events: WebBlackboxEvent[],
-    bytes: Uint8Array
-  ): Promise<void> {
-    const hash = await sha256Hex(bytes);
-
-    const chunk: StoredChunk = {
+  /** The chunker already hashed the bytes and computed the time bounds. */
+  private async persistChunk(chunk: FinalizedChunk): Promise<void> {
+    await this.options.storage.putChunk({
       sid: this.options.session.sid,
-      meta: {
-        chunkId,
-        seq,
-        ...computeChunkTimeBounds(events),
-        eventCount: events.length,
-        byteLength: bytes.byteLength,
-        codec,
-        sha256: hash
-      },
-      bytes
-    };
-
-    await this.options.storage.putChunk(chunk);
+      meta: chunk.meta,
+      bytes: chunk.bytes
+    });
   }
 
   private async buildIndexesFromChunks(chunks: StoredChunk[]): Promise<ExportIndexes> {

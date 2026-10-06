@@ -61,11 +61,7 @@ import {
   normalizePerformanceBudget,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
-import {
-  applyFullModeVisualCapture,
-  resolveModeBaseConfig,
-  shouldInjectPageHooksForMode
-} from "../shared/mode-profile.js";
+import { applyFullModeVisualCapture, resolveModeBaseConfig } from "../shared/mode-profile.js";
 import {
   capStorageValue,
   capturesPageStorageInFullMode,
@@ -210,6 +206,7 @@ import {
   type StoppedSessionRecord
 } from "./stopped-sessions.js";
 import { startWithOptionalReload } from "./start-with-reload.js";
+import { createThrottledPush } from "./throttled-push.js";
 import {
   FULL_MODE_STORAGE_SNAPSHOT_MAX_ITEMS,
   buildLocalStorageSnapshotExpression,
@@ -377,7 +374,8 @@ type SessionPipelineClient = {
     capturePolicy?: CapturePolicy
   ) => Promise<void>;
   ingest: (event: WebBlackboxEvent) => Promise<void>;
-  ingestBatch: (events: WebBlackboxEvent[]) => Promise<void>;
+  /** Resolves to the stored NDJSON bytes of the batch. */
+  ingestBatch: (events: WebBlackboxEvent[]) => Promise<number>;
   flush: () => Promise<void>;
   putBlob: (mime: string, bytes: Uint8Array) => Promise<string>;
   exportAndDownload: (options?: {
@@ -553,6 +551,8 @@ const BEST_EFFORT_QUEUE_MAX_PENDING = 80;
 const PIPELINE_BATCH_MAX_EVENTS = 160;
 const PIPELINE_BATCH_DRAIN_CHUNK_EVENTS = 160;
 const PIPELINE_BATCH_FLUSH_MS = 120;
+/** Shortest gap between session-list pushes driven by recorded events (counters, errors). */
+const SESSION_LIST_EVENT_PUSH_INTERVAL_MS = 500;
 const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
 // Pointer samples are kept: the page samples them at the profile rate and drops them under load.
 const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
@@ -638,6 +638,10 @@ const tabsContextTracker = createTabsContextTracker();
 console.info("[WebBlackbox] service worker booted");
 
 const contentInjection = createContentInjectionController(chromeApi);
+const sessionListPush = createThrottledPush(
+  () => broadcast(buildSessionListMessage()),
+  SESSION_LIST_EVENT_PUSH_INTERVAL_MS
+);
 const recordedTabWatch = createRecordedTabWatch(chromeApi, {
   onTabUpdated: handleRecordedTabUpdated,
   onTabRemoved: (tabId) => {
@@ -851,9 +855,7 @@ async function syncContentPortStateOnConnect(port: PortLike): Promise<void> {
 
   // Only the connecting frame: re-running the hooks script resets a frame's live capture config
   // (the script installs inactive), and only that frame gets the recording status back below.
-  if (shouldInjectHooksForMode(runtime.mode)) {
-    await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce, port.sender?.frameId);
-  }
+  await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce, port.sender?.frameId);
 
   syncContentPortRecordingState(port);
 }
@@ -962,7 +964,6 @@ function handleRecordedFrameCommitted(details: FrameCommittedDetails): void {
     !runtime ||
     runtime.stopping ||
     runtime.stoppedAt ||
-    !shouldInjectHooksForMode(runtime.mode) ||
     contentInjection.currentMode() !== "on-start" ||
     !isInjectableFrameUrl(details.url)
   ) {
@@ -1112,13 +1113,11 @@ async function handleInboundMessage(
     }
 
     // The sender's frame only: the reply below reaches only that frame's content script.
-    if (shouldInjectHooksForMode(runtime.mode)) {
-      await ensureInjectedHooks(
-        tabId,
-        runtime.injectedBridgeNonce,
-        senderFrameId ?? port?.sender?.frameId
-      );
-    }
+    await ensureInjectedHooks(
+      tabId,
+      runtime.injectedBridgeNonce,
+      senderFrameId ?? port?.sender?.frameId
+    );
 
     const sampling = toStatusSampling(runtime);
 
@@ -1395,10 +1394,8 @@ async function startSession(
     level: resolveTabsContextLevel(recorderConfig.capturePolicy)
   });
 
-  if (shouldInjectHooksForMode(mode)) {
-    await ensureContentScriptInjected(tabId);
-    await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
-  }
+  await ensureContentScriptInjected(tabId);
+  await ensureInjectedHooks(tabId, runtime.injectedBridgeNonce);
 
   if (mode === "full" && recorderConfig.capturePolicy?.categories.cdp !== "off") {
     await attachCdp(runtime);
@@ -1455,12 +1452,7 @@ async function reloadRecordingTab(tabId: number): Promise<void> {
 async function restoreTabInstrumentationAfterNavigation(tabId: number): Promise<void> {
   const runtime = sessionsByTab.get(tabId);
 
-  if (
-    !runtime ||
-    runtime.stopping ||
-    runtime.stoppedAt ||
-    !shouldInjectHooksForMode(runtime.mode)
-  ) {
+  if (!runtime || runtime.stopping || runtime.stoppedAt) {
     return;
   }
 
@@ -2364,16 +2356,15 @@ function shouldCaptureActionScreenshot(
 
 function trackSessionCounters(runtime: SessionRuntime, event: WebBlackboxEvent): void {
   runtime.capturedEventCount += 1;
-  runtime.capturedSizeBytes += estimateSessionEventBytes(event);
 
   if (event.type === "error.exception" || event.type === "error.unhandledrejection") {
     runtime.capturedErrorCount += 1;
-    pushSessionList();
+    sessionListPush.schedule();
     return;
   }
 
   if (runtime.capturedEventCount % 50 === 0) {
-    pushSessionList();
+    sessionListPush.schedule();
   }
 }
 
@@ -2424,7 +2415,7 @@ function evaluatePerformanceBudget(runtime: SessionRuntime, event: WebBlackboxEv
   }
 
   if (updated) {
-    pushSessionList();
+    sessionListPush.schedule();
   }
 }
 
@@ -2557,7 +2548,8 @@ async function drainPipelineBufferBatches(
       break;
     }
 
-    await runtime.pipeline.ingestBatch(batch);
+    // The pipeline serializes each event once; its byte count is the session size.
+    runtime.capturedSizeBytes += await runtime.pipeline.ingestBatch(batch);
     runtime.pipelineEventBuffer.splice(0, batch.length);
     flushed += batch.length;
 
@@ -2596,11 +2588,13 @@ function createOffscreenPipelineClient(sid: string): SessionPipelineClient {
       });
     },
     ingestBatch: async (events) => {
-      await requestOffscreenPipeline<void>({
+      const bytes = await requestOffscreenPipeline<unknown>({
         op: "ingestBatch",
         sid,
         events
       });
+
+      return typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
     },
     flush: async () => {
       await requestOffscreenPipeline<void>({
@@ -2803,14 +2797,6 @@ function handleOffscreenRuntimeMessage(rawMessage: unknown, port: PortLike): boo
   }
 
   return true;
-}
-
-function estimateSessionEventBytes(event: WebBlackboxEvent): number {
-  try {
-    return new TextEncoder().encode(JSON.stringify(event)).byteLength;
-  } catch {
-    return 0;
-  }
 }
 
 function rejectPendingOffscreenRequests(message: string): void {
@@ -4627,10 +4613,6 @@ function toStatusSampling(runtime: SessionRuntime): RecordingSampling {
   };
 }
 
-function shouldInjectHooksForMode(mode: CaptureMode): boolean {
-  return shouldInjectPageHooksForMode(mode);
-}
-
 function normalizePipelineExportDownloadResult(raw: unknown): PipelineExportDownloadResult {
   const row = asRecord(raw);
 
@@ -5752,7 +5734,6 @@ function toSessionListItem(runtime: SessionRuntime): SessionListItem {
     stoppedAt: runtime.stoppedAt,
     url: sanitizeUrlForPrivacy(runtime.url),
     title: runtime.title,
-    ringBufferMinutes: runtime.config.ringBufferMinutes,
     eventCount: runtime.capturedEventCount,
     errorCount: runtime.capturedErrorCount,
     budgetAlertCount: runtime.budgetAlertCount,
@@ -5869,7 +5850,7 @@ async function updateSessionMetadataFromEventAsync(
 }
 
 function pushSessionList(): void {
-  broadcast(buildSessionListMessage());
+  sessionListPush.now();
 }
 
 function buildSessionListMessage(): SessionListMessage {
@@ -5999,11 +5980,7 @@ function resolveFullModeVisualCapture(
 
   // Kept for a Lite request too: when the profile needs the Full engine the start runs in Full,
   // and an explicit choice (e.g. "none") must hold there. A Lite session ignores it.
-  if (isFullModeVisualCapture(message.visualCapture)) {
-    return message.visualCapture;
-  }
-
-  return message.mode === "full" && message.recordScreen === true ? "both" : undefined;
+  return isFullModeVisualCapture(message.visualCapture) ? message.visualCapture : undefined;
 }
 
 function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture {
@@ -6287,7 +6264,6 @@ function notifyOffscreenPipelineStatus(): void {
         mode: runtime.mode,
         startedAt: runtime.startedAt,
         active: true,
-        ringBufferMinutes: runtime.config.ringBufferMinutes,
         eventCount: runtime.capturedEventCount,
         errorCount: runtime.capturedErrorCount,
         budgetAlertCount: runtime.budgetAlertCount,
