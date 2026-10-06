@@ -4,6 +4,7 @@ import type { ArchiveModel } from "../core/archive-model.js";
 import type { Selection } from "../core/navigation.js";
 import type { ThemePreference } from "../core/preferences.js";
 import type { SessionView } from "../core/session-view.js";
+import type { TimeRange } from "../core/time-range.js";
 import type { RailTab } from "../core/url-hash.js";
 import type { PlayerLocale } from "../lib/i18n.js";
 
@@ -52,6 +53,10 @@ export type PlayerState = {
   /** Lists scroll to and highlight the playhead while playing. */
   follow: boolean;
   selection: Selection | null;
+  /** The range selected on the timeline (Shift+drag, `[` / `]`); frames Generate. */
+  range: TimeRange | null;
+  /** "Expand lanes": the timeline shows every lane (route, navigation, console, storage…). */
+  lanesExpanded: boolean;
   tab: RailTab;
   /** Text filter of the rail lists and the header search. */
   query: string;
@@ -80,6 +85,8 @@ export function createInitialState(locale: PlayerLocale, theme: ThemePreference)
     skipIdle: true,
     follow: true,
     selection: null,
+    range: null,
+    lanesExpanded: false,
     tab: "activity",
     query: "",
     detailsOpen: false,

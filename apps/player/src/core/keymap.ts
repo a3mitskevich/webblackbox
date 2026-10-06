@@ -14,7 +14,8 @@ export type KeyCommand =
   | { type: "open-details" }
   | { type: "close" }
   | { type: "show-shortcuts" }
-  | { type: "toggle-rail-wide" };
+  | { type: "toggle-rail-wide" }
+  | { type: "mark-range"; edge: "start" | "end" };
 
 /**
  * How a binding is matched (react-hotkeys-hook syntax):
@@ -65,6 +66,8 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { hotkey: "?", command: { type: "show-shortcuts" }, match: "character" },
   { hotkey: "enter", command: { type: "open-details" }, match: "keys", yieldsToControls: true },
   { hotkey: "f", command: { type: "toggle-rail-wide" }, match: "keys" },
+  { hotkey: "bracketleft", command: { type: "mark-range", edge: "start" }, match: "keys" },
+  { hotkey: "bracketright", command: { type: "mark-range", edge: "end" }, match: "keys" },
   ...RAIL_TABS.map(
     (tab, index): KeyBinding => ({
       hotkey: String(index + 1),
@@ -108,6 +111,7 @@ export const SHORTCUT_SHEET = [
   { keys: ["1…8"], action: "tabs" },
   { keys: ["Enter", "Esc"], action: "details" },
   { keys: ["F"], action: "railWide" },
+  { keys: ["[", "]"], action: "markRange" },
   { keys: ["?"], action: "shortcuts" }
 ] as const;
 

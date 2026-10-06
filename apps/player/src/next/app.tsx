@@ -19,6 +19,7 @@ import { ToastHost } from "./components/toasts.js";
 import { Transport } from "./components/transport.js";
 import { PlayerProvider, useI18n, usePlayerState } from "./context.js";
 import { ProblemsStrip } from "./features/feed/index.js";
+import { GenerateDialogs } from "./features/generate/index.js";
 import type { PlayerController } from "./controller.js";
 import {
   useArchiveDropTarget,
@@ -101,6 +102,7 @@ function Layout() {
       <DropOverlay />
       <PassphraseDialog />
       <ShortcutsDialog />
+      <GenerateDialogs />
       <ToastHost />
       <LiveRegion />
     </div>

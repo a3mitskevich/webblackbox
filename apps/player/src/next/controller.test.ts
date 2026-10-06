@@ -260,6 +260,33 @@ describe("playback", () => {
     controller.seekBy("step", -1);
     expect(store.getState().playheadMono).toBe(minMono);
   });
+
+  it("keeps a timeline range inside the recording; [ and ] move its ends to the playhead", async () => {
+    const { store, controller } = await loaded();
+    const { minMono, maxMono } = store.getState().archive?.model ?? { minMono: 0, maxMono: 0 };
+
+    controller.setRange({ startMono: minMono + 4_000, endMono: minMono - 500 });
+    expect(store.getState().range).toEqual({ startMono: minMono, endMono: minMono + 4_000 });
+
+    controller.seek(minMono + 2_000);
+    controller.markRange("start");
+    expect(store.getState().range).toEqual({
+      startMono: minMono + 2_000,
+      endMono: minMono + 4_000
+    });
+
+    controller.clearRange();
+    controller.seek(minMono + 3_000);
+    controller.markRange("end");
+    expect(store.getState().range).toEqual({ startMono: minMono, endMono: minMono + 3_000 });
+
+    // A click-sized range is no range; a new archive starts without one.
+    controller.setRange({ startMono: minMono + 10, endMono: minMono + 20 });
+    expect(store.getState().range).toBeNull();
+    controller.setRange({ startMono: minMono, endMono: maxMono });
+    await controller.openFile(source());
+    expect(store.getState().range).toBeNull();
+  });
 });
 
 describe("navigation and selection", () => {

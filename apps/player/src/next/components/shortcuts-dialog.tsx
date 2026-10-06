@@ -16,6 +16,7 @@ const ACTION_KEYS: Record<ShortcutAction, NextMessageKey> = {
   tabs: "keyTabs",
   details: "keyDetails",
   railWide: "keyRailWide",
+  markRange: "keyMarkRange",
   shortcuts: "keyShortcuts"
 };
 

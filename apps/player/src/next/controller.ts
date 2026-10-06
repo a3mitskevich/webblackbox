@@ -26,6 +26,7 @@ import {
 } from "../core/playback-clock.js";
 import { storeThemePreference, type ThemePreference } from "../core/preferences.js";
 import { buildSessionView } from "../core/session-view.js";
+import { isSameRange, moveRangeEdge, normalizeRange, type TimeRange } from "../core/time-range.js";
 import type { HashState, RailTab } from "../core/url-hash.js";
 import {
   applyPlayerDocumentLocale,
@@ -193,6 +194,7 @@ export function createPlayerController(
     const patch: Partial<PlayerState> = {
       playheadMono: archive.model.minMono,
       selection: null,
+      range: null,
       detailsOpen: false
     };
 
@@ -512,6 +514,44 @@ export function createPlayerController(
       } else {
         announceNoMore("actionsWord");
       }
+    },
+
+    /** The timeline range (Shift+drag); `null` clears it. Kept inside the recording. */
+    setRange(range: TimeRange | null): void {
+      const state = store.getState();
+      const archive = state.archive;
+      const next =
+        archive && range ? normalizeRange(range.startMono, range.endMono, bounds(archive)) : null;
+
+      if (!isSameRange(state.range, next)) {
+        update({ range: next });
+      }
+    },
+
+    clearRange(): void {
+      if (store.getState().range) {
+        update({ range: null });
+      }
+    },
+
+    /** `[` / `]`: moves the range start / end to the playhead (starts a range if none). */
+    markRange(edge: "start" | "end"): void {
+      const state = store.getState();
+      const archive = state.archive;
+
+      if (!archive) {
+        return;
+      }
+
+      const next = moveRangeEdge(state.range, edge, state.playheadMono, bounds(archive));
+
+      if (!isSameRange(state.range, next)) {
+        update({ range: next });
+      }
+    },
+
+    setLanesExpanded(lanesExpanded: boolean): void {
+      update({ lanesExpanded });
     },
 
     setTab(tab: RailTab): void {

@@ -4,6 +4,7 @@ import { formatRecordedAt } from "../../core/format.js";
 import { nextThemePreference, type ThemePreference } from "../../core/preferences.js";
 import { PLAYER_LOCALES, type PlayerLocale } from "../../lib/i18n.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
+import { GenerateMenu } from "../features/generate/index.js";
 import { ShareButton } from "../features/share/share-button.js";
 import { Hint } from "./hint.js";
 import { Icon, type IconName } from "./icon.js";
@@ -226,6 +227,7 @@ export function Header({ searchRef }: HeaderProps) {
           <span className="lbl">{i18n.tn("classicPlayer")}</span>
         </a>
       </Hint>
+      {archive ? <GenerateMenu /> : null}
       <ShareButton />
       <ArchiveInput className="btn primary" label={i18n.tn("openArchive")} hideLabelWhenNarrow />
     </header>

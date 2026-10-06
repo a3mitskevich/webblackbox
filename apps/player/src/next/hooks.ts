@@ -60,6 +60,9 @@ function runCommand(
     case "toggle-rail-wide":
       controller.toggleRailWide();
       return;
+    case "mark-range":
+      controller.markRange(command.edge);
+      return;
   }
 }
 

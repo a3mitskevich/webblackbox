@@ -493,6 +493,7 @@
     "keyTabs": "切换面板",
     "keyDetails": "打开详情 / 关闭",
     "keyRailWide": "侧栏全宽（网络、控制台）",
+    "keyMarkRange": "在播放头处设置范围起点 / 终点",
     "keyShortcuts": "本快捷键表",
     "announceError": "错误 {index} / {count}：{label}，{time}",
     "announceNoMore": "此方向没有更多{what}。",

@@ -493,6 +493,7 @@
     "keyTabs": "Переключить панель",
     "keyDetails": "Открыть подробности / закрыть",
     "keyRailWide": "Рейл на всю ширину (Сеть, Консоль)",
+    "keyMarkRange": "Начало / конец диапазона в позиции курсора",
     "keyShortcuts": "Эта шпаргалка",
     "announceError": "Ошибка {index} из {count}: {label}, {time}",
     "announceNoMore": "Дальше в эту сторону нет: {what}.",
