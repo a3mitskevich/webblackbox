@@ -44,5 +44,6 @@
   "openRequest": "Open request {id} · {status}",
   "failed": "failed",
   "requestNotRecorded": "Request {id} is not in the recording (logged before it started)",
-  "rawEvent": "Raw event"
+  "rawEvent": "Raw event",
+  "anonymousFunction": "(anonymous)"
 }

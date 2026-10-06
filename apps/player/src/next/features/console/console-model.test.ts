@@ -124,6 +124,13 @@ describe("symbolication service", () => {
       symbolServer: "ftp://symbols.example.test",
       symbolServerInvalid: true
     });
+
+    service.setSymbolServer("");
+    expect(service.sources()).toMatchObject({ symbolServer: "", symbolServerInvalid: false });
+    service.setSymbolServer("not a url");
+    expect(service.sources().symbolServerInvalid).toBe(true);
+    service.setSymbolServer("https://symbols.example.test/maps");
+    expect(service.sources().symbolServerInvalid).toBe(false);
     unsubscribe();
   });
 });

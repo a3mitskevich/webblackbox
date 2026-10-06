@@ -44,5 +44,6 @@
   "openRequest": "Открыть запрос {id} · {status}",
   "failed": "сбой",
   "requestNotRecorded": "Запроса {id} нет в записи (залогирован до её начала)",
-  "rawEvent": "Сырое событие"
+  "rawEvent": "Сырое событие",
+  "anonymousFunction": "(анонимная)"
 }

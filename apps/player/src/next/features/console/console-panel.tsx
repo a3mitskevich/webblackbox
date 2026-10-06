@@ -9,6 +9,7 @@ import {
 import type { ConsoleLevel } from "@webblackbox/player-sdk";
 import { CircleAlert, Dot, Info, Terminal, TriangleAlert } from "lucide-react";
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -102,7 +103,9 @@ function ToggleChip({ pressed, onToggle, testId, children }: ToggleChipProps) {
   );
 }
 
-function ConsoleTools({ view, slice }: { view: ConsoleView; slice: ConsoleSlice }) {
+type ConsoleFilters = Pick<ConsoleSlice, "levels" | "groupSimilar" | "hideThirdParty">;
+
+function ConsoleTools({ view, slice }: { view: ConsoleView; slice: ConsoleFilters }) {
   const controller = useController();
   const i18n = useI18n();
   const t = useFeatureI18n(consoleMessages);
@@ -178,6 +181,9 @@ type ConsoleRowViewProps = {
   isSelected: boolean;
   isExpanded: boolean;
   isFuture: boolean;
+  /** 1-based position among all rows (the list is virtualized). */
+  position: number;
+  rowCount: number;
   message: string;
   onActivate: (row: ConsoleRow) => void;
   t: ConsoleTranslate;
@@ -190,15 +196,18 @@ function useTopLocation(
   archive: LoadedArchive
 ): string | null {
   const event = archive.model.eventById.get(row.entry.eventId);
-  const version = useSyncExternalStore(service.subscribe, service.version, service.version);
+  const { eventId } = row.entry;
+  // Only this row's resolution: other rows resolving do not re-render it.
+  const peek = useCallback(() => service.peek(eventId), [service, eventId]);
+  const resolution = useSyncExternalStore(service.subscribe, peek, peek);
 
   useEffect(() => {
-    if (event && row.entry.hasStack) {
+    // Also re-requests after the service evicted or reset its cache.
+    if (event && row.entry.hasStack && !resolution) {
       service.request(event);
     }
-  }, [service, event, row.entry.hasStack, version]);
+  }, [service, event, row.entry.hasStack, resolution]);
 
-  const resolution = service.peek(row.entry.eventId);
   const mapped =
     resolution?.status === "done"
       ? resolution.frames.find((frame) => frame.status === "mapped")?.original
@@ -212,7 +221,7 @@ function useTopLocation(
   return location ? describeLocation(location.url, location.line) : null;
 }
 
-function ConsoleRowView({
+const ConsoleRowView = memo(function ConsoleRowView({
   archive,
   row,
   service,
@@ -220,6 +229,8 @@ function ConsoleRowView({
   isSelected,
   isExpanded,
   isFuture,
+  position,
+  rowCount,
   message,
   onActivate,
   t
@@ -244,6 +255,8 @@ function ConsoleRowView({
         id={`console-${entry.eventId}`}
         aria-selected={isSelected}
         aria-expanded={isExpanded}
+        aria-setsize={rowCount}
+        aria-posinset={position}
         className={classes}
         onClick={() => onActivate(row)}
         data-testid="console-row"
@@ -252,7 +265,7 @@ function ConsoleRowView({
         data-future={isFuture}
       >
         <time>{formatOffset(entry.mono - archive.model.minMono, locale)}</time>
-        <span className="gl" aria-label={t(`level_${entry.level}`)}>
+        <span className="gl" role="img" aria-label={t(`level_${entry.level}`)}>
           <LevelGlyph level={entry.level} />
         </span>
         <span className="msg">{message}</span>
@@ -273,7 +286,7 @@ function ConsoleRowView({
       ) : null}
     </div>
   );
-}
+});
 
 function NowLabel() {
   const t = useFeatureI18n(consoleMessages);
@@ -324,9 +337,14 @@ function ConsoleList({ archive, rows, expandedId }: ConsoleListProps) {
     useFlushSync: false
   });
   const nowIndex = upperBoundByMono(rows, nowMono, (row) => row.entry.mono);
-  const selectedIndex = selectedEventId
-    ? rows.findIndex((row) => row.memberIds.includes(selectedEventId))
-    : -1;
+  const rowIndexByEventId = useMemo(
+    () =>
+      new Map(
+        rows.flatMap((row, index) => row.memberIds.map((id): [string, number] => [id, index]))
+      ),
+    [rows]
+  );
+  const selectedIndex = selectedEventId ? (rowIndexByEventId.get(selectedEventId) ?? -1) : -1;
   const scrollTarget = isPlaying && follow ? Math.max(0, nowIndex - 1) : selectedIndex;
 
   useEffect(() => {
@@ -374,6 +392,11 @@ function ConsoleList({ archive, rows, expandedId }: ConsoleListProps) {
   );
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    // Keys typed into the opened row's controls (buttons, symbol server field) stay theirs.
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
     if (event.key === "Enter" && selectedIndex >= 0) {
       event.preventDefault();
       const row = rows[selectedIndex];
@@ -433,6 +456,8 @@ function ConsoleList({ archive, rows, expandedId }: ConsoleListProps) {
                   isSelected={item.index === selectedIndex}
                   isExpanded={row.entry.eventId === expandedId}
                   isFuture={item.index >= nowIndex}
+                  position={item.index + 1}
+                  rowCount={rows.length}
                   message={messageOf(row)}
                   onActivate={activate}
                   t={t}
@@ -454,7 +479,16 @@ function ConsoleList({ archive, rows, expandedId }: ConsoleListProps) {
   );
 }
 
-const selectWholeSlice = (slice: ConsoleSlice): ConsoleSlice => slice;
+const selectFilters = (slice: ConsoleSlice): ConsoleFilters => ({
+  levels: slice.levels,
+  groupSimilar: slice.groupSimilar,
+  hideThirdParty: slice.hideThirdParty
+});
+const sameFilters = (left: ConsoleFilters, right: ConsoleFilters): boolean =>
+  left.levels === right.levels &&
+  left.groupSimilar === right.groupSimilar &&
+  left.hideThirdParty === right.hideThirdParty;
+const selectExpandedId = (slice: ConsoleSlice): string | null => slice.expandedId;
 
 /**
  * The Console rail tab: console output and errors with their level, the request they are about
@@ -464,7 +498,9 @@ export function ConsolePanel() {
   const t = useFeatureI18n(consoleMessages);
   const archive = usePlayerState((state) => state.archive);
   const query = usePlayerState((state) => state.query);
-  const slice = useFeatureSlice(consoleSlice, selectWholeSlice);
+  // Opening a row or switching the stack mode must not rebuild the list.
+  const slice = useFeatureSlice(consoleSlice, selectFilters, sameFilters);
+  const expandedId = useFeatureSlice(consoleSlice, selectExpandedId);
   const view = useMemo(
     () =>
       archive
@@ -486,7 +522,7 @@ export function ConsolePanel() {
     <>
       <ConsoleTools view={view} slice={slice} />
       {view.rows.length > 0 ? (
-        <ConsoleList archive={archive} rows={view.rows} expandedId={slice.expandedId} />
+        <ConsoleList archive={archive} rows={view.rows} expandedId={expandedId} />
       ) : (
         <p className="list-empty" data-testid="console-empty">
           {view.total === 0 ? t("noConsole") : t("noMatches")}

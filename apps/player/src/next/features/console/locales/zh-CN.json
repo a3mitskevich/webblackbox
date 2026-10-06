@@ -44,5 +44,6 @@
   "openRequest": "打开请求 {id} · {status}",
   "failed": "失败",
   "requestNotRecorded": "请求 {id} 不在录制中（在录制开始前记录）",
-  "rawEvent": "原始事件"
+  "rawEvent": "原始事件",
+  "anonymousFunction": "(匿名)"
 }

@@ -107,6 +107,33 @@ describe("Console panel", () => {
     expect(screen.queryByTestId("console-details")).not.toBeInTheDocument();
   });
 
+  it("moves with the arrow keys and keeps Enter of the opened row's buttons to them", async () => {
+    const { store } = await renderConsole();
+    const list = screen.getByTestId("console-list");
+    const rows = screen.getAllByTestId("console-row");
+
+    fireEvent.click(rows[0] as HTMLElement);
+    fireEvent.keyDown(list, { key: "ArrowDown" });
+    expect(store.getState().selection).toEqual({ kind: "event", id: rows[1]?.dataset.eventId });
+    expect(list).toHaveAttribute("aria-activedescendant", `console-${rows[1]?.dataset.eventId}`);
+    expect(rows[1]).toHaveAttribute("aria-posinset", "2");
+    expect(rows[1]).toHaveAttribute("aria-setsize", String(rows.length));
+    expect(within(rows[1] as HTMLElement).getByRole("img")).toHaveAccessibleName();
+
+    const errorRow = screen
+      .getAllByTestId("console-row")
+      .filter((element) => element.textContent?.includes("AuthError"))
+      .at(-1) as HTMLElement;
+    fireEvent.click(errorRow);
+    const details = await screen.findByTestId("console-details");
+    const rawButton = within(details).getByTestId("raw-event");
+
+    fireEvent.keyDown(rawButton, { key: "Enter" });
+    fireEvent.keyDown(rawButton, { key: "ArrowDown" });
+    expect(screen.getByTestId("console-details")).toBeInTheDocument();
+    expect(store.getState().selection).toEqual({ kind: "event", id: errorRow.dataset.eventId });
+  });
+
   it("opens the request a resource error is about in the Network tab", async () => {
     const { store } = await renderConsole();
 

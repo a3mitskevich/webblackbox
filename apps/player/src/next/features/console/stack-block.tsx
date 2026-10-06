@@ -156,9 +156,10 @@ function describeMapSource(frames: readonly SymbolicatedFrame[], t: Translate): 
   return key ? t(key) : (mapped.mapSource ?? t("mapSourceArchive"));
 }
 
-function frameName(frame: SymbolicatedFrame, mode: StackMode): string {
+/** The frame's function name; `anonymous` is what an unnamed one reads as (V8 text when copied). */
+function frameName(frame: SymbolicatedFrame, mode: StackMode, anonymous = "(anonymous)"): string {
   const original = mode === "original" ? frame.original?.functionName : undefined;
-  return original ?? frame.frame.functionName ?? "(anonymous)";
+  return original ?? frame.frame.functionName ?? anonymous;
 }
 
 function FrameRow({
@@ -177,10 +178,11 @@ function FrameRow({
     : minified;
   const isLibrary = LIBRARY_PATH.test(original?.source ?? frame.frame.url);
   const classes = ["sframe", isTop ? "cur" : "", isLibrary ? "lib" : ""].filter(Boolean).join(" ");
+  const t = useFeatureI18n(consoleMessages);
 
   return (
     <li className={classes} data-testid="stack-frame" data-status={frame.status}>
-      <span className="fn">{frameName(frame, mode)}</span>
+      <span className="fn">{frameName(frame, mode, t("anonymousFunction"))}</span>
       <span className="loc" title={original ? original.source : frame.frame.url}>
         {location}
       </span>

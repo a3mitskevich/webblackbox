@@ -71,7 +71,7 @@ export function createSymbolicationService(
   let results = new Map<string, StackResolution>();
   let mapFiles: readonly SourceMapFile[] = [];
   let symbolServer = storage.readServer();
-  let symbolServerInvalid = false;
+  let symbolServerInvalid = !isUsableSymbolServer(symbolServer);
   let symbolicator: SourceMapSymbolicator | null = null;
   let sources: SymbolicationSources = { mapFileCount: 0, symbolServer, symbolServerInvalid };
   let generation = 0;
@@ -106,19 +106,13 @@ export function createSymbolicationService(
     }
 
     const providers: SourceMapProvider[] = [];
-    symbolServerInvalid = false;
 
     if (mapFiles.length > 0) {
       providers.push(createSourceMapFileProvider(mapFiles));
     }
 
-    if (symbolServer) {
-      try {
-        providers.push(createSymbolServerProvider({ baseUrl: symbolServer }));
-      } catch {
-        symbolServerInvalid = true;
-        notify();
-      }
+    if (symbolServer && !symbolServerInvalid) {
+      providers.push(createSymbolServerProvider({ baseUrl: symbolServer }));
     }
 
     symbolicator = createArchiveSymbolicator(archive, providers);
@@ -182,6 +176,7 @@ export function createSymbolicationService(
       }
 
       symbolServer = next;
+      symbolServerInvalid = !isUsableSymbolServer(next);
       storage.writeServer(next);
       reset();
     },
@@ -193,6 +188,20 @@ export function createSymbolicationService(
     },
     version: () => version
   };
+}
+
+/** Whether the symbol server URL can be used (empty means "no server", which is fine). */
+function isUsableSymbolServer(url: string): boolean {
+  if (!url) {
+    return true;
+  }
+
+  try {
+    createSymbolServerProvider({ baseUrl: url });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** `.map` / `.json` files the user picked (a file list or a folder), as symbolicator inputs. */
