@@ -247,6 +247,12 @@ export function PlayerShell({ locale = "en" }: PlayerShellProps = {}): React.JSX
                 defaultValue="0"
               />
               <div id="playback-markers" className="progress-markers" aria-hidden="true"></div>
+              <div
+                id="playback-pointer-lane"
+                className="pointer-lane"
+                aria-label={messages.pointerLaneLabel}
+                hidden
+              ></div>
               <div id="playback-playhead" className="progress-playhead" aria-hidden="true"></div>
               <div id="progress-hover" className="progress-hover" hidden>
                 <img

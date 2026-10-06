@@ -143,7 +143,7 @@ export const EN_MESSAGES = {
   optionsProfileRedactQueryParams: "URL query parameters to mask",
   optionsProfileRedactStorageKeys: "Storage keys to mask",
   optionsProfileValuePatterns:
-    "Value patterns, one per line: [bodies, dom, storage, inputs, console, urls] regex (no prefix: everywhere)",
+    "Value patterns, one per line: [bodies, dom, storage, inputs, console, urls] regex (no prefix: everywhere). DOM rules also apply to labels of recorded actions.",
   optionsProfileSave: "Apply",
   optionsProfileCancel: "Cancel",
   optionsRulesHint:
@@ -398,6 +398,10 @@ export const EN_MESSAGES = {
   optionsProfileAbout: "About",
   optionsProfileGroupMasking: "Masking",
   optionsProfileGroupBodies: "Network bodies & pointer",
+  optionsProfileGroupLocalData: "Local data",
+  optionsProfileDeleteAfterExport: "Delete the local recording after a successful export",
+  optionsProfileUnexportedRetention: "Keep unexported recordings for, minutes (1–1440)",
+  localDataRestartNotice: "Unexported recordings are cleared when the browser restarts.",
   optionsProfileUnmaskHint: "Stay readable even when blocked; password fields never are.",
   optionsProfileBodyMimeHint: "Empty uses the transport default list.",
   optionsInheritHint: "Empty = transport default.",

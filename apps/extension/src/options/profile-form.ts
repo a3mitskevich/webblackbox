@@ -1,4 +1,5 @@
 import type { ExtensionMessageKey } from "../shared/i18n.js";
+import { resolveLocalDataSettings } from "../shared/profiles/local-data.js";
 import {
   CAPTURE_CATEGORY_KEYS,
   CAPTURE_CATEGORY_LEVELS,
@@ -9,6 +10,8 @@ import {
   MAX_LIST_ENTRIES,
   MAX_MOUSEMOVE_HZ,
   MAX_PATTERN_LENGTH,
+  MAX_UNEXPORTED_RETENTION_MINUTES,
+  MIN_UNEXPORTED_RETENTION_MINUTES,
   type RecordingProfile
 } from "../shared/profiles/model.js";
 import { button, el } from "./dom.js";
@@ -158,6 +161,7 @@ export function chipListOptions(t: Translate) {
 /** Form for one editable profile; values are read back by name in profiles-editor. */
 export function createProfileForm(profile: RecordingProfile, t: Translate): HTMLElement {
   const list = listOptions(t);
+  const localData = resolveLocalDataSettings(profile);
   const chips = (
     name: string,
     label: ExtensionMessageKey,
@@ -350,6 +354,24 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
           "optionsUrlGlobPlaceholder",
           patternValidator(t)
         )
+      ]),
+      fieldGroup(t("optionsProfileGroupLocalData"), [
+        toggleField({
+          id: "pf-deleteAfterExport",
+          name: "deleteAfterExport",
+          label: t("optionsProfileDeleteAfterExport"),
+          hint: t("localDataRestartNotice"),
+          checked: localData.deleteAfterExport
+        }),
+        numberField({
+          id: "pf-unexportedRetentionMinutes",
+          name: "unexportedRetentionMinutes",
+          label: t("optionsProfileUnexportedRetention"),
+          value: String(localData.unexportedRetentionMinutes),
+          min: MIN_UNEXPORTED_RETENTION_MINUTES,
+          max: MAX_UNEXPORTED_RETENTION_MINUTES,
+          unit: "min"
+        })
       ])
     ]
   );

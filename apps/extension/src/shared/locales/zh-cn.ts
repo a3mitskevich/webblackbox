@@ -137,7 +137,7 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   optionsProfileRedactQueryParams: "要遮盖的 URL 查询参数",
   optionsProfileRedactStorageKeys: "要遮盖的存储键",
   optionsProfileValuePatterns:
-    "值模式，每行一个：[bodies, dom, storage, inputs, console, urls] 正则（无前缀：全部）",
+    "值模式，每行一个：[bodies, dom, storage, inputs, console, urls] 正则（无前缀：全部）。DOM 规则也适用于所记录操作的标签。",
   optionsProfileSave: "应用",
   optionsProfileCancel: "取消",
   optionsRulesHint:
@@ -381,6 +381,10 @@ export const ZH_CN_MESSAGES: Record<ExtensionMessageKey, string> = {
   optionsProfileAbout: "详情",
   optionsProfileGroupMasking: "遮盖",
   optionsProfileGroupBodies: "网络正文与指针",
+  optionsProfileGroupLocalData: "本地数据",
+  optionsProfileDeleteAfterExport: "导出成功后删除本地录制",
+  optionsProfileUnexportedRetention: "未导出录制的保留时间（分钟，1–1440）",
+  localDataRestartNotice: "浏览器重启后，未导出的录制会被清除。",
   optionsProfileUnmaskHint: "即使被屏蔽也保持可读；密码字段除外。",
   optionsProfileBodyMimeHint: "留空则使用默认列表。",
   optionsInheritHint: "留空 = 使用默认值。",
