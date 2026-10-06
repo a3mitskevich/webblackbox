@@ -377,7 +377,8 @@ type SessionPipelineClient = {
     capturePolicy?: CapturePolicy
   ) => Promise<void>;
   ingest: (event: WebBlackboxEvent) => Promise<void>;
-  ingestBatch: (events: WebBlackboxEvent[]) => Promise<void>;
+  /** Resolves to the stored NDJSON bytes of the batch. */
+  ingestBatch: (events: WebBlackboxEvent[]) => Promise<number>;
   flush: () => Promise<void>;
   putBlob: (mime: string, bytes: Uint8Array) => Promise<string>;
   exportAndDownload: (options?: {
@@ -2364,7 +2365,6 @@ function shouldCaptureActionScreenshot(
 
 function trackSessionCounters(runtime: SessionRuntime, event: WebBlackboxEvent): void {
   runtime.capturedEventCount += 1;
-  runtime.capturedSizeBytes += estimateSessionEventBytes(event);
 
   if (event.type === "error.exception" || event.type === "error.unhandledrejection") {
     runtime.capturedErrorCount += 1;
@@ -2557,7 +2557,8 @@ async function drainPipelineBufferBatches(
       break;
     }
 
-    await runtime.pipeline.ingestBatch(batch);
+    // The pipeline serializes each event once; its byte count is the session size.
+    runtime.capturedSizeBytes += await runtime.pipeline.ingestBatch(batch);
     runtime.pipelineEventBuffer.splice(0, batch.length);
     flushed += batch.length;
 
@@ -2596,11 +2597,13 @@ function createOffscreenPipelineClient(sid: string): SessionPipelineClient {
       });
     },
     ingestBatch: async (events) => {
-      await requestOffscreenPipeline<void>({
+      const bytes = await requestOffscreenPipeline<unknown>({
         op: "ingestBatch",
         sid,
         events
       });
+
+      return typeof bytes === "number" && Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
     },
     flush: async () => {
       await requestOffscreenPipeline<void>({
@@ -2803,14 +2806,6 @@ function handleOffscreenRuntimeMessage(rawMessage: unknown, port: PortLike): boo
   }
 
   return true;
-}
-
-function estimateSessionEventBytes(event: WebBlackboxEvent): number {
-  try {
-    return new TextEncoder().encode(JSON.stringify(event)).byteLength;
-  } catch {
-    return 0;
-  }
 }
 
 function rejectPendingOffscreenRequests(message: string): void {
