@@ -40,7 +40,7 @@ import {
   waitFor
 } from "./lib/e2e-utils.mjs";
 import { waitForIndicatorGone, waitForIndicatorText } from "./lib/extension-ui.mjs";
-import { runPlayerSmoke } from "./lib/player-smoke.mjs";
+import { PLAYER_READY_SELECTOR, runPlayerSmoke } from "./lib/player-smoke.mjs";
 import { REALISTIC_DEFAULT_DURATION_MS, startRealisticSite } from "./lib/realistic-site.mjs";
 import {
   attachFidelitySocketServer,
@@ -3255,12 +3255,9 @@ async function waitForPopupRuntimeReady(popupClient, timeoutMs) {
 async function waitForPlayerReady(playerClient, timeoutMs) {
   return waitFor(
     async () => {
-      const ready = await playerClient.evaluate(`
-      (() => {
-        const input = document.querySelector('#archive-input');
-        return !!input;
-      })()
-    `);
+      const ready = await playerClient.evaluate(
+        `Boolean(document.querySelector(${JSON.stringify(PLAYER_READY_SELECTOR)}))`
+      );
 
       return ready ? true : null;
     },
