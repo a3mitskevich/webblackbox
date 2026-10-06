@@ -76,6 +76,9 @@ const cdpClientOptions = { commandTimeoutMs: cdpCommandTimeoutMs };
 const FAILURE_CONSOLE_TAIL_LINES = 60;
 const captureMode = process.env.WB_E2E_MODE === "lite" ? "lite" : "full";
 const reloadAfterStart = (process.env.WB_E2E_RELOAD_AFTER_START ?? "0") === "1";
+// "on-start": the content script is injected on Start only, so the run controls the extension
+// from the popup page (there is no content-script runtime in the page before Start).
+const injectionMode = process.env.WB_E2E_INJECTION_MODE === "on-start" ? "on-start" : "always";
 const fullVisualCapture = normalizeFullVisualCaptureMode(
   process.env.WB_E2E_FULL_VISUAL_CAPTURE ??
     ((process.env.WB_E2E_RECORD_SCREEN ?? "0") === "1" ? "recording" : "screenshots")
@@ -276,7 +279,8 @@ async function main() {
   await demoClient.send("DOM.enable");
   state.demoClient = demoClient;
 
-  const usePopupControl = recordScreenInFullMode || usePopupUiActions;
+  const usePopupControl =
+    recordScreenInFullMode || usePopupUiActions || injectionMode === "on-start";
   let usePopupUiActionsEffective = recordScreenInFullMode ? false : usePopupUiActions;
   let control = null;
 
@@ -386,6 +390,12 @@ async function main() {
     });
   });
 
+  const injectionSetup =
+    injectionMode === "on-start"
+      ? await switchToOnDemandInjection(control, demoClient, demoContexts, extensionId)
+      : { ok: true, mode: injectionMode };
+  assert(injectionSetup.ok === true, "On-demand injection setup failed", injectionSetup);
+
   const recorderConfigured = configureRecorderOptions
     ? await configureE2eRecorderOptions(control, captureMode)
     : { ok: true, skipped: "default-recorder-options" };
@@ -429,6 +439,14 @@ async function main() {
         captureMode
       }
     );
+  }
+
+  if (injectionMode === "on-start") {
+    const recordedFrames = await listContentScriptContexts(demoClient, demoContexts, extensionId);
+    assert(recordedFrames.length > 0, "Content script missing in the recorded tab", {
+      recordedFrames,
+      reloadAfterStart
+    });
   }
 
   // The realistic page's held requests started before the capture (or, after a reload, inside it).
@@ -757,6 +775,7 @@ async function main() {
     control.kind === "popup" ? (control.useUiActions ? "ui" : "runtime") : control.kind
   );
   console.log("Reload after start:", reloadAfterStart);
+  console.log("Injection:", JSON.stringify(injectionSetup));
   console.log("Session:", sid);
   console.log("Export:", exportStatus.text);
   console.log("Archive:", exportedPath);
@@ -1736,6 +1755,78 @@ async function evaluateControl(control, expression) {
 
     return control.client.evaluate(expression, { contextId: control.contextId });
   }
+}
+
+/**
+ * Switches the extension to injection on Start, waits until the all-sites registration is gone,
+ * reloads the demo page and checks that no content script runs in it before Start.
+ */
+async function switchToOnDemandInjection(control, demoClient, demoContexts, extensionId) {
+  const remaining = await evaluateControl(
+    control,
+    `
+      (async () => {
+        await chrome.storage.local.set({ 'webblackbox.injection': 'on-start' });
+        const deadline = Date.now() + 10000;
+
+        while (Date.now() < deadline) {
+          const scripts = await chrome.scripting.getRegisteredContentScripts();
+
+          if (!scripts.some((script) => script.id === 'webblackbox-content')) {
+            return [];
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        return (await chrome.scripting.getRegisteredContentScripts()).map((script) => script.id);
+      })()
+    `
+  );
+
+  if (!Array.isArray(remaining) || remaining.length > 0) {
+    return { ok: false, reason: "registration-kept", remaining };
+  }
+
+  await demoClient.send("Page.reload", { ignoreCache: true });
+  await waitFor(
+    () => demoClient.evaluate("document.readyState === 'complete' || null"),
+    15_000,
+    200,
+    "Demo page did not finish reloading"
+  );
+  await sleep(1_000);
+
+  const frames = await listContentScriptContexts(demoClient, demoContexts, extensionId);
+
+  return frames.length === 0
+    ? { ok: true, mode: "on-start", framesBeforeStart: 0 }
+    : { ok: false, reason: "content-script-before-start", frames };
+}
+
+/** Isolated-world contexts of this extension in which content.js has started. */
+async function listContentScriptContexts(pageClient, tracker, extensionId) {
+  const found = [];
+
+  for (const context of tracker.list()) {
+    if (context?.auxData?.type !== "isolated") {
+      continue;
+    }
+
+    const running = await pageClient
+      .evaluate(
+        `(() => chrome?.runtime?.id === ${JSON.stringify(extensionId)} &&
+          typeof globalThis.__webblackboxContentScript__?.isAlive === 'function')()`,
+        { contextId: context.id }
+      )
+      .catch(() => false);
+
+    if (running === true) {
+      found.push({ contextId: context.id, frameId: context.auxData?.frameId ?? null });
+    }
+  }
+
+  return found;
 }
 
 /**
