@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createPlainArchive } from "../../../scripts/lib/synthetic-session.mjs";
@@ -125,8 +125,9 @@ describe("Timeline", () => {
   });
 
   it("gives each expanded lane one tab stop, moved by the arrow keys", async () => {
-    const { controller } = await openedApp();
+    const { store, controller } = await openedApp();
     act(() => screen.getByTestId("expand-lanes").click());
+    const playhead = store.getState().playheadMono;
 
     const marks = screen.getAllByTestId("pointer-mark");
     expect(marks.length).toBeGreaterThan(1);
@@ -135,9 +136,11 @@ describe("Timeline", () => {
 
     act(() => (marks[0] as HTMLElement).focus());
     act(() => {
-      fireEvent.keyDown(marks[0] as HTMLElement, { key: "ArrowRight" });
+      fireEvent.keyDown(marks[0] as HTMLElement, { key: "ArrowRight", code: "ArrowRight" });
     });
     expect(document.activeElement).toBe(marks[1]);
+    // On a lane the arrows move between marks; they do not seek.
+    expect(store.getState().playheadMono).toBe(playhead);
     expect((marks[1] as HTMLElement).tabIndex).toBe(0);
     expect((marks[0] as HTMLElement).tabIndex).toBe(-1);
     act(() => {
@@ -151,5 +154,23 @@ describe("Timeline", () => {
     expect(screen.getAllByTestId("pointer-mark")[0]).toHaveAccessibleName(
       new RegExp(createPlayerI18n("ru").formatPointerKind(kind))
     );
+  });
+
+  it("keeps ← / → as seek keys on other toolbars (the Console filter chips)", async () => {
+    const { store, controller } = await openedApp();
+    act(() => controller.setTab("console"));
+    const toolbar = await screen.findByRole(
+      "toolbar",
+      { name: "Console filters" },
+      { timeout: 5_000 }
+    );
+    const chip = within(toolbar).getAllByRole("button")[0] as HTMLElement;
+    const before = store.getState().playheadMono;
+
+    act(() => chip.focus());
+    act(() => {
+      fireEvent.keyDown(chip, { key: "ArrowRight", code: "ArrowRight" });
+    });
+    expect(store.getState().playheadMono).toBeGreaterThan(before);
   });
 });

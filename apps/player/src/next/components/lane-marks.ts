@@ -1,17 +1,19 @@
-import { useCallback, useEffect, useState, type KeyboardEvent, type RefObject } from "react";
+import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
 
 /** A lane mark is a 24 px target (WCAG 2.5.8): a lane keeps at most one mark per 24 px of track. */
 export const LANE_MARK_TARGET_PX = 24;
 
 const ROVING_KEYS = new Set(["ArrowLeft", "ArrowRight", "Home", "End"]);
 
-/** How many marks fit side by side on the track; unlimited until it is measured. */
-export function useLaneCapacity(ref: RefObject<HTMLElement | null>): number {
+/**
+ * How many marks fit side by side on the track; unlimited until it is measured. Returns a callback
+ * ref, so a track that mounts later (another archive, a lane that was empty) is measured too.
+ */
+export function useLaneCapacity(): [number, (element: HTMLElement | null) => void] {
+  const [element, setElement] = useState<HTMLElement | null>(null);
   const [capacity, setCapacity] = useState(Number.POSITIVE_INFINITY);
 
   useEffect(() => {
-    const element = ref.current;
-
     if (!element || typeof ResizeObserver !== "function") {
       return undefined;
     }
@@ -26,9 +28,9 @@ export function useLaneCapacity(ref: RefObject<HTMLElement | null>): number {
     measure();
     observer.observe(element);
     return () => observer.disconnect();
-  }, [ref]);
+  }, [element]);
 
-  return capacity;
+  return [capacity, setElement];
 }
 
 export type RovingLane = {

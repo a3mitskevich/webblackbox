@@ -378,8 +378,7 @@ const PointerRow = memo(function PointerRow({ archive, lanes }: ExpandedLaneProp
   const i18n = useI18n();
   const locale = usePlayerState((state) => state.locale);
   const { model } = archive;
-  const trackRef = useRef<HTMLDivElement>(null);
-  const capacity = useLaneCapacity(trackRef);
+  const [capacity, trackRef] = useLaneCapacity();
   // One mark per 24 px of track, the most telling one (rage / dead clicks first).
   const marks = useMemo(
     () => thinBySlot(lanes.pointer, capacity, (mark) => POINTER_LANE_PRIORITY[mark.kind]),
@@ -434,8 +433,7 @@ const FilmstripRow = memo(function FilmstripRow({ archive, lanes }: ExpandedLane
   const i18n = useI18n();
   const locale = usePlayerState((state) => state.locale);
   const { model } = archive;
-  const trackRef = useRef<HTMLDivElement>(null);
-  const capacity = useLaneCapacity(trackRef);
+  const [capacity, trackRef] = useLaneCapacity();
   const frames = useMemo(() => thinBySlot(lanes.filmstrip, capacity), [lanes.filmstrip, capacity]);
   const roving = useRovingLane(frames.length);
   const laneLabel = i18n.tn("filmstripLane");
