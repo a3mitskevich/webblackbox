@@ -1,5 +1,7 @@
+import { isBrowserInternalUrl } from "@webblackbox/recorder";
 import {
   BODY_REDACTION_TOKEN,
+  type BodySkipReason,
   isTextualMimeType,
   maskBodyBytes,
   type CaptureMode,
@@ -118,16 +120,27 @@ export type InlineRequestBodyGateContext = {
  * Gate for request body text the recorder would inline under `body-allowlist`: it must also pass
  * the body-capture rule (site policies, MIME allowlist, max bytes) that governs response bodies.
  * Other inline bodies (WebSocket, SSE) carry no request URL and stay on the category gate.
+ * Returns `true` to keep the body, otherwise why it is left out.
  */
 export function isInlineRequestBodyAllowed(
   context: InlineRequestBodyGateContext,
   resolveRule: (url: string, mimeType: string | undefined) => BodyCaptureRule
-): boolean {
+): true | BodySkipReason {
   if (context.eventType !== "network.request" || !context.url) {
     return true;
   }
 
-  return resolveRule(context.url, normalizeMimeType(context.mimeType)).enabled;
+  const mimeType = normalizeMimeType(context.mimeType);
+  const rule = resolveRule(context.url, mimeType);
+  return rule.enabled ? true : ruleSkipReason(rule, mimeType);
+}
+
+/** Why a disabled body rule left a body out: its MIME allowlist, or a URL or site rule. */
+export function ruleSkipReason(
+  rule: BodyCaptureRule,
+  mimeType: string | undefined
+): BodySkipReason {
+  return mimeType && !isMimeAllowed(rule.mimeAllowlist, mimeType) ? "mime-not-allowed" : "filtered";
 }
 
 /** Profile URL filters for body capture (`network.includeUrls` / `network.excludeUrls`). */
@@ -136,28 +149,8 @@ export type BodyUrlFilters = {
   excludeUrls: readonly string[];
 };
 
-/**
- * Schemes of extension and browser-internal resources. Their bodies are never app data: the
- * page loads this extension's own injected script (about 0.9 MiB) as `chrome-extension:`, and
- * recording it bloats archives and trips the privacy scanner on every export.
- */
-const BROWSER_INTERNAL_URL_SCHEMES = new Set([
-  "chrome-extension",
-  "moz-extension",
-  "safari-web-extension",
-  "chrome",
-  "chrome-untrusted",
-  "chrome-search",
-  "devtools",
-  "edge",
-  "about",
-  "view-source"
-]);
-
-export function isBrowserInternalUrl(url: string): boolean {
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url.trim())?.[1]?.toLowerCase();
-  return scheme !== undefined && BROWSER_INTERNAL_URL_SCHEMES.has(scheme);
-}
+// One list of extension and browser-internal schemes for network capture and body capture.
+export { isBrowserInternalUrl };
 
 /**
  * Narrows a body capture rule with profile URL globs (`*` = any characters, matched against the

@@ -2,9 +2,9 @@
   "entries": [
     {
       "path": "packages/recorder/dist/index.js",
-      "maxBytes": 86400,
-      "maxGzipBytes": 20400,
-      "note": "Combined integration of the 8 open PRs on main, measured 83,829 / 19,785 B (+3%): #9's full console detail, cache tracker and byte-capped stream bodies, #10's per-profile redaction rules, #11's script source map events, #13's pointer events and #16's parallel-tabs events."
+      "maxBytes": 90600,
+      "maxGzipBytes": 21400,
+      "note": "Combined integration of the 8 open PRs and #21 on main, measured 87,957 / 20,761 B (+3%): #9's full console detail, cache tracker and byte-capped stream bodies, #10's per-profile redaction rules, #11's script source map events, #13's pointer events, #16's parallel-tabs events and #21's body skip records and extension URL filter."
     },
     {
       "path": "packages/pipeline/dist/index.js",
@@ -14,9 +14,9 @@
     },
     {
       "path": "packages/player-sdk/dist/index.js",
-      "maxBytes": 172000,
-      "maxGzipBytes": 42700,
-      "note": "Combined integration of the 8 open PRs on main, measured 142,877 / 35,369 B (+3%): #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, and #16's tabs context. Player rewrite R2 (#20): third-party marking, problem grouping and Activity feed items (third-party.ts, problems.ts, activity-feed.ts), measured 166,946 / 41,433 B (+3%)."
+      "maxBytes": 188300,
+      "maxGzipBytes": 46500,
+      "note": "Combined integration of the 8 open PRs and #21 on main, measured 155,484 / 38,623 B (+3%): #7's archive loading and event ordering, #9's realtime payloads, archive format 2 (#10), #11's symbolication, #13's pointer insights and replay generator, #16's tabs context and #21's capture completeness report. Player rewrite R2 (#20) on top: third-party marking, problem grouping and Activity feed items (third-party.ts, problems.ts, activity-feed.ts), measured 182,837 / 45,098 B with #21 (+3%)."
     },
     {
       "path": "apps/player/build/main.js",
@@ -33,9 +33,9 @@
     },
     {
       "path": "apps/extension/build/sw.js",
-      "maxBytes": 994500,
-      "maxGzipBytes": 183300,
-      "note": "Combined integration of the 8 open PRs on main, measured 965,472 / 177,898 B (+3%): #8's recovery and #9's CDP Network allowlist (in main), recording profiles (#10), at-rest encryption (#15), script source maps (#11), pointer options (#13), parallel-tabs tracking (#16) and on-demand injection (#17)."
+      "maxBytes": 1017000,
+      "maxGzipBytes": 189100,
+      "note": "Combined integration of the 8 open PRs and #21 on main, measured 987,389 / 183,559 B (+3%): #8's recovery and #9's CDP Network allowlist (in main), recording profiles (#10), at-rest encryption (#15), script source maps (#11), pointer options (#13), parallel-tabs tracking (#16), on-demand injection (#17) and Full-mode body capture (#21)."
     },
     {
       "path": "apps/extension/build/content.js",

@@ -30,7 +30,37 @@ const PREVIEW = {
     base: "full",
     source: "rule",
     ruleName: "Stage",
-    extended: true
+    extended: true,
+    requiresFull: true
+  }
+};
+
+/** A profile that works in both engines (base Full): the engine switch stays free. */
+const BOTH_ENGINES_PREVIEW = {
+  ...PREVIEW,
+  catalog: [
+    ...PREVIEW.catalog,
+    { id: "builtin:full", name: "Full", base: "full", extended: false, readOnly: true }
+  ],
+  selection: {
+    id: "builtin:full",
+    name: "Full",
+    base: "full",
+    source: "explicit",
+    extended: false,
+    requiresFull: false
+  }
+};
+
+const DEFAULT_PREVIEW = {
+  ...PREVIEW,
+  selection: {
+    id: "default",
+    name: "Default",
+    base: "lite",
+    source: "default",
+    extended: false,
+    requiresFull: false
   }
 };
 
@@ -443,7 +473,7 @@ describe("popup recording profiles", () => {
       "QA · extended"
     ]);
     expect(query("[data-profile-hint]").textContent).toBe(
-      "Records with QA (rule: Stage). Recommended start: Full."
+      "Records with QA (rule: Stage). Full only: Lite cannot capture what this profile records."
     );
   });
 
@@ -452,25 +482,78 @@ describe("popup recording profiles", () => {
     installChromeStub(port);
 
     await importPopupModule();
-    port.emit(PREVIEW);
+    port.emit(BOTH_ENGINES_PREVIEW);
     await flushPopup();
 
     expect(radio("capture-mode", "full").checked).toBe(true);
 
     chooseRadio("capture-mode", "lite");
     await flushPopup();
-    port.emit(PREVIEW);
+    port.emit(BOTH_ENGINES_PREVIEW);
     await flushPopup();
 
     expect(radio("capture-mode", "lite").checked).toBe(true);
 
     const select = getProfileSelect();
-    select.value = "builtin:qa";
+    select.value = "builtin:full";
     select.dispatchEvent(new Event("change", { bubbles: true }));
+    port.emit(BOTH_ENGINES_PREVIEW);
+    await flushPopup();
+
+    expect(radio("capture-mode", "full").checked).toBe(true);
+  });
+
+  it("locks the engine to Full for a profile that needs it and says why", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
     port.emit(PREVIEW);
     await flushPopup();
 
     expect(radio("capture-mode", "full").checked).toBe(true);
+    expect(radio("capture-mode", "full").disabled).toBe(true);
+    expect(radio("capture-mode", "lite").disabled).toBe(true);
+    expect(query("[data-profile-hint]").textContent).toContain("Full only:");
+  });
+
+  it("keeps the engine switch for a profile that works in both engines", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    port.emit(DEFAULT_PREVIEW);
+    await flushPopup();
+
+    expect(radio("capture-mode", "lite").checked).toBe(true);
+    expect(radio("capture-mode", "lite").disabled).toBe(false);
+    expect(radio("capture-mode", "full").disabled).toBe(false);
+    expect(query("[data-profile-hint]").textContent).toContain("Recommended start: Lite.");
+  });
+
+  it("starts in Full for a profile that needs it, ignoring Lite picked before", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importPopupModule();
+    port.emit(DEFAULT_PREVIEW);
+    await flushPopup();
+    chooseRadio("capture-mode", "lite");
+    await flushPopup();
+    // The site rules now pick QA for the tab (e.g. after a navigation); the Lite pick is stale.
+    port.emit(PREVIEW);
+    await flushPopup();
+
+    getButton("start").click();
+    await flushPopup();
+
+    expect(has("[role='dialog']")).toBe(false);
+    expect(port.postMessage).toHaveBeenCalledWith({
+      kind: "ui.start",
+      tabId: 17,
+      mode: "full",
+      visualCapture: "screenshots"
+    });
   });
 
   it("shows the visual capture a profile pins instead of the choice", async () => {
@@ -531,7 +614,7 @@ describe("popup recording profiles", () => {
     await flushPopup();
 
     expect(query("[data-profile-hint]").textContent).toBe(
-      "Records with QA (rule: Stage). Your organization's policy limits: console, network. Recommended start: Full."
+      "Records with QA (rule: Stage). Your organization's policy limits: console, network. Full only: Lite cannot capture what this profile records."
     );
   });
 

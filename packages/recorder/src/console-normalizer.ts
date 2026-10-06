@@ -1,3 +1,5 @@
+import { CONSOLE_FULL_ENTRY_MAX_CHARS, CONSOLE_FULL_STACK_MAX_FRAMES } from "@webblackbox/protocol";
+
 import {
   asArray,
   asFiniteNumber,
@@ -16,9 +18,9 @@ import {
 export type ConsoleDetail = "compact" | "full";
 
 /** Ceiling for one console entry under `full` detail: its text, and all its arguments together. */
-export const MAX_CONSOLE_ENTRY_CHARS = 64 * 1024;
+export const MAX_CONSOLE_ENTRY_CHARS = CONSOLE_FULL_ENTRY_MAX_CHARS;
 /** Max call frames kept in a `full` stack (Chrome captures up to 200 for console messages). */
-export const MAX_FULL_STACK_FRAMES = 200;
+export const MAX_FULL_STACK_FRAMES = CONSOLE_FULL_STACK_MAX_FRAMES;
 
 type ConsoleLevel = "log" | "info" | "warn" | "error" | "debug";
 
@@ -91,7 +93,9 @@ export function normalizeCdpConsolePayload(
   const row = asRecord(payload);
   const method = asString(row?.type) ?? "log";
   const shape = resolveShape(detail);
-  const args = asArray(row?.args).map((entry) => normalizeCdpRemoteObject(entry, shape, limiter));
+  const args = asArray(row?.args).map((entry) =>
+    normalizeCdpRemoteObject(entry, shape, limiter, detail === "full")
+  );
   const text = readEntryText(asString(row?.text), args, detail, limiter);
   const stackTrace = asRecord(row?.stackTrace);
 
@@ -119,6 +123,8 @@ export function normalizeContentConsolePayload(
   const limiter = createTextLimiter(detail);
   const args = asArray(row?.args).map((entry) => sanitizeSerializable(entry, 0, shape, limiter));
   const text = readEntryText(asString(row?.text), args, detail, limiter);
+  // Under `full` the page hook already cut the entry to the same ceiling and flags it when it did.
+  const truncatedByHook = detail === "full" && row?.truncated === true;
 
   return stripUndefined({
     source: asString(row?.source) ?? "content.injected",
@@ -127,8 +133,22 @@ export function normalizeContentConsolePayload(
     text,
     args,
     stackTop: asString(row?.stackTop) ?? undefined,
-    truncated: limiter.isTruncated() || undefined
+    stack: detail === "full" ? readContentStack(asString(row?.stack)) : undefined,
+    truncated: truncatedByHook || limiter.isTruncated() || undefined
   });
+}
+
+/** A page-hook stack (V8 `Error.stack` frame lines), held to the frame and entry ceilings. */
+function readContentStack(stack: string | undefined): string | undefined {
+  if (!stack) {
+    return undefined;
+  }
+
+  return stack
+    .split("\n")
+    .slice(0, MAX_FULL_STACK_FRAMES)
+    .join("\n")
+    .slice(0, MAX_CONSOLE_ENTRY_CHARS);
 }
 
 function resolveShape(detail: ConsoleDetail): SerializeShape {
@@ -218,7 +238,8 @@ function normalizeConsoleLevel(rawLevel: string): ConsoleLevel {
 function normalizeCdpRemoteObject(
   value: unknown,
   shape: SerializeShape,
-  limiter: TextLimiter
+  limiter: TextLimiter,
+  withPreview = false
 ): unknown {
   const row = asRecord(value);
 
@@ -234,6 +255,18 @@ function normalizeCdpRemoteObject(
     return sanitizeSerializable(row.value, 0, shape, limiter);
   }
 
+  // Under `console: allow`, an object or array argument keeps what CDP's preview shows of it
+  // (the page logged `{ ... }`, not the word "Object"). Errors, nodes, dates and the like keep
+  // their description: an error's is its whole stack, which the preview cuts.
+  const preview =
+    withPreview && isPlainPreviewSubtype(row.subtype)
+      ? readCdpObjectPreview(asRecord(row.preview), 0, shape, limiter)
+      : null;
+
+  if (preview !== null) {
+    return preview;
+  }
+
   const description = asString(row.description);
 
   if (description) {
@@ -245,6 +278,72 @@ function normalizeCdpRemoteObject(
     subtype: asString(row.subtype),
     className: asString(row.className)
   });
+}
+
+/**
+ * An object or array built from a CDP `ObjectPreview` (`properties` with string `value`s, nested
+ * previews in `valuePreview`); `"…": true` marks a preview CDP cut (`overflow`). Null when the
+ * preview carries no properties.
+ */
+function readCdpObjectPreview(
+  preview: Record<string, unknown> | null,
+  depth: number,
+  shape: SerializeShape,
+  limiter: TextLimiter
+): unknown {
+  const properties = asArray(preview?.properties);
+
+  if (
+    !preview ||
+    !isPlainPreviewSubtype(preview.subtype) ||
+    properties.length === 0 ||
+    depth > shape.maxDepth
+  ) {
+    return null;
+  }
+
+  const isArray = preview.subtype === "array";
+  const entries = properties
+    .slice(0, isArray ? shape.maxArrayItems : shape.maxObjectKeys)
+    .flatMap((entry) => {
+      const property = asRecord(entry);
+      const name = asString(property?.name);
+
+      if (!property || name === undefined) {
+        return [];
+      }
+
+      const nested = readCdpObjectPreview(
+        asRecord(property.valuePreview),
+        depth + 1,
+        shape,
+        limiter
+      );
+      const text = asString(property.value);
+      const value =
+        nested ??
+        (property.type === "number" && text !== undefined && Number.isFinite(Number(text))
+          ? Number(text)
+          : property.type === "boolean" && (text === "true" || text === "false")
+            ? text === "true"
+            : text === undefined
+              ? null
+              : limiter.cutString(text));
+      return [[name, value] as const];
+    });
+
+  if (isArray) {
+    const items: unknown[] = entries.map(([, value]) => value);
+    return preview.overflow === true ? [...items, "…"] : items;
+  }
+
+  const output: Record<string, unknown> = Object.fromEntries(entries);
+  return preview.overflow === true ? { ...output, "…": true } : output;
+}
+
+/** A plain object (no subtype) or an array: the kinds a CDP preview shows in full. */
+function isPlainPreviewSubtype(subtype: unknown): boolean {
+  return subtype === undefined || subtype === "array";
 }
 
 function sanitizeSerializable(

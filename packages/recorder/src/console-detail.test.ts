@@ -217,6 +217,42 @@ describe("console text and stack under console: allow", () => {
     expect((data.args as unknown[])[0]).toBe(text);
     expect((data.args as Array<Record<string, unknown>>)[1]?.detail).toBe(text);
   });
+
+  it("keeps the page-hook call stack and its truncation flag", () => {
+    const stack = Array.from(
+      { length: 30 },
+      (_, index) => `    at fn${index} (${SCRIPT_URL}:1:${index + 1})`
+    ).join("\n");
+    const { data } = ingest("allow", "content", "console", {
+      source: "injected",
+      method: "error",
+      level: "error",
+      args: ["boom"],
+      text: "boom",
+      stackTop: `at fn0 (${SCRIPT_URL}:1:1)`,
+      stack,
+      truncated: true
+    });
+
+    expect(data.stack).toBe(stack);
+    expect(data.stackTop).toBe(`at fn0 (${SCRIPT_URL}:1:1)`);
+    expect(data.truncated).toBe(true);
+  });
+
+  it("holds a page-hook stack to the frame ceiling", () => {
+    const stack = Array.from({ length: 260 }, (_, index) => `    at fn${index} (app.js:1:1)`).join(
+      "\n"
+    );
+    const { data } = ingest("allow", "content", "console", {
+      source: "injected",
+      method: "error",
+      level: "error",
+      text: "boom",
+      stack
+    });
+
+    expect(readStackLines(data.stack)).toHaveLength(200);
+  });
 });
 
 describe("console text under other policies stays compact", () => {
@@ -245,6 +281,20 @@ describe("console text under other policies stays compact", () => {
     );
 
     expect(type).toBe("privacy.violation");
+  });
+
+  it("drops a page-hook stack and truncation flag under sanitized", () => {
+    const { data } = ingest("sanitized", "content", "console", {
+      source: "injected",
+      method: "error",
+      level: "error",
+      text: "boom",
+      stack: `    at fn0 (${SCRIPT_URL}:1:1)`,
+      truncated: true
+    });
+
+    expect(data.stack).toBeUndefined();
+    expect(data.truncated).toBeUndefined();
   });
 });
 
@@ -309,5 +359,99 @@ describe("CDP exceptions under console: allow", () => {
 
     expect((data.message as string).length).toBe(2_000);
     expect(readStackLines(data.stack).length).toBeLessThanOrEqual(11);
+  });
+});
+
+describe("CDP console object arguments", () => {
+  function consoleObjectEvent(console: ConsolePolicy) {
+    const recorder = new WebBlackboxRecorder(createConfig(console));
+
+    return recorder.ingest({
+      source: "cdp",
+      rawType: "Runtime.consoleAPICalled",
+      sid: "S-console-objects",
+      tabId: 1,
+      t: 1,
+      mono: 1,
+      payload: {
+        type: "log",
+        args: [
+          { type: "string", value: "login attempt" },
+          {
+            type: "object",
+            className: "Object",
+            description: "Object",
+            preview: {
+              type: "object",
+              description: "Object",
+              overflow: false,
+              properties: [
+                { name: "user", type: "string", value: "ada" },
+                { name: "attempt", type: "number", value: "3" },
+                {
+                  name: "tags",
+                  type: "object",
+                  subtype: "array",
+                  value: "Array(2)",
+                  valuePreview: {
+                    type: "object",
+                    subtype: "array",
+                    overflow: true,
+                    properties: [{ name: "0", type: "string", value: "beta" }]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }).event?.data as { args: unknown[]; text: string } | undefined;
+  }
+
+  it("keeps the object CDP previews under console: allow", () => {
+    const data = consoleObjectEvent("allow");
+
+    expect(data?.args[1]).toEqual({ user: "ada", attempt: 3, tags: ["beta", "…"] });
+    expect(data?.text).toContain("ada");
+  });
+
+  it("keeps the short description in the compact detail", () => {
+    expect(consoleObjectEvent("sanitized")?.args[1]).toBe("Object");
+  });
+
+  it("keeps an error argument's description, the whole stack, not its cut preview", () => {
+    const stack = `RangeError: Invalid quantity for demo-sku\n    at n (${"http://127.0.0.1:8080/demo/vendor/"}checkout.min.js:1:95)\n    at r (http://127.0.0.1:8080/demo/vendor/checkout.min.js:1:150)`;
+    const recorder = new WebBlackboxRecorder(createConfig("allow"));
+    const data = recorder.ingest({
+      source: "cdp",
+      rawType: "Runtime.consoleAPICalled",
+      sid: "S-console-error-object",
+      tabId: 1,
+      t: 1,
+      mono: 1,
+      payload: {
+        type: "error",
+        args: [
+          {
+            type: "object",
+            subtype: "error",
+            className: "RangeError",
+            description: stack,
+            preview: {
+              type: "object",
+              subtype: "error",
+              description: stack,
+              overflow: false,
+              properties: [
+                { name: "stack", type: "string", value: stack.slice(0, 100) },
+                { name: "message", type: "string", value: "Invalid quantity for demo-sku" }
+              ]
+            }
+          }
+        ]
+      }
+    }).event?.data as { args: unknown[] } | undefined;
+
+    expect(data?.args[0]).toBe(stack);
   });
 });

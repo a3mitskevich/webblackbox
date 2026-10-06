@@ -20,6 +20,7 @@
     "e2e:fullchain:full:on-demand": "WB_E2E_MODE=full WB_E2E_INJECTION_MODE=on-start node scripts/e2e-fullchain-demo.mjs",
     "e2e:injection": "node scripts/e2e-injection-modes.mjs",
     "e2e:injection:idle": "WB_E2E_INJECTION_BENCH=1 node scripts/e2e-injection-modes.mjs",
+    "e2e:completeness:full": "WB_E2E_MODE=full WB_E2E_COMPLETENESS=1 node scripts/e2e-fullchain-demo.mjs",
     "e2e:sw-restart": "node scripts/e2e-sw-restart.mjs",
     "e2e:profile:qa": "node scripts/e2e-profile-qa.mjs",
     "e2e:pointer": "node scripts/e2e-pointer-capture.mjs",
