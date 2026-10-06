@@ -210,6 +210,7 @@ import {
   type StoppedSessionRecord
 } from "./stopped-sessions.js";
 import { startWithOptionalReload } from "./start-with-reload.js";
+import { createThrottledPush } from "./throttled-push.js";
 import {
   FULL_MODE_STORAGE_SNAPSHOT_MAX_ITEMS,
   buildLocalStorageSnapshotExpression,
@@ -554,6 +555,8 @@ const BEST_EFFORT_QUEUE_MAX_PENDING = 80;
 const PIPELINE_BATCH_MAX_EVENTS = 160;
 const PIPELINE_BATCH_DRAIN_CHUNK_EVENTS = 160;
 const PIPELINE_BATCH_FLUSH_MS = 120;
+/** Shortest gap between session-list pushes driven by recorded events (counters, errors). */
+const SESSION_LIST_EVENT_PUSH_INTERVAL_MS = 500;
 const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
 // Pointer samples are kept: the page samples them at the profile rate and drops them under load.
 const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
@@ -639,6 +642,10 @@ const tabsContextTracker = createTabsContextTracker();
 console.info("[WebBlackbox] service worker booted");
 
 const contentInjection = createContentInjectionController(chromeApi);
+const sessionListPush = createThrottledPush(
+  () => broadcast(buildSessionListMessage()),
+  SESSION_LIST_EVENT_PUSH_INTERVAL_MS
+);
 const recordedTabWatch = createRecordedTabWatch(chromeApi, {
   onTabUpdated: handleRecordedTabUpdated,
   onTabRemoved: (tabId) => {
@@ -2368,12 +2375,12 @@ function trackSessionCounters(runtime: SessionRuntime, event: WebBlackboxEvent):
 
   if (event.type === "error.exception" || event.type === "error.unhandledrejection") {
     runtime.capturedErrorCount += 1;
-    pushSessionList();
+    sessionListPush.schedule();
     return;
   }
 
   if (runtime.capturedEventCount % 50 === 0) {
-    pushSessionList();
+    sessionListPush.schedule();
   }
 }
 
@@ -2424,7 +2431,7 @@ function evaluatePerformanceBudget(runtime: SessionRuntime, event: WebBlackboxEv
   }
 
   if (updated) {
-    pushSessionList();
+    sessionListPush.schedule();
   }
 }
 
@@ -5864,7 +5871,7 @@ async function updateSessionMetadataFromEventAsync(
 }
 
 function pushSessionList(): void {
-  broadcast(buildSessionListMessage());
+  sessionListPush.now();
 }
 
 function buildSessionListMessage(): SessionListMessage {
