@@ -2,8 +2,10 @@ import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import { extractRequestId } from "@webblackbox/protocol";
 
 import {
+  failedRequestUrls,
   isProblemEvent,
   isProblemRequest,
+  isRecordedResourceError,
   readConsoleLevel,
   readEventResourceUrl,
   type ProblemRequest
@@ -45,10 +47,17 @@ export type ActivityItem = {
 export type ActivityAction = {
   actId: string;
   triggerEventId: string;
+  /** Span bounds: an event without `ref.act` inside them is a consequence of the action. */
+  startMono?: number;
+  endMono?: number;
 };
 
 /** The request fields the feed reads (`NetworkWaterfallEntry` fits). */
-export type ActivityRequest = ProblemRequest & { method?: string };
+export type ActivityRequest = ProblemRequest & {
+  method?: string;
+  /** The action span any of the request's events belongs to (`ref.act`). */
+  actionId?: string;
+};
 
 export type ActivityFeedInput = {
   /** Events in timeline order. */
@@ -157,6 +166,12 @@ type FeedContext = {
   scope: ActivityScope;
   triggerToAct: ReadonlyMap<string, string>;
   actIds: ReadonlySet<string>;
+  /** Actions with span bounds, by start time. */
+  spans: readonly Required<ActivityAction>[];
+  /** The latest end among `spans[0..i]`: no span at or before `i` contains a later event. */
+  spanEndsUpTo: readonly number[];
+  /** URLs of failed requests (their `error.resource` events repeat them). */
+  failedUrls: ReadonlySet<string>;
   requestById: ReadonlyMap<string, ActivityRequest>;
   /** The event that stands for each request (its `network.request`, else its first event). */
   requestByEventId: ReadonlyMap<string, ActivityRequest>;
@@ -211,8 +226,12 @@ function eventTraits(event: WebBlackboxEvent, context: FeedContext): ItemTraits 
     asText(asRecord(event.data)?.networkRequestId) ??
     (type.startsWith("network.") ? extractRequestId(event) : null);
 
-  // A response, body or console line about a recorded request: the request row stands for it.
-  if (linkedRequest && context.requestById.has(linkedRequest)) {
+  // A response, body, console line or element error about a recorded request: the request row
+  // stands for it.
+  if (
+    (linkedRequest && context.requestById.has(linkedRequest)) ||
+    isRecordedResourceError(event, context.failedUrls)
+  ) {
     return null;
   }
 
@@ -276,14 +295,78 @@ function buildContext(input: ActivityFeedInput, scope: ActivityScope): FeedConte
     }
   }
 
+  const spans = input.actions
+    .filter(
+      (action): action is Required<ActivityAction> =>
+        typeof action.startMono === "number" && typeof action.endMono === "number"
+    )
+    .sort((left, right) => left.startMono - right.startMono);
+  const spanEndsUpTo: number[] = [];
+  spans.forEach((span, index) =>
+    spanEndsUpTo.push(Math.max(span.endMono, spanEndsUpTo[index - 1] ?? -Infinity))
+  );
+
   return {
     input,
     scope,
     triggerToAct: new Map(input.actions.map((action) => [action.triggerEventId, action.actId])),
     actIds: new Set(input.actions.map((action) => action.actId)),
+    spans,
+    spanEndsUpTo,
+    failedUrls: failedRequestUrls(input.requests),
     requestById: new Map(input.requests.map((request) => [request.reqId, request])),
     requestByEventId
   };
+}
+
+/**
+ * The action an event is a consequence of: its `ref.act` (for a request, the `ref.act` of any of
+ * its events), else the latest action span whose bounds contain it. A trigger is not its own
+ * consequence.
+ */
+function parentActionOf(
+  event: WebBlackboxEvent,
+  actId: string | null,
+  context: FeedContext
+): string | null {
+  const linked = asText(event.ref?.act) ?? context.requestByEventId.get(event.id)?.actionId ?? null;
+
+  if (linked && context.actIds.has(linked)) {
+    return linked === actId ? null : linked;
+  }
+
+  // From the last span that starts at or before the event, back while one may still contain it.
+  for (
+    let index = lastSpanStartingBy(context.spans, event.mono);
+    index >= 0 && (context.spanEndsUpTo[index] ?? -Infinity) >= event.mono;
+    index -= 1
+  ) {
+    const span = context.spans[index];
+
+    if (span && span.actId !== actId && event.mono <= span.endMono) {
+      return span.actId;
+    }
+  }
+
+  return null;
+}
+
+/** Index of the last span (by start) that starts at or before `mono`, or -1. */
+function lastSpanStartingBy(spans: readonly Required<ActivityAction>[], mono: number): number {
+  let low = 0;
+  let high = spans.length;
+
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+
+    if ((spans[middle]?.startMono ?? Infinity) <= mono) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  return low - 1;
 }
 
 /**
@@ -307,12 +390,11 @@ export function selectActivityItems(
 
   for (const event of input.events) {
     const actId = context.triggerToAct.get(event.id) ?? null;
-    const refAct = asText(event.ref?.act);
     const base = {
       eventId: event.id,
       mono: event.mono,
       actId,
-      parentActId: refAct && refAct !== actId && context.actIds.has(refAct) ? refAct : null
+      parentActId: parentActionOf(event, actId, context)
     };
 
     if (!started && event.type.startsWith("meta.")) {
@@ -356,6 +438,8 @@ export type ActivityRowOptions = {
   hideThirdParty?: boolean;
   /** Text filter: items it rejects are left out. */
   matches?: (item: ActivityItem, index: number) => boolean;
+  /** Items shown whatever the filters (the selection), not counted as hidden. */
+  pinned?: (item: ActivityItem) => boolean;
 };
 
 export type ActivityRows = {
@@ -373,16 +457,17 @@ export function buildActivityRows(
   items: readonly ActivityItem[],
   options: ActivityRowOptions = {}
 ): ActivityRows {
+  const isPinned = (item: ActivityItem): boolean => options.pinned?.(item) ?? false;
   const matching = options.matches
-    ? items.filter((item, index) => options.matches?.(item, index) ?? true)
+    ? items.filter((item, index) => isPinned(item) || (options.matches?.(item, index) ?? true))
     : items;
   const candidates = options.errorsOnly
-    ? matching.filter((item) => item.isProblem || item.actId !== null)
+    ? matching.filter((item) => isPinned(item) || item.isProblem || item.actId !== null)
     : matching;
   const visible = options.hideThirdParty
-    ? candidates.filter((item) => !item.thirdParty)
+    ? candidates.filter((item) => isPinned(item) || !item.thirdParty)
     : candidates;
-  const kept = options.errorsOnly ? keepActionsWithProblems(visible) : visible;
+  const kept = options.errorsOnly ? keepActionsWithProblems(visible, isPinned) : visible;
 
   return {
     rows: collapseRepeats(kept),
@@ -390,13 +475,17 @@ export function buildActivityRows(
   };
 }
 
-function keepActionsWithProblems(items: readonly ActivityItem[]): ActivityItem[] {
+function keepActionsWithProblems(
+  items: readonly ActivityItem[],
+  isPinned: (item: ActivityItem) => boolean
+): ActivityItem[] {
   const actsWithProblems = new Set(
     items.flatMap((item) => (item.isProblem && item.parentActId ? [item.parentActId] : []))
   );
 
   return items.filter(
-    (item) => item.isProblem || (item.actId !== null && actsWithProblems.has(item.actId))
+    (item) =>
+      item.isProblem || isPinned(item) || (item.actId !== null && actsWithProblems.has(item.actId))
   );
 }
 

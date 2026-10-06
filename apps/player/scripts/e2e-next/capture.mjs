@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 
 import { sleep, waitFor } from "../lib/cdp-harness.mjs";
 import {
+  assert,
   navigateFresh,
   openEncrypted,
   press,
@@ -92,8 +93,7 @@ export async function verifyRealArchive(client, origin, archivePath, passphrase,
   const outDir = resolve(artifactsDir, "real-archive");
   await mkdir(outDir, { recursive: true });
   await setViewport(client, 1440, 900);
-  // Mid-session (the real recording has no frame at 0 s); the classic error rule finds no errors
-  // in it (console errors carry data.level — R2), so the check seeks by the URL hash.
+  // Mid-session: the real recording has no frame at 0 s.
   await navigateFresh(client, `${origin}/?ui=next&lang=en#t=10.89`);
   await openEncrypted(client, archivePath, passphrase);
   const snapshot = await waitForSnapshot(
@@ -108,6 +108,19 @@ export async function verifyRealArchive(client, origin, archivePath, passphrase,
     (value) => value.selectedRow !== null,
     "L selected nothing"
   );
+  // R2: failures are grouped in the problems strip and E reaches them (console errors by
+  // data.level, failed requests).
+  const problems = await client.evaluate(
+    `[...document.querySelectorAll('[data-testid="problem-chip"]')].map((chip) => chip.textContent)`
+  );
+  assert(problems.length > 0, "The real archive shows no problems", problems);
+  await press(client, "Home", { code: "Home", keyCode: 36 });
+  await press(client, "e");
+  const error = await waitForSnapshot(
+    client,
+    (value) => value.live.startsWith("Error 1 of") && value.selectedRow !== null,
+    "E found no error in the real archive"
+  );
   await sleep(800);
   const shot = await screenshot(client, outDir, "real-archive-1440.png");
   return {
@@ -119,6 +132,8 @@ export async function verifyRealArchive(client, origin, archivePath, passphrase,
     networkBars: snapshot.networkBars,
     realtimeTicks: snapshot.realtimeTicks,
     stepped: stepped.live.slice(0, 80),
+    problems,
+    firstError: error.live.slice(0, 120),
     screenshot: shot
   };
 }

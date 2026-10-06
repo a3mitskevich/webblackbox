@@ -15,8 +15,10 @@ import { ShortcutsDialog } from "./components/shortcuts-dialog.js";
 import { BodySplit } from "./components/split-layout.js";
 import { Stage } from "./components/stage.js";
 import { Timeline } from "./components/timeline.js";
+import { ToastHost } from "./components/toasts.js";
 import { Transport } from "./components/transport.js";
 import { PlayerProvider, useI18n, usePlayerState } from "./context.js";
+import { ProblemsStrip } from "./features/feed/index.js";
 import type { PlayerController } from "./controller.js";
 import {
   useArchiveDropTarget,
@@ -46,6 +48,9 @@ function StageColumn() {
 
   return (
     <section className="stage-col" aria-label={i18n.tn("stageLabel")}>
+      <PanelBoundary resetKeys={[archive]}>
+        <ProblemsStrip />
+      </PanelBoundary>
       <ArchiveStatusLine />
       <PanelBoundary resetKeys={[archive]}>
         <Stage />
@@ -64,9 +69,11 @@ function StageColumn() {
  */
 function Workspace() {
   const wide = useMediaQuery(WIDE_LAYOUT_QUERY);
+  const railWide = usePlayerState((state) => state.railWide);
+  const layout = wide ? "body body-split" : "body body-stacked";
 
   return (
-    <main className={wide ? "body body-split" : "body body-stacked"}>
+    <main className={railWide ? `${layout} body-rail-wide` : layout} data-testid="workspace">
       <BodySplit stacked={!wide} stage={<StageColumn />} rail={<Rail />} />
     </main>
   );
@@ -94,6 +101,7 @@ function Layout() {
       <DropOverlay />
       <PassphraseDialog />
       <ShortcutsDialog />
+      <ToastHost />
       <LiveRegion />
     </div>
   );

@@ -1,14 +1,21 @@
+import { lazy } from "react";
+
 import type { PlayerLocale } from "../../../lib/i18n.js";
-import { placeholderPanel } from "../placeholder.js";
 import type { PlayerFeature } from "../types.js";
 import { networkMessages } from "./messages.js";
+import { getNetworkModel } from "./rows.js";
+import { networkStepItems, realtimeStepItems } from "./step-items.js";
 
 const networkLabel = (locale: PlayerLocale): string =>
   networkMessages.translate(locale, "networkTab");
 const realtimeLabel = (locale: PlayerLocale): string =>
   networkMessages.translate(locale, "realtimeTab");
 
-/** Network (R3): the "network" and "realtime" (WebSocket / SSE) rail tabs; placeholders until R3. */
+// The panels, their viewers and Shiki load as their own chunks the first time a tab opens.
+const NetworkPanel = lazy(() => import("./network-panel.js"));
+const RealtimePanel = lazy(() => import("./realtime-panel.js"));
+
+/** Network (R3): the "network" table with request / socket details and the "realtime" tab. */
 export const networkFeature: PlayerFeature = {
   id: "network",
   messages: networkMessages,
@@ -16,14 +23,17 @@ export const networkFeature: PlayerFeature = {
     {
       id: "network",
       label: networkLabel,
-      count: (archive) => archive.model.waterfall.length,
-      Panel: placeholderPanel("network", networkLabel)
+      count: (archive) => getNetworkModel(archive).rows.length,
+      stepItems: networkStepItems,
+      Panel: NetworkPanel
     },
     {
       id: "realtime",
       label: realtimeLabel,
-      count: (archive) => archive.model.realtime.length,
-      Panel: placeholderPanel("realtime", realtimeLabel)
+      count: (archive) =>
+        getNetworkModel(archive).streams.reduce((sum, stream) => sum + stream.messages.length, 0),
+      stepItems: realtimeStepItems,
+      Panel: RealtimePanel
     }
   ]
 };

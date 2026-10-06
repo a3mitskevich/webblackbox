@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import JSZip from "jszip";
 
 import { createCanvas } from "./png.mjs";
+import { addSyntheticNetworkEvents } from "./synthetic-network.mjs";
 import { addR4Signals } from "./synthetic-signals.mjs";
 
 export const SYNTHETIC_ORIGIN = "https://app.example.test";
@@ -517,6 +518,8 @@ export function buildSyntheticSession() {
   screenshot(15_000, game, "idle", 480, 290);
   add(SYNTHETIC_DURATION_MS, "user.visibility", { state: "hidden" });
   addR4Signals({ add, addBlob, relatedTab, origin: SYNTHETIC_ORIGIN, appUrl: APP_URL });
+
+  addSyntheticNetworkEvents({ add, addBlob, request, origin: SYNTHETIC_ORIGIN });
 
   events.sort((left, right) => left.mono - right.mono || left.id.localeCompare(right.id));
 

@@ -36,10 +36,10 @@ export function defaultBodyLayout(groupWidth: number, viewportWidth: number): La
   return { "layout-stage": 100 - rail, "layout-rail": rail };
 }
 
-export function defaultDetailsLayout(): Layout {
+export function defaultDetailsLayout(detailsPercent: number = DETAILS_DEFAULT_PERCENT): Layout {
   return {
-    "layout-list": 100 - DETAILS_DEFAULT_PERCENT,
-    "layout-details": DETAILS_DEFAULT_PERCENT
+    "layout-list": 100 - detailsPercent,
+    "layout-details": detailsPercent
   };
 }
 

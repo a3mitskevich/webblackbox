@@ -45,6 +45,12 @@ export type ArchiveSource = {
   arrayBuffer(): Promise<ArrayBuffer>;
 };
 
+/** An item J / L step through: what to select and when it happens. */
+export type ListStepItem = {
+  selection: Selection;
+  mono: number;
+};
+
 export type PlayerControllerOptions = {
   scheduler?: FrameScheduler;
   open?: ArchiveOpener<WebBlackboxPlayer>;
@@ -52,6 +58,11 @@ export type PlayerControllerOptions = {
   /** Persists the locale and theme choice; defaults to localStorage. */
   persistLocale?: (locale: PlayerLocale) => void;
   persistTheme?: (theme: ThemePreference) => void;
+  /**
+   * The list J / L step through in the current state (the active rail tab's rows); `null` falls
+   * back to the Activity events.
+   */
+  stepItems?: (state: PlayerState) => readonly ListStepItem[] | null;
 };
 
 export type SeekStep = "step" | "large-step" | "frame";
@@ -399,7 +410,7 @@ export function createPlayerController(
       update({ selection: null, detailsOpen: false });
     },
 
-    /** J / L in the current list (the Activity list in R1). */
+    /** J / L in the current list: the active rail tab's rows, else the Activity events. */
     stepList(direction: Direction): void {
       const state = store.getState();
       const archive = state.archive;
@@ -408,18 +419,44 @@ export function createPlayerController(
         return;
       }
 
-      const next = stepInList(selectActivityEvents(archive, state.query), {
-        pickId: (event) => event.id,
-        pickMono: (event) => event.mono,
-        selectedId: resolveSelectedEventId(archive, state.selection),
+      const items =
+        options.stepItems?.(state) ??
+        selectActivityEvents(archive, state.query).map(
+          (event): ListStepItem => ({
+            selection: { kind: "event", id: event.id },
+            mono: event.mono
+          })
+        );
+      const selectedKey = state.selection ? stepKey(state.selection) : null;
+      const selectedEventId = resolveSelectedEventId(archive, state.selection);
+      const next = stepInList(items, {
+        pickId: (item) => stepKey(item.selection),
+        pickMono: (item) => item.mono,
+        // A selection that is not a row of this list (e.g. a request picked on the timeline)
+        // still counts when its event is a row.
+        selectedId: items.some((item) => stepKey(item.selection) === selectedKey)
+          ? selectedKey
+          : selectedEventId
+            ? stepKey({ kind: "event", id: selectedEventId })
+            : null,
         playheadMono: state.playheadMono,
         direction
       });
 
-      if (next) {
-        selectEvent(next);
-      } else {
+      if (!next) {
         announceNoMore("eventsWord");
+        return;
+      }
+
+      const event =
+        next.selection.kind === "event"
+          ? archive.model.eventById.get(next.selection.id)
+          : undefined;
+
+      if (event) {
+        selectEvent(event);
+      } else {
+        this.select(next.selection);
       }
     },
 
@@ -499,7 +536,14 @@ export function createPlayerController(
         update({ shortcutsOpen: false });
       } else if (state.detailsOpen) {
         update({ detailsOpen: false });
+      } else if (state.railWide) {
+        update({ railWide: false });
       }
+    },
+
+    /** F: the rail takes the whole width, or gives the stage its column back. */
+    toggleRailWide(): void {
+      update({ railWide: !store.getState().railWide });
     },
 
     setShortcutsOpen(shortcutsOpen: boolean): void {
@@ -620,6 +664,10 @@ export function createPlayerController(
 }
 
 export type PlayerController = ReturnType<typeof createPlayerController>;
+
+function stepKey(selection: Selection): string {
+  return `${selection.kind}:${selection.id}`;
+}
 
 function selectionExists(archive: LoadedArchive, selection: Selection): boolean {
   return resolveSelectionMono(archive, selection) !== null;

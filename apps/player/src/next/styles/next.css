@@ -1250,6 +1250,19 @@ h2 {
 .body-stacked > .split > [data-panel] > .split-panel {
   display: contents !important;
 }
+/* F: the rail takes the whole width. The stage panel keeps its node (video, scroll) and the
+   stored splitter sizes stay untouched; !important beats the library's inline flex. */
+.body-rail-wide > .split > [data-panel]:first-child {
+  flex: 0 0 0 !important;
+  overflow: hidden !important;
+}
+.body-rail-wide > .split > [data-panel]:last-child {
+  flex: 1 1 100% !important;
+}
+.body-rail-wide > .split > .split-handle,
+.body-stacked.body-rail-wide .stage-col {
+  display: none;
+}
 .rail-panel > .split {
   flex: 1 1 auto;
   height: auto;
@@ -1316,6 +1329,11 @@ h2 {
   white-space: nowrap;
   box-shadow: var(--shadow);
   transition: opacity 100ms ease-out;
+}
+.tip.multiline {
+  max-width: min(420px, calc(100vw - 32px));
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 .tip[data-starting-style],
 .tip[data-ending-style] {

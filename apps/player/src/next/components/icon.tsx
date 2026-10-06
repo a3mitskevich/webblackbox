@@ -1,11 +1,16 @@
 import {
   AppWindow,
+  ArrowDown,
   ArrowDownUp,
   ArrowLeft,
   ArrowRight,
   ArrowRightLeft,
+  ArrowUp,
+  ChevronDown,
+  ChevronRight,
   CircleAlert,
   Clapperboard,
+  Copy,
   Database,
   File,
   Flag,
@@ -13,17 +18,21 @@ import {
   Keyboard,
   Lock,
   LockOpen,
+  Maximize2,
+  Minimize2,
   Monitor,
   Moon,
   MousePointer2,
   PanelsLeftRight,
   Pause,
   Play,
+  RotateCcw,
   Search,
   SkipBack,
   SkipForward,
   Sun,
   Terminal,
+  Timer,
   X,
   type LucideIcon
 } from "lucide-react";
@@ -59,7 +68,16 @@ const ICONS = {
   media: Clapperboard,
   close: X,
   back: ArrowLeft,
-  layout: PanelsLeftRight
+  layout: PanelsLeftRight,
+  copy: Copy,
+  replay: RotateCcw,
+  widen: Maximize2,
+  narrow: Minimize2,
+  expand: ChevronRight,
+  collapse: ChevronDown,
+  sent: ArrowUp,
+  received: ArrowDown,
+  slowest: Timer
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

@@ -66,6 +66,16 @@ describe("readConsoleLevel / isProblemEvent", () => {
     expect(isProblemEvent(event("x1", "storage.local.op", 1, {}, "error"))).toBe(true);
     expect(isProblemEvent(event("x2", "network.request", 1))).toBe(false);
   });
+
+  it("does not count a cancelled load logged by the browser", () => {
+    const cancelled = event("c4", "console.entry", 1, {
+      level: "error",
+      text: "Failed to load resource: net::ERR_ABORTED",
+      url: "https://app.example.test/prefetch.js"
+    });
+    expect(isProblemEvent(cancelled)).toBe(false);
+    expect(groupProblems({ events: [cancelled], requests: [], firstPartyUrl: ORIGIN })).toEqual([]);
+  });
 });
 
 describe("isProblemRequest", () => {
@@ -157,6 +167,9 @@ describe("groupProblems", () => {
     event("ex2", "error.exception", 12000, {
       message: "AuthError: casino-user request rejected (403 'xyz')"
     }),
+    event("ex3", "error.unhandledrejection", 12500, {
+      message: "TypeError: x is undefined\n    at render (https://app.example.test/js/view.js:4:18)"
+    }),
     event("tp", "console.entry", 3000, {
       level: "error",
       text: "widget crashed",
@@ -215,7 +228,9 @@ describe("groupProblems", () => {
   });
 
   it("folds linked console errors into their request and skips cancels", () => {
-    const ids = groups.flatMap((group) => group.occurrences.map((occurrence) => occurrence.eventId));
+    const ids = groups.flatMap((group) =>
+      group.occurrences.map((occurrence) => occurrence.eventId)
+    );
     expect(ids).not.toContain("c-linked");
     expect(ids).not.toContain("req-x1");
     expect(ids).not.toContain("req-ok");
@@ -235,12 +250,92 @@ describe("groupProblems", () => {
     });
   });
 
+  it("merges a logged error with the exception of the same message", () => {
+    const [merged] = groupProblems({
+      events: [
+        event("log", "console.entry", 1, { level: "error", text: "AuthError: rejected (401)" }),
+        event("throw", "error.exception", 2, { message: "AuthError: rejected (401)" })
+      ],
+      requests: [],
+      firstPartyUrl: ORIGIN
+    });
+    // Logged and thrown at the same moment: one failure, stepped to once (the exception).
+    expect(merged).toMatchObject({
+      key: "message:autherror: rejected (#)",
+      category: "exception",
+      count: 1,
+      occurrences: [{ eventId: "throw", mono: 2 }]
+    });
+  });
+
+  it("counts a logged error and a later exception of the same message twice", () => {
+    const [merged] = groupProblems({
+      events: [
+        event("log", "console.entry", 1, { level: "error", text: "AuthError: rejected (401)" }),
+        event("throw", "error.exception", 2, { message: "AuthError: rejected (401)" }),
+        event("log2", "console.entry", 5000, { level: "error", text: "AuthError: rejected (403)" })
+      ],
+      requests: [],
+      firstPartyUrl: ORIGIN
+    });
+    expect(merged?.occurrences.map((occurrence) => occurrence.eventId)).toEqual(["throw", "log2"]);
+  });
+
+  it("keeps apostrophes inside words when it drops quoted values", () => {
+    const groups = groupProblems({
+      events: [
+        event("a", "console.entry", 1, { level: "error", text: "Don't load A, it's broken" }),
+        event("b", "console.entry", 2, { level: "error", text: "Don't load B, it's broken" }),
+        event("c", "console.entry", 3, { level: "error", text: "Cannot read 'x' of undefined" }),
+        event("d", "console.entry", 4, { level: "error", text: "Cannot read 'y' of undefined" })
+      ],
+      requests: [],
+      firstPartyUrl: ORIGIN
+    });
+    expect(groups.map((group) => group.count).sort()).toEqual([1, 1, 2]);
+  });
+
+  it("files a failed script or image load under its host, unless its request is recorded", () => {
+    const failed = request("img", "https://app.example.test/img/a.png", 10, {
+      failed: true,
+      errorText: "net::ERR_CONNECTION_RESET"
+    });
+    const groups = groupProblems({
+      events: [
+        ...requestEvents([failed]),
+        event("res1", "error.resource", 11, { tag: "IMG", url: failed.url }),
+        event("res2", "error.resource", 20, {
+          tag: "SCRIPT",
+          url: "https://app.example.test/js/missing.js"
+        }),
+        event("res3", "error.resource", 30, {
+          tag: "LINK",
+          url: "https://app.example.test/css/missing.css"
+        })
+      ],
+      requests: [failed],
+      firstPartyUrl: ORIGIN
+    });
+    expect(groups.map((group) => [group.key, group.count])).toEqual([
+      ["net:failed:app.example.test", 2],
+      ["net:ERR_CONNECTION_RESET:app.example.test", 1]
+    ]);
+    expect(groups[0]).toMatchObject({ category: "network", errorCode: "failed" });
+  });
+
   it("groups exceptions by message without numbers or quoted values", () => {
     const exception = groups.find((group) => group.category === "exception");
     expect(exception).toMatchObject({
       message: "AuthError: casino-user request rejected (401 'abc')",
       where: "ensure-casino-user.js:57",
       count: 2
+    });
+  });
+
+  it("finds the script of an exception in its stack", () => {
+    expect(groups.find((group) => group.message === "TypeError: x is undefined")).toMatchObject({
+      category: "exception",
+      where: "view.js:4"
     });
   });
 
@@ -255,7 +350,7 @@ describe("groupProblems", () => {
 
   it("sorts first-party groups first, then by count and first time", () => {
     const order = groups.map((group) => `${group.thirdParty ? "3p" : "1p"}:${group.count}`);
-    expect(order).toEqual(["1p:3", "1p:2", "1p:2", "1p:1", "1p:1", "3p:3", "3p:1"]);
+    expect(order).toEqual(["1p:3", "1p:2", "1p:2", "1p:1", "1p:1", "1p:1", "3p:3", "3p:1"]);
     expect(groups[1]?.key).toBe("net:ERR_CONNECTION_RESET:cdn.example.test");
   });
 

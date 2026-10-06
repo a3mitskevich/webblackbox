@@ -184,6 +184,110 @@ describe("selectActivityItems", () => {
     expect(byId.get("ws")).toMatchObject({ kind: "realtime", thirdParty: false });
   });
 
+  it("puts unlinked events inside an action span under that action", () => {
+    const [click, request] = selectActivityItems({
+      events: [
+        event("c", "user.click", 100),
+        event("q", "network.request", 120, { reqId: "u" }),
+        event("late", "nav.hash", 900, { url: "https://app.example.test/#/x" })
+      ],
+      actions: [{ actId: "A9", triggerEventId: "c", startMono: 100, endMono: 400 }],
+      requests: [
+        {
+          reqId: "u",
+          url: "https://app.example.test/u",
+          startMono: 120,
+          status: 401,
+          failed: false,
+          eventIds: ["q"]
+        }
+      ],
+      firstPartyUrl: ORIGIN
+    });
+    expect(click).toMatchObject({ actId: "A9", parentActId: null });
+    expect(request).toMatchObject({ eventId: "q", parentActId: "A9" });
+    const late = selectActivityItems({
+      events: [event("late", "nav.hash", 900, { url: "https://app.example.test/#/x" })],
+      actions: [{ actId: "A9", triggerEventId: "c", startMono: 100, endMono: 400 }],
+      requests: [],
+      firstPartyUrl: ORIGIN
+    });
+    expect(late[0]?.parentActId).toBeNull();
+  });
+
+  it("picks the latest action span that still contains an event", () => {
+    const items = selectActivityItems({
+      events: [
+        event("a", "user.click", 0),
+        event("b", "user.click", 100),
+        event("in-b", "console.entry", 150, { level: "error", text: "b" }),
+        event("c", "user.click", 300),
+        event("in-a", "console.entry", 1000, { level: "error", text: "a" }),
+        event("after", "console.entry", 6000, { level: "error", text: "none" })
+      ],
+      actions: [
+        { actId: "A", triggerEventId: "a", startMono: 0, endMono: 5000 },
+        { actId: "B", triggerEventId: "b", startMono: 100, endMono: 200 },
+        { actId: "C", triggerEventId: "c", startMono: 300, endMono: 400 }
+      ],
+      requests: [],
+      firstPartyUrl: ORIGIN
+    });
+    expect(items.map((item) => [item.eventId, item.parentActId])).toEqual([
+      ["a", null],
+      ["b", "A"],
+      ["in-b", "B"],
+      ["c", "A"],
+      ["in-a", "A"],
+      ["after", null]
+    ]);
+  });
+
+  it("leaves out element load errors of recorded failed requests", () => {
+    const failed: ActivityRequest = request("img", "https://app.example.test/a.png", 10, {
+      failed: true,
+      errorText: "net::ERR_CONNECTION_RESET",
+      eventIds: ["q-img"]
+    });
+    const items = selectActivityItems({
+      events: [
+        event("q-img", "network.request", 10, { reqId: "img" }),
+        event("res-img", "error.resource", 11, { tag: "IMG", url: failed.url }),
+        event("res-js", "error.resource", 12, {
+          tag: "SCRIPT",
+          url: "https://app.example.test/missing.js"
+        })
+      ],
+      actions: [],
+      requests: [failed],
+      firstPartyUrl: ORIGIN
+    });
+    expect(items.map((item) => [item.eventId, item.kind, item.isProblem])).toEqual([
+      ["q-img", "request", true],
+      ["res-js", "exception", true]
+    ]);
+  });
+
+  it("links a request through the action id of any of its events", () => {
+    const [item] = selectActivityItems({
+      events: [event("q", "network.request", 50, { reqId: "v" })],
+      actions: [{ actId: "A1", triggerEventId: "x" }],
+      requests: [
+        {
+          reqId: "v",
+          url: "https://app.example.test/v",
+          startMono: 50,
+          status: 500,
+          failed: false,
+          eventIds: ["q"],
+          actionId: "A1"
+        }
+      ],
+      firstPartyUrl: ORIGIN
+    });
+    expect(item?.parentActId).toBe("A1");
+  });
+
   it("adds every request and console line for the search scope", () => {
     const all = ids(selectActivityItems(input, "all"));
     expect(all).toContain("q-ok");
@@ -240,6 +344,18 @@ describe("buildActivityRows", () => {
     });
     expect(heads(rows)).toEqual(["q-t1×2", "click2×1", "q-cu×1", "err×1", "lvl-err×1"]);
     expect(hiddenThirdParty).toBe(1);
+  });
+
+  it("keeps pinned items (the selection) whatever the filters", () => {
+    const pinned = (item: ActivityItem) => item.eventId === "q-ga" || item.eventId === "route2";
+    const { rows, hiddenThirdParty } = buildActivityRows(items, {
+      errorsOnly: true,
+      hideThirdParty: true,
+      matches: (item) => item.kind === "exception",
+      pinned
+    });
+    expect(heads(rows)).toEqual(["q-ga×1", "route2×1", "err×1", "lvl-err×1"]);
+    expect(hiddenThirdParty).toBe(0);
   });
 
   it("applies the text filter before grouping", () => {

@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
+    "@leeoniya/ufuzzy": "1.0.19",
     "@tanstack/react-virtual": "3.14.13",
     "@webblackbox/player-sdk": "workspace:*",
     "@webblackbox/protocol": "workspace:*",

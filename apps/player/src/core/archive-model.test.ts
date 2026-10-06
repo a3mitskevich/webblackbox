@@ -57,7 +57,7 @@ describe("buildArchiveModel", () => {
         (event, index) => index === 0 || event.mono >= (model.events[index - 1]?.mono ?? 0)
       )
     ).toBe(true);
-    expect(model.waterfall).toHaveLength(15);
+    expect(model.waterfall).toHaveLength(20);
     expect(model.waterfallByReqId.get("90080.1706")?.status).toBe(401);
     expect(model.screenshots).toHaveLength(5);
     expect(model.realtime.length).toBeGreaterThan(8);
@@ -174,8 +174,20 @@ describe("buildSessionView", () => {
       "#/live/64"
     ]);
     expect(view.chapters.filter((chapter) => chapter.isErrorRoute)).toHaveLength(2);
-    expect(view.errorEvents).toHaveLength(1);
-    expect(view.errorTicks).toHaveLength(1);
+    // Problems (player-sdk): failed requests, exceptions and console errors by `data.level`.
+    expect(view.problems[0]).toMatchObject({ category: "auth", status: 401, thirdParty: false });
+    expect(view.problems.map((group) => group.key)).toContain("net:ERR_ADDRESS_INVALID:third");
+    const ownProblems = view.problems.filter((group) => !group.thirdParty);
+    expect(ownProblems.length).toBeLessThan(view.problems.length);
+    expect(view.errorEvents).toHaveLength(ownProblems.reduce((sum, group) => sum + group.count, 0));
+    // The console.error logged right before the throw only echoes the exception and is dropped;
+    // the synthetic session logs the AuthError once more afterwards (R4's console stack), which
+    // is a separate occurrence and stays.
+    expect(view.errorEvents.map((event) => event.type)).toContain("error.exception");
+    const loggedErrors = view.errorEvents.filter((event) => event.type === "console.entry");
+    expect(loggedErrors.map((event) => event.mono - model.minMono)).toEqual([11_080]);
+    expect(view.errorEvents.map((event) => event.type)).toContain("network.request");
+    expect(view.errorTicks.length).toBeGreaterThan(1);
     expect(view.densityBins.some((bin) => bin.failed)).toBe(true);
     expect(view.realtimeTicks.length).toBeGreaterThan(1);
     expect(view.actionMarks.map((mark) => mark.kind)).toContain("click");

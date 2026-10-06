@@ -124,7 +124,7 @@ describe("React player", () => {
     await openArchive(controller);
 
     key("e");
-    expect(screen.getByTestId("live-region")).toHaveTextContent(/^Error 1 of 1/);
+    expect(screen.getByTestId("live-region")).toHaveTextContent(/^Error 1 of \d+: /);
     const selected = store.getState().selection?.id;
     // jsdom has no layout, so the virtual list cannot scroll the row into its window; the
     // listbox still points at it. e2e:player-next checks the rendered row (and that it is the
@@ -208,7 +208,7 @@ describe("React player", () => {
 
     // Russian ЙЦУКЕН: KeyE types "у", KeyL types "д", and "?" is Shift+7.
     key("у", { code: "KeyE" });
-    expect(screen.getByTestId("live-region")).toHaveTextContent(/^Error 1 of 1/);
+    expect(screen.getByTestId("live-region")).toHaveTextContent(/^Error 1 of \d+: /);
     const error = store.getState().selection?.id;
 
     key("д", { code: "KeyL" });
@@ -281,7 +281,8 @@ describe("React player", () => {
       act(() => {
         vi.advanceTimersByTime(500);
       });
-      expect(window.location.hash).toMatch(/^#t=11\.07&sel=evt%3AE-\d+&tab=activity$/);
+      // E: the first first-party problem (cdn.example.test connection reset at 3.40 s).
+      expect(window.location.hash).toMatch(/^#t=3\.40&sel=evt%3AE-\d+&tab=activity$/);
     } finally {
       vi.useRealTimers();
     }
