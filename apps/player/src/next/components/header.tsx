@@ -6,6 +6,7 @@ import { formatRecordedAt } from "../../core/format.js";
 import { nextThemePreference, type ThemePreference } from "../../core/preferences.js";
 import { PLAYER_LOCALES, type PlayerLocale } from "../../lib/i18n.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
+import type { PlayerController } from "../controller.js";
 import { GenerateMenu } from "../features/generate/index.js";
 import { ShareButton } from "../features/share/share-button.js";
 import { profileBannerLines, recordingProfileOf } from "./recording-profile.js";
@@ -79,6 +80,17 @@ export function ArchiveInput({
   );
 }
 
+/**
+ * The other-tabs badge opens the Tabs rail tab and moves focus to it (on a narrow screen that
+ * also scrolls the rail into view). It never seeks: the playhead, selection and filters stay.
+ */
+function openTabsPanel(controller: PlayerController): void {
+  controller.setTab("tabs");
+  requestAnimationFrame(() => {
+    document.querySelector<HTMLElement>('[data-testid="tab-tabs"]')?.focus();
+  });
+}
+
 type HeaderProps = {
   searchRef: RefObject<HTMLInputElement | null>;
 };
@@ -92,6 +104,7 @@ export function Header({ searchRef }: HeaderProps) {
   const archive = usePlayerState((state) => state.archive);
   const meta = archive?.view.meta ?? null;
   const nextTheme = nextThemePreference(theme);
+  const otherTabsHintId = useId();
 
   const subtitle = meta
     ? [
@@ -136,20 +149,15 @@ export function Header({ searchRef }: HeaderProps) {
       <ErrorBoundary fallback={null} resetKeys={[archive]}>
         <ProfileChip />
       </ErrorBoundary>
-      {meta && meta.otherTabs > 0 && meta.tabsEventId ? (
-        <Hint label={i18n.tn("otherTabs", { count: i18n.formatNumber(meta.otherTabs) })}>
+      {meta && meta.otherTabs > 0 ? (
+        <Hint label={i18n.tn("otherTabsHint")} multiline>
           <button
             type="button"
             className="chip chip-button"
             aria-label={i18n.tn("otherTabs", { count: i18n.formatNumber(meta.otherTabs) })}
+            aria-describedby={otherTabsHintId}
             data-testid="other-tabs-chip"
-            onClick={() => {
-              const event = archive?.model.eventById.get(meta.tabsEventId ?? "");
-
-              if (event) {
-                controller.selectEvent(event);
-              }
-            }}
+            onClick={() => openTabsPanel(controller)}
           >
             <Icon name="tabs" />
             <span className="lbl">
@@ -157,6 +165,9 @@ export function Header({ searchRef }: HeaderProps) {
             </span>
             <span className="lbl-short" aria-hidden="true">
               {i18n.formatNumber(meta.otherTabs)}
+            </span>
+            <span id={otherTabsHintId} hidden>
+              {i18n.tn("otherTabsHint")}
             </span>
           </button>
         </Hint>

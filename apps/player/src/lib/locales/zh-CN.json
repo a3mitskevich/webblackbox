@@ -126,6 +126,7 @@
     "encrypted": "已加密",
     "notEncrypted": "未加密",
     "otherTabs": "其他打开的标签页：{count}",
+    "otherTabsHint": "录制期间该站点还打开了其他标签页。点击在“标签页”面板中查看：有哪些标签页，以及它们何时打开、关闭或变化",
     "searchPlaceholder": "搜索事件、URL、文本",
     "searchLabel": "搜索会话",
     "language": "语言",

@@ -126,6 +126,7 @@
     "encrypted": "Encrypted",
     "notEncrypted": "Not encrypted",
     "otherTabs": "Other tabs open: {count}",
+    "otherTabsHint": "Other tabs of this site were open during the recording. Click to see them in the Tabs panel: which tabs, and when they opened, closed or changed",
     "searchPlaceholder": "Search events, URLs, text",
     "searchLabel": "Search the session",
     "language": "Language",
