@@ -6,6 +6,11 @@ import {
   RECENT_WINDOW_MINUTES_LIMITS,
   type ExportPolicyPrefs
 } from "../shared/export-policy-prefs.js";
+import {
+  DEFAULT_CONTENT_INJECTION_MODE,
+  isContentInjectionMode,
+  type ContentInjectionMode
+} from "../shared/content-injection.js";
 import type { ExtensionMessageKey, ExtensionUnit } from "../shared/i18n.js";
 import { OPTIONS_STORAGE_VERSION } from "../shared/options-storage.js";
 import {
@@ -23,6 +28,8 @@ export type GeneralDraft = {
   recorderConfig: RecorderConfig;
   performanceBudget: PerformanceBudgetConfig;
   archive: ExportPolicyPrefs;
+  /** Stored under its own key (`webblackbox.injection`), not in `webblackbox.options`. */
+  injection: ContentInjectionMode;
 };
 
 export type GeneralSectionId = "sensitivity" | "pointer" | "sampling" | "budgets" | "export";
@@ -67,7 +74,22 @@ export type ListFieldSpec = SpecText & {
   set: (draft: GeneralDraft, value: string[]) => GeneralDraft;
 };
 
-export type GeneralFieldSpec = NumberFieldSpec | ToggleFieldSpec | ListFieldSpec;
+export type ChoiceOptionSpec = {
+  value: string;
+  label: ExtensionMessageKey;
+  description: ExtensionMessageKey;
+};
+
+/** One of a few described options, shown as radio cards. */
+export type ChoiceFieldSpec = SpecText & {
+  kind: "choice";
+  options: readonly ChoiceOptionSpec[];
+  get: (draft: GeneralDraft) => string;
+  /** Unknown values leave the draft unchanged. */
+  set: (draft: GeneralDraft, value: string) => GeneralDraft;
+};
+
+export type GeneralFieldSpec = NumberFieldSpec | ToggleFieldSpec | ListFieldSpec | ChoiceFieldSpec;
 
 type SamplingKey = keyof RecorderConfig["sampling"];
 type BudgetNumberKey = "lcpWarnMs" | "requestWarnMs" | "errorRateWarnPct";
@@ -144,6 +166,27 @@ function redactionList(
 }
 
 export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
+  {
+    kind: "choice",
+    id: "contentInjection",
+    section: "sampling",
+    label: "optionsContentInjection",
+    hint: "optionsContentInjectionHint",
+    options: [
+      {
+        value: "always",
+        label: "optionsContentInjectionAlways",
+        description: "optionsContentInjectionAlwaysDescription"
+      },
+      {
+        value: "on-start",
+        label: "optionsContentInjectionOnStart",
+        description: "optionsContentInjectionOnStartDescription"
+      }
+    ],
+    get: (draft) => draft.injection,
+    set: (draft, value) => (isContentInjectionMode(value) ? { ...draft, injection: value } : draft)
+  },
   redactionList("blockedSelectors", {
     label: "optionsBlockedSelectors",
     hint: "optionsBlockedSelectorsHint",
@@ -385,7 +428,8 @@ export function createDefaultGeneralDraft(): GeneralDraft {
   return {
     recorderConfig: normalizeOptionsConfig(structuredClone(DEFAULT_RECORDER_CONFIG)),
     performanceBudget: { ...DEFAULT_PERFORMANCE_BUDGET },
-    archive: { ...DEFAULT_EXPORT_POLICY_PREFS }
+    archive: { ...DEFAULT_EXPORT_POLICY_PREFS },
+    injection: DEFAULT_CONTENT_INJECTION_MODE
   };
 }
 
@@ -398,6 +442,8 @@ export function resetGeneralSection(draft: GeneralDraft, section: GeneralSection
       case "number":
         return spec.set(next, spec.get(defaults));
       case "toggle":
+        return spec.set(next, spec.get(defaults));
+      case "choice":
         return spec.set(next, spec.get(defaults));
       case "list":
         return spec.set(next, [...spec.get(defaults)]);
@@ -424,6 +470,10 @@ export function isStoredOptionsChanged(draft: GeneralDraft, baseline: GeneralDra
 
 export function isArchiveChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
   return JSON.stringify(draft.archive) !== JSON.stringify(baseline.archive);
+}
+
+export function isInjectionChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
+  return draft.injection !== baseline.injection;
 }
 
 const GENERAL_SECTION_IDS: readonly GeneralSectionId[] = [

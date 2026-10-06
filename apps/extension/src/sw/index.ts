@@ -36,7 +36,13 @@ import {
 import { INJECTED_BRIDGE_NONCE_SETTER_KEY } from "webblackbox/injected-hooks";
 import { decodeScreenshotDataUrl } from "webblackbox/lite-materializer";
 
-import { getChromeApi, type PortLike, type RuntimeMessageSender } from "../shared/chrome-api.js";
+import {
+  getChromeApi,
+  type FrameCommittedDetails,
+  type PortLike,
+  type RuntimeMessageSender
+} from "../shared/chrome-api.js";
+import { CONTENT_INJECTION_STORAGE_KEY } from "../shared/content-injection.js";
 import {
   PORT_NAMES,
   type ExportPrivacyWarning,
@@ -100,6 +106,11 @@ import {
 import { primeChildSession } from "./child-session-prime.js";
 import { withCdpCommandTimeout, type CdpCommandOutcome } from "./cdp-command.js";
 import {
+  createContentInjectionController,
+  injectContentScriptIntoFrame,
+  isInjectableFrameUrl
+} from "./content-injection.js";
+import {
   completeRequestPostData,
   FullBodyCapture,
   needsRequestPostData,
@@ -113,6 +124,7 @@ import {
 } from "./lite-network-baseline.js";
 import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
 import { createOffscreenPortConnector, OFFSCREEN_UNAVAILABLE_ERROR } from "./offscreen-port.js";
+import { createRecordedTabWatch } from "./recorded-tab-watch.js";
 import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
   classifyMessageSender,
@@ -580,6 +592,14 @@ const SCREEN_RECORDING_OFFSCREEN_SOURCE = "tab";
 
 console.info("[WebBlackbox] service worker booted");
 
+const contentInjection = createContentInjectionController(chromeApi);
+const recordedTabWatch = createRecordedTabWatch(chromeApi, {
+  onTabUpdated: handleRecordedTabUpdated,
+  onTabRemoved: (tabId) => {
+    void stopSession(tabId);
+  },
+  onFrameCommitted: handleRecordedFrameCommitted
+});
 const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
   {
     getPort: () => offscreenPort,
@@ -612,6 +632,14 @@ const orphanedOffscreenCleanup = closeOrphanedOffscreenDocument().catch((error) 
 });
 
 void restoreRuntimeState();
+// Every boot re-applies the setting: it also restores a registration an update dropped.
+void contentInjection.sync();
+
+chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
+  if (areaName === "local" && Object.hasOwn(changes, CONTENT_INJECTION_STORAGE_KEY)) {
+    void contentInjection.sync();
+  }
+});
 
 chromeApi?.runtime?.onInstalled.addListener(() => {
   void setIdleBadge();
@@ -816,20 +844,39 @@ chromeApi?.commands?.onCommand.addListener((command) => {
   void relayMarkerCommand();
 });
 
-chromeApi?.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
-  if (typeof changeInfo.url !== "string" || changeInfo.url.length === 0) {
-    if (changeInfo.status === "complete") {
-      void restoreTabInstrumentationAfterNavigation(tabId);
-    }
-    return;
+function handleRecordedTabUpdated(
+  tabId: number,
+  changeInfo: { status?: "loading" | "complete"; url?: string }
+): void {
+  if (typeof changeInfo.url === "string" && changeInfo.url.length > 0) {
+    void handleTabUrlChanged(tabId, changeInfo.url);
   }
-
-  void handleTabUrlChanged(tabId, changeInfo.url);
 
   if (changeInfo.status === "complete") {
     void restoreTabInstrumentationAfterNavigation(tabId);
   }
-});
+}
+
+/**
+ * With injection on Start only, nothing registered covers a recorded tab's new documents, so each
+ * committed frame (reload, navigation, iframe added later) gets the content script right away.
+ */
+function handleRecordedFrameCommitted(details: FrameCommittedDetails): void {
+  const runtime = sessionsByTab.get(details.tabId);
+
+  if (
+    !runtime ||
+    runtime.stopping ||
+    runtime.stoppedAt ||
+    !shouldInjectHooksForMode(runtime.mode) ||
+    contentInjection.currentMode() !== "on-start" ||
+    !isInjectableFrameUrl(details.url)
+  ) {
+    return;
+  }
+
+  void injectContentScriptIntoFrame(chromeApi, details.tabId, details.frameId);
+}
 
 // Deleting or editing a profile, or a policy change, re-checks running recordings at once.
 chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
@@ -840,10 +887,6 @@ chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
   for (const runtime of sessionsByTab.values()) {
     scheduleProfileReevaluation(runtime, "settings-changed");
   }
-});
-
-chromeApi?.tabs?.onRemoved?.addListener((tabId) => {
-  void stopSession(tabId);
 });
 
 async function handleInboundMessage(
@@ -1225,6 +1268,7 @@ async function startSession(
 
   sessionsByTab.set(tabId, runtime);
   sessionsBySid.set(sid, runtime);
+  recordedTabWatch.sync(true);
 
   if (mode === "lite") {
     installLiteWebRequestCapture();
@@ -1356,6 +1400,7 @@ async function stopSession(tabId: number): Promise<void> {
   await flushBufferedPipelineEvents(runtime);
   await teardownCaptureInstrumentation(runtime);
   sessionsByTab.delete(runtime.tabId);
+  recordedTabWatch.sync(sessionsByTab.size > 0);
   uninstallLiteWebRequestCaptureIfUnused();
   runtime.stoppedAt = Date.now();
   scheduleStoppedRuntimeCleanup(runtime);
@@ -4481,11 +4526,12 @@ function createInjectedBridgeNonce(): string {
   return crypto.randomUUID();
 }
 
+/**
+ * Runs on Start and after navigations of a recorded tab, whatever the injection mode: frames that
+ * already run the content script ignore the second copy (see content/script-guard.ts), and tabs
+ * opened before the extension was installed or registered get it too.
+ */
 async function ensureContentScriptInjected(tabId: number): Promise<void> {
-  if (manifestDeclaresStaticContentScript()) {
-    return;
-  }
-
   await chromeApi?.scripting
     ?.executeScript({
       target: { tabId, allFrames: true },
@@ -4493,15 +4539,6 @@ async function ensureContentScriptInjected(tabId: number): Promise<void> {
       files: ["content.js"]
     })
     .catch(() => undefined);
-}
-
-function manifestDeclaresStaticContentScript(): boolean {
-  const manifest = chromeApi?.runtime?.getManifest?.();
-  const contentScripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
-
-  return contentScripts.some(
-    (entry) => Array.isArray(entry?.js) && entry.js.includes("content.js")
-  );
 }
 
 function installLiteWebRequestCapture(): void {

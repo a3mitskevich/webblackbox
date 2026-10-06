@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "tsup";
 
+import { contentScriptScopePlugin } from "./scripts/lib/content-script-scope.mjs";
+
 const appRoot = dirname(fileURLToPath(import.meta.url));
 const extensionNodeModulesDir = resolve(appRoot, "node_modules");
 const workspaceNodeModulesDir = resolve(appRoot, "..", "..", "node_modules");
@@ -31,6 +33,7 @@ export default defineConfig({
   clean: true,
   splitting: false,
   dts: false,
+  plugins: [contentScriptScopePlugin()],
   esbuildOptions(options) {
     options.external = [];
     options.nodePaths = [extensionNodeModulesDir, workspaceNodeModulesDir];

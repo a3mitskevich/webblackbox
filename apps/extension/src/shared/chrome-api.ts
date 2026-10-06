@@ -26,6 +26,36 @@ export type PortLike = {
   disconnect?: () => void;
 };
 
+export type RegisteredContentScript = {
+  id: string;
+  matches?: string[];
+  js?: string[];
+  allFrames?: boolean;
+  runAt?: "document_start" | "document_end" | "document_idle";
+  persistAcrossSessions?: boolean;
+};
+
+export type StorageChangeListener = (
+  changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+  areaName: string
+) => void;
+
+export type TabUpdatedListener = (
+  tabId: number,
+  changeInfo: {
+    status?: "loading" | "complete";
+    url?: string;
+  }
+) => void;
+
+export type FrameCommittedDetails = {
+  tabId: number;
+  frameId: number;
+  url: string;
+};
+
+export type FrameCommittedListener = (details: FrameCommittedDetails) => void;
+
 export type ChromeApi = {
   action?: {
     setBadgeText(details: { text: string }): Promise<void>;
@@ -83,6 +113,7 @@ export type ChromeApi = {
     getMediaStreamId(options?: { targetTabId?: number; consumerTabId?: number }): Promise<string>;
   };
   runtime?: {
+    /** Undefined once the extension context is gone (an orphaned content script). */
     id?: string;
     connect(connectInfo: { name: string }): PortLike;
     getManifest?: () => {
@@ -112,6 +143,12 @@ export type ChromeApi = {
       ): void;
     };
     sendMessage(message: unknown): Promise<unknown>;
+  };
+  webNavigation?: {
+    onCommitted: {
+      addListener(callback: FrameCommittedListener): void;
+      removeListener(callback: FrameCommittedListener): void;
+    };
   };
   webRequest?: {
     onBeforeRequest: {
@@ -192,12 +229,16 @@ export type ChromeApi = {
   };
   scripting?: {
     executeScript(options: {
-      target: { tabId: number; allFrames?: boolean };
+      target: { tabId: number; allFrames?: boolean; frameIds?: number[] };
       world?: "MAIN" | "ISOLATED";
       files?: string[];
       func?: (...args: never[]) => unknown;
       args?: unknown[];
+      injectImmediately?: boolean;
     }): Promise<Array<{ result?: unknown }> | void>;
+    registerContentScripts?(scripts: RegisteredContentScript[]): Promise<void>;
+    unregisterContentScripts?(filter?: { ids?: string[] }): Promise<void>;
+    getRegisteredContentScripts?(filter?: { ids?: string[] }): Promise<RegisteredContentScript[]>;
   };
   storage?: {
     local: {
@@ -212,7 +253,7 @@ export type ChromeApi = {
       ): Promise<Record<string, unknown>>;
     };
     onChanged?: {
-      addListener(callback: (changes: Record<string, unknown>, areaName: string) => void): void;
+      addListener(callback: StorageChangeListener): void;
     };
   };
   tabs?: {
@@ -246,18 +287,12 @@ export type ChromeApi = {
       }>
     >;
     onUpdated?: {
-      addListener(
-        callback: (
-          tabId: number,
-          changeInfo: {
-            status?: "loading" | "complete";
-            url?: string;
-          }
-        ) => void
-      ): void;
+      addListener(callback: TabUpdatedListener): void;
+      removeListener?(callback: TabUpdatedListener): void;
     };
     onRemoved?: {
       addListener(callback: (tabId: number) => void): void;
+      removeListener?(callback: (tabId: number) => void): void;
     };
     reload?(tabId: number, reloadProperties?: { bypassCache?: boolean }): Promise<void>;
     sendMessage(tabId: number, message: unknown): Promise<unknown>;
