@@ -35,24 +35,6 @@ const MS_PER_SECOND = 1000;
 const BYTES_PER_KB = 1024;
 const BYTES_PER_MB = BYTES_PER_KB * 1024;
 
-/** Strings of the source-map stack view. */
-export type StackViewMessages = {
-  heading: string;
-  showOriginal: string;
-  showRaw: string;
-  loadMapFiles: string;
-  loadMapFolder: string;
-  symbolServerPlaceholder: string;
-  symbolServerApply: string;
-  /** `{count}` is replaced with the number of loaded files. */
-  mapsLoaded: string;
-  resolving: string;
-  noMap: string;
-  noMapping: string;
-  mapError: string;
-  invalidSymbolServer: string;
-};
-
 type PlayerMessages = {
   pageTitlePlayer: string;
   localeNames: Record<PlayerLocale, string>;
@@ -100,7 +82,6 @@ type PlayerMessages = {
   networkSizeFailed: string;
   pointerKinds: Record<PointerLaneKind, string>;
   pointerRippleLabels: Record<PointerRippleKind, string>;
-  stackView: StackViewMessages;
   networkTypes: Record<NetworkType, string>;
   privacyHiddenByProfile: string;
   privacySubjects: Record<PrivacyViolationSubject, string>;

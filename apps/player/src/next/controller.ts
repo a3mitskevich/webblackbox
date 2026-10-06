@@ -557,20 +557,23 @@ export function createPlayerController(
 
       const next = moveRangeEdge(state.range, edge, state.playheadMono, bounds(archive));
 
-      if (!isSameRange(state.range, next)) {
-        const { minMono } = archive.model;
-        update({
-          range: next,
-          announcement: next
-            ? i18n().tn("rangeAnnounce", {
-                range: `${formatClock(next.startMono - minMono, state.locale)} – ${formatClock(
-                  next.endMono - minMono,
-                  state.locale
-                )}`
-              })
-            : state.announcement
-        });
+      // Too close to the other end (or to the edge of the recording): say so instead of
+      // silently ignoring the key.
+      if (!next || isSameRange(state.range, next)) {
+        update({ announcement: i18n().tn("rangeTooShort") });
+        return;
       }
+
+      const { minMono } = archive.model;
+      update({
+        range: next,
+        announcement: i18n().tn("rangeAnnounce", {
+          range: `${formatClock(next.startMono - minMono, state.locale)} – ${formatClock(
+            next.endMono - minMono,
+            state.locale
+          )}`
+        })
+      });
     },
 
     setLanesExpanded(lanesExpanded: boolean): void {

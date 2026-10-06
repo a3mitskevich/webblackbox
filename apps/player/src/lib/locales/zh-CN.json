@@ -75,21 +75,6 @@
     "drag": "拖动",
     "dnd": "放下"
   },
-  "stackView": {
-    "heading": "堆栈",
-    "showOriginal": "显示源码位置",
-    "showRaw": "显示原始堆栈",
-    "loadMapFiles": "加载 .map 文件",
-    "loadMapFolder": "加载 map 文件夹",
-    "symbolServerPlaceholder": "符号服务器 URL（按文件名获取 map）",
-    "symbolServerApply": "使用",
-    "mapsLoaded": "已加载 {count} 个 source map 文件。",
-    "resolving": "正在解析源码位置…",
-    "noMap": "无 source map",
-    "noMapping": "该位置无映射",
-    "mapError": "source map 错误",
-    "invalidSymbolServer": "符号服务器 URL 必须是 http(s)。"
-  },
   "privacyHiddenByProfile": "已被配置隐藏：{what}",
   "privacySubjects": {
     "console-text": "控制台文本",
@@ -191,6 +176,7 @@
     "rangeHint": "在时间轴上按住 Shift 拖动或按 [ / ] 选择范围",
     "clearRange": "清除范围",
     "rangeAnnounce": "已选择范围 {range}",
+    "rangeTooShort": "范围太短：请将播放头移离另一端",
     "aboutRecording": "关于此录制",
     "aboutRecordingHint": "会话详情以及存档包含的内容",
     "sessionSection": "会话",
@@ -265,7 +251,6 @@
     "stageImageAlt": "{time} 时的页面",
     "railLabel": "检查器",
     "toastClose": "关闭通知",
-    "openClassic": "打开经典播放器",
     "shortcutsTitle": "键盘快捷键",
     "shortcutKeysLabel": "按键",
     "shortcutActionLabel": "操作",

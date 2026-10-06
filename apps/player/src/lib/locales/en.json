@@ -75,21 +75,6 @@
     "drag": "drag",
     "dnd": "drop"
   },
-  "stackView": {
-    "heading": "Stack trace",
-    "showOriginal": "Show original",
-    "showRaw": "Show raw",
-    "loadMapFiles": "Load .map files",
-    "loadMapFolder": "Load maps folder",
-    "symbolServerPlaceholder": "Symbol server URL (maps by file name)",
-    "symbolServerApply": "Use",
-    "mapsLoaded": "{count} source map file(s) loaded.",
-    "resolving": "Resolving original sources…",
-    "noMap": "no source map",
-    "noMapping": "no mapping at this position",
-    "mapError": "source map error",
-    "invalidSymbolServer": "Symbol server URL must be http(s)."
-  },
   "privacyHiddenByProfile": "Hidden by profile: {what}",
   "privacySubjects": {
     "console-text": "console text",
@@ -191,6 +176,7 @@
     "rangeHint": "Shift+drag on the timeline or [ / ] to select a range",
     "clearRange": "Clear range",
     "rangeAnnounce": "Range {range} selected",
+    "rangeTooShort": "Range too short: move the playhead away from the other end",
     "aboutRecording": "About this recording",
     "aboutRecordingHint": "Session details and what this archive contains",
     "sessionSection": "Session",
@@ -265,7 +251,6 @@
     "stageImageAlt": "Recorded page at {time}",
     "railLabel": "Inspector",
     "toastClose": "Dismiss notice",
-    "openClassic": "Open the classic player",
     "shortcutsTitle": "Keyboard shortcuts",
     "shortcutKeysLabel": "Keys",
     "shortcutActionLabel": "Action",

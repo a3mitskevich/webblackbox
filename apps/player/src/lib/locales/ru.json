@@ -75,21 +75,6 @@
     "drag": "перетаскивание",
     "dnd": "сброс"
   },
-  "stackView": {
-    "heading": "Стек вызовов",
-    "showOriginal": "Показать по исходникам",
-    "showRaw": "Показать как записано",
-    "loadMapFiles": "Выбрать файлы .map",
-    "loadMapFolder": "Выбрать папку с картами",
-    "symbolServerPlaceholder": "URL сервера символов (карты по имени файла)",
-    "symbolServerApply": "Применить",
-    "mapsLoaded": "Загружено карт исходного кода: {count}.",
-    "resolving": "Определение исходных позиций…",
-    "noMap": "нет карты исходного кода",
-    "noMapping": "нет соответствия для этой позиции",
-    "mapError": "ошибка карты исходного кода",
-    "invalidSymbolServer": "URL сервера символов должен начинаться с http:// или https://."
-  },
   "privacyHiddenByProfile": "Скрыто профилем: {what}",
   "privacySubjects": {
     "console-text": "текст консоли",
@@ -191,6 +176,7 @@
     "rangeHint": "Shift+перетаскивание по шкале или [ / ] — выделить диапазон",
     "clearRange": "Сбросить диапазон",
     "rangeAnnounce": "Выделен диапазон {range}",
+    "rangeTooShort": "Диапазон слишком короткий: отведите курсор воспроизведения от другого края",
     "aboutRecording": "Об этой записи",
     "aboutRecordingHint": "Сведения о сессии и что есть в архиве",
     "sessionSection": "Сессия",
@@ -265,7 +251,6 @@
     "stageImageAlt": "Страница в момент {time}",
     "railLabel": "Инспектор",
     "toastClose": "Закрыть уведомление",
-    "openClassic": "Открыть классический плеер",
     "shortcutsTitle": "Горячие клавиши",
     "shortcutKeysLabel": "Клавиши",
     "shortcutActionLabel": "Действие",
