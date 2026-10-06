@@ -208,16 +208,36 @@ const AXE_SOURCE = readFileSync(
 );
 const AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
+/**
+ * WCAG 1.4.10 reflow: nothing scrolls the page sideways, and no rail panel is wider than the rail
+ * (a long unbreakable selector once widened the inspector to ~2,000 px).
+ */
+async function overflowViolations(ctx, state) {
+  const widths = await ctx.evaluate(`(() => {
+    const page = document.scrollingElement;
+    const rail = document.querySelector('${ctx.testId("rail")}');
+    const panel = rail?.querySelector('.rail-panel:not([hidden])');
+    return {
+      page: page.scrollWidth - page.clientWidth,
+      panel: panel && rail ? Math.round(panel.getBoundingClientRect().width - rail.clientWidth) : 0
+    };
+  })()`);
+  return widths.page > 0 || widths.panel > 1
+    ? [{ state, id: "horizontal-overflow", impact: "serious", nodes: [JSON.stringify(widths)] }]
+    : [];
+}
+
 /** axe-core on the current page: serious and critical WCAG A/AA violations. */
 async function axeViolations(ctx, state) {
+  const overflow = await overflowViolations(ctx, state);
   // DevTools evaluation is not subject to the page CSP; the Player never loads axe itself.
   if (!(await ctx.evaluate("Boolean(window.axe)"))) {
     await ctx.evaluate(AXE_SOURCE);
   }
 
-  // Timeline marks may sit closer than 24 px on dense recordings; WCAG 2.5.8 lets them, because
-  // the Activity list offers the same function at full size (the "equivalent" exception). Every
-  // other rule still checks them.
+  // Expanded lanes keep one mark per 24 px slot, but marks in neighbouring slots (and the action
+  // lane) may still sit closer than 24 px; WCAG 2.5.8 lets them, because the Activity list offers
+  // the same function at full size (the "equivalent" exception). Every other rule checks them.
   // axe runs one audit at a time.
   const result = await ctx.evaluate(`axe
     .run(document, {
@@ -236,7 +256,7 @@ async function axeViolations(ctx, state) {
         impact: violation.impact,
         nodes: violation.nodes.slice(0, 4).map((node) => node.target.join(" ") + " :: " + node.failureSummary.split("\\n")[1] + " :: " + node.html.slice(0, 160))
       })))`);
-  return result.map((violation) => ({ state, ...violation }));
+  return [...overflow, ...result.map((violation) => ({ state, ...violation }))];
 }
 
 /**
