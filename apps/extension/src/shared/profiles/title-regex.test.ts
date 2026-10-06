@@ -72,10 +72,22 @@ function randomTitle(random: () => number): string {
   );
 }
 
-function elapsedMs(run: () => unknown): number {
-  const started = performance.now();
-  run();
-  return performance.now() - started;
+/**
+ * Fastest of a few runs in process CPU time: other load on the machine (since #27 every package's
+ * tests run at once) and a GC pause or JIT warm-up in one run do not count. Catastrophic
+ * backtracking still takes seconds.
+ */
+function elapsedMs(run: () => unknown, runs = 3): number {
+  let fastest = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < runs; index += 1) {
+    const startedAt = process.cpuUsage();
+    run();
+    const used = process.cpuUsage(startedAt);
+    fastest = Math.min(fastest, (used.user + used.system) / 1_000);
+  }
+
+  return fastest;
 }
 
 describe("compileTitleRegex", () => {
@@ -143,24 +155,24 @@ describe("compileTitleRegex", () => {
   });
 
   it("rejects syntax it cannot match in linear time, and oversized programs", () => {
-    const started = performance.now();
+    const rejectAll = (): void => {
+      for (const source of [
+        "(a)\\1",
+        "(?<x>a)\\k<x>",
+        "(?=.*a)b",
+        "(?!a)b",
+        "(?<=a)b",
+        "(?<!a)b",
+        "((a{60}){60}){60}",
+        "(((((){99}){99}){99}){99}){99}",
+        "((((((?:){99}){99}){99}){99}){99}){99}",
+        "(unclosed",
+        "*a"
+      ]) {
+        expect(compileTitleRegex(source), source).toBeNull();
+      }
+    };
 
-    for (const source of [
-      "(a)\\1",
-      "(?<x>a)\\k<x>",
-      "(?=.*a)b",
-      "(?!a)b",
-      "(?<=a)b",
-      "(?<!a)b",
-      "((a{60}){60}){60}",
-      "(((((){99}){99}){99}){99}){99}",
-      "((((((?:){99}){99}){99}){99}){99}){99}",
-      "(unclosed",
-      "*a"
-    ]) {
-      expect(compileTitleRegex(source), source).toBeNull();
-    }
-
-    expect(performance.now() - started).toBeLessThan(FAST_MATCH_MS);
+    expect(elapsedMs(rejectAll)).toBeLessThan(FAST_MATCH_MS);
   });
 });
