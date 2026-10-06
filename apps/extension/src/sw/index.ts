@@ -91,6 +91,7 @@ import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import {
   classifyMessageSender,
   classifyPortSender,
+  isBroadcastDeliveredToPort,
   isInboundKindAllowed,
   type InboundSenderContext,
   type SenderTrustContext
@@ -102,6 +103,7 @@ import {
   upsertRequestMeta,
   type RequestMetaEntry
 } from "./request-meta.js";
+import { resolveRawEventSession } from "./session-routing.js";
 import {
   parseStoppedSessionRecords,
   pruneStoppedSessionRecords,
@@ -1387,9 +1389,7 @@ function ingestRawEvent(
   rawEvent: RawRecorderEvent,
   options: { arrivedBeforeStop?: boolean } = {}
 ): void {
-  const runtime =
-    sessionsByTab.get(rawEvent.tabId) ??
-    (typeof rawEvent.sid === "string" ? sessionsBySid.get(rawEvent.sid) : undefined);
+  const runtime = resolveRawEventSession(rawEvent, sessionsByTab, sessionsBySid);
 
   if (!runtime) {
     return;
@@ -4820,7 +4820,9 @@ function resolveUrlOrigin(value: string): string | null {
 
 function broadcast(message: ExtensionOutboundMessage): void {
   for (const port of connectedPorts) {
-    sendPortMessage(port, message);
+    if (isBroadcastDeliveredToPort(message.kind, port.name)) {
+      sendPortMessage(port, message);
+    }
   }
 }
 
