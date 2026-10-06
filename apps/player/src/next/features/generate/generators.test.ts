@@ -10,6 +10,7 @@ import {
   buildJiraIssue,
   buildPlaywrightMockScript,
   buildPlaywrightScript,
+  GENERATE_FILE_NAMES,
   resolveStartUrl
 } from "./generators.js";
 
@@ -37,7 +38,8 @@ describe("generators", () => {
 
     expect(script).toContain("import { test } from '@playwright/test';");
     expect(script).toContain(`await page.goto(${JSON.stringify(origin)});`);
-    expect(script).toContain("routeFromHAR('./session.har'");
+    // The test replays the HAR under the name the HAR dialog downloads it as.
+    expect(script).toContain(`routeFromHAR('./${GENERATE_FILE_NAMES.har}'`);
     expect(script).toContain(".click(");
   });
 
@@ -86,6 +88,7 @@ describe("generators", () => {
     expect(JSON.parse(whole.text).log.entries).toHaveLength(whole.entries);
     expect(whole.entries).toBe(archive.player.getNetworkWaterfall().length);
     expect(later.entries).toBeLessThan(whole.entries);
+    expect(whole.bytes).toBe(new TextEncoder().encode(whole.text).byteLength);
 
     const github = buildGitHubIssue(archive, null);
     expect(github.labels).toEqual(["bug", "webblackbox"]);

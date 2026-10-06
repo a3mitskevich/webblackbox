@@ -72,12 +72,22 @@ export function GenerateMenu() {
 
   const rangeLabel = formatRangeLabel(range, archive.model.minMono, locale);
 
+  // A report that fails to build or a clipboard that rejects is a "could not copy" notice too.
   const copyBugReport = async (): Promise<void> => {
-    const ok = await copyToClipboard(buildBugReport(archive, range));
-    toastManager.add({
-      title: ok ? t("bugReportCopied") : t("bugReportCopyFailed"),
-      description: rangeLabel ?? t("menuWholeSession")
-    });
+    const scope = rangeLabel ?? t("menuWholeSession");
+
+    try {
+      const ok = await copyToClipboard(buildBugReport(archive, range));
+      toastManager.add({
+        title: ok ? t("bugReportCopied") : t("bugReportCopyFailed"),
+        description: scope
+      });
+    } catch (error: unknown) {
+      toastManager.add({
+        title: t("bugReportCopyFailed"),
+        description: error instanceof Error ? error.message : String(error)
+      });
+    }
   };
 
   return (

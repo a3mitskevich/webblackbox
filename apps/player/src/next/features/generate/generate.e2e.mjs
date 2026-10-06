@@ -81,6 +81,12 @@ async function playwrightForRange(ctx) {
     "The clipboard has no Playwright test",
     clipboard.slice(0, 200)
   );
+  // The test replays the HAR under the name "download the HAR file" saves it as.
+  ctx.assert(
+    clipboard.includes("routeFromHAR('./webblackbox-session.har'"),
+    "The Playwright test does not replay webblackbox-session.har",
+    clipboard.slice(0, 400)
+  );
 
   await ctx.click("generate-close");
   return { menuRange, startUrl, status, lines: clipboard.split("\n").length };

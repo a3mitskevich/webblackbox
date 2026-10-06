@@ -1,18 +1,9 @@
 import "../network/viewers.css";
 
 import { Download, RefreshCw } from "lucide-react";
-import {
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-  type KeyboardEvent,
-  type ReactNode
-} from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
-import { normalizeRange, type TimeRange } from "../../../core/time-range.js";
+import type { TimeRange } from "../../../core/time-range.js";
 import { downloadTextFile } from "../../../lib/export.js";
 import { DialogDescription, DialogTitle, ModalDialog } from "../../components/modal-dialog.js";
 import { toastManager } from "../../components/toasts.js";
@@ -36,12 +27,9 @@ import {
   resolveStartUrl
 } from "./generators.js";
 import { generateMessages, type GenerateMessageKey, type GenerateTranslate } from "./messages.js";
-import {
-  clampMaxActions,
-  DEFAULT_MAX_ACTIONS,
-  formatRangeLabel,
-  resolveGenerateRange
-} from "./range.js";
+import { clampMaxActions, DEFAULT_MAX_ACTIONS, resolveGenerateRange } from "./range.js";
+import { RangeFields } from "./range-fields.js";
+import { useGenerated, type Output } from "./use-generated.js";
 
 const ICON_PROPS = { size: 15, strokeWidth: 1.5, absoluteStrokeWidth: true, "aria-hidden": true };
 
@@ -62,162 +50,6 @@ const DESCRIPTIONS: Record<GenerateKind, GenerateMessageKey> = {
   "github-issue": "describeGitHubIssue",
   "jira-issue": "describeJiraIssue"
 };
-
-type Output<T> =
-  | { status: "pending" }
-  | { status: "ready"; value: T }
-  | { status: "error"; message: string };
-
-/**
- * Runs a generator (sync or async) whenever `job` changes and keeps only the latest answer, so a
- * slow mock script for an old range never replaces the one for the new range.
- */
-function useGenerated<T>(job: () => T | Promise<T>): Output<T> {
-  const [output, setOutput] = useState<{ job: () => T | Promise<T>; output: Output<T> } | null>(
-    null
-  );
-
-  useEffect(() => {
-    let current = true;
-
-    Promise.resolve()
-      .then(job)
-      .then(
-        (value) => current && setOutput({ job, output: { status: "ready", value } }),
-        (error: unknown) =>
-          current &&
-          setOutput({
-            job,
-            output: {
-              status: "error",
-              message: error instanceof Error ? error.message : String(error)
-            }
-          })
-      );
-
-    return () => {
-      current = false;
-    };
-  }, [job]);
-
-  return output && output.job === job ? output.output : { status: "pending" };
-}
-
-/** Seconds from the session start, as typed in the range fields. */
-function toSecondsText(ms: number): string {
-  return (Math.max(0, ms) / 1_000).toFixed(2);
-}
-
-type RangeFieldsProps = {
-  archive: LoadedArchive;
-  range: TimeRange | null;
-  timelineRange: TimeRange | null;
-  onChange: (range: TimeRange | null) => void;
-  t: GenerateTranslate;
-};
-
-/**
- * From / To in seconds (the classic dialog's fields), plus "Whole session" and "Timeline range".
- * A typed value applies on Enter, on leaving the field or with "Regenerate".
- */
-function RangeFields(props: RangeFieldsProps) {
-  // The typed text starts over whenever the applied range changes (a preset, a commit).
-  const key = props.range ? `${props.range.startMono}-${props.range.endMono}` : "whole";
-  return <RangeFieldsInner key={key} {...props} />;
-}
-
-function RangeFieldsInner({ archive, range, timelineRange, onChange, t }: RangeFieldsProps) {
-  const i18n = useI18n();
-  const locale = usePlayerState((state) => state.locale);
-  const { minMono, maxMono, durationMono } = archive.model;
-  const [from, setFrom] = useState(() => toSecondsText((range?.startMono ?? minMono) - minMono));
-  const [to, setTo] = useState(() => toSecondsText((range?.endMono ?? maxMono) - minMono));
-  const fromId = useId();
-  const toId = useId();
-
-  const commit = (): void => {
-    const start = Number.parseFloat(from.replace(",", "."));
-    const end = Number.parseFloat(to.replace(",", "."));
-    const next = normalizeRange(
-      minMono + (Number.isFinite(start) ? start : 0) * 1_000,
-      minMono + (Number.isFinite(end) ? end : durationMono / 1_000) * 1_000,
-      { minMono, maxMono }
-    );
-    // The whole recording is no range (the generators then see every event).
-    const isWhole = next !== null && next.startMono <= minMono && next.endMono >= maxMono - 50;
-    onChange(isWhole ? null : next);
-  };
-
-  // Enter applies the typed range (and does not submit the dialog's form).
-  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      commit();
-    }
-  };
-
-  const label = formatRangeLabel(range, minMono, locale);
-  const duration = i18n.formatSeconds(durationMono);
-
-  return (
-    <fieldset className="gen-range" data-testid="generate-range">
-      <legend>{t("rangeLegend")}</legend>
-      <label className="gen-field" htmlFor={fromId}>
-        {t("rangeFrom")}
-        <input
-          id={fromId}
-          className="text-input"
-          inputMode="decimal"
-          value={from}
-          onChange={(event) => setFrom(event.target.value)}
-          onBlur={commit}
-          onKeyDown={handleKeyDown}
-          data-testid="generate-range-from"
-        />
-      </label>
-      <label className="gen-field" htmlFor={toId}>
-        {t("rangeTo")}
-        <input
-          id={toId}
-          className="text-input"
-          inputMode="decimal"
-          value={to}
-          onChange={(event) => setTo(event.target.value)}
-          onBlur={commit}
-          onKeyDown={handleKeyDown}
-          data-testid="generate-range-to"
-        />
-      </label>
-      <button
-        type="button"
-        className="btn small"
-        aria-pressed={range === null}
-        onClick={() => onChange(null)}
-        data-testid="generate-range-whole"
-      >
-        {t("rangeWhole")}
-      </button>
-      {timelineRange ? (
-        <button
-          type="button"
-          className="btn small"
-          aria-pressed={
-            range?.startMono === timelineRange.startMono && range?.endMono === timelineRange.endMono
-          }
-          onClick={() => onChange(timelineRange)}
-          data-testid="generate-range-timeline"
-        >
-          {t("rangeTimeline")}
-        </button>
-      ) : null}
-      <span className="gen-range-summary" data-testid="generate-range-summary">
-        {label
-          ? t("rangeSummary", { range: label, duration })
-          : t("rangeSummaryWhole", { duration })}
-      </span>
-    </fieldset>
-  );
-}
 
 type DownloadButtonProps = {
   fileName: string;
@@ -353,13 +185,15 @@ function PlaywrightDialog({ mocks, ...props }: GeneratorProps & { mocks: boolean
   const [includeHarReplay, setIncludeHarReplay] = useState(true);
   const maxActionsId = useId();
   const harId = useId();
+  // Scans every event (route chapters): once per range, not on each keystroke in Max actions.
+  const startUrl = useMemo(() => resolveStartUrl(archive, range), [archive, range]);
 
   const job = useMemo(
     () =>
       mocks
-        ? () => buildPlaywrightMockScript(archive, { range, maxActions })
-        : () => buildPlaywrightScript(archive, { range, maxActions, includeHarReplay }),
-    [archive, mocks, range, maxActions, includeHarReplay]
+        ? () => buildPlaywrightMockScript(archive, { range, maxActions, startUrl })
+        : () => buildPlaywrightScript(archive, { range, maxActions, includeHarReplay, startUrl }),
+    [archive, mocks, range, maxActions, includeHarReplay, startUrl]
   );
   const output = useGenerated(job);
   const text = output.status === "ready" ? output.value : null;
@@ -375,7 +209,7 @@ function PlaywrightDialog({ mocks, ...props }: GeneratorProps & { mocks: boolean
       kind={kind}
       onClose={onClose}
       onSubmit={commitMaxActions}
-      description={mocks ? t(DESCRIPTIONS[kind], { count: MAX_MOCKS }) : undefined}
+      description={t(DESCRIPTIONS[kind], { count: MAX_MOCKS, fileName: GENERATE_FILE_NAMES.har })}
       t={t}
       actions={
         <>
@@ -435,11 +269,11 @@ function PlaywrightDialog({ mocks, ...props }: GeneratorProps & { mocks: boolean
               onChange={(event) => setIncludeHarReplay(event.target.checked)}
               data-testid="generate-include-har"
             />
-            {t("includeHar")}
+            {t("includeHar", { fileName: GENERATE_FILE_NAMES.har })}
           </label>
         )}
         <span className="gen-start" data-testid="generate-start-url">
-          {t("startsAt", { url: resolveStartUrl(archive, range) })}
+          {t("startsAt", { url: startUrl })}
         </span>
       </div>
       <OutputPreview output={output} language="javascript" t={t} />
@@ -533,7 +367,7 @@ function HarDialog(props: GeneratorProps) {
         <p className="gen-status" data-testid="generate-har-summary">
           {t("harSummary", {
             count: i18n.formatNumber(har.entries),
-            size: i18n.formatByteSize(new TextEncoder().encode(har.text).byteLength)
+            size: i18n.formatByteSize(har.bytes)
           })}
         </p>
       ) : null}
@@ -634,11 +468,12 @@ function IssueDialog({ jira, ...props }: GeneratorProps & { jira: boolean }) {
           </label>
           {issue.type ? (
             <p className="gen-meta">
-              {t("issueType")}: <span className="chip">{issue.type}</span>
+              {t("issueType")}
+              <span className="chip">{issue.type}</span>
             </p>
           ) : null}
           <p className="gen-meta" data-testid="generate-issue-labels">
-            {t("issueLabels")}:{" "}
+            {t("issueLabels")}
             {issue.labels.map((label) => (
               <span key={label} className="chip">
                 {label}

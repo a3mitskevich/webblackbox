@@ -112,3 +112,7 @@
     text-align: left;
   }
 }
+.gen-range-error {
+  flex-basis: 100%;
+  margin: 0;
+}

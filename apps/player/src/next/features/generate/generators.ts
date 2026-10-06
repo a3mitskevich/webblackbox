@@ -5,7 +5,10 @@ import {
 } from "@webblackbox/player-sdk";
 
 import type { TimeRange } from "../../../core/time-range.js";
-import { generatePlaywrightScriptFromEvents } from "../../../lib/playwright-script.js";
+import {
+  generatePlaywrightScriptFromEvents,
+  HAR_FILE_NAME
+} from "../../../lib/playwright-script.js";
 import type { LoadedArchive } from "../../state.js";
 import type { GenerateKind } from "./api.js";
 import { toPlayerRange } from "./range.js";
@@ -20,7 +23,7 @@ export const GENERATE_FILE_NAMES: Record<GenerateKind, string> = {
   playwright: "webblackbox-replay.spec.ts",
   "playwright-mocks": "webblackbox-replay-mocks.spec.ts",
   "bug-report": "webblackbox-report.md",
-  har: "webblackbox-session.har",
+  har: HAR_FILE_NAME,
   "github-issue": "webblackbox-github-issue.json",
   "jira-issue": "webblackbox-jira-issue.json"
 };
@@ -32,6 +35,8 @@ export type PlaywrightOptions = {
   range: TimeRange | null;
   maxActions: number;
   includeHarReplay: boolean;
+  /** `resolveStartUrl(archive, range)`, when the caller already has it (it scans every event). */
+  startUrl?: string;
 };
 
 /**
@@ -65,7 +70,7 @@ export function buildPlaywrightScript(archive: LoadedArchive, options: Playwrigh
   return generatePlaywrightScriptFromEvents(events, {
     maxActions: options.maxActions,
     includeHarReplay: options.includeHarReplay,
-    startUrl: resolveStartUrl(archive, range)
+    startUrl: options.startUrl ?? resolveStartUrl(archive, range)
   });
 }
 
@@ -78,7 +83,7 @@ export function buildPlaywrightMockScript(
     range: toPlayerRange(options.range),
     maxActions: options.maxActions,
     maxMocks: MAX_MOCKS,
-    startUrl: resolveStartUrl(archive, options.range)
+    startUrl: options.startUrl ?? resolveStartUrl(archive, options.range)
   });
 }
 
@@ -88,14 +93,31 @@ export function buildBugReport(archive: LoadedArchive, range: TimeRange | null):
 
 export type HarExport = {
   text: string;
+  /** Requests in the HAR. */
   entries: number;
+  /** UTF-8 size of `text`. */
+  bytes: number;
 };
 
+/** `log.entries.length` of a HAR document; 0 when it has no entry list. */
+function countHarEntries(text: string): number {
+  const har: unknown = JSON.parse(text);
+  const log = typeof har === "object" && har !== null ? (har as { log?: unknown }).log : null;
+  const entries =
+    typeof log === "object" && log !== null ? (log as { entries?: unknown }).entries : null;
+  return Array.isArray(entries) ? entries.length : 0;
+}
+
+/**
+ * The HAR and its summary, computed once per range: the count comes from the HAR itself, so a
+ * ranged export does not build the network waterfall a second time.
+ */
 export function buildHar(archive: LoadedArchive, range: TimeRange | null): HarExport {
-  const playerRange = toPlayerRange(range);
+  const text = archive.player.exportHar(toPlayerRange(range));
   return {
-    text: archive.player.exportHar(playerRange),
-    entries: archive.player.getNetworkWaterfall(playerRange).length
+    text,
+    entries: countHarEntries(text),
+    bytes: new TextEncoder().encode(text).byteLength
   };
 }
 
