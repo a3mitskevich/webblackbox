@@ -177,7 +177,7 @@ async function main() {
   state.server = server.server;
   state.fidelitySockets = server.fidelitySockets;
 
-  state.realisticSite = completenessMode ? await startRealisticSite() : null;
+  state.realisticSite = completenessMode ? await startRealisticSite({ holdRequests: true }) : null;
   const demoUrl = state.realisticSite?.pageUrl ?? `http://127.0.0.1:${server.port}/demo/`;
   const playerUrl = `http://127.0.0.1:${server.port}/player/`;
 
@@ -449,6 +449,9 @@ async function main() {
     });
   }
 
+  // The realistic page's held requests started before the capture (or, after a reload, inside it).
+  state.realisticSite?.releaseHeld();
+
   const activeSessions = await readRuntimeSessions(control);
   assert(
     Array.isArray(activeSessions) && activeSessions.length === 1,
@@ -486,6 +489,13 @@ async function main() {
     ? await runRealisticScenario(demoClient, completenessDurationMs)
     : await runDemoScenario(demoClient);
   assert(scenarioResult?.ok === true, "Demo scenario failed", scenarioResult);
+  assert(
+    !completenessMode ||
+      (scenarioResult.heldRequests > 0 &&
+        scenarioResult.heldCompleted === scenarioResult.heldRequests),
+    "Realistic page's held requests did not complete",
+    scenarioResult
+  );
 
   const minifiedErrorResult = verifySourceMaps ? await logMinifiedBundleError(demoClient) : null;
   assert(
@@ -681,7 +691,10 @@ async function main() {
 
   // Every body the policy asked for is in the archive or carries the reason it is not.
   const completenessResult = completenessMode
-    ? checkCompleteness(archive, realisticCompletenessExpectations(scenarioResult))
+    ? checkCompleteness(
+        archive,
+        realisticCompletenessExpectations(scenarioResult, { reloadAfterStart })
+      )
     : bodiesRequested
       ? checkCompleteness(archive, {
           maxMissingResponseBodies: 0,
@@ -2676,11 +2689,14 @@ function checkRealisticTraffic(archive, scenario) {
 
 /**
  * What the realistic site must leave in a Full-capture archive. Bodies: none lost silently, the
- * 2.6 MB bundle recorded as too large, no reads lost to load. Traffic: at least what the page
- * reports it sent, every WebSocket frame whole, perf and console signals present.
+ * 2.6 MB bundle recorded as too large, no reads lost to load, SVG kept as text, `data:` URLs not
+ * counted. Requests the server held from page load: started before the capture (recorded as
+ * such), or, when Start reloads the page, inside it with their bodies. Traffic: at least what the
+ * page reports it sent, every WebSocket frame whole, perf and console signals present.
  */
-function realisticCompletenessExpectations(scenario) {
+function realisticCompletenessExpectations(scenario, { reloadAfterStart = false } = {}) {
   const frames = Number(scenario?.wsSent ?? 0) + Number(scenario?.wsReceived ?? 0);
+  const held = Number(scenario?.heldRequests ?? 0);
 
   return {
     maxMissingResponseBodies: 0,
@@ -2690,8 +2706,19 @@ function realisticCompletenessExpectations(scenario) {
     minResponseBodies: 250,
     // string, JSON, untyped Blob, typed Blob, ArrayBuffer, URLSearchParams, PUT, XHR, beacon.
     minRequestBodies: 9,
-    minSkipReasons: { "too-large": 1 },
-    maxSkipReasons: { backlog: 0, "session-limit": 0, "not-retained": 0, "fetch-failed": 0 },
+    minSkipReasons: {
+      "too-large": 1,
+      "started-before-capture": reloadAfterStart ? 0 : held
+    },
+    maxSkipReasons: {
+      backlog: 0,
+      "session-limit": 0,
+      "not-retained": 0,
+      "fetch-failed": 0,
+      "started-before-capture": reloadAfterStart ? 0 : held
+    },
+    minSvgBodies: Number(scenario?.svgLoads ?? 0) + (reloadAfterStart ? 1 : 0),
+    minDataUrls: Number(scenario?.dataUrls ?? 0) > 0 ? 1 : 0,
     // The last frames can race the socket close at stop.
     minWsFrames: Math.max(1, frames - 2),
     maxCutWsFrames: 0,

@@ -592,6 +592,8 @@ const LITE_DEFAULT_BODY_MIME_ALLOWLIST = [
   "application/javascript",
   "application/x-www-form-urlencoded"
 ];
+/** Full mode reads bodies through CDP whatever loaded them, so SVG images (text) are kept too. */
+const FULL_DEFAULT_BODY_MIME_ALLOWLIST = [...LITE_DEFAULT_BODY_MIME_ALLOWLIST, "image/svg+xml"];
 const LITE_BODY_REDACTED_TOKEN = "[REDACTED]";
 const LITE_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const LITE_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
@@ -3299,6 +3301,11 @@ function trackFullModeNetworkEvent(
 
   const metaKey = buildRequestMetaKey(requestId, sessionId);
 
+  if (method === "Network.requestWillBeSent") {
+    runtime.fullBodyCapture.onRequestWillBeSent(requestId, sessionId);
+    return;
+  }
+
   if (method === "Network.responseReceived") {
     recordScriptSourceMap(runtime, scriptRecordFromResponse(payload));
     const response = asRecord(payload?.response);
@@ -4306,7 +4313,7 @@ function resolveFullBodyCaptureRule(
 
 function resolveProfileBodyMimeAllowlist(runtime: SessionRuntime): string[] {
   const profileAllowlist = runtime.profile.selection.profile.network.bodyMimeAllowlist;
-  return profileAllowlist.length > 0 ? profileAllowlist : LITE_DEFAULT_BODY_MIME_ALLOWLIST;
+  return profileAllowlist.length > 0 ? profileAllowlist : FULL_DEFAULT_BODY_MIME_ALLOWLIST;
 }
 
 function isMimeAllowed(allowlist: string[], mimeType: string | undefined): boolean {

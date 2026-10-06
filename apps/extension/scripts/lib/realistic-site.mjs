@@ -2,7 +2,10 @@
 // reproduces what a real single-page app does to the recorder, which the small demo page never
 // did — hundreds of parallel fetch/XHR calls with small JSON bodies, multi-MB JS bundles, POST
 // bodies the browser does not inline (Blob, untyped) or cannot expose (streams), a SignalR-like
-// WebSocket, a service worker proxying requests, and DOM churn for the whole session.
+// WebSocket, a service worker proxying requests, and DOM churn for the whole session. The page
+// also loads CSS/JS/SVG while it boots (inside the recording when Start reloads the page), sends
+// requests at load that `holdRequests` keeps in flight until the harness calls `releaseHeld()`
+// after Start (requests that started before the capture), and loads SVG and `data:` URL resources.
 //
 // `startRealisticSite()` serves it on its own loopback origin; the page exposes
 // `window.__realistic.run(durationMs)`, which drives the traffic and resolves with a summary of
@@ -21,6 +24,12 @@ export const REALISTIC_BUNDLES = [
   { name: "app.js", bytes: 180_000 }
 ];
 export const REALISTIC_STYLESHEETS = 24;
+/**
+ * Requests the page sends at load that the server holds until `releaseHeld()`. They go to the
+ * `localhost` name of the server, whose connection pool (6 per host) they fill without blocking
+ * the page's own requests.
+ */
+export const REALISTIC_HELD_REQUESTS = { fetches: 3, scripts: 2, stylesheets: 1 };
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const RECORD_SEPARATOR = "\u001e";
@@ -31,13 +40,20 @@ const PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64"
 );
+const SVG_SOURCE = (label) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><title>${label}</title>` +
+  `<rect width="16" height="16" fill="#3a7"/></svg>`;
 
-/** Starts the site on 127.0.0.1 (random port by default). */
-export async function startRealisticSite({ port = 0 } = {}) {
+/**
+ * Starts the site on 127.0.0.1 (random port by default). With `holdRequests`, the requests the
+ * page sends at load wait for `releaseHeld()`; otherwise they are answered at once.
+ */
+export async function startRealisticSite({ port = 0, holdRequests = false } = {}) {
   const bundles = new Map(REALISTIC_BUNDLES.map((bundle) => [bundle.name, buildBundle(bundle)]));
   const sockets = new Set();
+  const held = createHeldGate(holdRequests);
   const server = createServer((request, response) => {
-    handleRequest(request, response, bundles).catch((error) => {
+    handleRequest(request, response, bundles, held).catch((error) => {
       if (!response.headersSent) {
         response.writeHead(500, { "content-type": "text/plain" });
       }
@@ -54,25 +70,53 @@ export async function startRealisticSite({ port = 0 } = {}) {
     origin,
     pageUrl: `${origin}${REALISTIC_PAGE_PATH}`,
     server,
+    /** Answers the held requests, and every later one at once. */
+    releaseHeld: held.release,
     async close() {
       for (const socket of sockets) {
         socket.destroy();
       }
 
       sockets.clear();
+      held.release();
       server.closeAllConnections?.();
       await new Promise((resolve) => server.close(() => resolve()));
     }
   };
 }
 
-async function handleRequest(request, response, bundles) {
+/** Holds requests until `release()`; afterwards (or when not holding) they are answered at once. */
+function createHeldGate(holding) {
+  let released = !holding;
+  const waiting = [];
+
+  return {
+    wait() {
+      return released ? Promise.resolve() : new Promise((resolve) => waiting.push(resolve));
+    },
+    release() {
+      released = true;
+
+      for (const resolve of waiting.splice(0, waiting.length)) {
+        resolve();
+      }
+    }
+  };
+}
+
+async function handleRequest(request, response, bundles, held) {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const path = url.pathname;
   const body = await readBody(request);
 
+  if (path.startsWith("/held/")) {
+    await held.wait();
+    return sendHeld(response, path.slice("/held/".length));
+  }
+
   if (path === "/" || path === REALISTIC_PAGE_PATH) {
-    return send(response, 200, "text/html; charset=utf-8", buildPage(), {
+    const heldOrigin = `http://localhost:${request.socket.localPort}`;
+    return send(response, 200, "text/html; charset=utf-8", buildPage(heldOrigin), {
       "cache-control": "no-store"
     });
   }
@@ -97,8 +141,22 @@ async function handleRequest(request, response, bundles) {
     return send(response, 200, "text/css", buildStylesheet(path), { "cache-control": "no-store" });
   }
 
+  if (path.startsWith("/img/") && path.endsWith(".svg")) {
+    return send(response, 200, "image/svg+xml", SVG_SOURCE(path), { "cache-control": "no-store" });
+  }
+
   if (path.startsWith("/img/")) {
     return send(response, 200, "image/png", PNG_BYTES, { "cache-control": "no-store" });
+  }
+
+  if (path === "/boot/boot.css") {
+    return send(response, 200, "text/css", buildStylesheet(path), { "cache-control": "no-store" });
+  }
+
+  if (path === "/boot/boot.js") {
+    return send(response, 200, "text/javascript", "window.__booted = true;\n", {
+      "cache-control": "no-store"
+    });
   }
 
   if (path === "/favicon.ico") {
@@ -154,6 +212,33 @@ async function handleRequest(request, response, bundles) {
 function send(response, status, contentType, body, headers = {}) {
   response.writeHead(status, { "content-type": contentType, ...headers });
   response.end(body);
+}
+
+/** A held resource: `<name>.js`, `<name>.css` or JSON. */
+function sendHeld(response, name) {
+  const headers = { "cache-control": "no-store", "access-control-allow-origin": "*" };
+
+  if (name.endsWith(".js")) {
+    return send(
+      response,
+      200,
+      "text/javascript",
+      `window.__held = ${JSON.stringify(name)};\n`,
+      headers
+    );
+  }
+
+  if (name.endsWith(".css")) {
+    return send(response, 200, "text/css", buildStylesheet(`/held/${name}`), headers);
+  }
+
+  return send(
+    response,
+    200,
+    "application/json; charset=utf-8",
+    JSON.stringify(buildItems(`held-${name}`)),
+    headers
+  );
 }
 
 function sendJson(response, payload) {
@@ -350,7 +435,7 @@ self.addEventListener('fetch', (event) => {
 });
 `;
 
-function buildPage() {
+function buildPage(heldOrigin) {
   // Bundles and stylesheets load lazily from `run()` (like SPA chunks), so they fall inside the
   // recording instead of before it starts.
   const assets = {
@@ -366,7 +451,11 @@ function buildPage() {
 <head>
 <meta charset="utf-8">
 <title>Realistic fixture</title>
+<link rel="stylesheet" href="/boot/boot.css">
+<script src="/boot/boot.js"></script>
 <script>window.__realisticAssets = ${JSON.stringify(assets)};</script>
+<script>window.__realisticHeldOrigin = ${JSON.stringify(heldOrigin)};</script>
+<script>${HELD_SCRIPT}</script>
 </head>
 <body>
 <header><h1>Lobby</h1><button id="refresh" type="button">Refresh</button></header>
@@ -374,11 +463,71 @@ function buildPage() {
   <section id="tables" aria-live="polite"></section>
   <section id="ticker"></section>
   <img src="/img/logo.png" alt="">
+  <img src="/img/boot.svg" alt="">
 </main>
 <script>${PAGE_SCRIPT}</script>
 </body>
 </html>`;
 }
+
+// Requests the page sends while it loads and the server holds until the harness releases them:
+// fetches at once, scripts and stylesheets after the load event (so the page still finishes
+// loading). `window.__realisticHeld.done()` resolves when all of them settled.
+const HELD_SCRIPT = `
+(() => {
+  const counts = ${JSON.stringify(REALISTIC_HELD_REQUESTS)};
+  const origin = window.__realisticHeldOrigin;
+  const pending = [];
+  let issued = 0;
+  const settle = (promise) => {
+    issued += 1;
+    pending.push(promise.then(() => true, () => false));
+  };
+  const loadTag = (tag, url) => new Promise((resolve, reject) => {
+    const element = document.createElement(tag);
+
+    if (tag === 'link') {
+      element.rel = 'stylesheet';
+      element.href = url;
+    } else {
+      element.src = url;
+    }
+
+    element.onload = resolve;
+    element.onerror = reject;
+    document.head.append(element);
+  });
+
+  for (let index = 0; index < counts.fetches; index += 1) {
+    settle(fetch(origin + '/held/items-' + index, { cache: 'no-store' })
+      .then((response) => response.text()));
+  }
+
+  const loaded = new Promise((resolve) => {
+    if (document.readyState === 'complete') {
+      resolve();
+    } else {
+      window.addEventListener('load', resolve, { once: true });
+    }
+  }).then(() => {
+    for (let index = 0; index < counts.scripts; index += 1) {
+      settle(loadTag('script', origin + '/held/chunk-' + index + '.js'));
+    }
+
+    for (let index = 0; index < counts.stylesheets; index += 1) {
+      settle(loadTag('link', origin + '/held/theme-' + index + '.css'));
+    }
+  });
+
+  window.__realisticHeld = {
+    issued: () => issued,
+    done: () => loaded.then(() => Promise.all(pending)).then((results) => ({
+      issued,
+      completed: results.filter(Boolean).length
+    }))
+  };
+})();
+`;
 
 // The page's traffic and DOM churn, as plain browser JavaScript (no build step).
 const PAGE_SCRIPT = `
@@ -387,7 +536,8 @@ const PAGE_SCRIPT = `
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const summary = {
     fetches: 0, xhrs: 0, posts: 0, serviceWorker: 0, polls: 0,
-    wsSent: 0, wsReceived: 0, domMutations: 0, errors: []
+    wsSent: 0, wsReceived: 0, domMutations: 0, svgLoads: 0, dataUrls: 0,
+    heldRequests: 0, heldCompleted: 0, errors: []
   };
 
   function track(promise, label) {
@@ -544,6 +694,33 @@ const PAGE_SCRIPT = `
     });
   }
 
+  function loadImage(src) {
+    return new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => resolve(true);
+      image.onerror = () => { summary.errors.push('image ' + src.slice(0, 40)); resolve(false); };
+      image.alt = '';
+      image.src = src;
+      document.querySelector('main').append(image);
+    });
+  }
+
+  // SVG is text: its bodies belong in a Full capture. \`data:\` URLs carry their body in the URL.
+  async function loadSvgAndDataUrls() {
+    const icons = ['/img/icon-a.svg', '/img/icon-b.svg', '/img/icon-c.svg'];
+    summary.svgLoads += icons.length + 1;
+    await Promise.all(icons.map(loadImage));
+    await track(fetch('/img/sprite.svg', { cache: 'no-store' }).then((response) => response.text()),
+      'sprite.svg');
+
+    const inlineSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8">' +
+      '<circle cx="4" cy="4" r="4"/></svg>';
+    summary.dataUrls += 2;
+    await loadImage('data:image/svg+xml;base64,' + btoa(inlineSvg));
+    await track(fetch('data:application/json,%7B%22inline%22%3Atrue%7D').then((r) => r.json()),
+      'data: fetch');
+  }
+
   function loadAssets() {
     const assets = window.__realisticAssets;
     return Promise.all([
@@ -556,7 +733,12 @@ const PAGE_SCRIPT = `
     const startedAt = Date.now();
     const deadline = startedAt + durationMs;
 
+    const held = await window.__realisticHeld.done();
+    summary.heldRequests = held.issued;
+    summary.heldCompleted = held.completed;
+
     await loadAssets();
+    await loadSvgAndDataUrls();
 
     if ('serviceWorker' in navigator) {
       await track(

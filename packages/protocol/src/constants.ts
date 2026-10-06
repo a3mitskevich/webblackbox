@@ -154,6 +154,8 @@ export const BODY_SKIP_REASONS = [
   "backlog",
   // The browser no longer held the body when it was read (evicted from its buffer).
   "not-retained",
+  // The request was already in flight when the capture began: the browser kept no body for it.
+  "started-before-capture",
   // The browser never exposes this body (e.g. a streamed request body).
   "unavailable",
   // Reading the body failed for another reason.

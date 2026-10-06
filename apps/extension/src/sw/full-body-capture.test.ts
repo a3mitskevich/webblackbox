@@ -272,6 +272,68 @@ describe("FullBodyCapture", () => {
     expect(harness.stored).toEqual(["long-poll:body-long-poll"]);
   });
 
+  it("tells a request in flight when the capture began from a body the browser dropped", async () => {
+    const harness = createHarness({ autoRead: false });
+    const noResource = { ok: false as const, error: "No resource with given identifier found" };
+
+    // `early` was sent before `Network.enable`: only its response reaches the capture.
+    harness.capture.onResponseReceived(finished("early"));
+    harness.capture.onRequestWillBeSent("late", undefined);
+    harness.capture.onResponseReceived(finished("late"));
+    harness.capture.onLoadingFinished(finished("early"));
+    harness.capture.onLoadingFinished(finished("late"));
+    harness.release("early", noResource);
+    harness.release("late", noResource);
+    await harness.settle();
+
+    expect(harness.skips.map((skip) => [skip.reqId, skip.reason])).toEqual([
+      ["early", "started-before-capture"],
+      ["late", "not-retained"]
+    ]);
+  });
+
+  it("keeps the body of an earlier request when the browser still has it", async () => {
+    const harness = createHarness();
+
+    harness.capture.onResponseReceived(finished("early"));
+    harness.capture.onLoadingFinished(finished("early"));
+    await harness.capture.drain(1_000);
+
+    expect(harness.stored).toEqual(["early:body-early"]);
+    expect(harness.skips).toEqual([]);
+  });
+
+  it("tracks requests per CDP session", async () => {
+    const harness = createHarness({ autoRead: false });
+
+    harness.capture.onRequestWillBeSent("same", "child");
+    harness.capture.onResponseReceived(finished("same"));
+    harness.capture.onLoadingFinished(finished("same"));
+    harness.release("same", { ok: false, error: "No resource with given identifier found" });
+    await harness.settle();
+
+    expect(harness.skips.map((skip) => skip.reason)).toEqual(["started-before-capture"]);
+  });
+
+  it("reads SVG images as text and leaves data: URLs alone", async () => {
+    const harness = createHarness();
+    const svg = { resourceType: "Image", mimeType: "image/svg+xml" };
+
+    harness.capture.onLoadingFinished(
+      finished("icon", { ...svg, url: "https://app.example/img/icon.svg" })
+    );
+    harness.capture.onLoadingFinished(
+      finished("inline", { ...svg, url: "data:image/svg+xml;base64,PHN2Zy8+" })
+    );
+    harness.capture.onLoadingFinished(
+      finished("json", { resourceType: "Fetch", url: "data:application/json,{}" })
+    );
+    await harness.capture.drain(1_000);
+
+    expect(harness.reads).toEqual(["icon"]);
+    expect(harness.skips).toEqual([]);
+  });
+
   it("leaves responses it never saw to the archive's own record", async () => {
     const harness = createHarness();
 
