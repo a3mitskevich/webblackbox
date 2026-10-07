@@ -17,7 +17,7 @@ import {
 import {
   capturesPageStorageInFullMode,
   capturesRawDom,
-  isPageEventKeptInFullMode
+  shouldPageCapture
 } from "./capture-scope.js";
 import {
   SCRIPT_SOURCE_MAP_RAW_TYPE,
@@ -90,15 +90,6 @@ const LONG_TASK_PRESSURE_EXTENDED_COOLDOWN_MS = 3_000;
 const RAF_PRESSURE_COOLDOWN_MS = 1_400;
 const MUTATION_DETAIL_RECORD_LIMIT = 160;
 const MUTATION_DETAIL_BUFFER_LIMIT = 240;
-const FULL_MODE_SKIPPED_RAW_TYPES = new Set([
-  "scroll",
-  "mutation",
-  "snapshot",
-  "screenshot",
-  "localStorageSnapshot",
-  "indexedDbSnapshot",
-  "cookieSnapshot"
-]);
 
 type CapturePressureStage = "none" | "soft" | "hard" | "critical";
 
@@ -1313,11 +1304,7 @@ export class LiteCaptureAgent {
   }
 
   private queueRawEvent(event: RawRecorderEvent): void {
-    if (
-      this.mode === "full" &&
-      FULL_MODE_SKIPPED_RAW_TYPES.has(event.rawType) &&
-      !isPageEventKeptInFullMode(event.rawType, this.capturePolicy.categories)
-    ) {
+    if (!shouldPageCapture(event.rawType, this.mode, this.capturePolicy.categories)) {
       return;
     }
 

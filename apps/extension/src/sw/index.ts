@@ -2,14 +2,13 @@ import { createCdpRouter, createChromeDebuggerTransport } from "@webblackbox/cdp
 import { IndexedDbPipelineStorage, sweepPipelineSessions } from "@webblackbox/pipeline/storage";
 import {
   createSessionId,
+  BODY_REDACTION_TOKEN,
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_EXPORT_POLICY,
   DEFAULT_POINTER_CAPTURE_OPTIONS,
   DEFAULT_RECORDER_CONFIG,
   assertExportPassphrase,
   isValidExportPassphrase,
-  maskBodyBytes,
-  maskBodyText,
   normalizeExportPassphrase,
   sanitizeUrlForPrivacy,
   type CapturePolicy,
@@ -27,7 +26,6 @@ import {
   WebBlackboxRecorder
 } from "@webblackbox/recorder";
 import { INJECTED_BRIDGE_NONCE_SETTER_KEY } from "webblackbox/injected-hooks";
-import { decodeScreenshotDataUrl } from "webblackbox/lite-materializer";
 
 import { PIPELINE_DB_NAME } from "../shared/at-rest.js";
 import {
@@ -61,12 +59,7 @@ import {
   PERFORMANCE_BUDGET_STORAGE_KEY,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
-import {
-  capStorageValue,
-  capturesPageStorageInFullMode,
-  isPageEventKeptInFullMode
-} from "webblackbox/capture-scope";
-import { materializeLiteRawEvent } from "webblackbox/lite-materializer";
+import { capStorageValue, capturesPageStorageInFullMode } from "webblackbox/capture-scope";
 import {
   AUTO_PROFILE_ID,
   buildProfileRecorderConfig,
@@ -95,12 +88,12 @@ import {
 import { migrateSettingsStorage } from "../shared/settings-migration.js";
 import {
   applyBodyUrlFilters,
-  isMimeAllowed as isMimeAllowedUtil,
+  DEFAULT_BODY_CAPTURE_MAX_BYTES,
+  DEFAULT_BODY_MIME_ALLOWLIST,
   normalizeBodyCaptureMaxBytes as normalizeBodyCaptureMaxBytesUtil,
-  normalizeMimeType as normalizeMimeTypeUtil,
   isInlineRequestBodyAllowed,
   resolveFullBodyCaptureRule as resolveFullBodyCaptureRuleUtil,
-  resolveLiteBodyCaptureRule as resolveLiteBodyCaptureRuleUtil
+  type BodyCaptureRule
 } from "./body-capture-utils.js";
 import {
   shouldStopForCaptureScopeOriginChange,
@@ -134,10 +127,12 @@ import {
   type StoppedSessionSnapshot
 } from "./stopped-session-store.js";
 import {
-  buildLiteNetworkFailureRawEvent,
-  buildLiteNetworkRequestRawEvent,
-  buildLiteNetworkResponseRawEvent
-} from "./lite-network-baseline.js";
+  materializeLiteContentEvent,
+  resolveLiteBodyCaptureRule,
+  resolveProfileBodyMimeAllowlist,
+  shouldMaterializeLiteContentEvent
+} from "./lite-materialize.js";
+import { createLiteNetworkBaselineController } from "./lite-network.js";
 import { shouldUpdateSessionMetadataFromNavigation } from "./navigation-metadata.js";
 import {
   createOffscreenClient,
@@ -177,12 +172,6 @@ import {
   NO_RECORDING_PROFILE_ERROR,
   readTabPageContext
 } from "./profile-runtime.js";
-import {
-  buildRequestMetaKey,
-  deleteRequestMeta,
-  getRequestMeta,
-  upsertRequestMeta
-} from "./request-meta.js";
 import {
   createSessionRegistry,
   createSessionRuntime,
@@ -243,12 +232,6 @@ type RecordingSampling = {
   bodyCaptureMaxBytes: number;
 };
 
-type LiteBodyCaptureRule = {
-  enabled: boolean;
-  maxBytes: number;
-  mimeAllowlist: string[];
-};
-
 const chromeApi = getChromeApi();
 
 const sessionRegistry = createSessionRegistry();
@@ -269,13 +252,11 @@ const inFlightContentMessagesByTab = new Map<number, number>();
 const offscreenSessionRecovery = new Map<string, Promise<void>>();
 let freezeBadgeTimer: ReturnType<typeof setTimeout> | null = null;
 let stoppedSessionRecordsQueue: Promise<unknown> = Promise.resolve();
-let liteWebRequestCaptureCleanup: (() => void) | null = null;
 
 const OFFSCREEN_PATH = "offscreen.html";
 const SERVICE_WORKER_BOOTED_AT = Date.now();
 const SCREENSHOT_ACTION_COOLDOWN_MS = 2_000;
 const POINTER_STALE_MS = 2_500;
-const NETWORK_BODY_MAX_BYTES = 256 * 1024;
 /**
  * How long stop waits for response bodies still being read before recording them as skipped:
  * a base plus a share per pending body, capped.
@@ -295,42 +276,10 @@ const PIPELINE_BATCH_FLUSH_MS = 120;
 /** Shortest gap between session-list pushes driven by recorded events (counters, errors). */
 const SESSION_LIST_EVENT_PUSH_INTERVAL_MS = 500;
 const CONTENT_EVENT_SLICE_BUDGET_MS = 8;
-// Pointer samples are kept: the page samples them at the profile rate and drops them under load.
-const SKIPPED_FULL_MODE_CONTENT_RAW_TYPES = new Set([
-  "scroll",
-  "mutation",
-  "snapshot",
-  "screenshot",
-  "localStorageSnapshot",
-  "indexedDbSnapshot",
-  "cookieSnapshot",
-  "networkBody",
-  "fetch",
-  "xhr",
-  "fetchError",
-  "console",
-  "pageError",
-  "unhandledrejection",
-  "resourceError",
-  "sse",
-  "notice",
-  SCRIPT_RAW_TYPE
-]);
-const LITE_DEFAULT_BODY_MIME_ALLOWLIST = [
-  "text/*",
-  "application/json",
-  "application/*+json",
-  "application/xml",
-  "application/*+xml",
-  "application/javascript",
-  "application/x-www-form-urlencoded"
-];
+// Full mode's "what the page captures" decision is made once, at the source: the capture agent
+// applies `shouldPageCapture` (webblackbox/capture-scope); events that arrive here are trusted.
 /** Full mode reads bodies through CDP whatever loaded them, so SVG images (text) are kept too. */
-const FULL_DEFAULT_BODY_MIME_ALLOWLIST = [...LITE_DEFAULT_BODY_MIME_ALLOWLIST, "image/svg+xml"];
-const LITE_BODY_REDACTED_TOKEN = "[REDACTED]";
-const LITE_SCREENSHOT_MAX_DATA_URL_LENGTH = 12 * 1024 * 1024;
-const LITE_SCREENSHOT_MAX_BYTES = 6 * 1024 * 1024;
-const LITE_DOM_SNAPSHOT_MAX_BYTES = 1_500 * 1024;
+const FULL_DEFAULT_BODY_MIME_ALLOWLIST = [...DEFAULT_BODY_MIME_ALLOWLIST, "image/svg+xml"];
 const CPU_PROFILE_SAMPLE_MS = 350;
 const ACTIVE_SESSION_STORAGE_KEY = "webblackbox.runtime.sessions";
 const SESSION_ANNOTATIONS_STORAGE_KEY = "webblackbox.runtime.sessionAnnotations";
@@ -380,7 +329,13 @@ const fullCdp = createFullCdpController({
   shouldCaptureIncidentArtifacts,
   captureIncidentArtifacts,
   resolveBodyRule: resolveFullBodyCaptureRule,
-  bodyRedactedToken: LITE_BODY_REDACTED_TOKEN
+  bodyRedactedToken: BODY_REDACTION_TOKEN
+});
+const liteNetworkBaseline = createLiteNetworkBaselineController({
+  webRequest: chromeApi?.webRequest,
+  ingestRawEvent,
+  getRuntimeByTab: (tabId) => sessionRegistry.getByTab(tabId),
+  tabRuntimes: () => sessionRegistry.tabRuntimes()
 });
 const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
   {
@@ -1120,7 +1075,7 @@ async function startSession(
   recordedTabWatch.sync(true);
 
   if (mode === "lite") {
-    installLiteWebRequestCapture();
+    liteNetworkBaseline.install();
   }
 
   ingestRawEvent({
@@ -1258,7 +1213,7 @@ async function stopSession(tabId: number): Promise<void> {
   await teardownCaptureInstrumentation(runtime);
   sessionRegistry.unregisterTab(runtime.tabId);
   recordedTabWatch.sync(sessionRegistry.tabCount() > 0);
-  uninstallLiteWebRequestCaptureIfUnused();
+  liteNetworkBaseline.uninstallIfUnused();
   runtime.stoppedAt = Date.now();
   scheduleStoppedRuntimeCleanup(runtime);
   await rememberStoppedSessionRecord(runtime).catch((error) => {
@@ -1704,10 +1659,6 @@ function ingestRawEvent(
     return;
   }
 
-  if (shouldSkipFullModeContentRawEvent(runtime, rawEvent)) {
-    return;
-  }
-
   if (rawEvent.source === "content" && rawEvent.rawType === SCRIPT_RAW_TYPE) {
     fullCdp.recordScriptSourceMap(runtime, readContentScriptRecord(rawEvent.payload));
     return;
@@ -1760,251 +1711,6 @@ function shouldAllowStopDrainContentEvent(
     runtime.stopDrained !== true &&
     STOP_DRAIN_CONTENT_RAW_TYPES.has(rawEvent.rawType)
   );
-}
-
-function shouldSkipFullModeContentRawEvent(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): boolean {
-  const categories = runtime.config.capturePolicy?.categories;
-
-  return (
-    runtime.mode === "full" &&
-    rawEvent.source === "content" &&
-    SKIPPED_FULL_MODE_CONTENT_RAW_TYPES.has(rawEvent.rawType) &&
-    !(categories && isPageEventKeptInFullMode(rawEvent.rawType, categories))
-  );
-}
-
-function shouldMaterializeLiteContentEvent(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): boolean {
-  const categories = runtime.config.capturePolicy?.categories;
-  const isKeptInFullMode =
-    categories !== undefined && isPageEventKeptInFullMode(rawEvent.rawType, categories);
-
-  if (runtime.mode !== "lite" && !isKeptInFullMode) {
-    return false;
-  }
-
-  if (rawEvent.source !== "content") {
-    return false;
-  }
-
-  const payload = asRecord(rawEvent.payload);
-
-  if (!payload) {
-    return false;
-  }
-
-  if (rawEvent.rawType === "screenshot") {
-    return typeof payload.dataUrl === "string" && payload.dataUrl.length > 0;
-  }
-
-  if (rawEvent.rawType === "snapshot") {
-    return typeof payload.html === "string" && payload.html.length > 0;
-  }
-
-  // Storage snapshots are always normalized to what the capture policy allows.
-  if (
-    rawEvent.rawType === "localStorageSnapshot" ||
-    rawEvent.rawType === "indexedDbSnapshot" ||
-    rawEvent.rawType === "cookieSnapshot"
-  ) {
-    return true;
-  }
-
-  if (rawEvent.rawType === "networkBody") {
-    return (
-      (typeof payload.reqId === "string" || typeof payload.requestId === "string") &&
-      typeof payload.body === "string"
-    );
-  }
-
-  return false;
-}
-
-async function materializeLiteContentEvent(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): Promise<RawRecorderEvent | null> {
-  if (rawEvent.rawType === "screenshot") {
-    return materializeLiteScreenshot(runtime, rawEvent);
-  }
-
-  if (rawEvent.rawType === "snapshot") {
-    return materializeLiteDomSnapshot(runtime, rawEvent);
-  }
-
-  if (
-    rawEvent.rawType === "localStorageSnapshot" ||
-    rawEvent.rawType === "indexedDbSnapshot" ||
-    rawEvent.rawType === "cookieSnapshot"
-  ) {
-    // Details stay inline (never in blobs) so the recorder's redactor and policy checks see them.
-    return materializeLiteRawEvent(rawEvent, {
-      config: runtime.config,
-      putBlob: (mime, bytes) => runtime.pipeline.putBlob(mime, bytes)
-    });
-  }
-
-  if (rawEvent.rawType === "networkBody") {
-    return materializeLiteNetworkBody(runtime, rawEvent);
-  }
-
-  return rawEvent;
-}
-
-async function materializeLiteScreenshot(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): Promise<RawRecorderEvent | null> {
-  const payload = asRecord(rawEvent.payload);
-  const dataUrl = asString(payload?.dataUrl);
-
-  if (!payload || !dataUrl || dataUrl.length > LITE_SCREENSHOT_MAX_DATA_URL_LENGTH) {
-    return null;
-  }
-
-  const decoded = decodeScreenshotDataUrl(dataUrl);
-
-  if (
-    !decoded ||
-    decoded.bytes.byteLength === 0 ||
-    decoded.bytes.byteLength > LITE_SCREENSHOT_MAX_BYTES
-  ) {
-    return null;
-  }
-
-  const shotId = await runtime.pipeline.putBlob(decoded.mime, decoded.bytes);
-  const width = normalizePositiveInt(payload.w) ?? normalizePositiveInt(payload.width);
-  const height = normalizePositiveInt(payload.h) ?? normalizePositiveInt(payload.height);
-  const quality = normalizePositiveInt(payload.quality);
-  const reason = asString(payload.reason) ?? undefined;
-  const viewport = normalizeScreenshotViewport(payload.viewport);
-  const pointer = normalizeScreenshotPointer(payload.pointer);
-  const format = decoded.format;
-
-  return {
-    ...rawEvent,
-    payload: {
-      shotId,
-      format,
-      w: width,
-      h: height,
-      quality: format === "webp" ? quality : undefined,
-      size: decoded.bytes.byteLength,
-      reason,
-      viewport,
-      pointer
-    }
-  };
-}
-
-async function materializeLiteDomSnapshot(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): Promise<RawRecorderEvent | null> {
-  const payload = asRecord(rawEvent.payload);
-  const html = asString(payload?.html);
-
-  if (!payload || !html) {
-    return null;
-  }
-
-  const encoded = encodeTextWithByteLimit(html, LITE_DOM_SNAPSHOT_MAX_BYTES);
-  const contentHash = await runtime.pipeline.putBlob("text/html", encoded.bytes);
-  const snapshotId = asString(payload.snapshotId) ?? `D-${Math.round(rawEvent.mono)}`;
-  const nodeCount = normalizeNonNegativeInt(payload.nodeCount);
-  const reason = asString(payload.reason) ?? undefined;
-  const htmlLength = normalizeNonNegativeInt(payload.htmlLength) ?? html.length;
-  const truncated = payload.truncated === true || encoded.truncated;
-
-  return {
-    ...rawEvent,
-    payload: {
-      snapshotId,
-      contentHash,
-      source: "html",
-      nodeCount,
-      reason,
-      htmlLength,
-      truncated
-    }
-  };
-}
-
-async function materializeLiteNetworkBody(
-  runtime: SessionRuntime,
-  rawEvent: RawRecorderEvent
-): Promise<RawRecorderEvent | null> {
-  const payload = asRecord(rawEvent.payload);
-
-  if (!payload) {
-    return null;
-  }
-
-  const reqId = asString(payload.reqId) ?? asString(payload.requestId);
-  const body = asString(payload.body);
-  const encoding = asString(payload.encoding) ?? "utf8";
-  const url = asString(payload.url) ?? "";
-  const mimeType = normalizeMimeType(asString(payload.mimeType));
-
-  if (!reqId || !body || (encoding !== "utf8" && encoding !== "base64")) {
-    return null;
-  }
-
-  const captureRule = resolveLiteBodyCaptureRule(runtime, url, mimeType);
-
-  if (!captureRule.enabled || !isMimeAllowed(captureRule.mimeAllowlist, mimeType)) {
-    return null;
-  }
-
-  const rules = runtime.config.redaction;
-  let bytes: Uint8Array;
-  let redacted = payload.redacted === true;
-
-  if (encoding === "utf8") {
-    const redaction = maskBodyText(body, rules, LITE_BODY_REDACTED_TOKEN);
-    redacted = redacted || redaction.redacted;
-    bytes = new TextEncoder().encode(redaction.value);
-  } else {
-    const redaction = maskBodyBytes(decodeBase64(body), rules, {
-      mimeType,
-      redactionToken: LITE_BODY_REDACTED_TOKEN
-    });
-    redacted = redacted || redaction.redacted;
-    bytes = redaction.bytes;
-  }
-
-  if (bytes.byteLength === 0) {
-    return null;
-  }
-
-  const size = normalizeNonNegativeInt(payload.size) ?? bytes.byteLength;
-  const truncatedByInput = payload.truncated === true;
-  const maxBytes = captureRule.maxBytes;
-  const truncatedByLimit = bytes.byteLength > maxBytes;
-  const sampledBytes = truncatedByLimit ? bytes.slice(0, maxBytes) : bytes;
-  const contentHash = await runtime.pipeline.putBlob(
-    mimeType ?? "application/octet-stream",
-    sampledBytes
-  );
-
-  return {
-    ...rawEvent,
-    payload: {
-      reqId,
-      requestId: reqId,
-      contentHash,
-      mimeType,
-      size,
-      sampledSize: sampledBytes.byteLength,
-      truncated: truncatedByInput || truncatedByLimit || sampledBytes.byteLength < size,
-      redacted
-    }
-  };
 }
 
 function updateRuntimeInteractionState(runtime: SessionRuntime, rawEvent: RawRecorderEvent): void {
@@ -3210,57 +2916,22 @@ function decodeBase64(value: string): Uint8Array {
   return bytes;
 }
 
-function resolveLiteBodyCaptureRule(
-  runtime: SessionRuntime,
-  url: string,
-  mimeType: string | undefined
-): LiteBodyCaptureRule {
-  return applyBodyUrlFilters(
-    resolveLiteBodyCaptureRuleUtil(runtime.config, url, mimeType, {
-      defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(
-        runtime,
-        LITE_DEFAULT_BODY_MIME_ALLOWLIST
-      ),
-      fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
-    }),
-    url,
-    runtime.profile.selection.profile.network
-  );
-}
-
 function resolveFullBodyCaptureRule(
   runtime: SessionRuntime,
   url: string,
   mimeType: string | undefined
-): LiteBodyCaptureRule {
+): BodyCaptureRule {
   return applyBodyUrlFilters(
     resolveFullBodyCaptureRuleUtil(runtime.config, url, mimeType, {
       defaultMimeAllowlist: resolveProfileBodyMimeAllowlist(
         runtime,
         FULL_DEFAULT_BODY_MIME_ALLOWLIST
       ),
-      fallbackMaxBytes: NETWORK_BODY_MAX_BYTES
+      fallbackMaxBytes: DEFAULT_BODY_CAPTURE_MAX_BYTES
     }),
     url,
     runtime.profile.selection.profile.network
   );
-}
-
-/** The profile's body MIME allowlist, or the engine's default when the profile sets none. */
-function resolveProfileBodyMimeAllowlist(
-  runtime: SessionRuntime,
-  engineDefault: readonly string[]
-): string[] {
-  const profileAllowlist = runtime.profile.selection.profile.network.bodyMimeAllowlist;
-  return profileAllowlist.length > 0 ? profileAllowlist : [...engineDefault];
-}
-
-function isMimeAllowed(allowlist: string[], mimeType: string | undefined): boolean {
-  return isMimeAllowedUtil(allowlist, mimeType);
-}
-
-function normalizeMimeType(value: string | null): string | undefined {
-  return normalizeMimeTypeUtil(value);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -3291,107 +2962,6 @@ function normalizeContentFrameId(value: unknown): string | undefined {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
-}
-
-function normalizePositiveInt(value: unknown): number | undefined {
-  const candidate = asFiniteNumber(value);
-
-  if (candidate === null || candidate <= 0) {
-    return undefined;
-  }
-
-  return Math.max(1, Math.round(candidate));
-}
-
-function normalizeNonNegativeInt(value: unknown): number | undefined {
-  const candidate = asFiniteNumber(value);
-
-  if (candidate === null || candidate < 0) {
-    return undefined;
-  }
-
-  return Math.max(0, Math.round(candidate));
-}
-
-function encodeTextWithByteLimit(
-  value: string,
-  maxBytes: number
-): { bytes: Uint8Array; truncated: boolean } {
-  const encoder = new TextEncoder();
-  const fullBytes = encoder.encode(value);
-
-  if (fullBytes.byteLength <= maxBytes) {
-    return {
-      bytes: fullBytes,
-      truncated: false
-    };
-  }
-
-  const roughRatio = Math.max(0.05, maxBytes / fullBytes.byteLength);
-  let targetChars = Math.max(1, Math.floor(value.length * roughRatio));
-  let clipped = value.slice(0, targetChars);
-  let clippedBytes = encoder.encode(clipped);
-
-  while (clippedBytes.byteLength > maxBytes && targetChars > 1) {
-    targetChars = Math.max(1, Math.floor(targetChars * 0.9));
-    clipped = value.slice(0, targetChars);
-    clippedBytes = encoder.encode(clipped);
-  }
-
-  return {
-    bytes: clippedBytes,
-    truncated: true
-  };
-}
-
-function normalizeScreenshotViewport(
-  value: unknown
-): { width: number; height: number; dpr: number } | undefined {
-  const row = asRecord(value);
-
-  if (!row) {
-    return undefined;
-  }
-
-  const width = normalizePositiveInt(row.width);
-  const height = normalizePositiveInt(row.height);
-  const dpr = asFiniteNumber(row.dpr);
-
-  if (!width || !height || dpr === null || dpr <= 0) {
-    return undefined;
-  }
-
-  return {
-    width,
-    height,
-    dpr: Number(dpr.toFixed(3))
-  };
-}
-
-function normalizeScreenshotPointer(
-  value: unknown
-): { x: number; y: number; t?: number; mono?: number } | undefined {
-  const row = asRecord(value);
-
-  if (!row) {
-    return undefined;
-  }
-
-  const x = asFiniteNumber(row.x);
-  const y = asFiniteNumber(row.y);
-  const t = asFiniteNumber(row.t);
-  const mono = asFiniteNumber(row.mono);
-
-  if (x === null || y === null) {
-    return undefined;
-  }
-
-  return {
-    x: Number(x.toFixed(2)),
-    y: Number(y.toFixed(2)),
-    t: t === null ? undefined : t,
-    mono: mono === null ? undefined : mono
-  };
 }
 
 function normalizeSamplingInterval(candidate: unknown, fallback: number): number {
@@ -3562,186 +3132,6 @@ async function ensureContentScriptInjected(tabId: number): Promise<void> {
       files: ["content.js"]
     })
     .catch(() => undefined);
-}
-
-function installLiteWebRequestCapture(): void {
-  if (!chromeApi?.webRequest || liteWebRequestCaptureCleanup) {
-    return;
-  }
-
-  const filter = { urls: ["<all_urls>"] };
-  const onBeforeRequest = (details: {
-    requestId: string;
-    tabId: number;
-    frameId?: number;
-    method?: string;
-    url: string;
-    timeStamp?: number;
-  }) => {
-    const runtime = resolveLiteRuntimeForWebRequest(details.tabId);
-
-    if (!runtime) {
-      return;
-    }
-
-    const startedAt = normalizeLiteNetworkTimestamp(details.timeStamp);
-    upsertRequestMeta(runtime.requestMeta, buildRequestMetaKey(details.requestId), {
-      url: details.url,
-      method: details.method,
-      startedAt
-    });
-
-    ingestRawEvent(
-      buildLiteNetworkRequestRawEvent(
-        {
-          sid: runtime.sid,
-          tabId: runtime.tabId,
-          frame: normalizeContentFrameId(details.frameId)
-        },
-        {
-          requestId: details.requestId,
-          method: details.method,
-          url: details.url,
-          timeStamp: startedAt
-        }
-      )
-    );
-  };
-
-  const onCompleted = (details: {
-    requestId: string;
-    tabId: number;
-    frameId?: number;
-    method?: string;
-    url: string;
-    statusCode?: number;
-    statusLine?: string;
-    timeStamp?: number;
-  }) => {
-    const runtime = resolveLiteRuntimeForWebRequest(details.tabId);
-
-    if (!runtime) {
-      return;
-    }
-
-    const metadata = getRequestMeta(runtime.requestMeta, buildRequestMetaKey(details.requestId));
-    const endedAt = normalizeLiteNetworkTimestamp(details.timeStamp);
-
-    ingestRawEvent(
-      buildLiteNetworkResponseRawEvent(
-        {
-          sid: runtime.sid,
-          tabId: runtime.tabId,
-          frame: normalizeContentFrameId(details.frameId)
-        },
-        {
-          requestId: details.requestId,
-          method: details.method ?? metadata?.method,
-          url: details.url ?? metadata?.url ?? "unknown://request",
-          statusCode: details.statusCode,
-          statusLine: details.statusLine,
-          timeStamp: endedAt,
-          duration:
-            typeof metadata?.startedAt === "number"
-              ? Math.max(0, endedAt - metadata.startedAt)
-              : undefined
-        }
-      )
-    );
-
-    deleteRequestMeta(runtime.requestMeta, buildRequestMetaKey(details.requestId));
-  };
-
-  const onErrorOccurred = (details: {
-    requestId: string;
-    tabId: number;
-    frameId?: number;
-    method?: string;
-    url: string;
-    error?: string;
-    timeStamp?: number;
-  }) => {
-    const runtime = resolveLiteRuntimeForWebRequest(details.tabId);
-
-    if (!runtime) {
-      return;
-    }
-
-    const metadata = getRequestMeta(runtime.requestMeta, buildRequestMetaKey(details.requestId));
-    const endedAt = normalizeLiteNetworkTimestamp(details.timeStamp);
-
-    ingestRawEvent(
-      buildLiteNetworkFailureRawEvent(
-        {
-          sid: runtime.sid,
-          tabId: runtime.tabId,
-          frame: normalizeContentFrameId(details.frameId)
-        },
-        {
-          requestId: details.requestId,
-          method: details.method ?? metadata?.method,
-          url: details.url ?? metadata?.url ?? "unknown://request",
-          timeStamp: endedAt,
-          duration:
-            typeof metadata?.startedAt === "number"
-              ? Math.max(0, endedAt - metadata.startedAt)
-              : undefined,
-          error: details.error
-        }
-      )
-    );
-
-    deleteRequestMeta(runtime.requestMeta, buildRequestMetaKey(details.requestId));
-  };
-
-  chromeApi.webRequest.onBeforeRequest.addListener(onBeforeRequest, filter);
-  chromeApi.webRequest.onCompleted.addListener(onCompleted, filter);
-  chromeApi.webRequest.onErrorOccurred.addListener(onErrorOccurred, filter);
-
-  liteWebRequestCaptureCleanup = () => {
-    chromeApi.webRequest?.onBeforeRequest.removeListener(onBeforeRequest);
-    chromeApi.webRequest?.onCompleted.removeListener(onCompleted);
-    chromeApi.webRequest?.onErrorOccurred.removeListener(onErrorOccurred);
-    liteWebRequestCaptureCleanup = null;
-  };
-}
-
-function uninstallLiteWebRequestCaptureIfUnused(): void {
-  if (!liteWebRequestCaptureCleanup || hasActiveLiteRuntime()) {
-    return;
-  }
-
-  liteWebRequestCaptureCleanup();
-}
-
-function hasActiveLiteRuntime(): boolean {
-  for (const runtime of sessionRegistry.tabRuntimes()) {
-    if (runtime.mode === "lite" && !runtime.stopping && !runtime.stoppedAt) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function resolveLiteRuntimeForWebRequest(tabId: number): SessionRuntime | undefined {
-  if (!Number.isFinite(tabId) || tabId < 0) {
-    return undefined;
-  }
-
-  const runtime = sessionRegistry.getByTab(tabId);
-
-  if (!runtime || runtime.mode !== "lite" || runtime.stopping) {
-    return undefined;
-  }
-
-  return runtime;
-}
-
-function normalizeLiteNetworkTimestamp(candidate: unknown): number {
-  return typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0
-    ? Math.round(candidate)
-    : Date.now();
 }
 
 /**
