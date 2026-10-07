@@ -28,6 +28,13 @@ export default tseslint.config(
     }
   },
   {
+    files: ["apps/extension/src/**/*.{ts,tsx}"],
+    rules: {
+      // God-module guard for the extension sources (the service-worker split, task 37).
+      "max-lines": ["error", { max: 800, skipBlankLines: true, skipComments: true }]
+    }
+  },
+  {
     files: ["apps/**/e2e-demo/**/*.{js,mjs,cjs}", "apps/**/public/**/*.{js,mjs,cjs}"],
     languageOptions: {
       globals: {

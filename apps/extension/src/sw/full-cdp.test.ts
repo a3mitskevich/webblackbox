@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- TODO: split by subject; table-driven test file that predates the 800-line guard */
 import type {
   CdpDetachHandler,
   CdpEventHandler,

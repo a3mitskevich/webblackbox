@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+/* eslint-disable max-lines -- TODO: split by subject; table-driven test file that predates the 800-line guard */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
