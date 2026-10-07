@@ -98,8 +98,7 @@ export function toScriptLocation(value: string): string | null {
 }
 
 export type ResolvedSourceMapReference =
-  | { kind: "remote"; url: string }
-  | { kind: "inline"; url: string };
+  { kind: "remote"; url: string } | { kind: "inline"; url: string };
 
 /**
  * Resolves a source map reference against its script URL. Returns `null` for references that

@@ -7,33 +7,13 @@ import { resolveNetworkSizeBytes } from "./network-size.js";
 const NETWORK_DURATION_ALERT_MS = 3_000;
 
 export type NetworkStatusFilter =
-  | "all"
-  | "success"
-  | "redirect"
-  | "client-error"
-  | "server-error"
-  | "failed";
+  "all" | "success" | "redirect" | "client-error" | "server-error" | "failed";
 
 export type NetworkTypeFilter =
-  | "all"
-  | "document"
-  | "fetch"
-  | "script"
-  | "stylesheet"
-  | "image"
-  | "font"
-  | "text"
-  | "other";
+  "all" | "document" | "fetch" | "script" | "stylesheet" | "image" | "font" | "text" | "other";
 
 export type NetworkSortKey =
-  | "start"
-  | "name"
-  | "method"
-  | "status"
-  | "type"
-  | "initiator"
-  | "size"
-  | "time";
+  "start" | "name" | "method" | "status" | "type" | "initiator" | "size" | "time";
 
 export type NetworkSortDirection = "asc" | "desc";
 

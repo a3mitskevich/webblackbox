@@ -194,8 +194,7 @@ describe("WebBlackboxLiteSdk", () => {
 
     await sdk.start();
     const policy = mockRuntime.instances.at(-1)?.statusHistory.at(-1)?.capturePolicy as
-      | CapturePolicy
-      | undefined;
+      CapturePolicy | undefined;
     const blockedSelectors = policy?.redaction.blockedSelectors ?? [];
 
     // The rule lists are the caller's own: `config.redaction` replaces the default selectors,
