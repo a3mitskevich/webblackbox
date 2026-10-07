@@ -2,12 +2,7 @@ import { defineFeatureSlice } from "../slice.js";
 import type { NetworkSort, NetworkTypeChip } from "./rows.js";
 
 export type NetworkDetailTab =
-  | "headers"
-  | "payload"
-  | "response"
-  | "timing"
-  | "initiator"
-  | "messages";
+  "headers" | "payload" | "response" | "timing" | "initiator" | "messages";
 
 export type BodyView = "tree" | "raw" | "hex";
 

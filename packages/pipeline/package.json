@@ -48,11 +48,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:coverage": "vitest run --coverage",
-    "bench": "tsx scripts/benchmark.ts"
+    "bench": "tsx scripts/benchmark.ts",
+    "bench:volumes": "tsx --expose-gc scripts/benchmark-volumes.ts"
   },
   "dependencies": {
     "@webblackbox/protocol": "workspace:*",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.2"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.5"
