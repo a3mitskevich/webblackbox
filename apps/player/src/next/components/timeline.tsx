@@ -144,8 +144,7 @@ export function Timeline() {
     const surface = event.currentTarget;
     const value = trackRatio(surface, event.clientX);
     const lane = (event.target as HTMLElement).closest<HTMLElement>("[data-lane]")?.dataset.lane as
-      | Lane
-      | undefined;
+      Lane | undefined;
 
     surface.focus();
     hover.onLeave();

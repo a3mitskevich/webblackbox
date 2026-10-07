@@ -6,7 +6,7 @@ import {
   type TabsContextSummary
 } from "@webblackbox/player-sdk";
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
-import { z } from "zod";
+import * as z from "zod";
 
 const ARCHIVE_EXTENSIONS = new Set([".webblackbox", ".zip"]);
 const DEFAULT_LIST_LIMIT = 50;
