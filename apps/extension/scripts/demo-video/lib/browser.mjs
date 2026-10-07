@@ -148,12 +148,14 @@ const PROBE_INSTALL = `(() => {
  * from the page's own mousemove events.
  */
 export class DemoPage {
-  constructor({ session, agent, hwnd, offsets, targetId }) {
+  constructor({ session, agent, hwnd, offsets, targetId, beforeInput }) {
     this.session = session;
     this.agent = agent;
     this.hwnd = hwnd;
     this.offsets = offsets;
     this.targetId = targetId;
+    /** Runs before the cursor heads for an element (tabs: close the extension popup first). */
+    this.beforeInput = beforeInput ?? (async () => undefined);
   }
 
   evaluate(expression, timeoutMs = 15_000) {
@@ -215,6 +217,7 @@ export class DemoPage {
 
   /** Moves the visible cursor onto the element (correcting the offset once from the probe). */
   async pointAt(query, { anchor = "center", timeoutMs } = {}) {
+    await this.beforeInput();
     await this.evaluate(PROBE_INSTALL);
     const r = await this.rect(query, timeoutMs);
     if (!r) throw new Error(`element vanished: ${JSON.stringify(query)}`);
@@ -257,6 +260,12 @@ export class DemoPage {
   /** Clicks a field, selects what is in it, and types `text` with real key presses. */
   async typeInto(query, text, { clear = true, charDelayMs = 75 } = {}) {
     await this.click(query, { afterMs: 150 });
+    // Keys go wherever the focus is: refuse to type unless it is in this very field.
+    const focused = await this.withElement(
+      query,
+      "(el) => document.hasFocus() && (el === document.activeElement || el.contains(document.activeElement))"
+    );
+    if (!focused) throw new Error(`refusing to type: ${JSON.stringify(query)} has no focus`);
     if (clear) {
       await this.agent.call("keys", { combo: "ctrl+a" });
       await this.agent.call("keys", { combo: "backspace" });

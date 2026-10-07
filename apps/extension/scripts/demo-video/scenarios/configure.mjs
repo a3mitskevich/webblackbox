@@ -33,22 +33,7 @@ export async function pinExtension(ctx) {
 
 /** Clicks the pinned WebBlackbox toolbar icon and returns the popup page. */
 export async function openPopup(ctx) {
-  const buttons = await ctx.agent.call(
-    "uiaFind",
-    {
-      hwnd: ctx.mainHwnd,
-      controlType: "Button",
-      name: UI.extensionName,
-      match: "contains",
-      all: true,
-      visibleOnly: true,
-      timeoutMs: 5000
-    },
-    30_000
-  );
-  ctx.log(
-    `toolbar candidates: ${buttons.map((b) => `${b.name}@${b.center?.x},${b.center?.y}`).join(" | ")}`
-  );
+  await ctx.dismissPopup();
   await ctx.uiaClick({ controlType: "Button", name: UI.extensionName, match: "startsWith" });
   const popup = await ctx.popup();
   await popup.waitFor({ css: "button" }, 10_000);

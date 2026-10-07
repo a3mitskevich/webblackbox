@@ -1,8 +1,8 @@
 // Video 2 — record and export: pick a profile, start with the reload offer, reproduce a bug on
 // the demo shop (login, order list, a failing report), stop, export with a passphrase. The
 // exported archive is kept as the fixture for the Player videos.
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 
 import { openPopup } from "./configure.mjs";
 import { ensureBaseProfile } from "./profiles.mjs";
@@ -11,8 +11,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const RECORD_PROFILE = "Full capture";
 const EXPORT_WAIT_MS = 60_000;
 
+/** The archive the last record-and-export take exported (kept under its real file name). */
 export function fixtureArchiveWsl(ctx) {
-  return join(ctx.config.workDirWsl, "fixtures", "demo.webblackbox");
+  return newestArchive(join(ctx.config.workDirWsl, "fixtures"));
 }
 
 /** Opens the native <select> and walks to `label` with the arrow keys, like a person would. */
@@ -43,7 +44,9 @@ function newestArchive(dirWsl) {
   if (!existsSync(dirWsl)) return null;
   const files = readdirSync(dirWsl, { recursive: true })
     .map(String)
-    .filter((name) => name.endsWith(".webblackbox"))
+    // Chrome on Windows saves the export as <sid>.zip (it picks the extension from the zip MIME
+    // type); the Player opens both.
+    .filter((name) => /\.(webblackbox|zip)$/u.test(name))
     .map((name) => join(dirWsl, name))
     .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
   return files[0] ?? null;
@@ -178,7 +181,7 @@ export const recordAndExportScenario = {
     },
     {
       id: "downloaded",
-      say: { ru: "Файл .webblackbox скачан. Пароль передавайте отдельно от файла" },
+      say: { ru: "Архив записи скачан в «Загрузки». Пароль передавайте отдельно от файла" },
       async run(ctx) {
         const started = Date.now();
         let archive = null;
@@ -186,10 +189,12 @@ export const recordAndExportScenario = {
           await sleep(500);
           archive = newestArchive(ctx.downloadsWsl);
         }
-        if (!archive) throw new Error("the export did not produce a .webblackbox file");
+        if (!archive) throw new Error("the export did not produce an archive file");
         await sleep(2500);
-        mkdirSync(join(ctx.config.workDirWsl, "fixtures"), { recursive: true });
-        copyFileSync(archive, fixtureArchiveWsl(ctx));
+        const fixturesWsl = join(ctx.config.workDirWsl, "fixtures");
+        rmSync(fixturesWsl, { recursive: true, force: true });
+        mkdirSync(fixturesWsl, { recursive: true });
+        copyFileSync(archive, join(fixturesWsl, basename(archive)));
       }
     }
   ]

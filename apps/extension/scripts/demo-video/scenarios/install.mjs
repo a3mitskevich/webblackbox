@@ -1,14 +1,13 @@
 // Video 1 — install: unzip the test build in Explorer, load it unpacked in chrome://extensions,
 // pin the icon, set the Player URL in the options.
-import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  adoptExplorer,
   closeExplorerWindows,
   confirmExtract,
   enableDeveloperMode,
   loadUnpacked,
-  openExplorer,
   openExtensionsPage,
   openExtractDialog,
   UI
@@ -19,10 +18,16 @@ import { toWinPath } from "../lib/windows.mjs";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export const EXPLORER_BOUNDS = Object.freeze({ x: 150, y: 110, width: 1300, height: 780 });
 
+// The guide in the Player serves the zip under a fixed name (task 50).
+const GUIDE_ZIP_BASE = "webblackbox-chrome";
+const GUIDE_LINK = "Ещё нет расширения? Скачайте его и посмотрите, как установить.";
+
 export function testerPaths(ctx) {
-  const zipBase = `webblackbox-${ctx.config.extensionVersion}-chrome`;
-  const testerWsl = join(ctx.config.workDirWsl, "tester");
-  return { zipBase, testerWsl, extractedWsl: join(testerWsl, zipBase) };
+  return {
+    zipBase: GUIDE_ZIP_BASE,
+    downloadsTitle: ctx.downloadsWsl.split("/").at(-1),
+    extractedWsl: join(ctx.downloadsWsl, GUIDE_ZIP_BASE)
+  };
 }
 
 /** @type {import("./index.mjs").Scenario} */
@@ -31,13 +36,11 @@ export const installScenario = {
   title: { ru: "Установка WebBlackbox" },
 
   async prepare(ctx) {
-    const { zipBase, testerWsl } = testerPaths(ctx);
-    await closeExplorerWindows(ctx, ["tester", zipBase]);
-    rmSync(testerWsl, { recursive: true, force: true });
-    mkdirSync(testerWsl, { recursive: true });
-    copyFileSync(ctx.config.extensionZip, join(testerWsl, `${zipBase}.zip`));
-    await ctx.startChrome({ url: "chrome://newtab" });
-    ctx.state.explorer = await openExplorer(ctx, testerWsl, EXPLORER_BOUNDS);
+    const { zipBase, downloadsTitle } = testerPaths(ctx);
+    await closeExplorerWindows(ctx, [downloadsTitle, zipBase]);
+    await ctx.startChrome({ url: ctx.config.playerUrl });
+    ctx.state.player = await ctx.page(ctx.config.playerUrl);
+    await ctx.state.player.waitFor({ text: GUIDE_LINK }, 20_000);
   },
 
   steps: [
@@ -47,8 +50,39 @@ export const installScenario = {
       run: (ctx) => ctx.pause(800)
     },
     {
+      id: "guide",
+      say: { ru: "Откройте Player команды → «Ещё нет расширения? Скачайте его…»" },
+      run: (ctx) => ctx.state.player.click({ text: GUIDE_LINK }, { afterMs: 1200 })
+    },
+    {
+      id: "download",
+      say: { ru: "«Скачать расширение (.zip)» — сборка лежит прямо в Player" },
+      async run(ctx) {
+        await ctx.state.player.click(
+          { css: '[data-testid="extension-download-link"]' },
+          { afterMs: 2500 }
+        );
+      }
+    },
+    {
+      id: "show-in-folder",
+      say: { ru: "Откройте папку со скачанным архивом" },
+      async run(ctx) {
+        const { downloadsTitle } = testerPaths(ctx);
+        const item = await ctx.uiaFind({
+          controlType: "Button",
+          name: `${GUIDE_ZIP_BASE}.zip`,
+          match: "startsWith"
+        });
+        await ctx.agent.call("moveTo", { x: item.center.x, y: item.center.y });
+        await sleep(700);
+        await ctx.uiaClick({ controlType: "Button", name: "Показать файл", match: "startsWith" });
+        ctx.state.explorer = await adoptExplorer(ctx, downloadsTitle, EXPLORER_BOUNDS);
+      }
+    },
+    {
       id: "unzip",
-      say: { ru: "Сборка приходит zip-архивом. Правый клик по архиву → «Извлечь все…»" },
+      say: { ru: "Правый клик по архиву → «Извлечь все…»" },
       async run(ctx) {
         const { zipBase } = testerPaths(ctx);
         ctx.state.extractDialog = await openExtractDialog(ctx, ctx.state.explorer, zipBase);
@@ -125,7 +159,7 @@ export const installScenario = {
   ],
 
   async cleanup(ctx) {
-    const { zipBase } = testerPaths(ctx);
-    await closeExplorerWindows(ctx, ["tester", zipBase]);
+    const { zipBase, downloadsTitle } = testerPaths(ctx);
+    await closeExplorerWindows(ctx, [downloadsTitle, zipBase]);
   }
 };

@@ -111,6 +111,11 @@ async function handleDemo(request, response) {
     sendJson(response, 200, { token: "demo-session-token", user: { name: "QA Тестировщик" } });
     return;
   }
+  if (url.pathname === "/favicon.ico") {
+    // No favicon, but no 404 either: it would show up as a "problem" in every recording.
+    response.writeHead(204, { "cache-control": "max-age=86400" }).end();
+    return;
+  }
   if (url.pathname === "/api/orders") {
     sendJson(response, 200, { page: 1, orders: ORDERS });
     return;

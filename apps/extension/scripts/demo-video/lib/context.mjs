@@ -23,6 +23,8 @@ export function createContext({ agent, config, lang, servers, log }) {
     log,
     chrome: null,
     mainHwnd: null,
+    /** The extension popup currently attached over CDP (see dismissPopup). */
+    openPopupPage: null,
     /** Scratch space for a scenario's steps (windows, pages found earlier in the take). */
     state: {},
     profileWsl: join(config.workDirWsl, `profile-${lang}`),
@@ -127,12 +129,27 @@ export function createContext({ agent, config, lang, servers, log }) {
         agent,
         hwnd: ctx.mainHwnd,
         offsets,
-        targetId: target.targetId
+        targetId: target.targetId,
+        beforeInput: () => ctx.dismissPopup()
       });
+    },
+
+    /**
+     * Closes the extension popup we attached to. Chrome keeps a popup open on blur while a CDP
+     * client is attached, so a click on the page (which closes it for a person) is not enough.
+     */
+    async dismissPopup() {
+      const popup = ctx.openPopupPage;
+      if (!popup) return;
+      ctx.openPopupPage = null;
+      await popup.evaluate("window.close()", 3000).catch(() => undefined);
+      await popup.close().catch(() => undefined);
+      await sleep(300);
     },
 
     /** The extension's action popup: its CDP target and its own Windows window. */
     async popup(timeoutMs = 10_000) {
+      await ctx.dismissPopup();
       const { session, target } = await attachTarget(
         ctx.chrome,
         (t) => t.url.startsWith("chrome-extension://") && t.url.includes("/popup.html"),
@@ -147,7 +164,14 @@ export function createContext({ agent, config, lang, servers, log }) {
         timeoutMs
       );
       offsets.delete(String(win.hwnd));
-      return new DemoPage({ session, agent, hwnd: win.hwnd, offsets, targetId: target.targetId });
+      ctx.openPopupPage = new DemoPage({
+        session,
+        agent,
+        hwnd: win.hwnd,
+        offsets,
+        targetId: target.targetId
+      });
+      return ctx.openPopupPage;
     },
 
     async uiaFind(query, hwnd = ctx.mainHwnd) {

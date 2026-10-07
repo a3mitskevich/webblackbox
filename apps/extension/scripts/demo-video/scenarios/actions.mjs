@@ -1,12 +1,7 @@
 // Reusable on-screen actions shared by the scenarios (and by the off-camera profile setup).
 // Names of native Chrome/Windows UI are the Russian ones: the videos are recorded in Russian on a
 // Russian Windows (owner decision).
-import { spawn } from "node:child_process";
-
-import { toWinPath } from "../lib/windows.mjs";
-
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const EXPLORER = "/mnt/c/Windows/explorer.exe";
 const EXPLORER_CLASS = "CabinetWClass";
 const WINUI_POPUP_CLASS = "Microsoft.UI.Content.PopupWindowSiteBridge";
 
@@ -20,22 +15,28 @@ export const UI = Object.freeze({
   folderField: "Папка:",
   selectFolder: "Выбор папки",
   fileNameField: "Имя файла:",
-  openButton: "Открыть",
   extensionName: "WebBlackbox"
 });
 
-/** Opens an Explorer window on `dirWsl`, placed inside the recorded rectangle. */
-export async function openExplorer(ctx, dirWsl, bounds) {
-  const title = dirWsl.split("/").filter(Boolean).at(-1);
-  spawn(EXPLORER, [toWinPath(dirWsl)], { detached: true, stdio: "ignore" }).unref();
-  const win = await ctx.waitWindow(
-    (w) => w.className === EXPLORER_CLASS && w.title.startsWith(title),
-    15_000,
-    []
-  );
-  await ctx.guard([win.pid]);
+/** Takes over an Explorer window something else opened (e.g. Chrome's "Show in folder"). */
+export async function adoptExplorer(ctx, titlePrefix, bounds) {
+  const win = await ctx
+    .waitWindow(
+      (w) => w.className === EXPLORER_CLASS && w.title.startsWith(titlePrefix),
+      30_000,
+      []
+    )
+    .catch(async (error) => {
+      const titles = (await ctx.agent.call("windows", {}))
+        .filter((w) => w.className === EXPLORER_CLASS)
+        .map((w) => w.title);
+      throw new Error(
+        `${error.message}: no "${titlePrefix}" Explorer (open: ${titles.join(" | ")})`
+      );
+    });
   await ctx.agent.call("placeWindow", { hwnd: win.hwnd, ...bounds });
   await ctx.agent.call("foreground", { hwnd: win.hwnd });
+  await ctx.guard([win.pid]);
   await sleep(700);
   return win;
 }
@@ -138,11 +139,29 @@ export async function loadUnpacked(ctx, page, folderWin) {
   await sleep(800);
 }
 
-/** Opens the puzzle (Extensions) menu; returns its window for the pin step. */
-export async function openExtensionsMenu(ctx) {
-  await ctx.uiaClick({ controlType: "Button", name: UI.extensionsButton }, { afterMs: 900 });
-  return ctx.waitWindow(
-    (w) => w.hwnd !== ctx.mainHwnd && w.className === "Chrome_WidgetWin_1" && w.rect.height > 100,
-    8000
+/**
+ * Picks a file in the Windows "Open" dialog a page's file input opened: types the full path into
+ * "File name" and presses Enter. `knownHwnds` are the dialogs that existed before the click.
+ */
+export async function chooseFileInOpenDialog(ctx, fileWin, knownHwnds) {
+  const dialog = await ctx.waitWindow(
+    (w) => w.className === "#32770" && !knownHwnds.has(w.hwnd),
+    15_000,
+    []
   );
+  await ctx.guard([dialog.pid]);
+  await sleep(900);
+  const field = await ctx.uiaFind({ controlType: "Edit", name: UI.fileNameField }, dialog.hwnd);
+  await ctx.agent.call("click", { x: field.center.x, y: field.center.y });
+  await ctx.agent.call("type", { text: fileWin, charDelayMs: 30 }, 60_000);
+  await sleep(500);
+  await ctx.agent.call("keys", { combo: "enter" });
+  await sleep(1200);
+  await ctx.guard([]);
+}
+
+/** The dialogs open right now, so the next one can be told apart. */
+export async function currentDialogs(ctx) {
+  const windows = await ctx.agent.call("windows", {});
+  return new Set(windows.filter((w) => w.className === "#32770").map((w) => w.hwnd));
 }
