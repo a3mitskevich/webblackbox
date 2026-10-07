@@ -41,7 +41,7 @@
     "e2e:perf:lite": "node scripts/e2e-lite-perf-regression.mjs",
     "e2e:perf:lite:ci": "WB_E2E_PERF_REQUESTS=32 WB_E2E_PERF_WARMUP_REQUESTS=12 WB_E2E_PERF_INTERACTION_ROUNDS=8 WB_E2E_PERF_IFRAME_ROUNDS=6 WB_E2E_PERF_EDITOR_ROUNDS=12 WB_E2E_PERF_NAV_ROUNDS=6 WB_E2E_PERF_NAV_WAIT_MS=6000 node scripts/e2e-lite-perf-regression.mjs",
     "lint": "eslint src scripts --ext .ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "node scripts/generate-locales.mjs && tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
@@ -49,11 +49,11 @@
     "@webblackbox/pipeline": "workspace:*",
     "@webblackbox/protocol": "workspace:*",
     "@webblackbox/recorder": "workspace:*",
-    "@zumer/snapdom": "^2.0.2",
+    "@zumer/snapdom": "^2.24.18",
     "webblackbox": "workspace:*",
-    "zod": "^4.1.12"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.2"
   }
 }

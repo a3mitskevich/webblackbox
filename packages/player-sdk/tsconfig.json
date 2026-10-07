@@ -7,7 +7,9 @@
     "baseUrl": ".",
     "paths": {
       "@webblackbox/protocol/schemas": ["../protocol/src/schemas-entry.ts"],
-      "@webblackbox/protocol": ["../protocol/src/index.ts"]
+      "@webblackbox/protocol": ["../protocol/src/index.ts"],
+      "@webblackbox/pipeline": ["../pipeline/src/index.ts"],
+      "@webblackbox/pipeline/storage": ["../pipeline/src/storage-entry.ts"]
     }
   },
   "include": ["src/**/*.ts"]

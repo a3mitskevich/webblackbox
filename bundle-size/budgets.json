@@ -16,10 +16,10 @@
     },
     {
       "path": "apps/extension/build/content-agent.js",
-      "maxBytes": 190000,
-      "maxGzipBytes": 60000,
+      "maxBytes": 260000,
+      "maxGzipBytes": 85000,
       "forbidSources": ["node_modules/zod/"],
-      "note": "Lite capture agent imported by content.js in every recorded frame; snapdom is ~96 KB of it. 138,139 B / 43,110 B gzip at introduction."
+      "note": "Lite capture agent imported by content.js in every recorded frame; snapdom is ~161 KB of it. 138,139 B / 43,110 B gzip at introduction. 245,875 B / 78,574 B gzip after snapdom 2.0.2 -> 2.24.18 (upstream deprecates <2.22 for screenshot fidelity bugs)."
     }
   ],
   "delta": {

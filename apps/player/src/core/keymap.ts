@@ -69,13 +69,11 @@ export const KEY_BINDINGS: readonly KeyBinding[] = [
   { hotkey: "f", command: { type: "toggle-rail-wide" }, match: "keys" },
   { hotkey: "bracketleft", command: { type: "mark-range", edge: "start" }, match: "keys" },
   { hotkey: "bracketright", command: { type: "mark-range", edge: "end" }, match: "keys" },
-  ...RAIL_TABS.map(
-    (tab, index): KeyBinding => ({
-      hotkey: String(index + 1),
-      command: { type: "select-tab", tab },
-      match: "keys"
-    })
-  )
+  ...RAIL_TABS.map((tab, index): KeyBinding => ({
+    hotkey: String(index + 1),
+    command: { type: "select-tab", tab },
+    match: "keys"
+  }))
 ];
 
 /** Commands that make sense before an archive is open. */

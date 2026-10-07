@@ -1,9 +1,9 @@
 import type { CaptureMode, FreezeReason } from "@webblackbox/protocol";
 
 import { getChromeApi } from "./chrome-api.js";
-import EN_MESSAGES from "./locales/en.json" with { type: "json" };
-import RU_MESSAGES from "./locales/ru.json" with { type: "json" };
-import ZH_CN_MESSAGES from "./locales/zh-CN.json" with { type: "json" };
+import EN_MESSAGES from "./locales/generated/en.json" with { type: "json" };
+import RU_MESSAGES from "./locales/generated/ru.json" with { type: "json" };
+import ZH_CN_MESSAGES from "./locales/generated/zh-CN.json" with { type: "json" };
 
 export type ExtensionLocale = "en" | "ru" | "zh-CN";
 
@@ -30,7 +30,11 @@ const BYTES_PER_MB = BYTES_PER_KB * 1024;
 /** `chrome.storage.local` key holding the {@link ExtensionLocalePreference}. */
 export const EXTENSION_LOCALE_STORAGE_KEY = "webblackbox.uiLocale";
 
-/** English is the reference dictionary; `locales.test.ts` keeps every other locale's keys equal. */
+/**
+ * English is the reference dictionary. Each feature keeps its messages in
+ * `locales/<feature>.<locale>.json`; the build merges them into `locales/generated/` (see
+ * `scripts/lib/locale-fragments.mjs`), and `locales.test.ts` keeps every locale's keys equal.
+ */
 export type ExtensionMessageKey = keyof typeof EN_MESSAGES;
 
 const EXTENSION_MESSAGES: Record<ExtensionLocale, Record<ExtensionMessageKey, string>> = {

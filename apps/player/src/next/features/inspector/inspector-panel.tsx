@@ -1,5 +1,5 @@
 import type { ActionConsequence } from "@webblackbox/player-sdk";
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 
 import "../network/viewers.css";
 import "./inspector.css";
@@ -411,7 +411,8 @@ export default function InspectorPanel() {
 
   // Opening from the list unmounts it (Enter, double-click): focus moves into the inspector
   // instead of falling back to the page. Focus that is elsewhere (the timeline) stays there.
-  useEffect(() => {
+  // A layout effect runs in the commit that unmounts the list, so focus never rests on <body>.
+  useLayoutEffect(() => {
     if (!document.activeElement || document.activeElement === document.body) {
       ref.current?.focus({ preventScroll: true });
     }

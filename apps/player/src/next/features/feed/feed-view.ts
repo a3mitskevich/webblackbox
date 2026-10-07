@@ -640,9 +640,13 @@ function toEntries(rows: readonly ActivityRow[], params: FeedParams): FeedEntry[
       expanded,
       nested: false
     };
-    const nested = rest.map(
-      (item): FeedEntry => ({ key: item.eventId, item, count: 1, expanded: false, nested: true })
-    );
+    const nested = rest.map((item): FeedEntry => ({
+      key: item.eventId,
+      item,
+      count: 1,
+      expanded: false,
+      nested: true
+    }));
 
     return expanded ? [headEntry, ...nested] : [headEntry];
   });
