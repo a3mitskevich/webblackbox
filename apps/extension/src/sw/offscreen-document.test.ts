@@ -111,6 +111,33 @@ describe("createOffscreenDocumentController", () => {
     expect(createDocument).toHaveBeenCalledTimes(1);
   });
 
+  it("logs a failed orphaned cleanup and still creates the document", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const createDocument = vi.fn(async () => undefined);
+    const controller = createOffscreenDocumentController({
+      offscreen: { createDocument } as unknown as ChromeApi["offscreen"],
+      runtime: {
+        getContexts: vi
+          .fn()
+          .mockRejectedValueOnce(new Error("contexts unavailable"))
+          .mockResolvedValue([]),
+        getURL: (path: string) => `chrome-extension://test/${path}`
+      } as unknown as ChromeApi["runtime"],
+      offscreenPath: "offscreen.html",
+      sidCount: () => 0
+    });
+
+    await expect(controller.orphanedCleanup).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      "[WebBlackbox] failed to close orphaned offscreen document",
+      expect.any(Error)
+    );
+
+    await controller.ensureOffscreenDocument();
+    expect(createDocument).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
   it("reports no document when the runtime cannot list contexts", async () => {
     const controller = createOffscreenDocumentController({
       offscreen: undefined,

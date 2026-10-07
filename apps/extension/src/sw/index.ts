@@ -412,7 +412,9 @@ chromeApi?.alarms?.onAlarm.addListener((alarm) => {
 // Wakes the worker at browser start, so the previous browser session's leftovers are deleted
 // right away instead of on the first click.
 chromeApi?.runtime?.onStartup?.addListener(() => {
-  void getAtRestKey().catch(() => undefined);
+  void getAtRestKey().catch((error) => {
+    console.warn("[WebBlackbox] at-rest encryption key unavailable at browser start", error);
+  });
 });
 
 // Every boot re-applies the setting: it also restores a registration an update dropped.
