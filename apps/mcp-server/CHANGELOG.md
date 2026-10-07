@@ -1,5 +1,18 @@
 # @webblackbox/mcp-server
 
+## 0.7.0
+
+### Minor Changes
+
+- Every archive tool result is now preceded by an untrusted-content notice text block; the JSON payload moves to the next content item. Consumers that parse `content[0].text` as the tool JSON must read the following item instead.
+- Added the repeatable `--allow-dir <dir>` CLI flag and `createServer`/`startServer` `allowedDirs` option to restrict which directories archive tools may read; the default stays unrestricted.
+- Added the `symbolicate_stack` tool for resolving minified stack traces against embedded or directory-provided source maps, and a `parallelTabs` section in `session_summary`.
+
+### Patch Changes
+
+- Updated dependencies
+  - @webblackbox/player-sdk@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

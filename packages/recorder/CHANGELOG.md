@@ -1,5 +1,20 @@
 # @webblackbox/recorder
 
+## 0.7.0
+
+### Minor Changes
+
+- Added `WebBlackboxRecorder.reconfigure`/`getConfig`, the optional `RecorderHooks.shouldKeepInlineNetworkBody` hook, and the `DefaultEventNormalizer` `consoleDetail` option.
+- Normalized the new pointer, tabs-context, and script-symbolication raw events (`user.pointerdown/up`, `user.contextmenu`, `user.auxclick`, `user.click.reaction`, `user.drag.start/end`, `user.selection`, `user.wheel`, `user.hover`, `meta.tabs.snapshot/change`, `sys.script`, `network.body.skipped`).
+- CDP `Network.*` payloads are now projected onto an explicit field allowlist, and inline network bodies are gated behind the new hook; non-allowlisted fields (raw headers, `securityDetails`, remote addresses, base64 bodies) are no longer recorded.
+- Under `console: allow` the recorder keeps the full console text (up to 64 KiB with a `truncated` flag) and complete stacks instead of truncating to ~600 characters.
+- Hashed redaction values now use a per-session keyed HMAC instead of plain SHA-256, so hash outputs differ from previous releases and across sessions.
+
+### Patch Changes
+
+- Updated dependencies
+  - @webblackbox/protocol@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

@@ -1,5 +1,26 @@
 # @webblackbox/extension
 
+## 0.7.0
+
+### Minor Changes
+
+- Added recording profiles with site rules, fine-grained sensitivity, and export safeguards; legacy options migrate into the new profiles store (schema version 2).
+- Local recordings are encrypted at rest with a per-browser-session key; sessions sealed under a lost key are wiped on fresh-key bootstrap.
+- The content script is injected on demand when recording starts, and the extension offers a page reload when capture begins.
+- Redesigned the popup, settings, and sessions pages; added the Russian locale with locale-aware formatting.
+- Records the other tabs of the recorded site (snapshots, changes, Player badge and markers, MCP and bug-report surfacing), pointer signals with readable targets and rage/dead clicks, and source maps for stack symbolication.
+- Added a configurable Player URL for self-hosted Players, service-worker restart recovery with stale-session sweeping, and enterprise managed-policy support.
+
+### Patch Changes
+
+- Stopped recording typed keys in editable and password fields, masked body values, and kept every Full-mode body (or a recorded skip reason).
+- Updated dependencies
+  - @webblackbox/cdp-router@0.7.0
+  - @webblackbox/pipeline@0.7.0
+  - @webblackbox/protocol@0.7.0
+  - @webblackbox/recorder@0.7.0
+  - webblackbox@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes
