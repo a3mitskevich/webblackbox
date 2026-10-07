@@ -33,6 +33,7 @@ import {
   PanelsLeftRight,
   Pause,
   Play,
+  Puzzle,
   RotateCcw,
   Rows3,
   Search,
@@ -94,7 +95,8 @@ const ICONS = {
   info: Info,
   lanes: Rows3,
   more: Ellipsis,
-  external: ExternalLink
+  external: ExternalLink,
+  puzzle: Puzzle
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

@@ -7,7 +7,9 @@ import { nextThemePreference, type ThemePreference } from "../../core/preference
 import { PLAYER_LOCALES, type PlayerLocale } from "../../lib/i18n.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import type { PlayerController } from "../controller.js";
+import { extensionGuideMessages, openExtensionGuide } from "../features/extension-guide/index.js";
 import { GenerateMenu } from "../features/generate/index.js";
+import { useFeatureI18n } from "../features/messages.js";
 import { ShareButton } from "../features/share/share-button.js";
 import { profileBannerLines, recordingProfileOf } from "./recording-profile.js";
 import { Hint } from "./hint.js";
@@ -277,10 +279,11 @@ function ProfileChip() {
   );
 }
 
-/** "⋯": about the recording, shortcuts, layout reset, the Player version and its source. */
+/** "⋯": about the recording, shortcuts, the extension guide, layout reset, version and source. */
 function PlayerMenu() {
   const controller = useController();
   const i18n = useI18n();
+  const guideT = useFeatureI18n(extensionGuideMessages);
   const hasArchive = usePlayerState((state) => state.archive !== null);
 
   return (
@@ -322,6 +325,14 @@ function PlayerMenu() {
             >
               <Icon name="keyboard" />
               {i18n.tn("shortcuts")}
+            </Menu.Item>
+            <Menu.Item
+              className="menu-item"
+              onClick={() => openExtensionGuide(controller.store)}
+              data-testid="menu-extension-guide"
+            >
+              <Icon name="puzzle" />
+              {guideT("menuLabel")}
             </Menu.Item>
             <Menu.Item
               className="menu-item"
