@@ -46,6 +46,7 @@ import { resolveLiteBodyCaptureRule, resolveProfileBodyMimeAllowlist } from "./l
 import type { SessionPipelineClient } from "./offscreen-client.js";
 import { extractPerformanceBudgetNetworkSample } from "./performance-budget.js";
 import type { PipelineBuffer } from "./pipeline-buffer.js";
+import { toSessionProfileRequest } from "./profile-change.js";
 import {
   withSessionCapturePolicy,
   type ProfileReevaluationController
@@ -250,7 +251,7 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
         tabId,
         mode,
         profile: {
-          request: profileRequest,
+          request: toSessionProfileRequest(profileRequest, profileSelection),
           visualCapture: options.visualCapture,
           selection: profileSelection,
           profileConfig: loadedRecorderConfig,
