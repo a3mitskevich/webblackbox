@@ -39,7 +39,7 @@ The dev server relaxes the page CSP for React refresh (its inline preamble scrip
 
 ```bash
 cd apps/player
-pnpm build      # vite build → build/
+pnpm build      # vite build → build/, then scripts/bundle-extension.mjs ships the packaged extension
 pnpm serve      # serve build/ on http://localhost:4177
 ```
 
@@ -75,6 +75,7 @@ There is no hosted Player for this fork: build it and serve `build/` yourself. T
 - **A secure context.** The archive's integrity hashes are checked and its files decrypted with the Web Crypto API (`crypto.subtle`), which browsers expose only on `https://` pages and on `http://localhost` / `127.0.0.1`. On plain `http://` elsewhere, no archive opens ("Web Crypto API or Node crypto is required for SHA-256 hashing.").
 - **CSP.** The policy ships in the `<meta http-equiv="Content-Security-Policy">` of `index.html`; it needs no `'unsafe-inline'` and no `eval`. If your server adds its own `Content-Security-Policy` header, both policies apply, so the header must allow at least `script-src 'self'`, `style-src 'self'`, `img-src`/`media-src 'self' blob: data:` and `connect-src 'self' http: https:` (share-server downloads).
 - **The extension.** Set the Player URL in the extension's Options (or the `playerUrl` managed policy) to your Player: `https:`, or `http:` on localhost / 127.0.0.1. "Export and open in Player" then opens that page; the archive stays in the downloads folder and is dropped into the Player.
+- **The bundled extension download.** The workspace build packages the extension (`@webblackbox/extension`'s `package:chrome`, a turbo dependency of this build) and the Player build copies the zip to `build/extension/webblackbox-chrome.zip` plus `build/extension/extension.json` (`{ version, file, size, sha256, builtAt }`). The Player's extension guide (the ⋯ menu → "Extension guide", or the empty state) offers that zip for download and walks through installing and connecting it, so testers need nothing but the Player URL. A plain `vite build` without a packaged zip still succeeds — with a warning and without the metadata; run `pnpm --filter @webblackbox/extension package:chrome` first (or just `pnpm build` from the repo root) to include it.
 
 ### GitHub Pages
 

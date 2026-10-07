@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "bench": "tsx scripts/benchmark.ts",
-    "build": "vite build",
+    "build": "vite build && node scripts/bundle-extension.mjs",
     "e2e:player": "pnpm run build && node scripts/e2e-player.mjs",
     "pages:build": "pnpm build && node scripts/prepare-pages-build.mjs",
     "pages:deploy": "node scripts/deploy-gh-pages.mjs",

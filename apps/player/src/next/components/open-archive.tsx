@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import { useController, useI18n, usePlayerState } from "../context.js";
+import { extensionGuideMessages, openExtensionGuide } from "../features/extension-guide/index.js";
+import { useFeatureI18n } from "../features/messages.js";
 import { ArchiveInput } from "./header.js";
 import { Icon } from "./icon.js";
 import { DialogDescription, DialogTitle, ModalDialog } from "./modal-dialog.js";
@@ -35,9 +37,11 @@ export function ArchiveStatusLine() {
   return null;
 }
 
-/** Start screen: what to do, a file button, and the whole page as a drop target. */
+/** Start screen: what to do, a file button, the extension guide, and the page as a drop target. */
 export function EmptyState() {
+  const controller = useController();
   const i18n = useI18n();
+  const guideT = useFeatureI18n(extensionGuideMessages);
   const titleId = useId();
 
   return (
@@ -53,6 +57,15 @@ export function EmptyState() {
           label={i18n.tn("chooseFile")}
           testId="empty-archive-input"
         />
+        <button
+          type="button"
+          className="btn xguide-empty-link"
+          onClick={() => openExtensionGuide(controller.store)}
+          data-testid="empty-extension-guide"
+        >
+          <Icon name="puzzle" />
+          <span>{guideT("emptyLink")}</span>
+        </button>
         <ArchiveStatusLine />
       </div>
     </section>

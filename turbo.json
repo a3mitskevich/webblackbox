@@ -6,6 +6,16 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "build/**"]
     },
+    // Packaging rebuilds into the same build/ (tsup --clean) as `build`: never run the two at once.
+    "package:chrome": {
+      "dependsOn": ["^build", "build"],
+      "outputs": ["build/**", "dist/**"]
+    },
+    // The player build ships the packaged extension (build/extension/): package it first.
+    "@webblackbox/player#build": {
+      "dependsOn": ["^build", "@webblackbox/extension#package:chrome"],
+      "outputs": ["build/**"]
+    },
     "dev": {
       "cache": false,
       "persistent": true

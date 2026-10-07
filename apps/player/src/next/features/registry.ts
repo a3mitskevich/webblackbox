@@ -1,6 +1,7 @@
 import { RAIL_TABS, type RailTab } from "../../core/url-hash.js";
 import { compareFeature } from "./compare/index.js";
 import { consoleFeature } from "./console/index.js";
+import { extensionGuideFeature } from "./extension-guide/index.js";
 import { feedFeature } from "./feed/index.js";
 import { generateFeature } from "./generate/index.js";
 import { inspectorFeature } from "./inspector/index.js";
@@ -26,7 +27,8 @@ export const PLAYER_FEATURES: readonly PlayerFeature[] = [
   compareFeature,
   shareFeature,
   inspectorFeature,
-  generateFeature
+  generateFeature,
+  extensionGuideFeature
 ];
 
 /**
