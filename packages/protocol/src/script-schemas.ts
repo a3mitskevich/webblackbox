@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod";
 
 import { SCRIPT_SOURCE_MAP_ORIGINS, SCRIPT_URL_MAX_LENGTH } from "./script.js";
 
