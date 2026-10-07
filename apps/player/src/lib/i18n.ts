@@ -16,14 +16,7 @@ type NextMessages = Record<NextMessageKey, string>;
 export const PLAYER_LOCALES: readonly PlayerLocale[] = ["en", "ru", "zh-CN"];
 
 type NetworkType =
-  | "document"
-  | "fetch"
-  | "script"
-  | "stylesheet"
-  | "image"
-  | "font"
-  | "text"
-  | "other";
+  "document" | "fetch" | "script" | "stylesheet" | "image" | "font" | "text" | "other";
 
 type PointerRippleKind = "double" | "right" | "middle" | "hold" | "drag" | "dnd";
 type SensitiveReason = "redacted-marker" | "hashed-value" | "sensitive-pattern";

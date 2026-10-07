@@ -10,6 +10,12 @@
     "filteredExportMaxMs": 8000,
     "archiveDropRatioMin": 0.2
   },
+  "pipelineVolumes": {
+    "ingestMinOpsPerSec": 6000,
+    "blobPutLatencyGrowthMax": 2,
+    "defaultExportMaxMs": 12000,
+    "defaultExportPeakRssMaxMb": 600
+  },
   "player": {
     "minEvents": 50000,
     "openMaxMs": 1500,
