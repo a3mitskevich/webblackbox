@@ -149,6 +149,56 @@ describe("extension guide", () => {
     expect(within(dialog).getByTestId("player-url-copy-status")).toHaveTextContent("Copied");
   });
 
+  it("shows the bundled videos, with a captions note when they are in another language", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).endsWith("videos.json")
+          ? new Response(
+              JSON.stringify({
+                videos: [
+                  { id: "install", lang: "ru", file: "install.ru.mp4", size: 2048 },
+                  { id: "open-in-player", lang: "ru", file: "open-in-player.ru.mp4", size: 1024 }
+                ]
+              }),
+              { status: 200 }
+            )
+          : new Response("not found", { status: 404 })
+      )
+    );
+    renderPlayer();
+
+    const dialog = await openGuideFromEmptyState();
+
+    const section = await within(dialog).findByTestId("extension-videos");
+    expect(within(section).getByRole("heading", { name: "Videos" })).toBeVisible();
+    const install = within(section).getByTestId("extension-video-install");
+    expect(install).toHaveTextContent("Installing the extension · Captions: Русский");
+    expect(install.querySelector("video")).toHaveAttribute(
+      "src",
+      "extension/videos/install.ru.mp4"
+    );
+    expect(within(section).getByTestId("extension-video-open-in-player")).toBeVisible();
+    expect(
+      within(section).queryByTestId("extension-video-record-and-export")
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("locale-ru"));
+    expect(within(section).getByTestId("extension-video-install")).toHaveTextContent(
+      /^Установка расширения$/u
+    );
+  });
+
+  it("has no video section when the build bundles no videos", async () => {
+    stubMetadataFetch(false);
+    renderPlayer();
+
+    const dialog = await openGuideFromEmptyState();
+
+    await within(dialog).findByTestId("extension-download-missing");
+    expect(within(dialog).queryByTestId("extension-videos")).not.toBeInTheDocument();
+  });
+
   it("switches the guide's language live", async () => {
     stubMetadataFetch(false);
     renderPlayer();
