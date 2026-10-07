@@ -23,8 +23,7 @@ export type ArchiveAnalysisWorkerInput = {
 };
 
 export type ArchiveAnalysisWorkerMessage =
-  | { ok: true; analysis: ArchiveAnalysis }
-  | { ok: false; error: string };
+  { ok: true; analysis: ArchiveAnalysis } | { ok: false; error: string };
 
 // Resolves next to the running module: `.ts` under tsx, `.js` in the tsup build.
 const WORKER_URL = new URL(

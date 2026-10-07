@@ -25,26 +25,26 @@
     "diff": "9.0.0",
     "lucide-react": "1.52.0",
     "microdiff": "1.6.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "react-error-boundary": "6.1.6",
     "react-hotkeys-hook": "5.3.3",
     "react-resizable-panels": "4.14.2",
     "shiki": "4.5.0",
     "uplot": "1.6.32",
-    "zod": "^4.1.12"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.1",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "6.1.2",
     "@webblackbox/pipeline": "workspace:*",
     "axe-core": "4.14.0",
     "jsdom": "^26.1.0",
-    "jszip": "^3.10.1",
-    "vite": "8.3.2"
+    "jszip": "^3.10.2",
+    "vite": "8.3.3"
   }
 }

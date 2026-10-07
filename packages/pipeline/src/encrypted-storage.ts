@@ -1,6 +1,12 @@
 import type { ChunkTimeIndexEntry, HashesManifest, SessionMetadata } from "@webblackbox/protocol";
 
-import type { PipelineStorage, StoredBlob, StoredChunk, StoredIndexes } from "./storage.js";
+import type {
+  PipelineStorage,
+  StoredBlob,
+  StoredBlobInfo,
+  StoredChunk,
+  StoredIndexes
+} from "./storage.js";
 import {
   decryptStorageBytes,
   encryptStorageBytes,
@@ -193,6 +199,15 @@ export class EncryptedPipelineStorage implements PipelineStorage {
     };
   }
 
+  /** Chunk metadata is stored readable; only the bytes are encrypted. */
+  public async listChunkMetas(sid: string): Promise<ChunkTimeIndexEntry[]> {
+    if (this.storage.listChunkMetas) {
+      return this.storage.listChunkMetas(sid);
+    }
+
+    return (await this.storage.listChunks(sid)).map((chunk) => chunk.meta);
+  }
+
   public async putBlob(blob: StoredBlob, sidHint?: string): Promise<void> {
     await this.storage.putBlob(
       {
@@ -226,6 +241,11 @@ export class EncryptedPipelineStorage implements PipelineStorage {
         };
       })
     );
+  }
+
+  /** Blob type and plaintext size stay readable in the wrapped storage, like the hash. */
+  public async listSessionBlobInfo(sid: string): Promise<StoredBlobInfo[]> {
+    return (await this.storage.listSessionBlobInfo?.(sid)) ?? [];
   }
 
   public async putIndexes(sid: string, indexes: StoredIndexes): Promise<void> {

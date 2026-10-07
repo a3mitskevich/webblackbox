@@ -5,9 +5,7 @@ import type { RealtimeNetworkEntry, WebBlackboxPlayer } from "@webblackbox/playe
 import { usePlayerState } from "../../context.js";
 
 export type Loadable<T> =
-  | { status: "loading" }
-  | { status: "ready"; value: T }
-  | { status: "error"; message: string };
+  { status: "loading" } | { status: "ready"; value: T } | { status: "error"; message: string };
 
 export type BlobValue = { mime: string; bytes: Uint8Array } | null;
 

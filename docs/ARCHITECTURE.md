@@ -6,9 +6,9 @@ This document describes the high-level architecture of WebBlackbox, the design d
 
 WebBlackbox is a three-tier core system with an optional collaboration tier:
 
-1. **Recording Tier** — A Chrome extension captures events from multiple sources
-2. **Processing Tier** — A pipeline chunks, compresses, indexes, and archives events
-3. **Playback Tier** — A Player SDK and React UI provide analysis and visualization
+1. **Recording Tier** — A Chrome extension (or the embeddable `webblackbox` lite SDK) captures events from multiple sources
+2. **Processing Tier** — A pipeline chunks, indexes, encrypts and archives events
+3. **Playback Tier** — A Player SDK, the React Player UI and the MCP server provide analysis and visualization
 4. **Collaboration Tier (optional)** — `share-server` stores uploaded archives and emits redacted secondary indexes for share links
 
 ```
@@ -55,8 +55,9 @@ WebBlackbox is a three-tier core system with an optional collaboration tier:
 │  └────────────────────────────────────────────────────────────┘    │
 │                                                                     │
 │  ┌────────────────────────────────────────────────────────────┐    │
-│  │                    Player UI (React)                        │    │
-│  │  Timeline │ Network │ Console │ Storage │ DOM │ Perf       │    │
+│  │                 Player UI (React + Vite)                   │    │
+│  │  Stage/Timeline │ Activity │ Network │ Console │ Realtime  │    │
+│  │  Storage │ Tabs │ Perf │ Compare │ Inspector │ Generate    │    │
 │  └────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -108,43 +109,77 @@ The extension resolves a recording profile before it builds the recorder config:
 
 Each package has a single responsibility:
 
-| Package      | Responsibility                       |
-| ------------ | ------------------------------------ |
-| `protocol`   | Data definitions and validation      |
-| `recorder`   | Event collection and normalization   |
-| `pipeline`   | Event processing and archival        |
-| `player-sdk` | Session analysis and code generation |
-| `cdp-router` | Chrome DevTools Protocol management  |
+| Package       | Responsibility                                                    |
+| ------------- | ----------------------------------------------------------------- |
+| `protocol`    | Data definitions and validation                                   |
+| `recorder`    | Event collection and normalization                                |
+| `pipeline`    | Event processing and archival                                     |
+| `player-sdk`  | Session analysis and code generation                              |
+| `cdp-router`  | Chrome DevTools Protocol management, events routed per tab        |
+| `webblackbox` | In-page lite capture SDK; the extension reuses its page-side code |
 
 ## Recording Architecture
 
+### Capture Modes and Starting a Recording
+
+The extension has two capture engines (`apps/extension/src/shared/mode-profile.ts`):
+
+- **Lite** — page-side signals (content script and page hooks) plus a browser-side network baseline from `chrome.webRequest`. No request/response bodies, no CDP.
+- **Full** — the service worker attaches `chrome.debugger` to the tab: CDP network (with capped bodies), navigation, runtime errors, console and screenshots, plus page-side interaction hints.
+
+A profile that asks for something only Full records (bodies, screenshots, tab video, whole console messages, CDP categories) locks the engine to Full in the popup (`shared/profiles/engine.ts`).
+
+Nothing is recorded until the user presses Start in the popup, and only in that tab. Start can offer to reload the page first so the recording covers the whole load (`shared/start-reload-offer.ts`, on by default). The content script either runs in every page from `document_start` (the default) or is injected only into the recorded tab on Start and into its later frames (`shared/content-injection.ts`); the heavy capture agent (`content-agent.js`) is loaded only when recording starts.
+
 ### Event Sources
 
-WebBlackbox captures events from three sources:
+WebBlackbox captures events from these sources:
 
-#### CDP (Chrome DevTools Protocol)
+#### CDP (Chrome DevTools Protocol, Full mode)
 
-- **Network domain** — HTTP requests, responses, WebSocket frames, failures
+- **Network domain** — HTTP requests, responses, bodies, WebSocket frames, failures
 - **Runtime domain** — JavaScript exceptions, console API calls
 - **Log domain** — Browser log entries
-- **Page domain** — Navigation events, frame lifecycle
+- **Page domain** — Navigation events, frame lifecycle, screenshots
+- **Debugger domain** — Script records and their source map references (see Source Maps)
+- Iframes and workers are auto-attached as child sessions. Events are routed by tab, so an event never reaches another tab's recording (`packages/cdp-router`, `apps/extension/src/sw/session-routing.ts`).
+
+#### Browser-side network baseline (Lite mode)
+
+- `chrome.webRequest` request/response metadata for the recorded tab (`apps/extension/src/sw/lite-network-baseline.ts`)
 
 #### Content Script
 
-- **User interactions** — click, dblclick, keydown, input, submit, scroll, mousemove, focus, blur, resize, visibilitychange
+- **User interactions** — click, dblclick, keydown, input, change, submit, focus, blur, scroll, wheel, sampled pointer moves, pointer targets with dead-click detection, resize, visibilitychange
 - **DOM mutations** — Batched MutationObserver records
-- **DOM snapshots** — Full page snapshots at intervals
-- **Screenshots** — SnapDOM captures on idle and after actions
+- **DOM snapshots** — Page snapshots at intervals (top frame)
+- **Screenshots** — Lite only: SnapDOM captures on idle, off by default (`screenshotIdleMs: 0`); Full takes screenshots through CDP
+
+In Full mode the content script skips DOM mutations and DOM/storage snapshots unless the profile records the raw DOM or page storage.
 
 #### Injected Script
 
-- **Console** — Intercepts `console.log/warn/error/etc.` calls
-- **Storage** — Monitors localStorage, sessionStorage, and IndexedDB operations
-- **Network/Error hooks** — Captures fetch/XHR lifecycle plus page/runtime errors
+Installed in the page's MAIN world with `chrome.scripting.executeScript`. The extension never installs its fetch/XHR hooks: network data comes from `webRequest` (Lite) or CDP (Full).
+
+- **Console** — Intercepts `console.log/warn/error/etc.` calls (Lite)
+- **Errors** — Page/runtime errors and unhandled rejections (Lite)
+- **Storage** — Monitors localStorage, sessionStorage, and IndexedDB operations (Lite; in Full only when the profile records page storage)
+
+#### Other tabs of the recorded site
+
+With the tabs context on (`metadata` by default, `allow` adds paths and titles), the service worker tracks other same-origin and same-site tabs through `chrome.tabs` and records `meta.tabs.snapshot` and `meta.tabs.change` events (`apps/extension/src/sw/tabs-context/`).
 
 ### Event Normalization
 
-Raw events from all three sources are normalized by the `DefaultEventNormalizer` into a consistent `WebBlackboxEvent` format. This unified representation enables downstream processing to be source-agnostic.
+Raw events from all sources are normalized by the `DefaultEventNormalizer` into a consistent `WebBlackboxEvent` format. This unified representation enables downstream processing to be source-agnostic.
+
+### Body Completeness (Full Mode)
+
+When the profile asks for bodies, every finished request either gets its body in the archive or a `network.body.skipped` event with a reason: `mime-not-allowed`, `filtered`, `too-large`, `session-limit`, `backlog`, `not-retained`, `started-before-capture`, `unavailable`, `fetch-failed` or `empty` (`BODY_SKIP_REASONS` in `packages/protocol/src/constants.ts`). Request bodies that are not kept are flagged with `postDataSkipped` on `network.request`. Bodies are read 4 at a time, and a session keeps at most 20,000 bodies and 512 MB (`apps/extension/src/sw/full-body-capture.ts`).
+
+### Source Maps
+
+Full mode records scripts with their source map references by default (`metadata`), Lite records none; a profile can set `off`, `metadata` or `embed` (maps embedded at record time, 8 MB per map by default) (`apps/extension/src/shared/profiles/resolve.ts`, `apps/extension/src/sw/source-maps.ts`). The Player SDK, the Player and the MCP server use them to symbolicate minified stack traces.
 
 ### Ring Buffer
 
@@ -159,11 +194,11 @@ User actions (clicks, form submissions, navigation) create "action spans" — ti
 The recorder evaluates freeze conditions on every event:
 
 - **Error freeze** — Uncaught JavaScript exceptions or unhandled promise rejections
-- **Network freeze** — Network request failure rate exceeds threshold
-- **Performance freeze** — Long tasks exceeding 200ms
-- **Manual freeze** — User-triggered markers (Ctrl+Shift+M)
+- **Network freeze** — 3 failed requests within 10 seconds
+- **Performance freeze** — Long tasks of 200ms or more
+- **Marker freeze** — User-triggered markers (Ctrl/Cmd+Shift+M), reason `marker`
 
-A freeze is a notification (`onFreeze` / `freezeReason`): the recorder keeps recording and nothing is trimmed or preserved because of it. The extension turns it into an incident alert (an ERR badge on the toolbar icon, the page indicator and an incident line in the popup) and keeps the network and performance triggers off.
+When a freeze is triggered, it is a notification (`onFreeze` / `freezeReason`): the recorder keeps recording and nothing is trimmed or preserved because of it. The extension turns it into an incident alert (an ERR badge on the toolbar icon, the page indicator and an incident line in the popup) and keeps the network and performance triggers off in both modes (`applyModeProductBoundary` in `apps/extension/src/shared/mode-profile.ts`); the marker freeze is always on, and the error freeze is on by default (`freezeOnError`, which the options and profiles can turn off).
 
 ## Processing Architecture
 
@@ -172,7 +207,7 @@ A freeze is a notification (`onFreeze` / `freezeReason`): the recorder keeps rec
 Events are grouped into size-bounded chunks (default: 512KB). Each chunk is:
 
 1. Serialized as NDJSON (newline-delimited JSON)
-2. Encoded with chunk codecs (`none`, `gzip`, `br`, `zst`)
+2. Encoded with the pipeline's chunk codec: `none` is the default, while the extension and the lite SDK select `gzip` (a chunk falls back to `none` when the runtime lacks `CompressionStream`, and the ZIP itself is written with `STORE`); `br` and `zst` are also available
 3. Hashed with SHA-256 for integrity
 4. Stored with metadata (timestamps, event count, byte length)
 
@@ -182,11 +217,15 @@ Events inside a chunk stay in arrival order, which is **not** `mono` order: page
 
 Three indexes are built for efficient querying:
 
-1. **Time Index** — Maps timestamp ranges to chunks for O(log n) time-based lookup
+1. **Time Index** — Maps timestamp ranges to chunks, so a time-range query decodes only the chunks that overlap it
 2. **Request Index** — Maps network request IDs to event IDs for request tracing
 3. **Inverted Index** — Maps searchable terms to event IDs for full-text search
 
-In the extension pipeline, chunks are persisted first and indexes are rebuilt on demand during `finalizeIndexes()` / export. This avoids keeping full-session request and inverted indexes resident in offscreen memory during long-running recordings.
+In the extension pipeline, chunks are persisted first (gzip-compressed) and indexes are rebuilt on demand during `finalizeIndexes()` / export. This avoids keeping full-session request and inverted indexes resident in offscreen memory during long-running recordings. The inverted index leaves out terms found in more than half the events of a large session and caps its total postings; a term missing from the index means a full scan for readers.
+
+### Export
+
+The export streams the archive (`exportArchive`): chunks are selected newest first from their metadata and decoded one at a time, blob sizes come from the `blobRefs` store (one row per `[sid, hash]`), the exact archive size is computed before writing, and chunks, indexes and blobs are then encrypted and written one by one into a STORE ZIP. The offscreen document collects the stream into a `Blob` and downloads it.
 
 ### Blob Storage
 
@@ -209,8 +248,10 @@ The export process creates a `.webblackbox` ZIP file:
 3. Blobs are included
 4. Manifest is generated with metadata and stats
 5. Integrity hashes are computed for all files
-6. AES-GCM encryption is applied to every file but the plaintext envelope `manifest.json` (format version and encryption parameters); a passphrase of at least 8 characters is required
+6. AES-GCM encryption is applied to every file but the plaintext envelope `manifest.json` (format version and encryption parameters) and `integrity/hashes.json` (hashes of the encrypted files); the full manifest is written encrypted to `meta/manifest.json`. A passphrase of at least 8 characters is required: there is no plaintext export
 7. Everything is packaged into a ZIP archive
+
+This is archive format 2 (`ARCHIVE_FORMAT_VERSION` in `packages/protocol/src/archive-encryption.ts`). Format 1 archives, with the full manifest in a readable `manifest.json`, can still be opened.
 
 ## Playback Architecture
 
@@ -271,20 +312,23 @@ Page World          Extension World         Background
 │          │       │              │        │              │
 │ window.  │       │ chrome.      │        │ CDP Router   │
 │ postMsg  │       │ runtime.     │        │ Recorder     │
-│          │       │ connect/port │        │              │
+│ + nonce  │       │ connect/port │        │ webRequest   │
 └──────────┘       └──────────────┘        └──────┬───────┘
                                                   │
                                            ┌──────▼───────┐
                                            │  Offscreen   │
                                            │  Document    │
-                                           │  (Pipeline)  │
+                                           │  (Pipeline,  │
+                                           │  tab video)  │
                                            └──────────────┘
 ```
 
-- **Page World** → Extension: `window.postMessage` (injected → content)
-- **Extension** → Background: `chrome.runtime.connect` + `port.postMessage` (content → SW)
-- **Background** → Offscreen: `chrome.runtime.connect` + `port.postMessage` (SW ↔ offscreen). The messages are defined once in `apps/extension/src/shared/offscreen-messages.ts` and checked by hand-written guards on the receiving side. Ports carry JSON, so binary data never travels as a typed array: blobs the worker produces (screenshots, bodies, DOM snapshots) go as base64, and tab video chunks are written to the pipeline inside the offscreen document, which sends the worker only their hashes.
-- **CDP**: `chrome.debugger.sendCommand/onEvent` (SW ↔ browser)
+Each context is its own tsup entry (`sw`, `content`, `content-agent`, `offscreen`, `injected`, `popup`, `options`, `sessions` in `apps/extension/tsup.config.ts`), bundled into `apps/extension/build/`. `manifest.json` is generated in code by `apps/extension/scripts/lib/extension-build.mjs` (version from `apps/extension/package.json`, `dev` and `store-safe` profiles); it declares no content scripts, since the service worker registers or injects `content.js` itself.
+
+- **Page World** → Extension: `window.postMessage` (injected → content). The service worker hands the page hooks a per-recording bridge nonce through `chrome.scripting.executeScript`; once it is set, the content side drops messages without it.
+- **Extension** → Background: `chrome.runtime.connect` + `port.postMessage` (content → SW). The service worker trusts a port name only when the sender matches it (`apps/extension/src/sw/port-sender.ts`).
+- **Background** ↔ Offscreen: the offscreen document opens a `chrome.runtime.connect` port to the service worker for pipeline traffic. The messages are defined once in `apps/extension/src/shared/offscreen-messages.ts` and checked by hand-written guards on the receiving side. Ports carry JSON, so binary data never travels as a typed array: blobs the worker produces (screenshots, bodies, DOM snapshots) go as base64, and tab video chunks are written to the pipeline inside the offscreen document, which sends the worker only their hashes. The service worker sends the at-rest storage key over the same port as a `sw.storage-key` message.
+- **CDP**: `chrome.debugger.sendCommand/onEvent` (SW ↔ browser), Full mode only
 
 ## Security Considerations
 
@@ -293,7 +337,7 @@ Page World          Extension World         Background
 - Sensitive headers are redacted before entering the pipeline
 - Content masking follows each profile's redaction rules (best effort, no guarantee): body keys and value patterns, blocked selectors, header/cookie/query/storage rules, and the optional built-in heuristics; `contentRedaction: false` records content as captured
 - Every archive is encrypted with AES-GCM
-- In the extension, everything in the pipeline IndexedDB (chunks, blobs, indexes, integrity, session metadata) is encrypted with AES-GCM under a per-browser-session key held only in `chrome.storage.session`; the offscreen document imports it non-extractable. A new key (browser or extension restart) deletes the database. Stopped recordings survive service worker restarts: a snapshot in `chrome.storage.session` lets a new worker rebuild them, and a `chrome.alarms` alarm deletes them when their retention ends. See [PRIVACY.md](PRIVACY.md#local-storage).
+- In the extension, the contents of the pipeline IndexedDB (chunk and blob bytes, indexes, integrity, full session records) are encrypted with AES-GCM under a per-browser-session key held only in `chrome.storage.session`; the offscreen document imports it non-extractable. A new key (browser or extension restart) makes older sessions unreadable, and the offscreen document deletes them before it uses the storage. Stopped recordings survive service worker restarts: a snapshot in `chrome.storage.session` lets a new worker rebuild them, and a `chrome.alarms` alarm deletes them when their retention ends. See [PRIVACY.md](PRIVACY.md#local-storage).
 
 ### Encryption Details
 
@@ -301,10 +345,10 @@ Page World          Extension World         Background
 - **Key Derivation**: PBKDF2 with SHA-256, 600,000 iterations for new exports (readers take the count from the manifest, so older 120,000-iteration archives still open; counts outside 10,000–10,000,000 are rejected)
 - **Salt**: Random 16-byte salt per archive
 - **IV**: Random 12-byte IV per file within the archive
-- **Scope**: Event chunks, indexes, and blobs; manifest remains readable and therefore holds only the sanitized origin (no page title)
+- **Scope**: Event chunks, indexes, blobs, the privacy manifest and the full manifest (`meta/manifest.json`); only the envelope `manifest.json` (format version, encryption parameters) and `integrity/hashes.json` stay readable
 
 ### Permission Model
 
-- The extension requires `debugger` permission for CDP access
-- `<all_urls>` host permission is needed for content script injection
+- The default (`dev`) build requests `debugger` for CDP access and `<all_urls>` host access, which `webRequest`, `scripting.executeScript`, and the dynamic content script registration need
+- The `store-safe` build profile drops `debugger`, `tabs`, `webRequest`, `webNavigation` and persistent host access and uses `activeTab`, so the content script is injected only on Start, and that build has no Full CDP capture and no Lite `webRequest` network baseline, and the other-tabs context cannot read other tabs' addresses and titles
 - Users must explicitly grant permissions during installation

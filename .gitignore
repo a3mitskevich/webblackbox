@@ -148,3 +148,6 @@ vite.config.ts.timestamp-*
 
 build
 .webblackbox-share-data/
+
+# Extension UI dictionaries merged from per-feature fragments at build/test/typecheck
+apps/extension/src/shared/locales/generated/

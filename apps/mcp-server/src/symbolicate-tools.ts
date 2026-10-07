@@ -11,7 +11,7 @@ import {
   type SymbolicatedFrame
 } from "@webblackbox/player-sdk";
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
-import { z } from "zod";
+import * as z from "zod";
 
 import { openArchivePlayer, resolveArchivePath } from "./session-tools.js";
 
