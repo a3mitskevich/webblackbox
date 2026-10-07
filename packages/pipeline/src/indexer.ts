@@ -17,6 +17,23 @@ const MAX_INDEX_TERM_LENGTH = 64;
 const MAX_TERMS_PER_EVENT = 256;
 const HASH_HEX_PATTERN = /^[a-f0-9]{32,}$/i;
 const BASE64ISH_PATTERN = /^[a-z0-9+/_=-]{80,}$/i;
+/**
+ * Inverted index size limits. A term found in more than half the events narrows nothing down,
+ * so once a session is large enough such stop-word terms are left out; the total number of
+ * postings is capped as well, dropping the most frequent terms first. Readers treat a term
+ * missing from the index as "scan every event", so search results stay complete.
+ */
+export type InvertedIndexLimits = {
+  maxDocumentRatio: number;
+  minEventsForDocumentCutoff: number;
+  maxTotalPostings: number;
+};
+
+export const INVERTED_INDEX_LIMITS: InvertedIndexLimits = {
+  maxDocumentRatio: 0.5,
+  minEventsForDocumentCutoff: 2_000,
+  maxTotalPostings: 1_000_000
+};
 
 export class EventIndexer {
   private readonly indexes: MutableIndexes = {
@@ -25,12 +42,17 @@ export class EventIndexer {
     inverted: new Map()
   };
 
+  private indexedEvents = 0;
+
+  public constructor(private readonly limits: InvertedIndexLimits = INVERTED_INDEX_LIMITS) {}
+
   public addChunk(meta: ChunkTimeIndexEntry): void {
     this.indexes.time.push(meta);
   }
 
   public addEvents(events: WebBlackboxEvent[]): void {
     for (const event of events) {
+      this.indexedEvents += 1;
       this.addRequestMapping(event);
       this.addInvertedTerms(event);
     }
@@ -47,10 +69,12 @@ export class EventIndexer {
         reqId,
         eventIds: [...eventIds]
       })),
-      inverted: [...this.indexes.inverted.entries()].map(([term, eventIds]) => ({
-        term,
-        eventIds: [...eventIds]
-      }))
+      inverted: limitInvertedTerms(this.indexes.inverted, this.indexedEvents, this.limits).map(
+        ([term, eventIds]) => ({
+          term,
+          eventIds: [...eventIds]
+        })
+      )
     };
   }
 
@@ -81,6 +105,38 @@ export class EventIndexer {
       this.indexes.inverted.set(normalized, eventIds);
     }
   }
+}
+
+function limitInvertedTerms(
+  inverted: Map<string, Set<string>>,
+  indexedEvents: number,
+  limits: InvertedIndexLimits
+): Array<[string, Set<string>]> {
+  const { maxDocumentRatio, minEventsForDocumentCutoff, maxTotalPostings } = limits;
+  const maxDocuments =
+    indexedEvents >= minEventsForDocumentCutoff
+      ? Math.floor(indexedEvents * maxDocumentRatio)
+      : Number.POSITIVE_INFINITY;
+  const kept = [...inverted.entries()].filter(([, eventIds]) => eventIds.size <= maxDocuments);
+  let totalPostings = kept.reduce((sum, [, eventIds]) => sum + eventIds.size, 0);
+
+  if (totalPostings <= maxTotalPostings) {
+    return kept;
+  }
+
+  const dropped = new Set<string>();
+  const byFrequency = [...kept].sort((left, right) => right[1].size - left[1].size);
+
+  for (const [term, eventIds] of byFrequency) {
+    if (totalPostings <= maxTotalPostings) {
+      break;
+    }
+
+    dropped.add(term);
+    totalPostings -= eventIds.size;
+  }
+
+  return kept.filter(([term]) => !dropped.has(term));
 }
 
 function collectTerms(event: WebBlackboxEvent, maxTerms: number): string[] {

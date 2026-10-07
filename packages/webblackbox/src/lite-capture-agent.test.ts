@@ -390,6 +390,68 @@ describe("LiteCaptureAgent", () => {
     agent.dispose();
   });
 
+  it("drops CDP-covered page events at the source in full mode", () => {
+    const { agent, emitBatch } = createAgent({ mode: "full" });
+
+    for (const rawType of [
+      "scroll",
+      "mutation",
+      "snapshot",
+      "screenshot",
+      "localStorageSnapshot",
+      "indexedDbSnapshot",
+      "cookieSnapshot"
+    ]) {
+      queueAgentRawEvents(agent, rawType, 2);
+    }
+
+    agent.flush();
+    expect(emitBatch).not.toHaveBeenCalled();
+
+    agent.dispose();
+  });
+
+  it("still emits page events full mode does not skip (one shared shouldPageCapture decision)", () => {
+    const { agent, emitBatch } = createAgent({ mode: "full" });
+
+    // The old service-worker second-layer list dropped these again; the unified decision lives
+    // in the agent and never skipped them, so they pass through when the hooks deliver them.
+    for (const rawType of ["console", "fetch", "networkBody", "pageError"]) {
+      queueAgentRawEvents(agent, rawType, 1);
+    }
+
+    agent.flush();
+    const rawTypes = emitBatch.mock.calls.flatMap(([events]) =>
+      (events as Array<{ rawType: string }>).map((event) => event.rawType)
+    );
+
+    expect(rawTypes.sort()).toEqual(["console", "fetch", "networkBody", "pageError"]);
+
+    agent.dispose();
+  });
+
+  it("keeps mutation events in full mode under dom: allow", () => {
+    const { agent, emitBatch } = createAgent({
+      mode: "full",
+      capturePolicy: {
+        ...DEFAULT_CAPTURE_POLICY,
+        categories: { ...DEFAULT_CAPTURE_POLICY.categories, dom: "allow" }
+      }
+    });
+
+    queueAgentRawEvents(agent, "mutation", 1);
+    queueAgentRawEvents(agent, "scroll", 1);
+
+    agent.flush();
+    const rawTypes = emitBatch.mock.calls.flatMap(([events]) =>
+      (events as Array<{ rawType: string }>).map((event) => event.rawType)
+    );
+
+    expect(rawTypes).toEqual(["mutation"]);
+
+    agent.dispose();
+  });
+
   it("throttles full-mode pointer tracking", () => {
     const { agent } = createAgent({ mode: "full" });
     const state = agent as unknown as {

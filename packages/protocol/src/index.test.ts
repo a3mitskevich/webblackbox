@@ -20,7 +20,6 @@ import {
   privacyClassificationSchema,
   privacyManifestSchema,
   validateEvent,
-  validateMessage,
   WEBBLACKBOX_PROTOCOL_VERSION,
   routeTemplatePath,
   sanitizeUrlForPrivacy
@@ -50,18 +49,6 @@ describe("protocol", () => {
         url: "https://example.com/api",
         method: "GET"
       }
-    });
-
-    expect(result.success).toBe(true);
-  });
-
-  it("validates control messages", () => {
-    const result = validateMessage({
-      t: "CTRL.START_SESSION",
-      sid: "S-1",
-      tabId: 3,
-      mode: "lite",
-      config: DEFAULT_RECORDER_CONFIG
     });
 
     expect(result.success).toBe(true);

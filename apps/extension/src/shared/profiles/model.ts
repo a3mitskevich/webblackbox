@@ -9,7 +9,7 @@ import {
   type SamplingProfile,
   type SiteCapturePolicy
 } from "@webblackbox/protocol";
-import { z } from "zod";
+import * as z from "zod";
 
 import { CAPTURE_CATEGORY_LEVELS, type CaptureCategories } from "./categories.js";
 import { compileTitleRegex } from "./title-regex.js";
@@ -72,11 +72,6 @@ export type ProfileSourceMapSettings = {
   maxMapBytes?: number;
 };
 
-export type ProfileExportSettings = {
-  encryption: "required" | "optional";
-  privacyScanner: "block" | "warn";
-};
-
 /** What happens to the encrypted local copy of a recording on this device. */
 export type ProfileLocalDataSettings = {
   /** Delete the local recording once its export has been handed to the browser's downloads. */
@@ -101,14 +96,12 @@ export type RecordingProfile = {
   sourceMaps?: ProfileSourceMapSettings;
   sampling: Partial<SamplingProfile>;
   recorder: {
-    ringBufferMinutes?: number;
     freezeOnError?: boolean;
   };
   /** Per-site body capture rules carried over from v1 options. */
   sitePolicies: SiteCapturePolicy[];
   /** Capture policy envelope migrated from v1 options (consent, context, retention); optional. */
   basePolicy?: CapturePolicy;
-  export: ProfileExportSettings;
   /** Absent = the defaults (delete after export, today's 10-minute retention). */
   localData?: ProfileLocalDataSettings;
 };
@@ -192,6 +185,15 @@ const samplingSchema = z
   .partial()
   .strict();
 
+/**
+ * A setting older profiles carry but nothing reads any more: accepted so stored, imported and
+ * managed profiles still parse, and dropped from the result.
+ */
+const legacyIgnoredSchema = z
+  .unknown()
+  .optional()
+  .transform((): undefined => undefined);
+
 export const recordingProfileSchema = z
   .object({
     id: idSchema,
@@ -228,18 +230,14 @@ export const recordingProfileSchema = z
     sampling: samplingSchema,
     recorder: z
       .object({
-        ringBufferMinutes: positiveIntSchema.max(120).optional(),
+        // The extension keeps no ring buffer; older profiles may still carry the minutes.
+        ringBufferMinutes: legacyIgnoredSchema,
         freezeOnError: z.boolean().optional()
       })
       .strict(),
     sitePolicies: z.array(siteCapturePolicySchema).max(MAX_LIST_ENTRIES),
     basePolicy: capturePolicySchema.optional(),
-    export: z
-      .object({
-        encryption: z.enum(["required", "optional"]),
-        privacyScanner: z.enum(["block", "warn"])
-      })
-      .strict(),
+    export: legacyIgnoredSchema,
     localData: z
       .object({
         deleteAfterExport: z.boolean(),

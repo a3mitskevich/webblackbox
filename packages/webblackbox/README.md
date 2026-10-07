@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/webllm/webblackbox"><img src="https://raw.githubusercontent.com/webllm/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://raw.githubusercontent.com/a3mitskevich/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
 </p>
 
 <h1 align="center">webblackbox</h1>
@@ -9,20 +9,18 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/webblackbox"><img src="https://img.shields.io/npm/v/webblackbox.svg?color=f97316" alt="npm version" /></a>
-  <a href="https://github.com/webllm/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/webblackbox?color=374151" alt="License" /></a>
-  <a href="https://github.com/webllm/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-374151" alt="License" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
 </p>
 
 ---
 
-The browser-side lite capture SDK for [WebBlackbox](https://github.com/webllm/webblackbox). Embed session recording directly in your web application — no Chrome extension required. Captures user interactions, console logs, network requests, DOM mutations, storage operations, and opt-in screenshots, then exports portable `.webblackbox` archives compatible with the full WebBlackbox Player.
+The browser-side lite capture SDK for [WebBlackbox](https://github.com/a3mitskevich/webblackbox). Embed session recording directly in your web application — no Chrome extension required. Captures user interactions, console logs, network requests, DOM mutations, storage operations, and opt-in screenshots, then exports portable, always-encrypted `.webblackbox` archives (format 2) that the Player in this repository opens.
 
 ## Installation
 
-```bash
-npm install webblackbox
-```
+This fork does not publish `webblackbox` to npm. Depend on it from this pnpm workspace (`"webblackbox": "workspace:*"`)
+or build it from source with `pnpm --filter webblackbox build` and use `packages/webblackbox/dist`.
 
 ## Quick Start
 
@@ -38,9 +36,40 @@ await sdk.start();
 
 // ... user interacts with the page ...
 
-const exported = await sdk.export({ stopCapture: true });
+// Every archive is encrypted: export() throws without a passphrase of at least 8 characters.
+const exported = await sdk.export({ passphrase: "correct horse battery", stopCapture: true });
 sdk.downloadArchive(exported);
 await sdk.dispose();
+```
+
+Other instance members: `stop()`, `flush()`, `emitMarker(message)`, `ingestRawEvent()` / `ingestRawEvents()`,
+`getSessionMetadata()`, `getRecorderConfig()`, `sessionId`, `isRecording`, and the static
+`WebBlackboxLiteSdk.downloadArchive(result)`.
+
+## What Gets Recorded
+
+The SDK uses `DEFAULT_CAPTURE_POLICY` from `@webblackbox/protocol` unless you pass
+`config.capturePolicy`. Its categories decide how much detail survives:
+
+- **Console** — under the default `console: "metadata"`, entries keep only method and level, and
+  page errors only their location (`messageRedacted` / `stackRedacted`). Under `"allow"`, the text and
+  arguments are kept in full up to 64 KiB per entry (`truncated: true` past that), and
+  `console.error` / `warn` / `assert` / `trace` carry the caller's stack (up to 200 frames).
+  `"off"` drops them and records a `privacy.violation` instead.
+- **Keystrokes** — navigation and editing keys (Enter, Tab, Escape, arrows, F1–F24, …) are always
+  kept. In a password field or an element covered by a blocked selector, any other key is replaced
+  with `[REDACTED]` (and `code` dropped) whatever `inputs` says, as long as content masking
+  (`redaction.contentRedaction`) is on, which is the default. In other editable fields
+  (text inputs, textareas, selects, contenteditable), typed keys are redacted too, except
+  Ctrl/Cmd shortcuts, unless `inputs: "allow"`.
+- **Pointer** — clicks, presses (`user.pointerdown` / `user.pointerup`, with long press), right and
+  middle clicks and click reactions are always captured. Hover, drag/selection and wheel are opt-in
+  through `config.pointer`:
+
+```ts
+const sdk = new WebBlackboxLiteSdk({
+  config: { pointer: { hover: true, drag: true, wheel: false } }
+});
 ```
 
 ## What's Included
@@ -54,16 +83,22 @@ await sdk.dispose();
 
 ### Entry Points
 
+The package root (`webblackbox`) re-exports the four modules below and the types. Subpaths:
+
 ```ts
 import { WebBlackboxLiteSdk } from "webblackbox/lite-sdk";
 import { LiteCaptureAgent } from "webblackbox/lite-capture-agent";
 import { installInjectedLiteCaptureHooks } from "webblackbox/injected-hooks";
 import { materializeLiteRawEvent } from "webblackbox/lite-materializer";
+import type { WebBlackboxLiteSdkOptions } from "webblackbox/types";
 ```
+
+`webblackbox/capture-scope` and `webblackbox/input-value-policy` hold helpers the extension shares
+with the capture agent.
 
 ## Optional IndexedDB Cache Encryption
 
-When using `storage: "indexeddb"`, you can provide `pipelineStorageEncryptionKey` to encrypt cached chunk/blob payload bytes at rest.
+When using `storage: "indexeddb"`, you can provide `pipelineStorageEncryptionKey` to encrypt the cache at rest: chunk and blob bytes, indexes, integrity records and the full session records (lookup fields such as session id, tab id, start time and mode stay readable).
 
 ```ts
 import { derivePipelineStorageKey } from "@webblackbox/pipeline";
@@ -110,9 +145,10 @@ The same applies to `config.capturePolicy.redaction`; `config.redaction` is appl
 | `freezeOnError`          | `true`  | Capture uncaught JS exceptions/rejections           |
 | `freezeOnNetworkFailure` | `false` | Avoid noisy freezes from transient network issues   |
 | `freezeOnLongTaskSpike`  | `false` | Avoid freezes from expected long tasks              |
-| `mousemoveHz`            | `14`    | Lower frequency than full mode (20 Hz)              |
-| `scrollHz`               | `10`    | Lower frequency than full mode (15 Hz)              |
-| `domFlushMs`             | `160`   | Longer flush interval than full mode (100 ms)       |
+| `mousemoveHz`            | `14`    | Lower than the protocol default (20 Hz)             |
+| `scrollHz`               | `10`    | Lower than the protocol default (15 Hz)             |
+| `domFlushMs`             | `160`   | Longer than the protocol default (100 ms)           |
+| `snapshotIntervalMs`     | `30000` | Longer than the protocol default (20 s)             |
 | `screenshotIdleMs`       | `0`     | Disabled unless explicitly enabled                  |
 | `bodyCaptureMaxBytes`    | `0`     | Disabled — keeps lite sessions page-thread friendly |
 
@@ -120,18 +156,24 @@ Override any of these through `options.config`.
 
 ### Export Policy Defaults
 
-| Setting              | Default    |
-| -------------------- | ---------- |
-| `includeScreenshots` | `false`    |
-| `maxArchiveBytes`    | 100 MB     |
-| `recentWindowMs`     | 20 minutes |
+| Setting                   | Default    |
+| ------------------------- | ---------- |
+| `includeScreenshots`      | `false`    |
+| `includeScreenRecordings` | `false`    |
+| `maxArchiveBytes`         | 100 MiB    |
+| `recentWindowMs`          | 20 minutes |
+
+`export()` clamps `maxArchiveBytes` to 64 KiB–5 GiB and `recentWindowMs` to 1 minute–30 days;
+a missing or non-positive value uses the default.
 
 ## Extension Reuse
 
 The Chrome extension (`apps/extension`) reuses this package in lite capture mode:
 
-- **Content script** → `webblackbox/lite-capture-agent`
+- **Content agent** (`content-agent.js`, loaded by the content script) → `webblackbox/lite-capture-agent`
 - **Injected script** → `webblackbox/injected-hooks`
+- **Service worker** → `webblackbox/lite-materializer`, `webblackbox/capture-scope`
+- **Content script** → `webblackbox/capture-scope`, `webblackbox/input-value-policy`
 
 This keeps capture logic centralized and shared across the SDK and extension lite mode.
 
@@ -149,4 +191,4 @@ pnpm --filter @webblackbox/extension e2e:fullchain:full
 
 ## License
 
-[MIT](https://github.com/webllm/webblackbox/blob/main/LICENSE)
+[MIT](https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE)

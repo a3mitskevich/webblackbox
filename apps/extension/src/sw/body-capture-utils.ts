@@ -40,8 +40,8 @@ type TransformResponseBodyArgs = {
   redactionToken?: string;
 };
 
-const DEFAULT_FALLBACK_MAX_BYTES = 256 * 1024;
-const DEFAULT_BODY_MIME_ALLOWLIST = [
+export const DEFAULT_BODY_CAPTURE_MAX_BYTES = 256 * 1024;
+export const DEFAULT_BODY_MIME_ALLOWLIST = [
   "text/*",
   "application/json",
   "application/*+json",
@@ -205,7 +205,7 @@ export function applyBodyUrlFilters(
 
 export function normalizeBodyCaptureMaxBytes(
   candidate: unknown,
-  fallbackMaxBytes: number = DEFAULT_FALLBACK_MAX_BYTES
+  fallbackMaxBytes: number = DEFAULT_BODY_CAPTURE_MAX_BYTES
 ): number {
   const value = asFiniteNumber(candidate);
 
@@ -350,7 +350,7 @@ function buildDefaultRule(
 
   const maxBytes = normalizeBodyCaptureMaxBytes(
     config.sampling.bodyCaptureMaxBytes,
-    options.fallbackMaxBytes ?? DEFAULT_FALLBACK_MAX_BYTES
+    options.fallbackMaxBytes ?? DEFAULT_BODY_CAPTURE_MAX_BYTES
   );
 
   return {

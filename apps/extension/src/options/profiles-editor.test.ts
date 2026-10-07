@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { DEFAULT_RECORDER_CONFIG, type RecorderConfig } from "@webblackbox/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
@@ -105,7 +106,6 @@ async function mountWithHandle(storage: ReturnType<typeof createStorage>) {
     chromeApi: storage.chromeApi,
     t,
     locale: "en",
-    legacyOptionsKey: "webblackbox.options",
     enterprisePolicyKey: "enterprisePolicy"
   });
   lastHandle = handle;
@@ -116,6 +116,14 @@ function savedStore(storage: ReturnType<typeof createStorage>) {
   return storage.data[PROFILES_STORAGE_KEY] as {
     profiles: Array<{ id: string; name: string; redaction: Record<string, unknown> }>;
     rules: Array<{ id: string; profileId: string }>;
+  };
+}
+
+/** What the general settings form saves, with its own blocked selectors. */
+function generalForm(blockedSelectors: string[]): RecorderConfig {
+  return {
+    ...structuredClone(DEFAULT_RECORDER_CONFIG),
+    redaction: { ...DEFAULT_RECORDER_CONFIG.redaction, blockedSelectors }
   };
 }
 
@@ -349,10 +357,7 @@ describe("profiles editor", () => {
     const { container, handle } = await mountWithHandle(storage);
 
     click(rowOf(container, "default"), "[data-action='profile-edit']");
-    handle.applyGeneralOptions({
-      optionsVersion: 1,
-      redaction: { blockedSelectors: [".from-general-form"] }
-    });
+    handle.applyGeneralOptions(generalForm([".from-general-form"]));
     click(container, "[data-action='profile-cancel']");
     await saveProfiles();
 
@@ -413,10 +418,7 @@ describe("profiles editor", () => {
 
     click(rowOf(container, BUILT_IN_PROFILE_IDS.full), "[data-action='profile-duplicate']");
     click(container, "[data-action='profile-apply']");
-    handle.applyGeneralOptions({
-      optionsVersion: 1,
-      redaction: { blockedSelectors: [".from-general-form"] }
-    });
+    handle.applyGeneralOptions(generalForm([".from-general-form"]));
     await saveProfiles();
 
     const saved = savedStore(storage);

@@ -69,7 +69,6 @@ async function mount(storage: ReturnType<typeof createStorage>) {
     chromeApi: storage.chromeApi,
     t,
     locale: "en",
-    legacyOptionsKey: "webblackbox.options",
     enterprisePolicyKey: "enterprisePolicy"
   });
   return { container, handle };

@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/webllm/webblackbox"><img src="https://raw.githubusercontent.com/webllm/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://raw.githubusercontent.com/a3mitskevich/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
 </p>
 
 <h1 align="center">@webblackbox/cdp-router</h1>
@@ -9,9 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@webblackbox/cdp-router"><img src="https://img.shields.io/npm/v/@webblackbox/cdp-router.svg?color=f97316" alt="npm version" /></a>
-  <a href="https://github.com/webllm/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@webblackbox/cdp-router?color=374151" alt="License" /></a>
-  <a href="https://github.com/webllm/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-374151" alt="License" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
 </p>
 
 ---
@@ -23,7 +22,9 @@ Chrome DevTools Protocol (CDP) routing layer for WebBlackbox. Manages debugger c
 - **CdpRouter** — High-level interface for managing CDP sessions and sending commands
 - **DefaultCdpRouter** — Full implementation with multi-target tracking (tabs, iframes, workers)
 - **Transport Layer** — Abstraction over Chrome's `chrome.debugger` API
-- **Auto-Attach** — Automatic attachment to child targets (iframes, workers, service workers)
+- **Auto-Attach** — Attachment to child targets (iframes, workers, service workers) once `enableAutoAttach()` is called
+
+This fork does not publish the package to npm; use it from the pnpm workspace (`"@webblackbox/cdp-router": "workspace:*"`) or build it with `pnpm --filter @webblackbox/cdp-router build`.
 
 ## Usage
 
@@ -39,18 +40,16 @@ const router = createCdpRouter(transport);
 ### Attaching to a Tab
 
 ```typescript
-// Attach debugger to tab
+// Attach debugger to tab (protocol version "1.3" by default, or "1.2")
 await router.attach(tabId, "1.3");
 
 // Enable baseline CDP domains (Network, Runtime, Log, Page)
 await router.enableBaseline(tabId);
 
-// Enable auto-attach for child targets (iframes, workers)
-await router.enableAutoAttach(tabId, {
-  autoAttach: true,
-  waitForDebuggerOnStart: false,
-  flatten: true
-});
+// Enable auto-attach for child targets. Options are partial; the defaults are
+// { autoAttach: true, waitForDebuggerOnStart: false, flatten: true,
+//   filter: iframe, worker and service_worker targets }
+await router.enableAutoAttach(tabId);
 ```
 
 ### Sending CDP Commands
@@ -73,7 +72,10 @@ const childResult = await router.send<ResponseType>(
 
 A router delivers events and detaches only for the tabs it attached with `attach()`, child sessions
 (iframes, workers) of those tabs included. `chrome.debugger.onEvent` is global to the extension, so
-events of tabs attached by another router or by other code are ignored.
+events of tabs attached by another router or by other code are ignored. Child-session events arrive
+with their root tab's `tabId` and stay with that tab, so each tab's events end up in that tab's
+recording. A detach (from `detach()` or reported by Chrome) stops routing for the tab; `onDetach`
+fires only for detaches Chrome reports.
 
 ```typescript
 // Listen for CDP events
@@ -93,17 +95,20 @@ const unsubDetach = router.onDetach((info) => {
 
 ### Target Management
 
+The router tracks child targets from `Target.attachedToTarget` / `Target.detachedFromTarget`
+events; the tab's own page target is not listed.
+
 ```typescript
-// Get all attached targets for a tab
+// Get the attached child targets (iframes, workers) of a tab
 const targets = router.getAttachedTargets(tabId);
 
 for (const target of targets) {
   console.log(target.tabId);
-  console.log(target.sessionId); // CDP session ID (for child targets)
+  console.log(target.sessionId); // CDP session ID of the child target
   console.log(target.targetId); // Target ID
-  console.log(target.frameId); // Frame ID
-  console.log(target.targetType); // "page", "iframe", "worker", "service_worker"
+  console.log(target.targetType); // "iframe", "worker", "service_worker", ...
   console.log(target.url); // Target URL
+  // target.frameId is part of the type but the router does not fill it
 }
 ```
 
@@ -123,11 +128,19 @@ router.dispose();
 
 ```typescript
 interface CdpRouter {
-  attach(tabId: number, protocolVersion?: string): Promise<void>;
+  attach(tabId: number, protocolVersion?: "1.3" | "1.2"): Promise<void>;
   detach(tabId: number): Promise<void>;
-  send<T>(target: Debuggee, method: string, params?: object): Promise<T>;
+  send<TResult = unknown>(
+    target: Debuggee,
+    method: string,
+    params?: Record<string, unknown>
+  ): Promise<TResult>;
   enableBaseline(tabId: number, sessionId?: string): Promise<void>;
-  enableAutoAttach(tabId: number, options?: AutoAttachOptions, sessionId?: string): Promise<void>;
+  enableAutoAttach(
+    tabId: number,
+    options?: Partial<AutoAttachOptions>,
+    sessionId?: string
+  ): Promise<void>;
   getAttachedTargets(tabId: number): RouterAttachedTarget[];
   onEvent(callback: CdpEventHandler): () => void;
   onDetach(callback: CdpDetachHandler): () => void;
@@ -146,7 +159,7 @@ type RawCdpEvent = {
   tabId: number;
   sessionId?: string;
   method: string;
-  params?: object;
+  params?: unknown;
 };
 
 type DetachInfo = {
@@ -167,7 +180,7 @@ type AutoAttachOptions = {
   autoAttach: boolean;
   waitForDebuggerOnStart: boolean;
   flatten: boolean;
-  filter?: object;
+  filter?: Array<{ type: string; exclude: boolean }>;
 };
 ```
 
@@ -183,15 +196,22 @@ When `enableBaseline()` is called, the following CDP domains are enabled:
 ### Transport Interface
 
 ```typescript
-interface DebuggerTransport {
-  attach(debuggee: object, version: string): Promise<void>;
-  detach(debuggee: object): Promise<void>;
-  sendCommand<T>(debuggee: object, method: string, params?: object): Promise<T>;
+type DebuggerTransport = {
+  attach(debuggee: DebuggerRoot, version: string): Promise<void>;
+  detach(debuggee: DebuggerRoot): Promise<void>;
+  sendCommand<TResult = unknown>(
+    debuggee: Debuggee,
+    method: string,
+    params?: Record<string, unknown>
+  ): Promise<TResult>;
   addEventListener(handler: CdpEventHandler): () => void;
   addDetachListener(handler: CdpDetachHandler): () => void;
-}
+};
 ```
+
+`createChromeDebuggerTransport()` implements it over `chrome.debugger` and throws when
+`chrome.debugger` is unavailable.
 
 ## License
 
-[MIT](https://github.com/webllm/webblackbox/blob/main/LICENSE)
+[MIT](https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE)

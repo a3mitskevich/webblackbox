@@ -4,7 +4,6 @@ import type {
   CHUNK_CODECS,
   EVENT_LEVELS,
   FREEZE_REASONS,
-  MESSAGE_TYPES,
   RELATED_TAB_CHANGE_KINDS,
   RELATED_TAB_RELATIONS,
   STORAGE_SNAPSHOT_MODES,
@@ -21,8 +20,6 @@ export type CaptureMode = (typeof CAPTURE_MODES)[number];
 export type ChunkCodec = (typeof CHUNK_CODECS)[number];
 
 export type WebBlackboxEventType = (typeof WEBBLACKBOX_EVENT_TYPES)[number];
-
-export type MessageType = (typeof MESSAGE_TYPES)[number];
 
 export type FreezeReason = (typeof FREEZE_REASONS)[number];
 
@@ -278,6 +275,7 @@ export type SiteCapturePolicy = {
 
 export type RecorderConfig = {
   mode: CaptureMode;
+  /** Minutes of recent events the recorder keeps in memory; 0 keeps none. */
   ringBufferMinutes: number;
   freezeOnError: boolean;
   freezeOnNetworkFailure: boolean;
@@ -444,90 +442,12 @@ export type ArchiveEnvelopeManifest = {
   encryption: ExportEncryption;
 };
 
-export type SessionStartMessage = {
-  t: "CTRL.START_SESSION";
-  sid: string;
-  tabId: number;
-  mode: CaptureMode;
-  config: RecorderConfig;
-};
-
-export type SessionStopMessage = {
-  t: "CTRL.STOP_SESSION";
-  sid: string;
-  tabId: number;
-  reason?: string;
-};
-
-export type FreezeMessage = {
-  t: "CTRL.FREEZE";
-  sid: string;
-  tabId: number;
-  why: FreezeReason;
-};
-
-export type ExportMessage = {
-  t: "CTRL.EXPORT";
-  sid: string;
-  passphrase?: string;
-};
-
 export type ExportPolicy = {
   includeScreenshots: boolean;
   includeScreenRecordings: boolean;
   maxArchiveBytes: number;
   recentWindowMs: number;
 };
-
-export type EventBatchMessage = {
-  t: "EVT.BATCH";
-  sid: string;
-  tabId: number;
-  seq: number;
-  events: WebBlackboxEvent[];
-};
-
-export type BlobPutMessage = {
-  t: "PIPE.BLOB_PUT";
-  sid: string;
-  hash: string;
-  mime: string;
-  bytes: ArrayBuffer;
-};
-
-export type ChunkPutMessage = {
-  t: "PIPE.CHUNK_PUT";
-  sid: string;
-  chunkId: string;
-  tStart: number;
-  tEnd: number;
-  codec: ChunkCodec;
-  bytes: ArrayBuffer;
-  sha256: string;
-};
-
-export type BuildIndexMessage = {
-  t: "PIPE.BUILD_INDEX";
-  sid: string;
-};
-
-export type ExportDoneMessage = {
-  t: "PIPE.EXPORT_DONE";
-  sid: string;
-  size: number;
-  fileName?: string;
-};
-
-export type WebBlackboxMessage =
-  | SessionStartMessage
-  | SessionStopMessage
-  | FreezeMessage
-  | ExportMessage
-  | EventBatchMessage
-  | BlobPutMessage
-  | ChunkPutMessage
-  | BuildIndexMessage
-  | ExportDoneMessage;
 
 export type NetworkBodyCaptureRule = {
   enabled: boolean;

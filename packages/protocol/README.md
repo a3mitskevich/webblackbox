@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/webllm/webblackbox"><img src="https://raw.githubusercontent.com/webllm/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://raw.githubusercontent.com/a3mitskevich/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
 </p>
 
 <h1 align="center">@webblackbox/protocol</h1>
@@ -9,34 +9,34 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@webblackbox/protocol"><img src="https://img.shields.io/npm/v/@webblackbox/protocol.svg?color=f97316" alt="npm version" /></a>
-  <a href="https://github.com/webllm/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@webblackbox/protocol?color=374151" alt="License" /></a>
-  <a href="https://github.com/webllm/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-374151" alt="License" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
 </p>
 
 ---
 
-The foundational protocol package for WebBlackbox. Defines all event types, message formats, configuration schemas, and validation logic shared across the entire system.
+The foundational protocol package for WebBlackbox. Defines all event types, configuration schemas, and validation logic shared across the entire system.
 
 ## Overview
 
 This package provides:
 
-- **Constants** — Event types, message types, capture modes, codecs, freeze reasons
+- **Constants** — Event types, capture modes, codecs, freeze reasons, body skip reasons, archive format and KDF limits
 - **TypeScript Types** — All data structures used across the system
-- **Zod Schemas** — Runtime validation for events, messages, configs, and archive manifests
+- **Zod Schemas** — Runtime validation for events, configs, and archive manifests
 - **ID Generators** — Deterministic and random ID creation for sessions, events, actions, and chunks
-- **Default Configuration** — Recommended recorder defaults
+- **Default Configuration** — Recommended recorder, capture policy, redaction, and export defaults
+- **Privacy helpers** — Body, URL, DOM-text and keystroke redaction shared by the recorder, the lite SDK and the extension (`redactBodyText`, `redactBodyBytes`, `recordUrl`, `maskDomText`, `shouldRedactKeystroke`, …)
+- **Archive helpers** — Export passphrase rules (`assertExportPassphrase`, `MIN_EXPORT_PASSPHRASE_LENGTH`) and PBKDF2 bounds (`assertArchiveKdfIterations`)
 
 ## Installation
 
-```bash
-npm install @webblackbox/protocol
-```
+This fork does not publish to npm. Depend on it from this pnpm workspace (`"@webblackbox/protocol": "workspace:*"`) or
+build it from source with `pnpm --filter @webblackbox/protocol build` (output in `dist/`).
 
 ## Event Types
 
-WebBlackbox currently defines 64 event types, organized by category:
+WebBlackbox currently defines 76 event types (`WEBBLACKBOX_EVENT_TYPES`) in 12 categories:
 
 ### Meta Events
 
@@ -50,6 +50,11 @@ WebBlackbox currently defines 64 event types, organized by category:
 
 - `sys.debugger.attach` / `sys.debugger.detach` — CDP debugger lifecycle
 - `sys.notice` — Internal system notices
+- `sys.script` — Script URL → source map reference (optionally with the map as a blob), from the debugger or the lite same-origin scanner
+
+### Privacy Events
+
+- `privacy.violation` — A captured signal the capture policy does not allow was dropped (for example console output under `console: "off"`); records the blocked type and the reason, not the data
 
 ### Navigation Events
 
@@ -66,6 +71,13 @@ WebBlackbox currently defines 64 event types, organized by category:
 - `user.submit` — Form submissions
 - `user.scroll` — Scroll position changes (sampled)
 - `user.mousemove` — Mouse position (sampled)
+- `user.pointerdown` / `user.pointerup` — Pointer presses with pointer type, button, hold time and long-press flag
+- `user.contextmenu` / `user.auxclick` — Right and middle clicks
+- `user.click.reaction` — Whether the DOM reacted to a click within a window (dead-click detection)
+- `user.drag.start` / `user.drag.end` — Pointer drags and HTML5 drag-and-drop (opt-in: `pointer.drag`)
+- `user.selection` — Text selection length (text only when the profile allows it; opt-in: `pointer.drag`)
+- `user.wheel` — Wheel bursts and Ctrl+wheel zoom (opt-in: `pointer.wheel`)
+- `user.hover` — Dwell over an interactive element (opt-in: `pointer.hover`)
 - `user.focus` / `user.blur` — Focus changes
 - `user.marker` — User-defined markers (Ctrl+Shift+M)
 - `user.visibility` — Page visibility changes
@@ -90,6 +102,7 @@ WebBlackbox currently defines 64 event types, organized by category:
 - `network.failed` — Request failed (error text)
 - `network.redirect` — Request redirected
 - `network.body` — Captured request/response body (hash reference)
+- `network.body.skipped` — A body the capture policy asked for is not in the archive, with the reason (`BODY_SKIP_REASONS`: `too-large`, `mime-not-allowed`, `not-retained`, …)
 - `network.ws.open` / `network.ws.frame` / `network.ws.close` — WebSocket lifecycle
 - `network.sse.message` — Server-Sent Event messages
 
@@ -103,6 +116,7 @@ WebBlackbox currently defines 64 event types, organized by category:
 ### Screen Events
 
 - `screen.screenshot` — Page screenshot with pointer position
+- `screen.recording.start` / `screen.recording.chunk` / `screen.recording.end` / `screen.recording.error` — Screen video recording lifecycle; chunks are blobs (`screenRecordings` capture category, off by default)
 - `screen.viewport` — Viewport dimension changes
 
 ### Storage Events
@@ -141,6 +155,7 @@ type WebBlackboxEvent<TData = unknown> = {
   id: string; // Unique event ID (E-{sequence})
   lvl?: EventLevel; // "debug" | "info" | "warn" | "error"
   ref?: EventReference; // Cross-references
+  privacy?: PrivacyClassification; // { category, sensitivity, redacted }, set by the recorder
   data: TData; // Event-specific payload
 };
 ```
@@ -172,7 +187,9 @@ type RecorderConfig = {
   freezeOnLongTaskSpike: boolean; // Freeze on long tasks
   sampling: SamplingProfile; // Sampling rates
   redaction: RedactionProfile; // Privacy redaction rules
+  capturePolicy?: CapturePolicy; // What each data category may keep (see DEFAULT_CAPTURE_POLICY)
   sitePolicies: SiteCapturePolicy[]; // Per-origin overrides
+  pointer?: PointerCaptureOptions; // Optional hover / drag / wheel streams; absent = all off
 };
 ```
 
@@ -180,16 +197,33 @@ type RecorderConfig = {
 
 ```typescript
 type ExportManifest = {
-  protocolVersion: 1;
+  protocolVersion: 1 | 2;
   createdAt: string; // ISO 8601 datetime
   mode: CaptureMode;
   site: { origin: string; title?: string };
   chunkCodec: ChunkCodec; // "none" | "br" | "zst" | "gzip"
   redactionProfile: RedactionProfile;
   stats: ExportStats;
-  encryption?: ExportEncryption; // AES-GCM encryption metadata
+  encryption?: ExportEncryption; // AES-GCM + PBKDF2 parameters and per-file IVs
+};
+
+// Plaintext manifest.json of a format 2 archive: only what decryption needs.
+type ArchiveEnvelopeManifest = {
+  protocolVersion: 2;
+  encryption: ExportEncryption;
 };
 ```
+
+Archives written now use format 2 (`ARCHIVE_FORMAT_VERSION = 2`): the plaintext `manifest.json`
+is an `ArchiveEnvelopeManifest`, and the full `ExportManifest` is encrypted at
+`meta/manifest.json` (`ENCRYPTED_MANIFEST_PATH`). Format 1 archives keep the full manifest as
+plaintext `manifest.json`.
+
+Every export is encrypted. The passphrase is trimmed and must be at least
+`MIN_EXPORT_PASSPHRASE_LENGTH` (8) characters; `assertExportPassphrase` throws otherwise. New
+archives use `ARCHIVE_KDF_DEFAULT_ITERATIONS` (600,000) PBKDF2-SHA-256 iterations, and
+`assertArchiveKdfIterations` rejects a manifest count outside `ARCHIVE_KDF_MIN_ITERATIONS`–
+`ARCHIVE_KDF_MAX_ITERATIONS` (10,000–10,000,000) before a key is derived.
 
 ## Validation
 
@@ -200,7 +234,6 @@ All types have corresponding Zod schemas for runtime validation. Import them fro
 import {
   validateEvent,
   validateEventData,
-  validateMessage,
   eventEnvelopeSchema,
   recorderConfigSchema,
   exportManifestSchema,
@@ -247,21 +280,38 @@ const eid2 = idFactory.next(); // "E-00000002"
 ## Default Configuration
 
 ```typescript
-import { DEFAULT_EXPORT_POLICY, DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
+import {
+  DEFAULT_CAPTURE_POLICY,
+  DEFAULT_EXPORT_POLICY,
+  DEFAULT_RECORDER_CONFIG,
+  DEFAULT_REDACTION_PROFILE
+} from "@webblackbox/protocol";
 
-// Defaults:
+// DEFAULT_RECORDER_CONFIG:
 // - mode: "lite"
 // - ringBufferMinutes: 10
-// - freezeOnError: true
-// - mousemoveHz: 20, scrollHz: 15
+// - freezeOnError, freezeOnNetworkFailure, freezeOnLongTaskSpike: true
+// - mousemoveHz: 20, scrollHz: 15, domFlushMs: 100, snapshotIntervalMs: 20000, actionWindowMs: 1500
 // - screenshotIdleMs: 0 (screenshots disabled unless explicitly enabled)
 // - bodyCaptureMaxBytes: 0 (response bodies disabled unless explicitly enabled)
-// - Redacts: authorization, cookie, set-cookie, proxy auth, API key, auth token, CSRF/XSRF headers
-// - Redacts cookie names such as token, session, auth, jwt, refresh_token, csrf, xsrf
-// - Blocks: .secret, [data-sensitive], [data-webblackbox-redact], password/token/secret inputs, card-number autocomplete
+// - redaction: DEFAULT_REDACTION_PROFILE, capturePolicy: DEFAULT_CAPTURE_POLICY, sitePolicies: []
 //
-// Export policy defaults:
-// - includeScreenshots: false
+// DEFAULT_REDACTION_PROFILE:
+// - Redacts headers: authorization, cookie, set-cookie, proxy-authorization, x-api-key, x-auth-token, x-csrf-token, x-xsrf-token
+// - Redacts cookie names: token, session, auth, jwt, refresh_token, csrf, xsrf
+// - Masks body keys: password, token, secret, otp, credential, api_key, apikey, private_key, refresh_token
+// - Blocks: .secret, [data-sensitive], [data-webblackbox-redact], password/token/secret inputs, card-number autocomplete
+// - hashSensitiveValues: true
+//
+// DEFAULT_CAPTURE_POLICY ("private" mode, "real-user" context):
+// - actions: "metadata", inputs: "length-only", dom: "masked", screenshots: "off", screenRecordings: "off"
+// - console: "metadata", network: "metadata", storage / indexedDb: "counts-only", cookies: "count-only"
+// - cdp: "off", heapProfiles: "off", tabsContext: "metadata"
+// - encryption: local at rest and archive "required", archive key envelope "passphrase"
+// - retention: localTtlMs 24 h
+//
+// DEFAULT_EXPORT_POLICY:
+// - includeScreenshots: false, includeScreenRecordings: false
 // - maxArchiveBytes: 100 * 1024 * 1024
 // - recentWindowMs: 20 * 60 * 1000
 ```
@@ -269,22 +319,6 @@ import { DEFAULT_EXPORT_POLICY, DEFAULT_RECORDER_CONFIG } from "@webblackbox/pro
 `DEFAULT_RECORDER_CONFIG` is a shared baseline. Runtime products may apply product-specific
 overrides for sampling or freeze policies, but should document those overrides explicitly.
 
-## Message Types
-
-Inter-component communication uses typed messages:
-
-| Message              | Direction          | Purpose                  |
-| -------------------- | ------------------ | ------------------------ |
-| `CTRL.START_SESSION` | SW → Pipeline      | Start recording session  |
-| `CTRL.STOP_SESSION`  | SW → Pipeline      | Stop recording session   |
-| `CTRL.FREEZE`        | Recorder → SW      | Freeze notification      |
-| `CTRL.EXPORT`        | UI → SW            | Export request           |
-| `EVT.BATCH`          | SW → Pipeline      | Batch of recorded events |
-| `PIPE.BLOB_PUT`      | Pipeline → Storage | Store binary blob        |
-| `PIPE.CHUNK_PUT`     | Pipeline → Storage | Store event chunk        |
-| `PIPE.BUILD_INDEX`   | Pipeline → Indexer | Build search indexes     |
-| `PIPE.EXPORT_DONE`   | Pipeline → SW      | Export complete          |
-
 ## License
 
-[MIT](https://github.com/webllm/webblackbox/blob/main/LICENSE)
+[MIT](https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE)

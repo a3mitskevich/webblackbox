@@ -1,6 +1,7 @@
+import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 import { describe, expect, it } from "vitest";
 
-import { requiresFullEngine, resolveStartEngine, selectionRequiresFullEngine } from "./engine.js";
+import { requiresFullEngine, resolveStartEngine } from "./engine.js";
 import {
   BUILT_IN_PROFILE_IDS,
   createBaseProfile,
@@ -8,6 +9,7 @@ import {
   duplicateProfile,
   findBuiltInProfile
 } from "./presets.js";
+import { migrateLegacyOptionsToProfiles } from "./storage.js";
 
 function preset(id: string) {
   const profile = findBuiltInProfile(id);
@@ -75,21 +77,31 @@ describe("resolveStartEngine", () => {
   const fullCapture = preset(BUILT_IN_PROFILE_IDS.fullCapture);
 
   it("upgrades a Lite start for a profile that needs Full", () => {
-    expect(resolveStartEngine("lite", { profile: fullCapture, legacy: false })).toBe("full");
-    expect(resolveStartEngine("full", { profile: fullCapture, legacy: false })).toBe("full");
+    expect(resolveStartEngine("lite", fullCapture)).toBe("full");
+    expect(resolveStartEngine("full", fullCapture)).toBe("full");
   });
 
   it("keeps the requested engine for a profile that works in both", () => {
     const profile = createDefaultProfile();
 
-    expect(resolveStartEngine("lite", { profile, legacy: false })).toBe("lite");
-    expect(resolveStartEngine("full", { profile, legacy: false })).toBe("full");
+    expect(resolveStartEngine("lite", profile)).toBe("lite");
+    expect(resolveStartEngine("full", profile)).toBe("full");
   });
 
-  it("leaves the legacy Default switchable whatever its v1 options ask for", () => {
-    const legacyDefault = { ...createDefaultProfile(), categories: fullCapture.categories };
+  it("keeps a Default migrated from options page v1 options switchable", () => {
+    const [migrated] = migrateLegacyOptionsToProfiles({
+      ...DEFAULT_RECORDER_CONFIG,
+      optionsVersion: 1,
+      sampling: { ...DEFAULT_RECORDER_CONFIG.sampling, mousemoveHz: 30 }
+    }).profiles;
 
-    expect(selectionRequiresFullEngine({ profile: legacyDefault, legacy: true })).toBe(false);
-    expect(resolveStartEngine("lite", { profile: legacyDefault, legacy: true })).toBe("lite");
+    expect(resolveStartEngine("lite", migrated!)).toBe("lite");
+    expect(resolveStartEngine("full", migrated!)).toBe("full");
+  });
+
+  it("starts a Default whose categories need Full in Full, like any other profile", () => {
+    const raised = { ...createDefaultProfile(), categories: fullCapture.categories };
+
+    expect(resolveStartEngine("lite", raised)).toBe("full");
   });
 });

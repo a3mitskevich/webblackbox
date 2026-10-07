@@ -24,8 +24,8 @@ import {
   type ProfileSelection
 } from "../shared/profiles/resolve.js";
 import {
+  applyGeneralFormToDefaultProfile,
   resolveProfilesState,
-  syncDefaultProfileWithLegacyOptions,
   type ProfilesState
 } from "../shared/profiles/storage.js";
 import {
@@ -51,8 +51,7 @@ function state(partial: Partial<ProfilesState["store"]> = {}): ProfilesState {
       rules: [],
       extendedCaptureHosts: [],
       ...partial
-    },
-    rawLegacyOptions: undefined
+    }
   });
 }
 
@@ -136,7 +135,7 @@ describe("detectProfileChange", () => {
   it("ignores v1 option keys and the capture policy's redaction copy the session replaces", () => {
     const started = snapshot(select(state()));
     const { profileConfig } = started;
-    // The legacy Default path spreads the stored v1 options record into the config.
+    // A profile renders as a v1 options record, whose extra keys end up in the config.
     const legacyLike = {
       ...profileConfig,
       optionsVersion: 3,
@@ -160,7 +159,7 @@ describe("detectProfileChange", () => {
           ...started,
           profileConfig: {
             ...profileConfig,
-            ringBufferMinutes: profileConfig.ringBufferMinutes + 1
+            freezeOnError: !profileConfig.freezeOnError
           }
         },
         startedProfileExists: true
@@ -210,7 +209,7 @@ describe("detectProfileChange", () => {
   it("keeps recording when a General settings save pins the values Default already ran with", () => {
     const started = snapshot(select(state()));
     // Options saves the whole normalized config: every sampling and recorder value gets pinned.
-    const synced = syncDefaultProfileWithLegacyOptions(
+    const synced = applyGeneralFormToDefaultProfile(
       state().store,
       structuredClone(resolveModeBaseConfig("full"))
     );
@@ -402,19 +401,15 @@ describe("shouldDeferProfileCheck", () => {
 });
 
 describe("isProfileSettingsChange", () => {
-  const keys = { legacyOptionsKey: "webblackbox.options" };
-
-  it("re-checks running recordings when profiles, options or the managed policy change", () => {
-    expect(isProfileSettingsChange({ [PROFILES_STORAGE_KEY]: {} }, "local", keys)).toBe(true);
-    expect(isProfileSettingsChange({ "webblackbox.options": {} }, "local", keys)).toBe(true);
-    expect(isProfileSettingsChange({ anything: {} }, "managed", keys)).toBe(true);
+  it("re-checks running recordings when the profiles or the managed policy change", () => {
+    expect(isProfileSettingsChange({ [PROFILES_STORAGE_KEY]: {} }, "local")).toBe(true);
+    expect(isProfileSettingsChange({ anything: {} }, "managed")).toBe(true);
   });
 
-  it("ignores unrelated storage writes", () => {
-    expect(isProfileSettingsChange({ "webblackbox.runtime.sessions": {} }, "local", keys)).toBe(
-      false
-    );
-    expect(isProfileSettingsChange({ [PROFILES_STORAGE_KEY]: {} }, "sync", keys)).toBe(false);
+  it("ignores unrelated storage writes, v1 options included", () => {
+    expect(isProfileSettingsChange({ "webblackbox.runtime.sessions": {} }, "local")).toBe(false);
+    expect(isProfileSettingsChange({ "webblackbox.options": {} }, "local")).toBe(false);
+    expect(isProfileSettingsChange({ [PROFILES_STORAGE_KEY]: {} }, "sync")).toBe(false);
   });
 });
 

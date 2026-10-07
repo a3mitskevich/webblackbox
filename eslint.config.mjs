@@ -11,8 +11,7 @@ export default tseslint.config(
       "**/.turbo/**",
       "**/node_modules/**",
       "docs/api/**",
-      "apps/extension/e2e-demo/vendor/**",
-      ".changeset/*.md"
+      "apps/extension/e2e-demo/vendor/**"
     ]
   },
   js.configs.recommended,
@@ -26,6 +25,13 @@ export default tseslint.config(
     },
     rules: {
       "no-console": "off"
+    }
+  },
+  {
+    files: ["apps/extension/src/**/*.{ts,tsx}"],
+    rules: {
+      // God-module guard for the extension sources (the service-worker split, task 37).
+      "max-lines": ["error", { max: 800, skipBlankLines: true, skipComments: true }]
     }
   },
   {

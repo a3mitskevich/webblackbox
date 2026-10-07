@@ -9,9 +9,7 @@ import type { LoadedArchive } from "../../state.js";
 
 /** Why the archive offers no tab video. */
 export type VideoUnavailableReason =
-  | { kind: "lite" }
-  | { kind: "failed"; message: string }
-  | { kind: "none" };
+  { kind: "lite" } | { kind: "failed"; message: string } | { kind: "none" };
 
 export type VideoSource = {
   /** Segments in start order (one per `recordingId`). */

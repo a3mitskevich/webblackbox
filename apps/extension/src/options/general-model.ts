@@ -12,7 +12,6 @@ import {
   type ContentInjectionMode
 } from "../shared/content-injection.js";
 import type { ExtensionMessageKey, ExtensionUnit } from "../shared/i18n.js";
-import { OPTIONS_STORAGE_VERSION } from "../shared/options-storage.js";
 import { parsePlayerUrl } from "../shared/player-url.js";
 import {
   DEFAULT_PERFORMANCE_BUDGET,
@@ -27,12 +26,14 @@ import { DEFAULT_START_RELOAD_OFFER } from "../shared/start-reload-offer.js";
  */
 
 export type GeneralDraft = {
+  /** Shows and edits the Default profile's sampling, freeze-on-error and redaction lists. */
   recorderConfig: RecorderConfig;
+  /** Stored under its own key (`webblackbox.performanceBudget`). */
   performanceBudget: PerformanceBudgetConfig;
   archive: ExportPolicyPrefs;
-  /** Stored under its own key (`webblackbox.injection`), not in `webblackbox.options`. */
+  /** Stored under its own key (`webblackbox.injection`). */
   injection: ContentInjectionMode;
-  /** Stored under its own key (`webblackbox.startReloadOffer`), not in `webblackbox.options`. */
+  /** Stored under its own key (`webblackbox.startReloadOffer`). */
   startReloadOffer: boolean;
   /**
    * The user's own Player URL ("" = none), stored under `webblackbox.playerUrl`. A managed value
@@ -111,11 +112,7 @@ export type TextFieldSpec = SpecText & {
 };
 
 export type GeneralFieldSpec =
-  | NumberFieldSpec
-  | ToggleFieldSpec
-  | ListFieldSpec
-  | ChoiceFieldSpec
-  | TextFieldSpec;
+  NumberFieldSpec | ToggleFieldSpec | ListFieldSpec | ChoiceFieldSpec | TextFieldSpec;
 
 type SamplingKey = keyof RecorderConfig["sampling"];
 type BudgetNumberKey = "lcpWarnMs" | "requestWarnMs" | "errorRateWarnPct";
@@ -279,20 +276,6 @@ export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
     max: 10_000,
     step: 100
   }),
-  {
-    kind: "number",
-    id: "ringBufferMinutes",
-    section: "sampling",
-    label: "optionsRingBufferMinutes",
-    hint: "optionsRingBufferHint",
-    help: "optionsRingBufferHelp",
-    unit: "min",
-    min: 1,
-    max: 120,
-    slider: true,
-    get: (draft) => draft.recorderConfig.ringBufferMinutes,
-    set: (draft, value) => withConfig(draft, { ringBufferMinutes: value })
-  },
   samplingNumber("domFlushMs", {
     section: "sampling",
     label: "optionsDomFlushMs",
@@ -457,14 +440,12 @@ export function validateNumberField(spec: NumberFieldSpec, raw: string): NumberV
   return { ok: true, value };
 }
 
-/** Freeze triggers the shipped runtime keeps off, and the body capture cap. */
+/** The body capture cap; the runtime's mode boundary keeps the perf/network freezes off. */
 export function normalizeOptionsConfig(config: RecorderConfig): RecorderConfig {
   const bodyCaptureMaxBytes = config.sampling.bodyCaptureMaxBytes;
 
   return {
     ...config,
-    freezeOnNetworkFailure: false,
-    freezeOnLongTaskSpike: false,
     sampling: {
       ...config.sampling,
       bodyCaptureMaxBytes: Number.isFinite(bodyCaptureMaxBytes)
@@ -504,20 +485,22 @@ export function resetGeneralSection(draft: GeneralDraft, section: GeneralSection
   }, draft);
 }
 
-/** `webblackbox.options` record for the general settings; fields the page does not show stay. */
-export function toStoredOptionsPayload(draft: GeneralDraft): Record<string, unknown> {
-  return {
-    ...normalizeOptionsConfig(draft.recorderConfig),
-    optionsVersion: OPTIONS_STORAGE_VERSION,
-    performanceBudget: normalizePerformanceBudget(draft.performanceBudget)
-  };
+/** The recorder fields the form saves into the Default profile. */
+export function toGeneralFormFields(draft: GeneralDraft): RecorderConfig {
+  return normalizeOptionsConfig(draft.recorderConfig);
 }
 
-/** Whether the parts stored in `webblackbox.options` differ (archive prefs live elsewhere). */
-export function isStoredOptionsChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
+/** Whether the fields saved into the Default profile differ. */
+export function isRecorderFieldsChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
   return (
-    JSON.stringify(toStoredOptionsPayload(draft)) !==
-    JSON.stringify(toStoredOptionsPayload(baseline))
+    JSON.stringify(toGeneralFormFields(draft)) !== JSON.stringify(toGeneralFormFields(baseline))
+  );
+}
+
+export function isPerformanceBudgetChanged(draft: GeneralDraft, baseline: GeneralDraft): boolean {
+  return (
+    JSON.stringify(normalizePerformanceBudget(draft.performanceBudget)) !==
+    JSON.stringify(normalizePerformanceBudget(baseline.performanceBudget))
   );
 }
 

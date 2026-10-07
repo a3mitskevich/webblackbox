@@ -90,15 +90,11 @@ export function createBaseProfile(
     sampling: {},
     recorder: {},
     sitePolicies: [],
-    export: {
-      encryption: "optional",
-      privacyScanner: "warn"
-    },
     ...overrides
   };
 }
 
-/** The editable "Default" profile used when no v1 options exist. */
+/** The editable "Default" profile with today's defaults. */
 export function createDefaultProfile(): RecordingProfile {
   return createBaseProfile({
     id: DEFAULT_PROFILE_ID,
@@ -143,11 +139,7 @@ const QA_PRESET = createBaseProfile({
     includeUrls: [],
     excludeUrls: []
   },
-  sourceMaps: { mode: "embed" },
-  export: {
-    encryption: "required",
-    privacyScanner: "block"
-  }
+  sourceMaps: { mode: "embed" }
 });
 
 const FULL_CAPTURE_PRESET = createBaseProfile({
@@ -195,10 +187,6 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
     wheel: true
   },
   sourceMaps: { mode: "embed" },
-  export: {
-    encryption: "required",
-    privacyScanner: "block"
-  },
   localData: { ...FULL_CAPTURE_LOCAL_DATA_SETTINGS }
 });
 

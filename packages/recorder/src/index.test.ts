@@ -1304,8 +1304,7 @@ describe("recorder", () => {
     expect(navPayload?.routeContext?.url).toBe("https://example.com/dashboard");
 
     const consolePayload = consoleEvent.event?.data as
-      | { routeContext?: { url?: string } }
-      | undefined;
+      { routeContext?: { url?: string } } | undefined;
     expect(consolePayload?.routeContext?.url).toBe("https://example.com/dashboard");
 
     const errorPayload = errorEvent.event?.data as
@@ -1555,5 +1554,44 @@ describe("recorder reconfigure", () => {
     expect(recorder.getConfig().capturePolicy?.categories.console).toBe("allow");
     expect(recorder.ingest(consoleEvent(2)).event?.type).toBe("console.entry");
     expect(recorder.getBufferedEventCount()).toBe(2);
+  });
+});
+
+describe("recorder ring buffer", () => {
+  const markerEvent = (t: number): RawRecorderEvent => ({
+    source: "content",
+    rawType: "marker",
+    tabId: 1,
+    sid: "S-1",
+    t,
+    mono: t,
+    payload: { message: `marker ${t}` }
+  });
+
+  it("keeps recent events for snapshots by default", () => {
+    const recorder = new WebBlackboxRecorder(TEST_CONFIG);
+
+    recorder.ingest(markerEvent(1));
+    recorder.ingest(markerEvent(2));
+
+    expect(recorder.snapshotRingBuffer().map((event) => event.t)).toEqual([1, 2]);
+  });
+
+  it("keeps nothing with ringBufferMinutes 0 and still emits every event and freeze", () => {
+    const onEvent = vi.fn();
+    const onFreeze = vi.fn();
+    const recorder = new WebBlackboxRecorder(
+      { ...TEST_CONFIG, ringBufferMinutes: 0 },
+      { onEvent, onFreeze }
+    );
+
+    recorder.ingest(markerEvent(1));
+    recorder.ingest(markerEvent(2));
+    recorder.clearRingBuffer();
+
+    expect(onEvent).toHaveBeenCalledTimes(2);
+    expect(onFreeze).toHaveBeenCalledWith("marker", expect.objectContaining({ t: 2 }));
+    expect(recorder.getBufferedEventCount()).toBe(0);
+    expect(recorder.snapshotRingBuffer()).toEqual([]);
   });
 });

@@ -7,15 +7,7 @@ import type { WebBlackboxEvent } from "@webblackbox/protocol";
  */
 
 export type RequestTimingPhaseName =
-  | "queueing"
-  | "stalled"
-  | "proxy"
-  | "dns"
-  | "connect"
-  | "ssl"
-  | "send"
-  | "wait"
-  | "download";
+  "queueing" | "stalled" | "proxy" | "dns" | "connect" | "ssl" | "send" | "wait" | "download";
 
 export type RequestTimingPhase = {
   name: RequestTimingPhaseName;

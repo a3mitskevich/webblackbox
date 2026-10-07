@@ -12,6 +12,7 @@ import {
   RECOMMENDED_PROFILE_IDS
 } from "../shared/profiles/presets.js";
 import { selectRecordingProfile } from "../shared/profiles/resolve.js";
+import { createDefaultProfilesStore } from "../shared/profiles/storage.js";
 import {
   buildProfilePreview,
   capturedVisualsOf,
@@ -21,7 +22,7 @@ import {
   readTabPageContext
 } from "./profile-runtime.js";
 
-const KEYS = { legacyOptionsKey: "webblackbox.options", enterprisePolicyKey: "enterprisePolicy" };
+const KEYS = { enterprisePolicyKey: "enterprisePolicy" };
 
 function fakeChrome(options: {
   local?: Record<string, unknown>;
@@ -68,8 +69,12 @@ describe("loadProfilesState", () => {
   it("survives storage failures and missing APIs", async () => {
     const { api } = fakeChrome({ managed: new Error("no managed storage") });
 
-    await expect(loadProfilesState(api, KEYS)).resolves.toMatchObject({ legacy: true });
-    await expect(loadProfilesState(null, KEYS)).resolves.toMatchObject({ legacy: true });
+    await expect(loadProfilesState(api, KEYS)).resolves.toMatchObject({
+      store: createDefaultProfilesStore()
+    });
+    await expect(loadProfilesState(null, KEYS)).resolves.toMatchObject({
+      store: createDefaultProfilesStore()
+    });
   });
 
   it("reads the v2 store and managed rules", async () => {
@@ -87,7 +92,7 @@ describe("loadProfilesState", () => {
     });
     const state = await loadProfilesState(api, KEYS);
 
-    expect(state.legacy).toBe(false);
+    expect(state.store.profiles).toEqual([createDefaultProfile()]);
     expect(state.rules.map((rule) => rule.id)).toEqual(["managed:stage"]);
   });
 });
@@ -292,7 +297,7 @@ describe("buildProfilePreview", () => {
       }
 
       return {
-        engine: resolveStartEngine("lite", selection),
+        engine: resolveStartEngine("lite", selection.profile),
         requiresFull: buildProfilePreview(state, selection).selection?.requiresFull
       };
     };
@@ -303,19 +308,14 @@ describe("buildProfilePreview", () => {
     expect(startWith(BUILT_IN_PROFILE_IDS.full)).toEqual({ engine: "lite", requiresFull: false });
   });
 
-  it("keeps a Lite start for the legacy Default whatever its v1 options ask for", async () => {
+  it("ignores v1 options left in storage: only the migration reads them", async () => {
     const { api } = fakeChrome({
       local: {
-        [KEYS.legacyOptionsKey]: {
+        "webblackbox.options": {
           optionsVersion: 1,
           capturePolicy: {
             ...DEFAULT_CAPTURE_POLICY,
-            categories: {
-              ...DEFAULT_CAPTURE_POLICY.categories,
-              console: "allow",
-              network: "body-allowlist",
-              cdp: "safe-subset"
-            }
+            categories: { ...DEFAULT_CAPTURE_POLICY.categories, console: "allow" }
           }
         }
       }
@@ -323,10 +323,8 @@ describe("buildProfilePreview", () => {
     const state = await loadProfilesState(api, KEYS);
     const selection = selectRecordingProfile({ state, page: { url: "https://a.example/" } });
 
-    expect(selection?.legacy).toBe(true);
-    expect(selection?.profile.categories.network).toBe("body-allowlist");
-    expect(selection && resolveStartEngine("lite", selection)).toBe("lite");
-    expect(selection && buildProfilePreview(state, selection).selection?.requiresFull).toBe(false);
+    expect(selection?.profile).toEqual(createDefaultProfile());
+    expect(selection && resolveStartEngine("lite", selection.profile)).toBe("lite");
   });
 
   it("returns an empty catalog and no selection once every profile is deleted", async () => {

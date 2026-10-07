@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/webllm/webblackbox"><img src="https://raw.githubusercontent.com/webllm/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://raw.githubusercontent.com/a3mitskevich/webblackbox/main/logo.png" alt="WebBlackbox" width="80" /></a>
 </p>
 
 <h1 align="center">@webblackbox/recorder</h1>
@@ -9,9 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@webblackbox/recorder"><img src="https://img.shields.io/npm/v/@webblackbox/recorder.svg?color=f97316" alt="npm version" /></a>
-  <a href="https://github.com/webllm/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@webblackbox/recorder?color=374151" alt="License" /></a>
-  <a href="https://github.com/webllm/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-374151" alt="License" /></a>
+  <a href="https://github.com/a3mitskevich/webblackbox"><img src="https://img.shields.io/badge/Part%20of-WebBlackbox-000?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzFhMWEyZSIvPjxwYXRoIGQ9Ik0zIDhoMi41bDIuNS00TDEwLjUgMTIgMTMgOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjk3MzE2IiBzdHJva2Utd2lkdGg9IjEuNSIvPjwvc3ZnPg==" alt="WebBlackbox" /></a>
 </p>
 
 ---
@@ -55,9 +54,7 @@ const result = recorder.ingest({
   sid: "S-1706000000000-abc",
   t: Date.now(),
   mono: performance.now(),
-  payload: {
-    /* CDP event params */
-  }
+  payload: {/* CDP event params */}
 });
 
 if (result.event) {
@@ -135,6 +132,11 @@ Under `capturePolicy.categories.console === "allow"` console entries keep their 
 | `submit`                                             | `user.submit`                                                     |
 | `scroll`                                             | `user.scroll`                                                     |
 | `mousemove`                                          | `user.mousemove`                                                  |
+| `pointerdown` / `pointerup`                          | `user.pointerdown` / `user.pointerup`                             |
+| `contextmenu` / `auxclick`                           | `user.contextmenu` / `user.auxclick`                              |
+| `clickReaction`                                      | `user.click.reaction`                                             |
+| `dragStart` / `dragEnd`                              | `user.drag.start` / `user.drag.end`                               |
+| `selection` / `wheel` / `hover`                      | `user.selection` / `user.wheel` / `user.hover`                    |
 | `focus` / `blur`                                     | `user.focus` / `user.blur`                                        |
 | `resize`                                             | `user.resize`                                                     |
 | `marker`                                             | `user.marker`                                                     |
@@ -145,14 +147,21 @@ Under `capturePolicy.categories.console === "allow"` console entries keep their 
 | `console`                                            | `console.entry`                                                   |
 | `fetch` / `xhr`                                      | `network.request` / `network.response`                            |
 | `fetchError`                                         | `network.failed`                                                  |
+| `networkBody`                                        | `network.body`                                                    |
+| `sse`                                                | `network.sse.message`                                             |
 | `pageError` / `unhandledrejection` / `resourceError` | `error.exception` / `error.unhandledrejection` / `error.resource` |
 | `localStorageOp` / `localStorageSnapshot`            | `storage.local.op` / `storage.local.snapshot`                     |
 | `sessionStorageOp`                                   | `storage.session.op`                                              |
 | `indexedDbOp` / `indexedDbSnapshot`                  | `storage.idb.op` / `storage.idb.snapshot`                         |
 | `cookieSnapshot`                                     | `storage.cookie.snapshot`                                         |
 | `longtask` / `vitals`                                | `perf.longtask` / `perf.vitals`                                   |
+| `privacyViolation`                                   | `privacy.violation`                                               |
 
 `dom.rrweb.event` is emitted when raw `rrweb` payloads are ingested (for example, lite mutation-summary events produced by the webblackbox capture agent).
+
+### System Events
+
+Raw events with `source: "system"` come from the host (the extension service worker or the lite SDK): `session-start` / `session-end` → `meta.session.*`, `config` → `meta.config`, `notice` → `sys.notice`, `debugger-attach` / `debugger-detach` → `sys.debugger.*`, `tabs.snapshot` / `tabs.change` → `meta.tabs.*`, `script` → `sys.script` (also accepted from `content`), `cdp.network.body` → `network.body`, `cdp.network.body.skipped` → `network.body.skipped`, `cdp.screen.screenshot` → `screen.screenshot`, `screen.recording.*` → `screen.recording.*`, and `cdp.dom.snapshot`, `cdp.storage.{cookie,local,idb}.snapshot`, `cdp.perf.{trace,cpu.profile,heap.snapshot}` → the matching `dom.*` / `storage.*` / `perf.*` events. Malformed `meta.tabs.*`, `sys.script` and `network.body.skipped` payloads are dropped.
 
 ## Action Span Tracking
 
@@ -167,9 +176,9 @@ const tracker = new ActionSpanTracker(1500); // 1500ms action window
 // Related events within the time window are linked via ref.act
 ```
 
-Action types: `click`, `submit`, `marker`, `nav`
+An action starts on `user.click`, `user.dblclick`, `user.contextmenu`, `user.auxclick`, `user.drag.end` (unless the drag was cancelled), `user.submit`, `user.marker`, `nav.commit`, and `user.keydown` for Enter, NumpadEnter or Space. The click a browser fires right after a drag joins the drag's action instead of starting a new one.
 
-Events within the action window receive a `ref.act` reference linking them to the action span. Network requests initiated during an action are also tracked.
+Events within the action window receive a `ref.act` reference linking them to the action span. Network requests initiated during an action are also tracked: their later `network.*` events (and `dom.*` events carrying the request id) keep the action's `ref.act` until the request finishes or fails.
 
 ## Freeze Policy
 
@@ -177,11 +186,12 @@ The `FreezePolicy` evaluates conditions that should pause recording:
 
 ```typescript
 import { FreezePolicy } from "@webblackbox/recorder";
+import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 
+// Takes the whole RecorderConfig and reads its freezeOn* flags.
 const policy = new FreezePolicy({
-  freezeOnError: true,
-  freezeOnNetworkFailure: true,
-  freezeOnLongTaskSpike: true
+  ...DEFAULT_RECORDER_CONFIG,
+  freezeOnNetworkFailure: false
 });
 
 const reason = policy.evaluate(event);
@@ -191,9 +201,9 @@ const reason = policy.evaluate(event);
 Freeze conditions:
 
 - **Error** — Uncaught exceptions or unhandled rejections (`error.resource` is recorded but does not auto-freeze)
-- **Network failure** — Network request failures exceeding threshold (emits freeze reason `"network"`)
-- **Performance** — Long tasks exceeding 200ms
-- **Marker** — User-triggered markers
+- **Network failure** — 3 `network.failed` events within 10 seconds (emits freeze reason `"network"`)
+- **Performance** — A `perf.longtask` of 200ms or longer
+- **Marker** — User-triggered markers (always, regardless of the flags)
 
 ## Redaction
 
@@ -229,7 +239,7 @@ Redaction is applied recursively through nested objects and supports:
 
 Network body blobs are redacted separately with `redactBodyText` / `redactBodyBytes` from `@webblackbox/protocol`, which mask the values of sensitive keys in JSON, form, query, XML and `key: value` text.
 
-Inline bodies — textual request bodies (`network.request` → `request.postData`), WebSocket text frames (`network.ws.frame` → `frame.payloadPreview`) and SSE messages (`network.sse.message` → `data`) — follow the same rule as `network.body`. They are kept only when `capturePolicy.categories.network` is `"body-allowlist"`, value-masked with `redactBodyText` and size-capped: request bodies at 64 KiB; WebSocket frames and SSE messages at the profile body size (`sampling.bodyCaptureMaxBytes`, in UTF-8 bytes, cut on a character boundary), or at the old 512 / 800-character previews when it is 0. A cut sets `postDataTruncated`, `frame.payloadTruncated` or `dataTruncated`. The pipeline later moves frame and message text over 16 KiB into a blob (`frame.payloadHash` / `dataHash`, with a 512-character head left inline). Otherwise only sizes survive (`postDataSize`, `frame.payloadLength`/`opcode`, SSE `dataSize`). A host can add its own gate through the `shouldKeepInlineNetworkBody` recorder hook (it gets the event type, the unsanitized request URL and the request MIME type); the extension uses it to apply its site body-capture rules to request bodies, the same rules response bodies follow.
+Inline bodies — textual request bodies (`network.request` → `request.postData`), WebSocket text frames (`network.ws.frame` → `frame.payloadPreview`) and SSE messages (`network.sse.message` → `data`) — follow the same rule as `network.body`. They are kept only when `capturePolicy.categories.network` is `"body-allowlist"`, value-masked and size-capped at the profile body size (`sampling.bodyCaptureMaxBytes`, in UTF-8 bytes, cut on a character boundary); when that is 0 the caps are 65,536 characters for request bodies and the old 512 / 800-character previews for WebSocket frames and SSE messages. A cut sets `postDataTruncated`, `frame.payloadTruncated` or `dataTruncated`. The pipeline later moves frame and message text over 16,384 characters into a blob (`frame.payloadHash` / `dataHash`, with a 512-character head left inline). Otherwise only sizes survive (`postDataSize`, `frame.payloadLength`/`opcode`, SSE `dataSize`). A host can add its own gate through the `shouldKeepInlineNetworkBody` recorder hook (it gets the event type, the unsanitized request URL and the request MIME type); the extension uses it to apply its site body-capture rules to request bodies, the same rules response bodies follow.
 
 ## Plugins
 
@@ -273,13 +283,14 @@ const routePlugin = createRouteContextPlugin();
 // Error fingerprint generation
 const errorPlugin = createErrorFingerprintPlugin();
 
-// AI-assisted root cause analysis
-const aiPlugin = createAiRootCausePlugin(5000); // 5s analysis window
+// Heuristic root-cause hints on error.* events (data.aiRootCause): failed or 5xx requests,
+// long tasks and large mutation batches seen in the window before the error
+const aiPlugin = createAiRootCausePlugin(5000); // 5s window (default 10s)
 
-// Bundle of all default plugins
+// The three plugins above, with default options
 const plugins = createDefaultRecorderPlugins();
 ```
 
 ## License
 
-[MIT](https://github.com/webllm/webblackbox/blob/main/LICENSE)
+[MIT](https://github.com/a3mitskevich/webblackbox/blob/main/LICENSE)

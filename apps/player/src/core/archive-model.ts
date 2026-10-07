@@ -75,12 +75,7 @@ export type ScreenshotRenderContext = {
 };
 
 export type ProgressMarkerKind =
-  | "error"
-  | "network"
-  | "screenshot"
-  | "recording"
-  | "action"
-  | "tabs";
+  "error" | "network" | "screenshot" | "recording" | "action" | "tabs";
 
 export type ProgressMarker = {
   mono: number;

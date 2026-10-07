@@ -250,8 +250,7 @@ function createPointerProfile(redaction) {
     pointer: { mousemoveHz: 60, hover: true, drag: true, wheel: true },
     sampling: {},
     recorder: {},
-    sitePolicies: [],
-    export: { encryption: "required", privacyScanner: "block" }
+    sitePolicies: []
   };
 }
 

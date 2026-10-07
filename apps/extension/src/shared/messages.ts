@@ -26,12 +26,6 @@ export type UiStartSessionMessage = {
   mode: CaptureMode;
   reloadPage?: boolean;
   visualCapture?: FullModeVisualCapture;
-  /**
-   * Backward-compatible alias for older popup/runtime callers. New callers
-   * should send `visualCapture` so screenshots can be disabled for
-   * recording-only full sessions.
-   */
-  recordScreen?: boolean;
   /** Recording profile id, or `"auto"` / absent to let site rules pick one. */
   profileId?: string;
 };
@@ -149,7 +143,6 @@ export type SessionListItem = {
   stoppedAt?: number;
   url?: string;
   title?: string;
-  ringBufferMinutes?: number;
   eventCount?: number;
   errorCount?: number;
   budgetAlertCount?: number;
@@ -167,10 +160,7 @@ export const PROFILES_SECTION_ID = "profiles";
 
 /** Why a recording was stopped after its effective profile changed. */
 export type ProfileCancelReason =
-  | "rule-changed"
-  | "profile-missing"
-  | "profile-edited"
-  | "enterprise-policy";
+  "rule-changed" | "profile-missing" | "profile-edited" | "enterprise-policy";
 
 /** What the popup needs to explain a cancelled recording and how to fix it. */
 export type ProfileCancelNotice = {

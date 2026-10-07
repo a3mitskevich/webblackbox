@@ -12,8 +12,9 @@ import {
   listStoreProfiles,
   removeProfileFromStore,
   restoreRecommendedProfiles,
+  applyGeneralFormToDefaultProfile,
   serializeProfilesStore,
-  syncDefaultProfileWithLegacyOptions,
+  type GeneralFormFields,
   type ProfilesState
 } from "../shared/profiles/storage.js";
 import { previewProfilesImport, type ProfilesDiff } from "../shared/profiles/transfer.js";
@@ -71,7 +72,6 @@ export type ProfilesEditorDeps = {
   chromeApi: ChromeApi | null;
   t: Translate;
   locale: string;
-  legacyOptionsKey: string;
   enterprisePolicyKey: string;
   /** Called after any change of the draft (typing included) so the page can show dirty state. */
   onChange?: () => void;
@@ -96,13 +96,11 @@ export type ProfilesSaveResult = { ok: true } | { ok: false; error: string };
 
 export type ProfilesEditorHandle = {
   /** Folds a general settings save (the fields changed from `shown`) into the draft's Default. */
-  applyGeneralOptions(payload: unknown, shown?: unknown): void;
+  applyGeneralOptions(form: GeneralFormFields, shown?: GeneralFormFields): void;
   /** The draft (including open forms and rule rows) differs from what was loaded or saved. */
   isDirty(): boolean;
   /** Which settings sections (profiles, rules) hold the unsaved changes. */
   changedSections(): EditorChanges;
-  /** A v2 profiles store exists in storage (otherwise Default mirrors the general options). */
-  hasStoredStore(): boolean;
   /** Checks that the draft can be saved, without writing anything. */
   validate(): ProfilesSaveResult;
   save(): Promise<ProfilesSaveResult>;
@@ -170,18 +168,15 @@ export async function mountProfilesEditor(
   bindEditor(editor);
 
   return {
-    applyGeneralOptions: (payload, shown) => {
+    applyGeneralOptions: (form, shown) => {
       syncDraftFromDom(editor);
       const { state } = editor;
-      state.draft = syncDefaultProfileWithLegacyOptions(state.draft, payload, shown);
+      state.draft = applyGeneralFormToDefaultProfile(state.draft, form, shown);
       // The general save is already stored; Cancel must not roll it back.
       const snapshot = state.editingSnapshot;
       state.editingSnapshot = snapshot
-        ? syncDefaultProfileWithLegacyOptions(
-            { ...state.draft, profiles: [snapshot] },
-            payload,
-            shown
-          ).profiles[0]
+        ? applyGeneralFormToDefaultProfile({ ...state.draft, profiles: [snapshot] }, form, shown)
+            .profiles[0]
         : undefined;
       // Not an edit made in the form: it must not make closing the form ask.
       state.formBaseline = undefined;
@@ -192,7 +187,6 @@ export async function mountProfilesEditor(
       syncDraftFromDom(editor);
       return diffEditorSections(editor.state.draft, editor.state.savedStore);
     },
-    hasStoredStore: () => !editor.state.profilesState.legacy,
     validate: () => {
       syncDraftFromDom(editor);
 

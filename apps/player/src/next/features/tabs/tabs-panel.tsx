@@ -49,25 +49,21 @@ type TabsLogRow = {
 function buildLog(archive: LoadedArchive): TabsLogRow[] {
   const { snapshots, changes } = archive.model.tabsContext;
   const rows: TabsLogRow[] = [
-    ...snapshots.map(
-      (snapshot): TabsLogRow => ({
-        eventId: snapshot.eventId,
-        mono: snapshot.mono,
-        kind: "snapshot",
-        label: snapshot.reason,
-        openCount: snapshot.tabs.length
-      })
-    ),
-    ...changes.map(
-      (change): TabsLogRow => ({
-        eventId: change.eventId,
-        mono: change.mono,
-        kind: "change",
-        label: change.change,
-        tab: change.tab,
-        openCount: change.openCount
-      })
-    )
+    ...snapshots.map((snapshot): TabsLogRow => ({
+      eventId: snapshot.eventId,
+      mono: snapshot.mono,
+      kind: "snapshot",
+      label: snapshot.reason,
+      openCount: snapshot.tabs.length
+    })),
+    ...changes.map((change): TabsLogRow => ({
+      eventId: change.eventId,
+      mono: change.mono,
+      kind: "change",
+      label: change.change,
+      tab: change.tab,
+      openCount: change.openCount
+    }))
   ];
 
   return rows.sort((left, right) => left.mono - right.mono);
