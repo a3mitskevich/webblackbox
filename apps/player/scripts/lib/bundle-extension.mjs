@@ -3,7 +3,7 @@
 // and writes extension/extension.json ({ version, file, size, sha256, builtAt }). The guide view
 // reads that metadata; without it the guide explains that this build does not bundle the extension.
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const PLAYER_EXTENSION_DIR = "extension";
@@ -11,51 +11,19 @@ export const PLAYER_EXTENSION_DIR = "extension";
 export const PLAYER_EXTENSION_ZIP = "webblackbox-chrome.zip";
 export const PLAYER_EXTENSION_METADATA = "extension.json";
 
-const PACKAGED_ZIP_PATTERN = /^webblackbox-(.+)-chrome\.zip$/u;
-
 /**
  * The zip `pnpm --filter @webblackbox/extension package:chrome` wrote for `version`
- * (`webblackbox-<version>-chrome.zip`), or — when only an older packaging run is left — the newest
- * `webblackbox-*-chrome.zip` in the directory. Returns null when nothing was ever packaged.
+ * (`webblackbox-<version>-chrome.zip`), or null when this version was never packaged. A zip left
+ * over from an older version is not used: the Player would offer testers an outdated extension.
  */
 export async function findPackagedExtensionZip(distDir, version) {
-  const exact = join(distDir, `webblackbox-${version}-chrome.zip`);
+  const path = join(distDir, `webblackbox-${version}-chrome.zip`);
 
   try {
-    await stat(exact);
-    return exact;
-  } catch {
-    // Fall through to the stale-artifact search.
-  }
-
-  let entries;
-
-  try {
-    entries = await readdir(distDir);
+    return (await stat(path)).isFile() ? path : null;
   } catch {
     return null;
   }
-
-  const candidates = [];
-
-  for (const name of entries) {
-    const match = PACKAGED_ZIP_PATTERN.exec(name);
-
-    if (!match) {
-      continue;
-    }
-
-    try {
-      const path = join(distDir, name);
-      const info = await stat(path);
-      candidates.push({ path, version: match[1], mtimeMs: info.mtimeMs });
-    } catch {
-      // A race with a concurrent packaging run: skip the vanished entry.
-    }
-  }
-
-  candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
-  return candidates[0] ?? null;
 }
 
 /**
@@ -79,22 +47,21 @@ export async function bundleExtensionIntoPlayer({
     throw new Error(`Missing version in ${extensionPackageJson}`);
   }
 
-  const packaged = await findPackagedExtensionZip(extensionDistDir, version);
+  const zipPath = await findPackagedExtensionZip(extensionDistDir, version);
   const targetDir = join(playerBuildDir, PLAYER_EXTENSION_DIR);
 
-  if (!packaged) {
+  if (!zipPath) {
     await rm(join(targetDir, PLAYER_EXTENSION_ZIP), { force: true });
     await rm(join(targetDir, PLAYER_EXTENSION_METADATA), { force: true });
     return { bundled: false, version };
   }
 
-  const bytes = await readFile(typeof packaged === "string" ? packaged : packaged.path);
-  const zipVersion = typeof packaged === "string" ? version : packaged.version;
+  const bytes = await readFile(zipPath);
   await mkdir(targetDir, { recursive: true });
   await writeFile(join(targetDir, PLAYER_EXTENSION_ZIP), bytes);
 
   const metadata = {
-    version: zipVersion,
+    version,
     file: PLAYER_EXTENSION_ZIP,
     size: bytes.byteLength,
     sha256: createHash("sha256").update(bytes).digest("hex"),

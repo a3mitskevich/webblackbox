@@ -96,6 +96,9 @@ describe("extension guide", () => {
       "Version 0.7.0 · 1.5 KB"
     );
     expect(within(dialog).getByTestId("extension-sha256")).toHaveTextContent(METADATA.sha256);
+    expect(within(dialog).getByTestId("extension-sha256-copy")).toHaveAccessibleName(
+      "Copy SHA-256"
+    );
     expect(within(dialog).queryByTestId("extension-download-missing")).not.toBeInTheDocument();
   });
 
@@ -132,6 +135,10 @@ describe("extension guide", () => {
     expect(within(dialog).getByTestId("player-url")).toHaveTextContent(
       `${window.location.origin}${window.location.pathname}`
     );
+    // Each copy button names what it copies, not just "Copy".
+    expect(within(dialog).getByTestId("player-url-copy")).toHaveAccessibleName(
+      "Copy this Player's URL"
+    );
     fireEvent.click(within(dialog).getByTestId("player-url-copy"));
 
     await waitFor(() => {
@@ -162,5 +169,12 @@ describe("extension guide", () => {
     fireEvent.click(within(dialog).getByTestId("extension-guide-close"));
 
     expect(screen.queryByTestId("extension-guide")).not.toBeInTheDocument();
+
+    await openGuideFromEmptyState();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape", code: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("extension-guide")).not.toBeInTheDocument();
+    });
   });
 });

@@ -22,6 +22,7 @@ function thisPlayerUrl(): string {
 }
 
 type GuideCopyButtonProps = {
+  /** What is copied ("Copy SHA-256"): the accessible name and the toast's description. */
   label: string;
   /** The text copied on click. */
   text: string;
@@ -54,7 +55,7 @@ function GuideCopyButton({ label, text, testId }: GuideCopyButtonProps) {
         data-testid={testId}
       >
         <Icon name="copy" />
-        <span>{label}</span>
+        <span>{t("copy")}</span>
       </button>
       <span className="visually-hidden" role="status" data-testid={`${testId}-status`}>
         {status === "copied" ? t("copied") : status === "failed" ? t("copyFailed") : ""}
@@ -123,7 +124,7 @@ function DownloadSection() {
             <span className="xguide-hash-label">{t("downloadSha256")}</span>
             <code data-testid="extension-sha256">{bundle.metadata.sha256}</code>
             <GuideCopyButton
-              label={t("copy")}
+              label={t("copySha256")}
               text={bundle.metadata.sha256}
               testId="extension-sha256-copy"
             />
@@ -145,7 +146,7 @@ function ConnectSection() {
       <p className="xguide-hash">
         <span className="xguide-hash-label">{t("connectThisUrl")}</span>
         <code data-testid="player-url">{playerUrl}</code>
-        <GuideCopyButton label={t("copy")} text={playerUrl} testId="player-url-copy" />
+        <GuideCopyButton label={t("copyPlayerUrl")} text={playerUrl} testId="player-url-copy" />
       </p>
       <p className="xguide-note">{t("connectPolicy")}</p>
     </section>

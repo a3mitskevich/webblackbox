@@ -11,6 +11,8 @@
   "downloadMissing": "This Player build does not bundle the extension.",
   "downloadMissingHow": "Ask whoever serves this Player for a build that includes it, or build it yourself: run pnpm --filter @webblackbox/extension package:chrome before pnpm build.",
   "copy": "Copy",
+  "copySha256": "Copy SHA-256",
+  "copyPlayerUrl": "Copy this Player's URL",
   "copied": "Copied",
   "copyFailed": "Could not copy — select the text and copy it yourself.",
   "installTitle": "Install in Chrome",

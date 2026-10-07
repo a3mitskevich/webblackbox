@@ -2,16 +2,10 @@ export declare const PLAYER_EXTENSION_DIR: string;
 export declare const PLAYER_EXTENSION_ZIP: string;
 export declare const PLAYER_EXTENSION_METADATA: string;
 
-export type PackagedExtensionZip = {
-  path: string;
-  version: string;
-  mtimeMs: number;
-};
-
 export declare function findPackagedExtensionZip(
   distDir: string,
   version: string
-): Promise<string | PackagedExtensionZip | null>;
+): Promise<string | null>;
 
 export type ExtensionBundleMetadata = {
   version: string;

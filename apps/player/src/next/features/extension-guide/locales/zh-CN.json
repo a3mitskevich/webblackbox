@@ -11,6 +11,8 @@
   "downloadMissing": "此播放器构建未附带扩展。",
   "downloadMissingHow": "请联系提供此播放器的人获取包含扩展的构建，或自行构建：在 pnpm build 之前先运行 pnpm --filter @webblackbox/extension package:chrome。",
   "copy": "复制",
+  "copySha256": "复制 SHA-256",
+  "copyPlayerUrl": "复制此播放器的 URL",
   "copied": "已复制",
   "copyFailed": "复制失败 — 请手动选择文本复制。",
   "installTitle": "在 Chrome 中安装",

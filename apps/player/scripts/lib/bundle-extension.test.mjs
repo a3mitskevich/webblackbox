@@ -102,7 +102,7 @@ describe("bundleExtensionIntoPlayer", () => {
     ).rejects.toThrow();
   });
 
-  it("falls back to the newest packaged zip of another version, with its version", async () => {
+  it("does not ship a zip left over from another extension version", async () => {
     const { packageJson, distDir, buildDir } = await layout("9.9.9");
     await writeFile(join(distDir, "webblackbox-0.6.0-chrome.zip"), "old zip");
 
@@ -112,8 +112,8 @@ describe("bundleExtensionIntoPlayer", () => {
       playerBuildDir: buildDir
     });
 
-    expect(result.bundled).toBe(true);
-    expect(result.bundled ? result.metadata.version : null).toBe("0.6.0");
+    expect(result).toEqual({ bundled: false, version: "9.9.9" });
+    await expect(readFile(join(buildDir, "extension", PLAYER_EXTENSION_ZIP))).rejects.toThrow();
   });
 
   it("fails loudly when the extension package.json has no version", async () => {

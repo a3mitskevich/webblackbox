@@ -11,6 +11,8 @@
   "downloadMissing": "В этой сборке Player нет расширения.",
   "downloadMissingHow": "Попросите того, кто раздаёт этот Player, собрать его с расширением, или соберите сами: выполните pnpm --filter @webblackbox/extension package:chrome перед pnpm build.",
   "copy": "Копировать",
+  "copySha256": "Копировать SHA-256",
+  "copyPlayerUrl": "Копировать URL этого Player",
   "copied": "Скопировано",
   "copyFailed": "Не удалось скопировать — выделите текст и скопируйте вручную.",
   "installTitle": "Установка в Chrome",
