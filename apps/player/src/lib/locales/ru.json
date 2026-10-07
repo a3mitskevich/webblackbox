@@ -153,7 +153,7 @@
     "previousEvent": "Предыдущее событие",
     "nextEvent": "Следующее событие",
     "skipIdle": "Пропускать простой",
-    "followPlayhead": "Следовать за курсором",
+    "followPlayhead": "Прокручивать за воспроизведением",
     "playbackSpeed": "Скорость воспроизведения",
     "timelineLabel": "Шкала сессии",
     "timelineValue": "{time} из {duration}",

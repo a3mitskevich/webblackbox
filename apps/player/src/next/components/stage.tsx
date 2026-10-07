@@ -164,6 +164,11 @@ type PointerLayerProps = {
   size: MediaSize;
   /** The event inspector's target, outlined on the frame. */
   target: InspectedTargetFrame | null;
+  /**
+   * Draw the recorded cursor. Off over a tab video: Chrome's tab capture already paints the real
+   * cursor (with its arrow / hand / text shape) into the frames, so a second arrow would double it.
+   */
+  drawCursor: boolean;
 };
 
 function sizeOf(width: number | null | undefined, height: number | null | undefined) {
@@ -210,10 +215,19 @@ function contentBoxStyle(size: FrameSize, viewport: ViewportSize | null): CSSPro
  * rectangle in the media: a tab video fits the page into its own frame size with bars (DevTools
  * docked, another window size), and that rectangle follows viewport changes over time.
  */
-function PointerLayer({ model, playheadMono, shot, size, target }: PointerLayerProps) {
+export function PointerLayer({
+  model,
+  playheadMono,
+  shot,
+  size,
+  target,
+  drawCursor
+}: PointerLayerProps) {
   const i18n = useI18n();
   const trail = buildScreenshotTrail(model.pointers, playheadMono);
-  const marker = resolveScreenshotMarker(model.pointers, playheadMono, shot?.marker ?? null);
+  const marker = drawCursor
+    ? resolveScreenshotMarker(model.pointers, playheadMono, shot?.marker ?? null)
+    : null;
   const ripples = buildRippleMarks(model.pointerActions, playheadMono);
   const viewport = viewportAt(model, playheadMono, shot, target);
   const sourceWidth = viewport?.width ?? size.width;
@@ -417,6 +431,7 @@ export function Stage() {
             shot={shot}
             size={size}
             target={target}
+            drawCursor={!recording}
           />
         </div>
       ) : (
