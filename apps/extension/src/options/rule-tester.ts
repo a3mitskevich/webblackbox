@@ -14,13 +14,7 @@ import type { ProfilesState } from "../shared/profiles/storage.js";
  */
 
 export type RuleConditionKind =
-  | "any"
-  | "host"
-  | "path"
-  | "query"
-  | "title"
-  | "incognito-only"
-  | "incognito-never";
+  "any" | "host" | "path" | "query" | "title" | "incognito-only" | "incognito-never";
 
 export type RuleTestResult =
   | { kind: "invalid-url" }

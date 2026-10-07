@@ -43,12 +43,7 @@ export type ClickReaction = {
 };
 
 export type ConsequenceKind =
-  | "request"
-  | "page-load"
-  | "route"
-  | "websocket"
-  | "console-error"
-  | "exception";
+  "request" | "page-load" | "route" | "websocket" | "console-error" | "exception";
 
 export type ActionConsequence = {
   kind: ConsequenceKind;

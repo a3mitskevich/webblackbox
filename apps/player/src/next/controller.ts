@@ -435,12 +435,10 @@ export function createPlayerController(
 
       const items =
         options.stepItems?.(state) ??
-        selectActivityEvents(archive, state.query).map(
-          (event): ListStepItem => ({
-            selection: { kind: "event", id: event.id },
-            mono: event.mono
-          })
-        );
+        selectActivityEvents(archive, state.query).map((event): ListStepItem => ({
+          selection: { kind: "event", id: event.id },
+          mono: event.mono
+        }));
       const selectedKey = state.selection ? stepKey(state.selection) : null;
       const selectedEventId = resolveSelectedEventId(archive, state.selection);
       const next = stepInList(items, {

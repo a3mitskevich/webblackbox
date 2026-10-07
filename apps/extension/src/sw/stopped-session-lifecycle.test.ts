@@ -210,12 +210,10 @@ function createHarness(overrides: Partial<StoppedSessionLifecycleDeps> = {}): Ha
   const notifyOffscreenPipelineStatus = vi.fn();
   const loadPerformanceBudgetConfig = vi.fn(async () => ({ ...DEFAULT_PERFORMANCE_BUDGET }));
   const getSessionAnnotation = vi.fn(() => ({ tags: [] as string[] }));
-  const sweepStoredSessions = vi.fn(
-    async (): Promise<PipelineSessionSweepResult> => ({
-      deleted: [],
-      failed: []
-    })
-  );
+  const sweepStoredSessions = vi.fn(async (): Promise<PipelineSessionSweepResult> => ({
+    deleted: [],
+    failed: []
+  }));
   const getAtRestKey = vi.fn(async () => ({}));
 
   const deps: StoppedSessionLifecycleDeps = {
