@@ -72,8 +72,8 @@ describe("demo-video captions", () => {
     expect(ass).toContain("Title: Установка");
     const dialogues = ass.split("\n").filter((line) => line.startsWith("Dialogue:"));
     expect(dialogues).toEqual([
-      "Dialogue: 0,0:00:00.00,0:00:02.50,Caption,,0,0,0,,Первый",
-      "Dialogue: 0,0:00:02.50,0:00:04.00,Caption,,0,0,0,,Второй"
+      "Dialogue: 0,0:00:00.00,0:00:02.50,Caption,,0,0,0,,{\\an5\\pos(800,1055)}Первый",
+      "Dialogue: 0,0:00:02.50,0:00:04.00,Caption,,0,0,0,,{\\an5\\pos(800,1055)}Второй"
     ]);
   });
 

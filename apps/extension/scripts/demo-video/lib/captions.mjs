@@ -6,6 +6,9 @@
 export const LANGS = Object.freeze(["ru"]);
 
 const MIN_CAPTION_MS = 2200;
+/** Height of the caption bar added under the recorded frame, and the caption font size. */
+export const CAPTION_BAR_HEIGHT = 150;
+export const CAPTION_FONT_SIZE = 46;
 const CHARS_PER_SECOND = 15;
 const CAPTION_LEAD_MS = 500;
 
@@ -90,9 +93,10 @@ export function escapeAssText(text) {
 export function buildAss(options) {
   const { cues, width, videoHeight, barHeight } = options;
   const fontName = options.fontName ?? "Segoe UI";
-  const fontSize = options.fontSize ?? 34;
+  const fontSize = options.fontSize ?? CAPTION_FONT_SIZE;
   const height = videoHeight + barHeight;
-  const marginV = Math.max(8, Math.round((barHeight - fontSize * 2.4) / 2));
+  // Every caption is centred in the bar, whether it takes one line or two.
+  const anchor = `{\\an5\\pos(${Math.round(width / 2)},${videoHeight + Math.round(barHeight / 2)})}`;
   const header = [
     "[Script Info]",
     `Title: ${escapeAssText(options.title ?? "WebBlackbox demo")}`,
@@ -104,7 +108,7 @@ export function buildAss(options) {
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    `Style: Caption,${fontName},${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,2,48,48,${marginV},1`,
+    `Style: Caption,${fontName},${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,48,48,0,1`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
@@ -113,7 +117,7 @@ export function buildAss(options) {
     .sort((a, b) => a.startMs - b.startMs)
     .map(
       (cue) =>
-        `Dialogue: 0,${formatAssTime(cue.startMs)},${formatAssTime(cue.endMs)},Caption,,0,0,0,,${escapeAssText(cue.text)}`
+        `Dialogue: 0,${formatAssTime(cue.startMs)},${formatAssTime(cue.endMs)},Caption,,0,0,0,,${anchor}${escapeAssText(cue.text)}`
     );
   return `${[...header, ...events].join("\n")}\n`;
 }

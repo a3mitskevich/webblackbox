@@ -4,7 +4,7 @@ import { execFile, spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 
-import { buildAss } from "./captions.mjs";
+import { buildAss, CAPTION_BAR_HEIGHT } from "./captions.mjs";
 
 const execFileAsync = promisify(execFile);
 const WINDOWS_FFMPEG = "/mnt/c/ProgramData/chocolatey/bin/ffmpeg.exe";
@@ -13,7 +13,6 @@ const FIRST_FRAME_TIMEOUT_MS = 20_000;
 const STOP_TIMEOUT_MS = 30_000;
 
 export const CAPTURE_FPS = 30;
-export const CAPTION_BAR_HEIGHT = 110;
 
 /**
  * Starts recording `rect` (screen pixels, even width/height) to `outWin` (a Windows path, .mkv).
@@ -136,4 +135,29 @@ export async function probeDurationMs(fileWsl) {
 
 function escapeFilterPath(path) {
   return path.replace(/\\/gu, "/").replace(/:/gu, "\\:").replace(/'/gu, "\\'");
+}
+
+/** The recorded picture alone (the frame above the caption bar) of a finished video. */
+export async function extractPicture({ finalWsl, outWsl, width, height }) {
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-hide_banner",
+      "-y",
+      "-i",
+      finalWsl,
+      "-vf",
+      `crop=${width}:${height}:0:0`,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "14",
+      "-pix_fmt",
+      "yuv420p",
+      outWsl
+    ],
+    { maxBuffer: 32 * 1024 * 1024 }
+  );
 }

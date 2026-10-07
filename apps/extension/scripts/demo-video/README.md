@@ -35,6 +35,7 @@ node apps/extension/scripts/demo-video/run.mjs install --rehearsal   # same step
 node apps/extension/scripts/demo-video/run.mjs install               # one take
 node apps/extension/scripts/demo-video/run.mjs all                   # every scenario, in order
 node apps/extension/scripts/demo-video/run.mjs all --dry-run         # captions only, no desktop
+node apps/extension/scripts/demo-video/run.mjs all --rerender        # new caption style, no retake
 ```
 
 Wrap real takes in `timeout` (each take also has a 6-minute hard limit). Record
@@ -62,7 +63,10 @@ stops ffmpeg and closes the demo browser.
 
 ## Outputs
 
-- `apps/extension/demo-video-output/` (git-ignored): `<scenario>.ru.mp4` (1600×1110, H.264, CRF 23),
+- The raw take (`<workDir>\raw\<scenario>.ru.mkv`) is kept, so `--rerender` can redo the
+  captions without a new take; without it, `--rerender` cuts the picture out of the previous video
+  (the caption bar sits below the picture, never over it).
+- `apps/extension/demo-video-output/` (git-ignored): `<scenario>.ru.mp4` (1600×1150, H.264, CRF 23, captions 46 px bold in a 150 px bar),
   the burned `<scenario>.ru.ass` captions and `<scenario>.ru.marks.json` (when each caption
   appeared in the take). `dry-run/` holds the `--dry-run` captions.
 - A copy of each video in `C:\Users\Admin\webblackbox-test-build\videos\` (`WBB_DEMO_REVIEW_DIR`).
