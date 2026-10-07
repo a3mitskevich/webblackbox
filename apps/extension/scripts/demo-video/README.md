@@ -53,6 +53,8 @@ stops ffmpeg and closes the demo browser.
   before every take. The owner's profile, windows and downloads folder are never touched.
 - Before every click and every key the agent checks that the foreground window belongs to the
   demo Chrome (or the Explorer/dialog the current step opened); otherwise it refuses the input.
+  Clicks and the wheel also check the window under the cursor, so a topmost window of another
+  app (a notification, an always-on-top tool) over the target is refused rather than clicked.
   Typing into a page also requires the target field to have the focus.
 - The agent never sends Escape (it is the abort key).
 - The demo shop (`site/`, served from WSL) uses fake data, a fake account and the visibly fake

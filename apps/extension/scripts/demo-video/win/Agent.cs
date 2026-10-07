@@ -4,7 +4,8 @@
 //   <- {"id":1,"ok":true,"result":{...}}
 // Every input burst first checks the shared abort event (set by Watchdog.cs when the owner presses
 // Escape or throws the cursor into a screen corner) and the foreground window, so the agent never
-// types into a window that is not the demo browser.
+// types into a window that is not the demo browser; mouse buttons and the wheel also check the
+// window under the cursor, so a topmost window of another app over the target is never clicked.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -72,6 +73,8 @@ namespace Wbb
         [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
+        [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
+        [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
         [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
         [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int max);
@@ -169,7 +172,7 @@ namespace Wbb
                 case "uiaTree": return UiaTree(req);
                 case "moveTo": MoveTo(Int(req, "x"), Int(req, "y"), Int(req, "durationMs", -1)); return null;
                 case "click": return Click(req);
-                case "mouseDown": GuardForeground(); MouseButton(Str(req, "button", "left"), true); return null;
+                case "mouseDown": GuardForeground(); GuardPointTarget(); MouseButton(Str(req, "button", "left"), true); return null;
                 case "mouseUp": MouseButton(Str(req, "button", "left"), false); return null;
                 case "wheel": return Wheel(req);
                 case "type": TypeText(Str(req, "text"), Int(req, "charDelayMs", 70)); return null;
@@ -239,6 +242,20 @@ namespace Wbb
             Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out pid);
             if (!guardPids.Contains(pid))
                 throw new InvalidOperationException("foreground window is not a demo window (pid " + pid + "); input refused");
+        }
+
+        // A click lands on whatever window is under the cursor, not on the foreground one: a topmost
+        // window of another app (a notification, an always-on-top tool) can cover the target.
+        private static void GuardPointTarget()
+        {
+            if (guardPids.Count == 0) return;
+            Native.POINT p;
+            Native.GetCursorPos(out p);
+            IntPtr root = Native.GetAncestor(Native.WindowFromPoint(p), 2); // GA_ROOT
+            uint pid;
+            Native.GetWindowThreadProcessId(root, out pid);
+            if (!guardPids.Contains(pid))
+                throw new InvalidOperationException("the window under the cursor is not a demo window (pid " + pid + " at " + p.X + "," + p.Y + "); input refused");
         }
 
         private static void ReleaseAll()
@@ -530,7 +547,7 @@ namespace Wbb
             if (req.ContainsKey("x")) MoveTo(Int(req, "x"), Int(req, "y"), Int(req, "durationMs", -1));
             Thread.Sleep(Int(req, "settleMs", 140));
             CheckAbort();
-            if (!Bool(req, "unguarded")) GuardForeground();
+            if (!Bool(req, "unguarded")) { GuardForeground(); GuardPointTarget(); }
             string button = Str(req, "button", "left");
             int count = Int(req, "count", 1);
             for (int i = 0; i < count; i++)
@@ -546,6 +563,7 @@ namespace Wbb
         private static object Wheel(Dictionary<string, object> req)
         {
             GuardForeground();
+            GuardPointTarget();
             int notches = Int(req, "notches");
             int step = notches > 0 ? 1 : -1;
             for (int i = 0; i != notches; i += step)
