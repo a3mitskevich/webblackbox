@@ -12,7 +12,7 @@ import { PlayerProvider } from "../context.js";
 import { createPlayerController } from "../controller.js";
 import { createInitialState, type PlayerState } from "../state.js";
 import { createStore } from "../store.js";
-import { RecordingView } from "./stage.js";
+import { PointerLayer, RecordingView } from "./stage.js";
 
 let archiveBytes: Uint8Array;
 
@@ -79,6 +79,41 @@ describe("Stage pointer layer", () => {
     expect(box.style.width).toBe("100%");
     expect(box.style.height).toBe("66.6667%");
     expect(screen.getByTestId("pointer-layer")).toHaveAttribute("viewBox", "0 0 960 540");
+  });
+
+  it("draws the recorded cursor over a screenshot", async () => {
+    await openedAt(10_890);
+    await loadFrame(1920, 1080);
+
+    expect(screen.getByTestId("pointer-cursor")).toBeInTheDocument();
+  });
+
+  it("leaves the cursor to a tab video's own frames and keeps the trail", async () => {
+    const { store, controller } = await openedAt(10_890);
+    const archive = store.getState().archive;
+    if (!archive) throw new Error("archive did not open");
+    const layer = (drawCursor: boolean) =>
+      render(
+        <PlayerProvider controller={controller}>
+          <PointerLayer
+            model={archive.model}
+            playheadMono={store.getState().playheadMono}
+            shot={null}
+            size={{ width: 1920, height: 1080 }}
+            target={null}
+            drawCursor={drawCursor}
+          />
+        </PlayerProvider>
+      ).container;
+
+    const withCursor = layer(true);
+    expect(withCursor.querySelector('[data-testid="pointer-cursor"]')).not.toBeNull();
+
+    // Chrome's tab capture paints the real cursor (arrow, hand, text) into the video frames.
+    const overVideo = layer(false);
+    expect(overVideo.querySelector('[data-testid="pointer-layer"]')).not.toBeNull();
+    expect(overVideo.querySelector('[data-testid="pointer-cursor"]')).toBeNull();
+    expect(overVideo.querySelector(".trail")).not.toBeNull();
   });
 });
 
