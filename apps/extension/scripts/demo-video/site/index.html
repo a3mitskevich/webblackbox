@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Демо-магазин — заказы</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <span class="brand">Демо-магазин</span>
+      <span class="hint">учебный сайт для роликов WebBlackbox</span>
+      <span id="user" class="user"></span>
+    </header>
+
+    <main class="shell">
+      <section id="login" class="card login">
+        <h1>Вход для сотрудников</h1>
+        <form id="login-form">
+          <label for="email">Почта</label>
+          <input id="email" name="email" type="email" autocomplete="off" />
+          <label for="password">Пароль</label>
+          <input id="password" name="password" type="password" autocomplete="off" />
+          <button id="login-button" type="submit">Войти</button>
+        </form>
+      </section>
+
+      <section id="dashboard" class="dashboard" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>Заказы</h2>
+            <button id="reload-orders" type="button">Обновить список</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>№</th>
+                <th>Покупатель</th>
+                <th>Сумма</th>
+                <th>Статус</th>
+              </tr>
+            </thead>
+            <tbody id="orders"></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Отчёт за неделю</h2>
+            <button id="load-report" type="button">Построить отчёт</button>
+          </div>
+          <p id="report" class="muted">Отчёт ещё не построен.</p>
+        </div>
+
+        <div class="card">
+          <h2>Уведомления (WebSocket)</h2>
+          <ul id="notifications" class="notifications"></ul>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
