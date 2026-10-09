@@ -7,7 +7,9 @@ import { basename } from "node:path";
  */
 export const CLASSIC_SCRIPT_CHUNKS = Object.freeze(["content.js", "injected.js"]);
 
-const WRAPPER_PREFIX = "(() => {";
+// The prefix takes a line of its own, so the bundle keeps its columns (minified, almost all of it
+// is on its first line) and its source map only moves down by that line.
+const WRAPPER_PREFIX = "(() => {\n";
 const WRAPPER_SUFFIX = "\n})();\n";
 // tsup appends the source map comment after `renderChunk`, i.e. after the wrapper.
 const TRAILING_SOURCE_MAP_COMMENT = /\/\/# sourceMappingURL=\S+\s*$/;
@@ -20,7 +22,7 @@ const TRAILING_SOURCE_MAP_COMMENT = /\/\/# sourceMappingURL=\S+\s*$/;
  *   guard can stop it;
  * - in the page's MAIN world the minified names (`$`, `N`, `_t`…) overwrite the page's own globals,
  *   e.g. jQuery's `$`.
- * The prefix stays on line 1, so source map lines keep matching.
+ * The wrapped bundle is one line lower; {@link shiftSourceMapPastWrapper} moves its source map too.
  *
  * @param {string} code
  * @returns {string}
@@ -42,18 +44,33 @@ export function isWrappedInScriptScope(code) {
 }
 
 /**
+ * The bundle's source map for its wrapped copy: an empty first line for the wrapper's prefix, the
+ * bundle's own lines and columns unchanged after it.
+ *
+ * @param {string | { mappings: string }} map
+ * @returns {{ mappings: string }}
+ */
+export function shiftSourceMapPastWrapper(map) {
+  const parsed = typeof map === "string" ? JSON.parse(map) : map;
+  return { ...parsed, mappings: `;${parsed.mappings}` };
+}
+
+/**
  * tsup plugin: gives every {@link CLASSIC_SCRIPT_CHUNKS} bundle its own scope. Other entries are
  * left alone; `content-agent.js` must stay an ES module.
  *
- * @returns {{ name: string, renderChunk(code: string, chunk: { path: string }): { code: string } | undefined }}
+ * @returns {{ name: string, renderChunk(code: string, chunk: { path: string, map?: string | object | null }): { code: string, map?: object } | undefined }}
  */
 export function contentScriptScopePlugin() {
   return {
     name: "content-script-scope",
     renderChunk(code, chunk) {
-      return CLASSIC_SCRIPT_CHUNKS.includes(basename(chunk.path))
-        ? { code: wrapInScriptScope(code) }
-        : undefined;
+      if (!CLASSIC_SCRIPT_CHUNKS.includes(basename(chunk.path))) {
+        return undefined;
+      }
+
+      const wrapped = { code: wrapInScriptScope(code) };
+      return chunk.map ? { ...wrapped, map: shiftSourceMapPastWrapper(chunk.map) } : wrapped;
     }
   };
 }

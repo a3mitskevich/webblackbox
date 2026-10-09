@@ -97,14 +97,21 @@ describe("content script scope", () => {
     expect(Object.keys(scoped)).toEqual(["$"]);
   });
 
-  it("wraps content.js and injected.js only and keeps their line numbers", () => {
+  it("wraps content.js and injected.js only and moves their source maps with them", () => {
     const plugin = contentScriptScopePlugin();
+    const map = { version: 3, sources: ["a.ts"], names: [], mappings: "AAAA;AACA" };
 
     for (const file of ["content.js", "injected.js"]) {
       const code = `// module\nvar a = 1;\n//# sourceMappingURL=${file}.map`;
-      const wrapped = plugin.renderChunk(code, { path: `/x/build/${file}` })?.code ?? "";
+      const result = plugin.renderChunk(code, {
+        path: `/x/build/${file}`,
+        map: JSON.stringify(map)
+      });
+      const wrapped = result?.code ?? "";
 
-      expect(wrapped.split("\n")[1]).toBe("var a = 1;");
+      // The bundle keeps its lines and columns one line lower, and so does its map.
+      expect(wrapped.split("\n").slice(1, 3)).toEqual(["// module", "var a = 1;"]);
+      expect(result?.map).toEqual({ ...map, mappings: ";AAAA;AACA" });
       expect(wrapped.trimEnd().endsWith("})();")).toBe(true);
       expect(isWrappedInScriptScope(wrapped)).toBe(true);
       // As emitted: tsup appends the source map comment after the plugin ran.
@@ -112,6 +119,9 @@ describe("content script scope", () => {
     }
 
     const code = "// module\nvar a = 1;";
+    expect(plugin.renderChunk(code, { path: "/x/build/content.js" })).toEqual({
+      code: wrapInScriptScope(code)
+    });
     expect(plugin.renderChunk(code, { path: "/x/build/content-agent.js" })).toBeUndefined();
     expect(plugin.renderChunk(code, { path: "/x/build/sw.js" })).toBeUndefined();
     expect(isWrappedInScriptScope(code)).toBe(false);
