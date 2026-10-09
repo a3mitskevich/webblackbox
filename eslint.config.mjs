@@ -35,7 +35,11 @@ export default tseslint.config(
     }
   },
   {
-    files: ["apps/**/e2e-demo/**/*.{js,mjs,cjs}", "apps/**/public/**/*.{js,mjs,cjs}"],
+    files: [
+      "apps/**/e2e-demo/**/*.{js,mjs,cjs}",
+      "apps/**/public/**/*.{js,mjs,cjs}",
+      "apps/extension/scripts/demo-video/site/**/*.js"
+    ],
     languageOptions: {
       globals: {
         ...globals.browser
