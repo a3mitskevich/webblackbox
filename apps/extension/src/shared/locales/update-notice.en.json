@@ -1,0 +1,7 @@
+{
+  "updateNoticeAvailable": "Version {latest} is available (you have {installed}).",
+  "updateNoticeHint": "The Player's extension guide has the download and the update steps.",
+  "updateNoticeOpenGuide": "Open the Player",
+  "updateNoticeDismiss": "Hide",
+  "updateNoticeDismissTitle": "Hide until a newer version appears"
+}

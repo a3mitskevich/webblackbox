@@ -1,0 +1,7 @@
+{
+  "updateNoticeAvailable": "Доступна версия {latest} (у вас {installed}).",
+  "updateNoticeHint": "Архив и шаги обновления — в руководстве по расширению в Player.",
+  "updateNoticeOpenGuide": "Открыть Player",
+  "updateNoticeDismiss": "Скрыть",
+  "updateNoticeDismissTitle": "Скрыть до выхода следующей версии"
+}

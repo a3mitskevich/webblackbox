@@ -188,6 +188,7 @@ function createHarness(overrides: Partial<InboundRouterDeps> = {}): Harness {
       setRecordingBadge: vi.fn(async () => undefined),
       setFreezeBadge: vi.fn(async () => undefined),
       refreshActionBadge: vi.fn(async () => undefined),
+      refreshNoticeBadge: vi.fn(async () => undefined),
       notifyTabStatus: vi.fn(async () => undefined),
       resolveFullBodyCaptureRule: vi.fn(),
       persistRuntimeState: vi.fn(async () => undefined),

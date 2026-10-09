@@ -15,6 +15,7 @@ import {
   createBoundedManagedPolicyReader,
   readManagedEnterprisePolicy
 } from "../shared/options-storage.js";
+import { loadKnownPlayerUrl } from "../shared/player-url.js";
 import { migrateSettingsStorage } from "../shared/settings-migration.js";
 import { createArtifactsController } from "./artifacts.js";
 import { createScreenshotArtifactsController } from "./artifacts-screenshot.js";
@@ -55,6 +56,7 @@ import { createThrottledPush } from "./throttled-push.js";
 import { monotonicTime, perfNow, wait } from "./time-utils.js";
 import { TabsContextTracker, type TabsContextEmission } from "./tabs-context/tracker.js";
 import { resolveUiActionTabId } from "./ui-action-target.js";
+import { createExtensionUpdateChecker, EXTENSION_UPDATE_ALARM } from "./update-check.js";
 
 const chromeApi = getChromeApi();
 
@@ -351,7 +353,17 @@ const sessionCommands = createSessionCommands({
   ensureOffscreenDocument: offscreenDocuments.ensureOffscreenDocument,
   createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
   loadPerformanceBudgetConfig,
-  monotonicTime
+  monotonicTime,
+  idleBadgeNotice: () => extensionUpdates.badge()
+});
+const extensionUpdates = createExtensionUpdateChecker({
+  storageLocal: chromeApi?.storage?.local,
+  alarms: chromeApi?.alarms,
+  loadPlayerUrl: () => loadKnownPlayerUrl(chromeApi?.storage),
+  fetch: typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : undefined,
+  installedVersion: chromeApi?.runtime?.getManifest?.().version ?? "",
+  now: () => Date.now(),
+  refreshBadge: () => sessionCommands.refreshNoticeBadge()
 });
 const navigationRouter = createNavigationRouter({
   sessionRegistry,
@@ -400,6 +412,11 @@ const runtimeStateRestored = sessionCommands.restoreRuntimeState().catch((error)
 
 // Retention of stopped, unexported recordings: alarms outlive the worker, timers do not.
 chromeApi?.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm.name === EXTENSION_UPDATE_ALARM) {
+    void extensionUpdates.check();
+    return;
+  }
+
   const sid = sidFromRetentionAlarm(alarm.name);
 
   if (sid) {
@@ -415,7 +432,12 @@ chromeApi?.runtime?.onStartup?.addListener(() => {
   void getAtRestKey().catch((error) => {
     console.warn("[WebBlackbox] at-rest encryption key unavailable at browser start", error);
   });
+  void extensionUpdates.check();
 });
+
+// The newer-version notice: checked at browser start, on install/update, every few hours and
+// when the Player URL changes. The alarm survives worker restarts; it is created once.
+void extensionUpdates.ensureAlarm();
 
 // Every boot re-applies the setting: it also restores a registration an update dropped.
 void contentInjection.sync();
@@ -424,10 +446,13 @@ chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
   if (areaName === "local" && Object.hasOwn(changes, CONTENT_INJECTION_STORAGE_KEY)) {
     void contentInjection.sync();
   }
+
+  extensionUpdates.handleStorageChange(changes, areaName);
 });
 
 chromeApi?.runtime?.onInstalled.addListener(() => {
   void sessionCommands.setIdleBadge();
+  void extensionUpdates.check();
 });
 
 chromeApi?.runtime?.onConnect.addListener((port) => {

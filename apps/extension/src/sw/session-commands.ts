@@ -28,6 +28,7 @@ import {
   listEnterpriseCappedCategories,
   toArchivedProfileInfo
 } from "../shared/profiles/resolve.js";
+import { createActionBadge, type BadgeSpec } from "./action-badge.js";
 import type { AtRestKeyRecord } from "./at-rest-key.js";
 import type { ScreenRecordingController } from "./artifacts-screen-recording.js";
 import type { StorageArtifactsController } from "./artifacts-storage.js";
@@ -79,7 +80,6 @@ import { resolveTabsContextLevel, type TabsContextTracker } from "./tabs-context
 const FULL_MODE_BODY_STOP_DRAIN_MS = 3_000;
 const FULL_MODE_BODY_STOP_DRAIN_PER_BODY_MS = 25;
 const FULL_MODE_BODY_STOP_DRAIN_MAX_MS = 15_000;
-const FREEZE_BADGE_HIGHLIGHT_MS = 15_000;
 const PERFORMANCE_BUDGET_BREACH_COOLDOWN_MS = 15_000;
 const PERFORMANCE_BUDGET_ERROR_RATE_MIN_SAMPLES = 10;
 /** Full mode reads bodies through CDP whatever loaded them, so SVG images (text) are kept too. */
@@ -132,6 +132,8 @@ export type SessionCommandsDeps = {
   createPipeline: (sid: string) => SessionPipelineClient;
   loadPerformanceBudgetConfig: () => Promise<PerformanceBudgetConfig>;
   monotonicTime: () => number;
+  /** The lowest-priority badge (the update notice), shown when nothing else claims it. */
+  idleBadgeNotice?: () => Promise<BadgeSpec | null>;
 };
 
 export type SessionCommandsController = {
@@ -148,8 +150,10 @@ export type SessionCommandsController = {
   setIdleBadge: () => Promise<void>;
   setRecordingBadge: () => Promise<void>;
   setFreezeBadge: () => Promise<void>;
-  /** REC while anything records, otherwise `!` while a profile-change notice is unread. */
+  /** Applies the badge precedence of `action-badge.ts`. */
   refreshActionBadge: () => Promise<void>;
+  /** `refreshActionBadge`, unless a freeze highlight runs (it re-applies the badge when done). */
+  refreshNoticeBadge: () => Promise<void>;
   notifyTabStatus: (
     tabId: number,
     active: boolean,
@@ -175,7 +179,15 @@ export type SessionCommandsController = {
  */
 export function createSessionCommands(deps: SessionCommandsDeps): SessionCommandsController {
   const { sessionRegistry } = deps;
-  let freezeBadgeTimer: ReturnType<typeof setTimeout> | null = null;
+  const badge = createActionBadge({
+    action: deps.action,
+    isRecording: () => sessionRegistry.tabCount() > 0,
+    hasUnreadProfileNotice: () =>
+      [...sessionRegistry.sidRuntimes()].some(
+        (runtime) => runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
+      ),
+    idleNotice: deps.idleBadgeNotice
+  });
 
   async function startSession(
     tabId: number,
@@ -491,69 +503,19 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
   }
 
   async function setIdleBadge(): Promise<void> {
-    await deps.action?.setBadgeText({ text: "" }).catch((error) => {
-      console.warn("[WebBlackbox] failed to clear the action badge", error);
-    });
+    await badge.setIdle();
   }
 
   async function setRecordingBadge(): Promise<void> {
-    await deps.action?.setBadgeText({ text: "REC" }).catch((error) => {
-      console.warn("[WebBlackbox] failed to set the recording badge", error);
-    });
-    await deps.action?.setBadgeBackgroundColor({ color: "#c92a2a" }).catch((error) => {
-      console.warn("[WebBlackbox] failed to set the recording badge color", error);
-    });
+    await badge.setRecording();
   }
 
   async function setFreezeBadge(): Promise<void> {
-    await deps.action?.setBadgeText({ text: "ERR" }).catch((error) => {
-      console.warn("[WebBlackbox] failed to set the freeze badge", error);
-    });
-    await deps.action?.setBadgeBackgroundColor({ color: "#9b2226" }).catch((error) => {
-      console.warn("[WebBlackbox] failed to set the freeze badge color", error);
-    });
-
-    if (freezeBadgeTimer !== null) {
-      clearTimeout(freezeBadgeTimer);
-    }
-
-    freezeBadgeTimer = setTimeout(() => {
-      freezeBadgeTimer = null;
-
-      if (sessionRegistry.tabCount() > 0) {
-        void setRecordingBadge();
-        return;
-      }
-
-      void setIdleBadge();
-    }, FREEZE_BADGE_HIGHLIGHT_MS);
+    await badge.setFreeze();
   }
 
-  /**
-   * REC while anything records, otherwise `!` while a profile-change notice is unread, otherwise
-   * no badge.
-   */
   async function refreshActionBadge(): Promise<void> {
-    if (sessionRegistry.tabCount() > 0) {
-      await setRecordingBadge();
-      return;
-    }
-
-    const unread = [...sessionRegistry.sidRuntimes()].some(
-      (runtime) => runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
-    );
-
-    if (!unread) {
-      await setIdleBadge();
-      return;
-    }
-
-    await deps.action?.setBadgeText({ text: "!" }).catch((error) => {
-      console.warn("[WebBlackbox] failed to set the profile-change badge", error);
-    });
-    await deps.action?.setBadgeBackgroundColor({ color: "#b35c00" }).catch((error) => {
-      console.warn("[WebBlackbox] failed to set the profile-change badge color", error);
-    });
+    await badge.refresh();
   }
 
   async function notifyTabStatus(
@@ -835,6 +797,7 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     setRecordingBadge,
     setFreezeBadge,
     refreshActionBadge,
+    refreshNoticeBadge: badge.refreshUnlessHighlighted,
     notifyTabStatus,
     resolveFullBodyCaptureRule,
     persistRuntimeState,
