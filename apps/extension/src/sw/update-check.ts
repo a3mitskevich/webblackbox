@@ -42,8 +42,11 @@ type UpdateAlarmsLike = {
 export type ExtensionUpdateCheckDeps = {
   storageLocal: StorageLocalLike | undefined;
   alarms: UpdateAlarmsLike | undefined;
-  /** The effective Player URL, "" when none is configured. Must not throw. */
-  loadPlayerUrl: () => Promise<string>;
+  /**
+   * The effective Player URL, "" when none is configured, null when that is unknown (the policy
+   * did not answer). Must not throw.
+   */
+  loadPlayerUrl: () => Promise<string | null>;
   fetch: typeof fetch | undefined;
   installedVersion: string;
   now: () => number;
@@ -95,6 +98,12 @@ export function createExtensionUpdateChecker(
   async function runCheck(): Promise<void> {
     try {
       const playerUrl = await deps.loadPlayerUrl();
+
+      // Unknown is not "none": forgetting here would drop a policy Player's answer.
+      if (playerUrl === null) {
+        return;
+      }
+
       const latestVersion = playerUrl ? await fetchLatestVersion(playerUrl) : null;
 
       if (latestVersion) {

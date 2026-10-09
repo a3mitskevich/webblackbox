@@ -50,7 +50,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function createHarness(
   options: {
-    playerUrl?: string;
+    playerUrl?: string | null;
     fetch?: ExtensionUpdateCheckDeps["fetch"];
     storage?: Record<string, unknown>;
     installedVersion?: string;
@@ -60,7 +60,9 @@ function createHarness(
   const storage = createStorage(options.storage);
   const fetchImpl = options.fetch ?? vi.fn(async () => jsonResponse({ version: "0.8.0" }));
   const refreshBadge = vi.fn(async () => undefined);
-  const loadPlayerUrl = vi.fn(async () => options.playerUrl ?? PLAYER_URL);
+  const loadPlayerUrl = vi.fn(async (): Promise<string | null> =>
+    options.playerUrl === undefined ? PLAYER_URL : options.playerUrl
+  );
   const checker = createExtensionUpdateChecker({
     storageLocal: storage,
     alarms: options.alarms,
@@ -164,6 +166,19 @@ describe("extension update check", () => {
     expect(harness.refreshBadge).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the last answer when the Player URL is unknown (the policy did not answer)", async () => {
+    const harness = createHarness({
+      playerUrl: null,
+      storage: { [EXTENSION_UPDATE_STORAGE_KEY]: stored("0.8.0") }
+    });
+
+    await harness.checker.check();
+
+    expect(harness.fetch).not.toHaveBeenCalled();
+    expect(harness.storage.values.get(EXTENSION_UPDATE_STORAGE_KEY)).toEqual(stored("0.8.0"));
+    expect(harness.refreshBadge).toHaveBeenCalledTimes(1);
+  });
+
   it("forgets an answer from another Player when the new one cannot be reached", async () => {
     vi.spyOn(console, "debug").mockImplementation(() => undefined);
     const harness = createHarness({
@@ -212,12 +227,12 @@ describe("extension update check", () => {
   });
 
   it("does not lose a Player URL set while a check that read the old one is running", async () => {
-    let releaseStartupRead: (url: string) => void = () => undefined;
+    let releaseStartupRead: (url: string | null) => void = () => undefined;
     const harness = createHarness();
     harness.loadPlayerUrl
       .mockImplementationOnce(
         () =>
-          new Promise<string>((resolve) => {
+          new Promise<string | null>((resolve) => {
             releaseStartupRead = resolve;
           })
       )

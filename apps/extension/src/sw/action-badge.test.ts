@@ -104,6 +104,55 @@ describe("action badge precedence", () => {
     expect(harness.text()).toBe("!");
   });
 
+  it("does not overwrite REC or ERR set while the update notice was being read", async () => {
+    for (const setNewer of ["setRecording", "setFreeze"] as const) {
+      vi.useFakeTimers();
+      let releaseRead: (badge: BadgeSpec | null) => void = () => undefined;
+      const harness = createHarness();
+      const badge = createActionBadge({
+        action: harness.action,
+        isRecording: () => false,
+        hasUnreadProfileNotice: () => false,
+        idleNotice: () =>
+          new Promise<BadgeSpec | null>((resolve) => {
+            releaseRead = resolve;
+          })
+      });
+
+      const idle = badge.setIdle();
+      await badge[setNewer]();
+      releaseRead(UPDATE);
+      await idle;
+
+      expect(harness.text()).toBe(setNewer === "setRecording" ? "REC" : "ERR");
+      vi.useRealTimers();
+    }
+  });
+
+  it("applies the latest of two overlapping idle refreshes", async () => {
+    const reads: Array<(badge: BadgeSpec | null) => void> = [];
+    const harness = createHarness();
+    const badge = createActionBadge({
+      action: harness.action,
+      isRecording: () => false,
+      hasUnreadProfileNotice: () => false,
+      idleNotice: () =>
+        new Promise<BadgeSpec | null>((resolve) => {
+          reads.push(resolve);
+        })
+    });
+
+    const stale = badge.setIdle();
+    const fresh = badge.setIdle();
+    reads[1]?.(null);
+    await fresh;
+    reads[0]?.(UPDATE);
+    await stale;
+
+    expect(harness.action.setBadgeText).toHaveBeenCalledTimes(1);
+    expect(harness.text()).toBe("");
+  });
+
   it("survives a missing action API", async () => {
     const badge = createActionBadge({
       action: undefined,

@@ -84,11 +84,15 @@ export function resolvePlayerUrl(local: unknown, managed: string): PlayerUrlSett
 
 /**
  * The policy's Player URL, or "" when unset, invalid or unavailable (also when the policy has not
- * answered after `MANAGED_POLICY_READ_TIMEOUT_MS`). Never throws.
+ * answered after `MANAGED_POLICY_READ_TIMEOUT_MS`, which `onTimeout` reports). Never throws.
  */
-export async function loadManagedPlayerUrl(managed: StorageAreaLike | undefined): Promise<string> {
+export async function loadManagedPlayerUrl(
+  managed: StorageAreaLike | undefined,
+  onTimeout?: () => void
+): Promise<string> {
   const readPolicy = createBoundedManagedPolicyReader(() => readManagedEnterprisePolicy(managed), {
-    timeoutMs: MANAGED_POLICY_READ_TIMEOUT_MS
+    timeoutMs: MANAGED_POLICY_READ_TIMEOUT_MS,
+    onTimeout
   });
   const policy = await readPolicy();
   return normalizePlayerUrl(policy?.[PLAYER_URL_POLICY_KEY]);
@@ -104,6 +108,25 @@ export async function loadPlayerUrlSetting(
   ]);
 
   return resolvePlayerUrl(local, managed);
+}
+
+/**
+ * The effective URL for background work that drops state when no Player is configured: "" when
+ * none is, null when that is unknown because the policy did not answer in time (Chrome can stall
+ * it at browser start, and a policy URL wins over the local one). Never throws.
+ */
+export async function loadKnownPlayerUrl(
+  storage: { local?: StorageAreaLike; managed?: StorageAreaLike } | undefined
+): Promise<string | null> {
+  let isPolicyUnanswered = false;
+  const [local, managed] = await Promise.all([
+    readLocalPlayerUrl(storage?.local),
+    loadManagedPlayerUrl(storage?.managed, () => {
+      isPolicyUnanswered = true;
+    })
+  ]);
+
+  return isPolicyUnanswered ? null : resolvePlayerUrl(local, managed).url;
 }
 
 async function readLocalPlayerUrl(local: StorageAreaLike | undefined): Promise<unknown> {

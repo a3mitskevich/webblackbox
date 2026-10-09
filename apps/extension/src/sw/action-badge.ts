@@ -43,6 +43,13 @@ export type ActionBadgeController = {
 
 export function createActionBadge(deps: ActionBadgeDeps): ActionBadgeController {
   let freezeBadgeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Bumped by every badge request; an idle notice read in the meantime is stale. */
+  let latestRequest = 0;
+
+  function claim(): number {
+    latestRequest += 1;
+    return latestRequest;
+  }
 
   async function apply(badge: BadgeSpec | null, label: string): Promise<void> {
     await deps.action?.setBadgeText({ text: badge?.text ?? "" }).catch((error) => {
@@ -57,15 +64,24 @@ export function createActionBadge(deps: ActionBadgeDeps): ActionBadgeController 
   }
 
   async function setIdle(): Promise<void> {
+    const request = claim();
     const notice = await deps.idleNotice?.().catch(() => null);
+
+    // REC or ERR may have been set while the notice was read: do not overwrite them.
+    if (request !== latestRequest) {
+      return;
+    }
+
     await apply(notice ?? null, notice ? "idle notice" : "idle");
   }
 
   async function setRecording(): Promise<void> {
+    claim();
     await apply(RECORDING_BADGE, "recording");
   }
 
   async function setFreeze(): Promise<void> {
+    claim();
     await apply(FREEZE_BADGE, "freeze");
 
     if (freezeBadgeTimer !== null) {
@@ -85,6 +101,7 @@ export function createActionBadge(deps: ActionBadgeDeps): ActionBadgeController 
     }
 
     if (deps.hasUnreadProfileNotice()) {
+      claim();
       await apply(PROFILE_CHANGE_BADGE, "profile-change");
       return;
     }

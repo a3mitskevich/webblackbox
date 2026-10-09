@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  loadKnownPlayerUrl,
   loadManagedPlayerUrl,
   loadPlayerUrlSetting,
   normalizePlayerUrl,
@@ -118,6 +119,26 @@ describe("player URL setting", () => {
 
       await expect(setting).resolves.toEqual({ url: "https://local.example.com/", managed: false });
       await expect(managedUrl).resolves.toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("tells an unknown URL (the policy did not answer) from an unset one", async () => {
+    const local = area({ [PLAYER_URL_STORAGE_KEY]: "https://local.example.com/" });
+
+    await expect(loadKnownPlayerUrl({ local, managed: area({}) })).resolves.toBe(
+      "https://local.example.com/"
+    );
+    await expect(loadKnownPlayerUrl({ local: area({}), managed: failing() })).resolves.toBe("");
+    await expect(loadKnownPlayerUrl(undefined)).resolves.toBe("");
+
+    vi.useFakeTimers();
+
+    try {
+      const known = loadKnownPlayerUrl({ local, managed: pending() });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(known).resolves.toBeNull();
     } finally {
       vi.useRealTimers();
     }

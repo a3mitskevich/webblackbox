@@ -15,7 +15,7 @@ import {
   createBoundedManagedPolicyReader,
   readManagedEnterprisePolicy
 } from "../shared/options-storage.js";
-import { loadPlayerUrlSetting } from "../shared/player-url.js";
+import { loadKnownPlayerUrl } from "../shared/player-url.js";
 import { migrateSettingsStorage } from "../shared/settings-migration.js";
 import { createArtifactsController } from "./artifacts.js";
 import { createScreenshotArtifactsController } from "./artifacts-screenshot.js";
@@ -359,7 +359,7 @@ const sessionCommands = createSessionCommands({
 const extensionUpdates = createExtensionUpdateChecker({
   storageLocal: chromeApi?.storage?.local,
   alarms: chromeApi?.alarms,
-  loadPlayerUrl: async () => (await loadPlayerUrlSetting(chromeApi?.storage)).url,
+  loadPlayerUrl: () => loadKnownPlayerUrl(chromeApi?.storage),
   fetch: typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : undefined,
   installedVersion: chromeApi?.runtime?.getManifest?.().version ?? "",
   now: () => Date.now(),
