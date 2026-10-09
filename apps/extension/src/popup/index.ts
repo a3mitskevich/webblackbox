@@ -2,6 +2,10 @@ import type { CaptureMode, ExportPolicy, FreezeReason } from "@webblackbox/proto
 
 import { getChromeApi } from "../shared/chrome-api.js";
 import { loadExportPolicyPrefs, toExportPolicy } from "../shared/export-policy-prefs.js";
+import {
+  loadExtensionUpdateNotice,
+  type ExtensionUpdateNotice
+} from "../shared/extension-update.js";
 import { createExtensionI18n, loadExtensionLocale } from "../shared/i18n.js";
 import {
   PORT_NAMES,
@@ -27,6 +31,13 @@ import {
   saveProfileChoice,
   toStartProfileId
 } from "./profile-picker.js";
+import {
+  createUpdateBanner,
+  DISMISS_UPDATE_ACTION,
+  dismissExtensionUpdate,
+  OPEN_UPDATE_GUIDE_ACTION,
+  updateGuideUrl
+} from "./update-banner.js";
 import {
   createLastSessionPanel,
   createPopupHeader,
@@ -77,6 +88,7 @@ const state: {
   statusText?: string;
   statusIsError?: boolean;
   lastFreeze?: { sid: string; reason: FreezeReason; at: number };
+  updateNotice?: ExtensionUpdateNotice | null;
 } = {
   tabId: null,
   sessions: [],
@@ -119,6 +131,10 @@ async function bootstrap(container: HTMLElement): Promise<void> {
   });
   postUiMessage({ kind: "ui.request-session-list" });
   requestProfilePreview();
+  void loadExtensionUpdateNotice(chromeApi?.storage?.local, extensionVersion).then((notice) => {
+    state.updateNotice = notice;
+    render(container);
+  });
 
   render(container);
 }
@@ -249,6 +265,10 @@ function render(container: HTMLElement): void {
         : null
     )
   ]);
+
+  if (state.updateNotice) {
+    section.append(createUpdateBanner(state.updateNotice, t));
+  }
 
   if (cancelledSession?.profileCancel) {
     section.append(
@@ -399,6 +419,14 @@ function bindActions(
   on("export", () =>
     exportSession ? runDialogFlow(() => exportWithDialog(container, exportSession)) : undefined
   );
+  on(OPEN_UPDATE_GUIDE_ACTION, () => openUpdateGuide());
+  on(DISMISS_UPDATE_ACTION, async () => {
+    if (state.updateNotice) {
+      await dismissExtensionUpdate(chromeApi?.storage?.local, state.updateNotice);
+      state.updateNotice = null;
+      render(container);
+    }
+  });
   on("open-sessions", () => openExtensionPage("sessions.html"));
   on("open-options", () => openExtensionPage("options.html"));
 
@@ -567,6 +595,15 @@ async function openExtensionPage(path: string): Promise<void> {
 
   await chromeApi.tabs.create({ url, active: true });
   window.close();
+}
+
+async function openUpdateGuide(): Promise<void> {
+  const url = state.updateNotice ? updateGuideUrl(state.updateNotice) : null;
+
+  if (url && typeof chromeApi?.tabs?.create === "function") {
+    await chromeApi.tabs.create({ url, active: true });
+    window.close();
+  }
 }
 
 async function startRecordingFromPopup(

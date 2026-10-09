@@ -127,7 +127,11 @@ export type ChromeApi = {
   };
   /** Persisted timers: they fire after the service worker was stopped and restarted. */
   alarms?: {
-    create(name: string, alarmInfo: { when: number }): Promise<void> | void;
+    create(
+      name: string,
+      alarmInfo: { when?: number; delayInMinutes?: number; periodInMinutes?: number }
+    ): Promise<void> | void;
+    get?(name: string): Promise<{ name: string; periodInMinutes?: number } | undefined>;
     clear(name: string): Promise<boolean> | void;
     onAlarm: {
       addListener(callback: (alarm: { name: string }) => void): void;

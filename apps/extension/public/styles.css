@@ -781,6 +781,23 @@ input[type="radio"] {
   font-size: 12px;
 }
 
+/* A newer extension version is available (informational, so brand-tinted, not a warning). */
+.wb-popup__update {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius-sm);
+  background: var(--wb-brand-soft);
+  color: var(--wb-brand-ink);
+  font-size: 12px;
+  box-shadow: inset 3px 0 0 var(--wb-brand);
+}
+
+.wb-popup__update p {
+  margin: 0;
+}
+
 /* Profile notices: the recording stopped because its profile changed, or no profile exists. */
 .wb-popup__alert {
   display: grid;

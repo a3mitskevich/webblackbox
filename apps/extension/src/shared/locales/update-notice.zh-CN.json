@@ -1,0 +1,7 @@
+{
+  "updateNoticeAvailable": "版本 {latest} 已可用（当前为 {installed}）。",
+  "updateNoticeHint": "Player 的扩展指南提供下载和更新步骤。",
+  "updateNoticeOpenGuide": "打开 Player",
+  "updateNoticeDismiss": "隐藏",
+  "updateNoticeDismissTitle": "隐藏，直到有更新的版本"
+}
