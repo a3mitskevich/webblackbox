@@ -4,6 +4,7 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 
+import { CLASSIC_SCRIPT_CHUNKS, isWrappedInScriptScope } from "./content-script-scope.mjs";
 import { createManagedStorageSchema, MANAGED_SCHEMA_FILE } from "./managed-schema.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -287,7 +288,25 @@ export async function assertExtensionBuild(outputDir, { version, release = false
     throw new Error(`Build output manifest is invalid:\n- ${issues.join("\n- ")}`);
   }
 
+  await assertClassicScriptsScoped(outputDir);
   return manifest;
+}
+
+/** A classic script without its own scope leaks every top-level binding into the page. */
+async function assertClassicScriptsScoped(outputDir) {
+  const unscoped = [];
+
+  for (const file of CLASSIC_SCRIPT_CHUNKS) {
+    if (!isWrappedInScriptScope(await readFile(resolve(outputDir, file), "utf8"))) {
+      unscoped.push(file);
+    }
+  }
+
+  if (unscoped.length > 0) {
+    throw new Error(
+      `Classic scripts must be wrapped in their own scope (contentScriptScopePlugin): ${unscoped.join(", ")}`
+    );
+  }
 }
 
 export async function prepareBuildOutput({

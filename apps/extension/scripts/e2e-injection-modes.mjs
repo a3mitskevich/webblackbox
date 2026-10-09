@@ -87,6 +87,7 @@ async function runScenarios(origin, extension, extensionId) {
   assert(start?.ok !== false, "Start was rejected", start);
   await recorded.waitForIndicator(true);
   report.onDemandStarted = await recorded.waitForFrames(2);
+  await recorded.expectPageGlobalsIntact("after Start");
 
   // An iframe added after Start gets the script when it commits.
   await recorded.evaluate(`(() => {
@@ -102,6 +103,7 @@ async function runScenarios(origin, extension, extensionId) {
   await recorded.reload();
   await recorded.waitForIndicator(true);
   report.onDemandAfterReload = await recorded.waitForFrames(2);
+  await recorded.expectPageGlobalsIntact("after a reload");
   report.crossOriginAfterReload = await expectCrossOriginFrameEvents(recorded, extension);
 
   await recorded.evaluate(`(location.assign("/next/?tab=recorded&xo=1"), true)`);
@@ -115,6 +117,7 @@ async function runScenarios(origin, extension, extensionId) {
   );
   await recorded.waitForIndicator(true);
   report.onDemandAfterNavigation = await recorded.waitForFrames(2);
+  await recorded.expectPageGlobalsIntact("after a navigation");
   report.crossOriginAfterNavigation = await expectCrossOriginFrameEvents(recorded, extension);
   await recorded.clickInFrames();
 
@@ -417,6 +420,16 @@ async function openTrackedPage(url, extensionId, { settleMs = SETTLE_MS } = {}) 
         `Expected content.js in ${count} frame(s) of ${url}`
       );
     },
+    // The page hooks run as a classic script in the page; their bindings must not replace its `$`.
+    async expectPageGlobalsIntact(when) {
+      await waitFor(
+        () => evaluate(`window.__WEBBLACKBOX_INJECTED__ === true || null`),
+        15_000,
+        `Page hooks did not run in ${url} ${when}`
+      );
+      const jQuery = await evaluate(`typeof $ === "function" && $.isPageJQuery === true`);
+      assert(jQuery, `Page hooks replaced the page's $ ${when}`, { url });
+    },
     async hasIndicator() {
       return evaluate(`Boolean(document.querySelector('[data-webblackbox-indicator="true"]'))`);
     },
@@ -492,6 +505,7 @@ async function startPageServer() {
         : ""
     }
     <script>
+      window.$ = Object.assign(() => [], { isPageJQuery: true });
       document.getElementById("act").addEventListener("click", () => {
         console.log("injection-e2e act");
         fetch("/api/ping").catch(() => undefined);
