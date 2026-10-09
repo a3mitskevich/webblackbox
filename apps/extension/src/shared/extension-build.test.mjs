@@ -9,10 +9,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   contentScriptScopePlugin,
+  isWrappedInScriptScope,
   wrapInScriptScope
 } from "../../scripts/lib/content-script-scope.mjs";
 
 import {
+  assertExtensionBuild,
   createChromeArchive,
   createExtensionManifest,
   validateExtensionManifest
@@ -79,17 +81,67 @@ describe("content script scope", () => {
     expect(scoped.readStarted()).toBe(true);
   });
 
-  it("wraps only content.js and keeps its line numbers", () => {
-    const plugin = contentScriptScopePlugin();
-    const code = "// module\nvar a = 1;\n//# sourceMappingURL=content.js.map";
+  it("keeps the page's own globals when the page hooks run in the MAIN world", () => {
+    // `injected.js` runs as a classic script in the page; minified, its bindings are `$`, `N`…
+    const minifiedHooks = "var $ = false; function N() {} class G {}";
+    const jQuery = () => "jQuery";
 
+    const bare = { $: jQuery };
+    runInNewContext(minifiedHooks, bare);
+    expect(bare.$).toBe(false);
+    expect(bare).toHaveProperty("N");
+
+    const scoped = { $: jQuery };
+    runInNewContext(wrapInScriptScope(minifiedHooks), scoped);
+    expect(scoped.$).toBe(jQuery);
+    expect(Object.keys(scoped)).toEqual(["$"]);
+  });
+
+  it("wraps content.js and injected.js only and moves their source maps with them", () => {
+    const plugin = contentScriptScopePlugin();
+    const map = { version: 3, sources: ["a.ts"], names: [], mappings: "AAAA;AACA" };
+
+    for (const file of ["content.js", "injected.js"]) {
+      const code = `// module\nvar a = 1;\n//# sourceMappingURL=${file}.map`;
+      const result = plugin.renderChunk(code, {
+        path: `/x/build/${file}`,
+        map: JSON.stringify(map)
+      });
+      const wrapped = result?.code ?? "";
+
+      // The bundle keeps its lines and columns one line lower, and so does its map.
+      expect(wrapped.split("\n").slice(1, 3)).toEqual(["// module", "var a = 1;"]);
+      expect(result?.map).toEqual({ ...map, mappings: ";AAAA;AACA" });
+      expect(wrapped.trimEnd().endsWith("})();")).toBe(true);
+      expect(isWrappedInScriptScope(wrapped)).toBe(true);
+      // As emitted: tsup appends the source map comment after the plugin ran.
+      expect(isWrappedInScriptScope(`${wrapped}//# sourceMappingURL=${file}.map`)).toBe(true);
+    }
+
+    const code = "// module\nvar a = 1;";
+    expect(plugin.renderChunk(code, { path: "/x/build/content.js" })).toEqual({
+      code: wrapInScriptScope(code)
+    });
     expect(plugin.renderChunk(code, { path: "/x/build/content-agent.js" })).toBeUndefined();
     expect(plugin.renderChunk(code, { path: "/x/build/sw.js" })).toBeUndefined();
+    expect(isWrappedInScriptScope(code)).toBe(false);
+    expect(isWrappedInScriptScope(`${code}\n//# sourceMappingURL=x.js.map`)).toBe(false);
+  });
 
-    const wrapped = plugin.renderChunk(code, { path: "/x/build/content.js" })?.code ?? "";
+  it("fails the build check when a classic script leaks top-level bindings", async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "webblackbox-extension-scope-test-"));
 
-    expect(wrapped.split("\n")[1]).toBe("var a = 1;");
-    expect(wrapped.trimEnd().endsWith("})();")).toBe(true);
+    try {
+      await writeBuildFixture(root, createExtensionManifest({ version: "1.2.3" }));
+      await expect(assertExtensionBuild(root, { version: "1.2.3" })).resolves.toBeTruthy();
+
+      await writeFile(resolve(root, "injected.js"), "var $=!1;\n");
+      await expect(assertExtensionBuild(root, { version: "1.2.3" })).rejects.toThrow(
+        /injected\.js/
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -255,8 +307,8 @@ async function writeBuildFixture(outputDir, manifest) {
     "_locales/ru/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
     "_locales/zh_CN/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
     "content-agent.js": "export {};\n",
-    "content.js": "export {};\n",
-    "injected.js": "export {};\n",
+    "content.js": wrapInScriptScope("void 0;"),
+    "injected.js": wrapInScriptScope("void 0;"),
     "offscreen.html": "<!doctype html><title>offscreen</title>\n",
     "offscreen.js": "export {};\n",
     "options.html": "<!doctype html><title>options</title>\n",
