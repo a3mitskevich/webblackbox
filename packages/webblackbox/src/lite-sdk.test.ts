@@ -490,7 +490,7 @@ describe("WebBlackboxLiteSdk", () => {
     await sdk.dispose();
   });
 
-  it("applies default export policy and allows screenshot/window override", async () => {
+  it("exports the whole session by default and allows screenshot/window override", async () => {
     const sdk = new WebBlackboxLiteSdk({
       sid: "S-sdk-export-policy",
       injectHooks: false,
@@ -557,8 +557,26 @@ describe("WebBlackboxLiteSdk", () => {
     const parsedDefault = await readWebBlackboxArchive(exportedDefault.bytes, {
       passphrase: TEST_PASSPHRASE
     });
-    expect(parsedDefault.events.some((event) => event.t < now - 20 * 60 * 1000)).toBe(false);
+    // The whole session by default; only the screenshots are left out, and the archive says so.
+    expect(parsedDefault.events.some((event) => event.t < now - 20 * 60 * 1000)).toBe(true);
     expect(parsedDefault.events.some((event) => event.type === "screen.screenshot")).toBe(false);
+    expect(parsedDefault.manifest.completeness?.truncations.map((row) => row.reason)).toEqual([
+      "screenshots-excluded"
+    ]);
+
+    const exportedWindow = await sdk.export({
+      passphrase: TEST_PASSPHRASE,
+      stopCapture: false,
+      recentWindowMs: 20 * 60 * 1000
+    });
+    const parsedWindow = await readWebBlackboxArchive(exportedWindow.bytes, {
+      passphrase: TEST_PASSPHRASE
+    });
+    expect(parsedWindow.events.some((event) => event.t < now - 20 * 60 * 1000)).toBe(false);
+    expect(parsedWindow.manifest.completeness?.truncations[0]).toMatchObject({
+      reason: "recent-window",
+      limit: 20 * 60 * 1000
+    });
 
     const exportedWithScreenshots = await sdk.export({
       passphrase: TEST_PASSPHRASE,

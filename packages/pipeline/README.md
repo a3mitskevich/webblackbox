@@ -70,15 +70,15 @@ const indexes = await pipeline.finalizeIndexes();
 // Export as archive
 const result = await pipeline.exportBundle({
   passphrase: "required-encryption-key", // every archive is encrypted (8+ characters)
-  includeScreenshots: true,
-  maxArchiveBytes: 100 * 1024 * 1024,
-  recentWindowMs: 20 * 60 * 1000
+  includeScreenshots: true
 });
 
 console.log(`Exported: ${result.fileName} (${result.bytes.length} bytes)`);
 ```
 
-`includeScreenshots`, `includeScreenRecordings`, `maxArchiveBytes`, and `recentWindowMs` are optional export filters. Omitted ones fall back to `DEFAULT_EXPORT_POLICY` from `@webblackbox/protocol`: no screenshots, no screen recordings, at most 100 MiB, the last 20 minutes. Pass `null` for `maxArchiveBytes` or `recentWindowMs` to drop that limit; with screenshots and recordings included and both limits `null`, the export holds the full retained session. `exportBundle` throws without a passphrase of at least 8 characters.
+`includeScreenshots`, `includeScreenRecordings`, `maxArchiveBytes`, and `recentWindowMs` are optional export filters. Omitted ones fall back to `DEFAULT_EXPORT_POLICY` from `@webblackbox/protocol`: no screenshots, no screen recordings, no size limit and no recent window — the whole stored session. A positive `maxArchiveBytes` keeps the newest chunks that fit; a positive `recentWindowMs` keeps the events of that window before the session's end. `exportBundle` throws without a passphrase of at least 8 characters.
+
+Whatever an export leaves out is recorded in the (encrypted) full manifest as `completeness`: the stored event and chunk counts, one `truncations` entry per reason (`recent-window`, `size-limit`, `screenshots-excluded`, `screen-recordings-excluded`, `chunk-unreadable`) with the events and chunks left out and their time range, and the session's `interruption` when the recording ended without Stop. player-sdk's completeness report reads it.
 
 ### Streaming Export
 
