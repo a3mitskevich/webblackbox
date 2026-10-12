@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 // E2E: a site rule picks the QA profile on a matching host and the exported archive contains
-// console text and JSON response bodies. The rule also reads the DOM: a navigation on the same
-// host to a page that is slow to load keeps recording (the check waits for the loaded page).
+// console text, JSON response bodies and the page DOM (masked by its rules, Full's default). The
+// rule also reads the DOM: a navigation on the same host to a page that is slow to load keeps
+// recording (the check waits for the loaded page).
 // Navigating to a host where the rules pick another profile (Default) stops the recording: the
 // archive records why, the badge shows "!", the popup explains it, and nothing after the change is
 // recorded. Exporting without a passphrase is refused (every archive is encrypted). A second
@@ -24,6 +25,9 @@ const passphrase = "webblackbox-qa-e2e-passphrase";
 const CONSOLE_MARKER = "qa-console-marker-7f3a";
 const DEFAULT_CONSOLE_MARKER = "default-console-marker-c41d";
 const BODY_MARKER = "qa-body-marker-91c2";
+// Field values the page DOM must never carry: QA does not record input values.
+const FIELD_ATTRIBUTE_VALUE = "qa-field-attribute-5d1e";
+const FIELD_TYPED_VALUE = "qa-field-typed-7a3b";
 // A JWT-shaped value: the privacy scanner reports it (never blocking).
 const SCANNER_FINDING =
   "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJxYS1lMmUifQ.c2lnbmF0dXJlLWZvci1xYS1lMmUtdGVzdA";
@@ -230,9 +234,16 @@ async function main() {
     })
   );
   const jsonBody = bodyTexts.find((text) => text.includes(BODY_MARKER));
-  // QA keeps the DOM at the Full level: no page HTML (raw DOM blob) is recorded.
-  const rawDomSnapshots = events.filter(
+  // Full mode records the page DOM by default (QA keeps the default DOM level), masked by the
+  // profile's rules: the snapshots hold the page markup but no field values.
+  const domSnapshots = events.filter(
     (event) => event.type === "dom.snapshot" && event.data?.source === "html"
+  );
+  const domTexts = await Promise.all(
+    domSnapshots.map(async (event) => {
+      const blob = await player.getBlob(event.data?.contentHash ?? "");
+      return blob ? new TextDecoder().decode(blob.bytes) : "";
+    })
   );
 
   assert(profileConfig, "meta.config does not record the QA profile");
@@ -259,9 +270,25 @@ async function main() {
     bodies: bodyEvents.length
   });
   assert(!jsonBody.includes("hunter2"), "Sensitive body value was not masked", { jsonBody });
-  assert(rawDomSnapshots.length === 0, "QA recorded the raw DOM", {
-    snapshots: rawDomSnapshots.length
+  assert(domSnapshots.length > 0, "QA did not record the page DOM", {
+    types: [...new Set(events.map((event) => event.type))]
   });
+  assert(
+    domTexts.some((text) => text.includes("QA demo")),
+    "The DOM snapshots miss the page markup",
+    { snapshots: domSnapshots.length }
+  );
+  // The field itself is in the snapshot, so its value is missing because it was masked.
+  assert(
+    domTexts.some((text) => text.includes('name="note"')),
+    "The DOM snapshots miss the text field"
+  );
+  assert(
+    !domTexts.some(
+      (text) => text.includes(FIELD_ATTRIBUTE_VALUE) || text.includes(FIELD_TYPED_VALUE)
+    ),
+    "A field value leaked into the DOM"
+  );
   assert(!manifestText.includes("alice@example.com"), "Page title leaked into the manifest");
   assert(swExceptions.length === 0, "Service worker threw", swExceptions);
   assert(
@@ -333,7 +360,9 @@ function startDemoServer() {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>QA demo for alice@example.com</title></head>
 <body><h1>QA demo</h1><div id="qa-app"></div><input name="password" type="password">
+<input name="note" type="text" value="${FIELD_ATTRIBUTE_VALUE}">
 <script>
+  document.querySelector("[name=note]").value = "${FIELD_TYPED_VALUE}";
   window.__runQaScenario = async (marker) => {
     console.log(marker, { orderId: 42 });
     const response = await fetch("/api/orders?env=qa", {

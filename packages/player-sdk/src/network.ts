@@ -285,6 +285,7 @@ function toNetworkEntry(bucket: MutableNetworkBucket): NetworkWaterfallEntry {
       : readBodySkipReason(requestObject?.postDataSkipped ?? requestPayload?.postDataSkipped),
     responseBodyHash: asString(bodyPayload?.contentHash),
     responseBodySize: asNumber(bodyPayload?.size) ?? asNumber(bodyPayload?.sampledSize),
+    responseBodySampledSize: asNumber(bodyPayload?.sampledSize),
     responseBodyTruncated: bodyPayload?.truncated === true ? true : undefined,
     responseBodySkip: bodyPayload?.contentHash
       ? undefined

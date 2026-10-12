@@ -26,11 +26,21 @@ afterEach(() => {
 });
 
 describe("primeChildSession", () => {
+  it("passes the network buffer sizes to the child's baseline domains", async () => {
+    const router = createRouter();
+    const baseline = { network: { maxTotalBufferSize: 300_000_000 } };
+
+    await expect(
+      primeChildSession(router as unknown as ChildSessionPrimer, 7, "child-2", 1_000, baseline)
+    ).resolves.toBe(true);
+    expect(router.enableBaseline).toHaveBeenCalledWith(7, "child-2", baseline);
+  });
+
   it("enables the baseline domains, auto-attach, DOM storage and performance in order", async () => {
     const router = createRouter();
 
     await expect(prime(router, "child-1", 1_000)).resolves.toBe(true);
-    expect(router.enableBaseline).toHaveBeenCalledWith(7, "child-1");
+    expect(router.enableBaseline).toHaveBeenCalledWith(7, "child-1", {});
     expect(router.enableAutoAttach).toHaveBeenCalledWith(7, undefined, "child-1");
     expect(router.send.mock.calls.map((call) => call[1])).toEqual([
       "DOMStorage.enable",

@@ -181,7 +181,7 @@ Build entries:
 
 - `pnpm e2e:fullchain:full` runs the full-mode end-to-end capture/export demo. `pnpm e2e:fullchain:lite:on-demand` (with a reload after Start) and `pnpm e2e:fullchain:full:on-demand` run it with injection on Start only (`WB_E2E_INJECTION_MODE=on-start`).
 - `pnpm e2e:full:reload` checks "Reload and Start" in the Full engine: the session starts (CDP attached) before the reload, so the archive holds the page load from scratch; a start without the reload leaves the page alone.
-- `pnpm e2e:completeness:full` (and `:reload`) records a realistic fixture site with Full capture and checks that the archive holds every body the policy asked for, or a `network.body.skipped` event saying why it is missing.
+- `pnpm e2e:completeness:full` (and `:reload`) records a realistic fixture site with Full capture and checks that the archive holds every body the policy asked for, or a `network.body.skipped` event saying why it is missing. `:heavy` adds a burst of JSON reports sent with about 220 MB of binary media, past Chrome's default 200 MB body buffer, and still expects no `not-retained` body.
 - `pnpm e2e:pointer` checks pointer capture (clicks with targets and geometry, right/middle clicks, long press, drag, wheel, hover, mousemove samples) in both engines.
 - `pnpm e2e:tabs-context` checks that other tabs of the recorded site reach the archive and tabs of other sites never do.
 - `pnpm e2e:sw-restart` terminates the service worker mid-run and checks that the next session starts, exports, and that orphaned IndexedDB sessions are swept.
@@ -255,7 +255,7 @@ The extension uses `@webblackbox/protocol`'s `RecorderConfig` for all settings. 
   - initial DOM/storage/screenshot capture is deferred briefly after start so the tab does not stall at record activation
   - hot listeners, observers, and page-side capture loops stay inactive until recording is enabled, even when `content.js` is loaded at `document_start` (the default page injection mode)
 - `full`: same perf-freeze disable + stricter sampling/body-capture limits
-  - page-side heavy capture loops (SnapDOM screenshots, outerHTML snapshots, storage snapshots) are skipped to reduce main-thread impact
+  - page-side SnapDOM screenshots and storage snapshots are skipped (CDP takes screenshots); DOM snapshots and mutation summaries run at the default DOM level (`masked`, recorded like `allow` through the profile's masking rules) and stop only under `wireframe` or `off`
   - `injected` console patching is not enabled (CDP is the primary source in full mode); fetch/XHR hooks are off in both modes
   - screenshot/trace artifacts are still captured from the SW/CDP pipeline path
 
@@ -263,8 +263,9 @@ Body capture sizing note:
 
 - Protocol baseline (`DEFAULT_RECORDER_CONFIG`) sets `bodyCaptureMaxBytes=0`.
 - Extension `lite` keeps `bodyCaptureMaxBytes=0` and disables runtime screenshots unless screenshot cadence is explicitly enabled.
-- Extension `full` defaults clamp CDP-side body capture to `128 KiB` for safer long-session behavior.
-- Options can still override the full-mode cap per profile.
+- Extension `full` defaults to `1 MiB` per body (the same as the Full capture preset). The options page and profiles accept up to `8 MiB` (one shared ceiling, `shared/body-capture-limits.ts`); a body over the limit keeps its first bytes and is flagged `truncated`, and the Player shows "Cut at N of M".
+- When a session keeps bodies, `Network.enable` gets buffer sizes from the body limit (`sw/network-buffers.ts`): a total buffer of 256× the limit (Chrome's 200 MB at least, 512 MiB at most), a per-response buffer of 16× the limit (Chrome's 20 MB at least, 64 MiB at most) and request bodies up to the limit inline. Chrome then keeps bodies long enough to read them on heavy pages instead of evicting them (`not-retained`).
+- A body the browser keeps is read whole and cut at the limit (large reads run one at a time). A response that declares a length past the per-response buffer is streamed for its start (`Network.streamResourceContent`, up to 64 MiB, four at once); otherwise the skip says why (`too-large` with the size and a detail).
 
 The SW ↔ offscreen pipeline path also uses ingest batching with chunked drain to reduce message round-trips and avoid giant postMessage payloads under high event volume.
 
