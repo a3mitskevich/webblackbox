@@ -14,6 +14,12 @@ export default {
           ctx.testId("extension-guide"),
           "The extension guide did not open"
         );
+        // The guide reads extension/extension.json after it opens; on a slow runner it is still
+        // checking when the dialog appears.
+        await ctx.waitForSelector(
+          `${ctx.testId("extension-download-link")}, ${ctx.testId("extension-download-missing")}`,
+          "The extension guide did not finish checking for the bundled extension"
+        );
 
         const state = await ctx.evaluate(`(async () => {
           const q = (id) => document.querySelector('[data-testid="' + id + '"]');
