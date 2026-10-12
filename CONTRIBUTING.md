@@ -30,7 +30,7 @@ pnpm dev
 ```text
 webblackbox/
 ├── apps/
-│   ├── extension/      # Chrome extension (MV3, tsup)
+│   ├── extension/      # Chrome extension (MV3, WXT + Vite)
 │   ├── player/         # Hosted archive player (React, Vite)
 │   ├── mcp-server/     # MCP server CLI
 │   └── share-server/   # Optional sharing backend
@@ -86,13 +86,13 @@ Build once:
 pnpm --filter @webblackbox/extension build
 ```
 
-Watch during development:
+Watch during development (`wxt` dev server: pages reload on save, scripts rebuild and the extension reloads):
 
 ```bash
 pnpm --filter @webblackbox/extension dev
 ```
 
-Then load `apps/extension/build` in `chrome://extensions/` with `Developer mode` enabled. The build bundles one tsup entry per extension context (`apps/extension/tsup.config.ts`) and generates `manifest.json` in code (`apps/extension/scripts/lib/extension-build.mjs`); there is no static manifest file.
+Then load `apps/extension/build` in `chrome://extensions/` with `Developer mode` enabled. The extension is built with [WXT](https://wxt.dev) (`apps/extension/wxt.config.ts`): one entrypoint per extension context in `apps/extension/entrypoints/`, each a thin wrapper over its `src/` module. The manifest fields that are not derived from the entrypoints, the `dev` / `store-safe` profiles and the build checks live in `apps/extension/scripts/lib/extension-build.mjs`; there is no static manifest file. A `dev` server build adds WXT's reload command, a `localhost` host permission and the dev server to the CSP; `build` does not.
 
 Useful extension commands:
 
