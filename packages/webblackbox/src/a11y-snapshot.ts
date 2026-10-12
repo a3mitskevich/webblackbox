@@ -163,7 +163,7 @@ export function captureA11ySnapshot(options: A11ySnapshotOptions): DomA11ySnapsh
     tooDeep: 0,
     frames: 0
   };
-  const roots = walkChildren(document.body, context, readViewportRect(window), 0);
+  const roots = walkDocumentBody(document.body, context, readViewportRect(window), 0);
   const formatted = formatA11yTree(roots, {
     omittedBefore: (context.timedOut ? Math.max(1, context.skipped) : 0) + context.tooDeep,
     cutReason: context.timedOut ? "time budget, elements not examined" : "depth budget"
@@ -241,6 +241,18 @@ function isBlockedAnywhere(element: Element, context: WalkContext): boolean {
 
 function readViewportRect(view: Window): Rect {
   return { left: 0, top: 0, right: view.innerWidth, bottom: view.innerHeight };
+}
+
+/** A document's body: the walk starts below it, so a selector blocking `body` or `html` is checked here. */
+function walkDocumentBody(
+  body: HTMLElement,
+  context: WalkContext,
+  viewport: Rect,
+  depth: number
+): A11yTreeNode[] {
+  return isBlockedAnywhere(body, context)
+    ? [{ role: "generic", states: ["masked"] }]
+    : walkChildren(body, context, viewport, depth);
 }
 
 function walkChildren(
@@ -437,7 +449,7 @@ function withFrameContent(
   }
 
   context.frames += 1;
-  const children = walkChildren(body, context, readViewportRect(view), depth + 1);
+  const children = walkDocumentBody(body, context, readViewportRect(view), depth + 1);
   return children.length > 0 ? { ...node, children } : node;
 }
 
@@ -728,7 +740,10 @@ function readStates(element: Element, role: string, context: WalkContext): strin
 
   if (
     element.getAttribute("aria-selected") === "true" ||
-    (isTag(element, "OPTION") && (element as HTMLOptionElement).selected)
+    // A native option's selectedness is the user's pick: an input value.
+    (isTag(element, "OPTION") &&
+      context.policy.categories.inputs === "allow" &&
+      (element as HTMLOptionElement).selected)
   ) {
     states.push("selected");
   }

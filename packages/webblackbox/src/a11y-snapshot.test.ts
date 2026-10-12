@@ -176,6 +176,23 @@ describe("captureA11ySnapshot", () => {
     expect(text).not.toMatch(/SECRETQ|hunter2/);
   });
 
+  it("masks the whole page when a blocked selector matches its body or html", () => {
+    document.body.innerHTML = `<h1>Payroll</h1><iframe title="Inner"></iframe>`;
+    document.querySelector("iframe")!.contentDocument!.body.className = "secret";
+
+    expect(tree(policy({ redaction: { blockedSelectors: ["body"] } }))).toBe("- generic [masked]");
+    expect(tree()).toBe('- heading "Payroll" [level=1]\n- iframe "Inner":\n  - generic [masked]');
+  });
+
+  it("keeps the picked options of a list box only with inputs: allow", () => {
+    document.body.innerHTML = `<select multiple aria-label="Plans"><option selected>Gold</option><option>Basic</option></select>`;
+
+    expect(tree()).not.toContain("[selected]");
+    expect(tree(policy({ categories: { inputs: "allow" } }))).toContain(
+      '- option "Gold" [selected]'
+    );
+  });
+
   it("records no page text while designMode makes the page an editor", () => {
     document.body.innerHTML = `<p>Dear Ada</p>`;
     document.designMode = "on";
