@@ -364,9 +364,11 @@ function sanitizeAttributes(element: Element, context: SanitizeContext): void {
     if (isDroppedAttribute(element, name)) {
       element.removeAttributeNode(attribute);
     } else {
-      attribute.value = maskDomText(
-        sanitizeAttributeValue(name, attribute.value, context),
-        context.rules
+      attribute.value = sanitizeRawDomAttribute(
+        name,
+        attribute.value,
+        context.rules,
+        context.extraNameParts
       );
     }
   }
@@ -378,27 +380,65 @@ function sanitizeAttributes(element: Element, context: SanitizeContext): void {
 
 /** Inline documents, event handlers and `<meta content>` other than a few display hints. */
 function isDroppedAttribute(element: Element, name: string): boolean {
+  return isDroppedRawDomAttribute(element.localName, name, (attribute) =>
+    element.getAttribute(attribute)
+  );
+}
+
+/**
+ * Whether the built-in heuristics drop an attribute whole: inline documents, event handlers and
+ * `<meta content>` other than a few display hints. `readAttribute` reads the element's others.
+ */
+export function isDroppedRawDomAttribute(
+  tagName: string,
+  name: string,
+  readAttribute: (name: string) => string | null
+): boolean {
   // Every handler name, known to the element or not (`onfocusin`), but not `one`.
   if (DROPPED_ATTRIBUTES.has(name) || /^on[a-z]{3,}$/.test(name)) {
     return true;
   }
 
-  if (element.localName !== "meta" || name !== "content") {
+  if (tagName.toLowerCase() !== "meta" || name !== "content") {
     return false;
   }
 
-  const metaName = (
-    element.getAttribute("name") ??
-    element.getAttribute("property") ??
-    ""
-  ).toLowerCase();
+  const metaName = (readAttribute("name") ?? readAttribute("property") ?? "").toLowerCase();
 
   // `http-equiv="refresh"` carries a URL whatever `name` says.
-  return !KEPT_META_NAMES.has(metaName) || element.hasAttribute("http-equiv");
+  return !KEPT_META_NAMES.has(metaName) || readAttribute("http-equiv") !== null;
 }
 
-function sanitizeAttributeValue(name: string, value: string, context: SanitizeContext): string {
-  if (mentionsSecretName(name, context.extraNameParts) || isSecretJson(value, context)) {
+/**
+ * An attribute value under the built-in heuristics and the DOM value patterns (`name` is the
+ * lower-case local name; `extraNameParts` are the profile's body patterns).
+ */
+export function sanitizeRawDomAttribute(
+  name: string,
+  value: string,
+  rules: RedactionRules,
+  extraNameParts: readonly string[]
+): string {
+  return maskDomText(sanitizeAttributeValue(name, value, extraNameParts), rules);
+}
+
+/** A text node's value under the built-in heuristics and the DOM value patterns. */
+export function sanitizeRawDomText(
+  text: string,
+  rules: RedactionRules,
+  extraNameParts: readonly string[]
+): string {
+  return isSecretJson(text, extraNameParts)
+    ? MASKED_TEXT
+    : maskDomText(enforceTextInvariant(text, MASKED_TEXT, false), rules);
+}
+
+function sanitizeAttributeValue(
+  name: string,
+  value: string,
+  extraNameParts: readonly string[]
+): string {
+  if (mentionsSecretName(name, extraNameParts) || isSecretJson(value, extraNameParts)) {
     return MASKED_TEXT;
   }
 
@@ -413,8 +453,8 @@ function sanitizeAttributeValue(name: string, value: string, context: SanitizeCo
 }
 
 /** JSON page state (`data-props='{"auth":{"sid":…}}'`, `<pre>{…}</pre>`) naming a secret field. */
-function isSecretJson(text: string, context: SanitizeContext): boolean {
-  return /^\s*[[{]/.test(text) && mentionsSecretName(unescapeForScan(text), context.extraNameParts);
+function isSecretJson(text: string, extraNameParts: readonly string[]): boolean {
+  return /^\s*[[{]/.test(text) && mentionsSecretName(unescapeForScan(text), extraNameParts);
 }
 
 /** URL attributes and URL-shaped values (`data-src`) are sanitized like every recorded URL. */
@@ -456,9 +496,7 @@ function sanitizeTextNodes(root: Element | DocumentFragment, context: SanitizeCo
     }
 
     const text = node.nodeValue ?? "";
-    const sanitized = isSecretJson(text, context)
-      ? MASKED_TEXT
-      : maskDomText(enforceTextInvariant(text, MASKED_TEXT, false), context.rules);
+    const sanitized = sanitizeRawDomText(text, context.rules, context.extraNameParts);
 
     if (sanitized !== text) {
       node.nodeValue = sanitized;

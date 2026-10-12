@@ -1,11 +1,13 @@
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
+import { DOM_RECORDER_MESSAGE_KIND, parseDomRecorderPageMessage } from "./dom-recorder-bridge.js";
 import {
   INJECTED_MESSAGE_SOURCE,
   INJECTED_RAW_EVENT_TYPES,
   type InjectedCaptureWindowMessage
 } from "./injected-hooks.js";
 import { monotonicTime } from "./lite-capture-config.js";
+import type { DomRecorderPageMessage } from "./types.js";
 
 const INJECTED_RAW_EVENT_TYPE_SET: ReadonlySet<string> = new Set(INJECTED_RAW_EVENT_TYPES);
 /** The hooks post at most 24 events per message; a longer batch is not theirs. */
@@ -25,6 +27,8 @@ export type InjectedBridgeHost = {
   /** Session nonce the host set for the hooks; null until one is set. */
   nonce(): string | null;
   queueRawEvent(event: RawRecorderEvent): void;
+  /** A message of the page-world DOM recorder (rrweb batches and signals), validated. */
+  receiveDomRecorderMessage?(message: DomRecorderPageMessage): void;
   emitMarker(message: string): void;
   tabId(): number;
   sid(): string;
@@ -63,6 +67,16 @@ export function installInjectedBridgeListener(host: InjectedBridgeHost): void {
         if (item && typeof item.rawType === "string") {
           queueInjectedRawEvent(host, item);
         }
+      }
+
+      return;
+    }
+
+    if ((data as { kind?: unknown }).kind === DOM_RECORDER_MESSAGE_KIND) {
+      const message = parseDomRecorderPageMessage(data);
+
+      if (message) {
+        host.receiveDomRecorderMessage?.(message);
       }
 
       return;

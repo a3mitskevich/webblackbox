@@ -1,6 +1,7 @@
 import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_POINTER_CAPTURE_OPTIONS,
+  RRWEB_RAW_TYPE,
   type CapturePolicy,
   type PointerCaptureOptions
 } from "@webblackbox/protocol";
@@ -42,6 +43,7 @@ import {
   EVENT_BUFFER_SOFT_LIMIT,
   LiteEventBuffer
 } from "./lite-event-buffer.js";
+import { LiteDomRecorderHost } from "./lite-dom-recorder-host.js";
 import { installInjectedBridgeListener } from "./lite-injected-bridge.js";
 import { LiteInputCapture } from "./lite-input-capture.js";
 import {
@@ -186,6 +188,7 @@ export class LiteCaptureAgent {
   private readonly stopWatchingPasswordReveals: () => void;
   private pendingQuietRecoverySummary = false;
   private stopScriptSourceMapScanner: (() => void) | null = null;
+  private readonly domRecorder: LiteDomRecorderHost;
 
   /** Creates and installs capture hooks for the current page context. */
   public constructor(private readonly options: LiteCaptureAgentOptions) {
@@ -195,6 +198,15 @@ export class LiteCaptureAgent {
     // Runs while idle too: a password revealed before Start must stay a password.
     this.stopWatchingPasswordReveals =
       typeof document === "undefined" ? () => undefined : watchPasswordFieldReveals(document);
+    this.domRecorder = new LiteDomRecorderHost({
+      factory: options.domRecorder,
+      emit: (payload, mono) => this.queueEvent(RRWEB_RAW_TYPE, payload, mono),
+      onFallback: () => {
+        if (this.recordingActive && !this.disposed) {
+          this.startMutationAndSnapshots();
+        }
+      }
+    });
   }
 
   /** Updates recording state and sampling profile from the host SDK. */
@@ -206,6 +218,7 @@ export class LiteCaptureAgent {
     const wasRecording = this.recordingActive;
 
     if (state.active && !wasRecording) {
+      this.domRecorder.resetForNewRecording();
       this.hasDomSnapshot = false;
       this.hasLocalStorageSnapshot = false;
       this.hasCapturedScreenshot = false;
@@ -226,6 +239,8 @@ export class LiteCaptureAgent {
 
     if (!state.active && wasRecording) {
       this.pointerCapture.flushPending();
+      // While still recording: its last batch must reach the buffer.
+      this.stopDomRecorder();
     }
 
     this.recordingActive = state.active;
@@ -257,6 +272,7 @@ export class LiteCaptureAgent {
       }
 
       this.ensureIndicator(this.sid, this.mode);
+      this.syncDomRecorder();
       this.startMutationAndSnapshots();
       return;
     }
@@ -303,6 +319,7 @@ export class LiteCaptureAgent {
   /** Flushes the current buffered raw events immediately. */
   public flush(): void {
     this.inputCapture.flushPendingScrollEvent();
+    this.domRecorder.flush();
     this.eventBuffer.drainBufferedEvents();
   }
 
@@ -311,6 +328,9 @@ export class LiteCaptureAgent {
     if (this.disposed || !this.recordingActive) {
       return;
     }
+
+    // The DOM recorder's last events must reach the buffer while it still records.
+    await this.domRecorder.drain();
 
     try {
       await this.screenshotInFlightPromise;
@@ -336,6 +356,7 @@ export class LiteCaptureAgent {
     this.disposed = true;
     this.syncScriptSourceMapScanner(false);
     this.stopWatchingPasswordReveals();
+    this.stopDomRecorder();
     this.stopMutationAndSnapshots();
     this.removeIndicator();
 
@@ -410,18 +431,26 @@ export class LiteCaptureAgent {
     );
   }
 
-  /** Full mode leaves DOM changes to CDP unless the profile records the raw DOM. */
+  /**
+   * Full mode leaves DOM changes to CDP unless the profile records the raw DOM; a DOM recorder
+   * (rrweb) replaces the summaries.
+   */
   private shouldCaptureMutationSignals(): boolean {
     return (
+      !this.domRecorder.isRecording &&
       (this.mode !== "full" || capturesRawDom(this.capturePolicy.categories)) &&
       this.isTopLevelFrame &&
       this.capturePolicy.categories.dom !== "off"
     );
   }
 
-  /** Full mode leaves the DOM to CDP unless the profile records the raw DOM. */
+  /**
+   * Full mode leaves the DOM to CDP unless the profile records the raw DOM; a DOM recorder
+   * (rrweb) replaces the snapshots.
+   */
   private shouldCaptureDomSnapshots(): boolean {
     return (
+      !this.domRecorder.isRecording &&
       (this.mode !== "full" || capturesRawDom(this.capturePolicy.categories)) &&
       this.isTopLevelFrame &&
       this.capturePolicy.categories.dom !== "off"
@@ -552,6 +581,7 @@ export class LiteCaptureAgent {
       listen: (target, type, listener, options) => this.listen(target, type, listener, options),
       nonce: () => this.injectedBridgeNonce,
       queueRawEvent: (event) => this.queueRawEvent(event),
+      receiveDomRecorderMessage: (message) => this.domRecorder.receive(message),
       emitMarker: (message) => this.emitMarker(message),
       tabId: () => this.tabId,
       sid: () => this.sid
@@ -666,7 +696,30 @@ export class LiteCaptureAgent {
     this.scheduleDomChangeSnapshot();
   }
 
+  /** Runs the DOM recorder (rrweb) in the top frame while the profile records any DOM. */
+  private syncDomRecorder(): void {
+    this.domRecorder.sync(
+      this.isTopLevelFrame && this.capturePolicy.categories.dom !== "off",
+      this.capturePolicy,
+      this.mode === "full" ? "full" : "lite"
+    );
+  }
+
+  private stopDomRecorder(): void {
+    this.domRecorder.stop();
+  }
+
+  /** The host lost rrweb events on their way out (a full queue): take a fresh full snapshot. */
+  public requestDomCheckpoint(): void {
+    this.domRecorder.checkpoint();
+  }
+
   private emitRrwebMutationSummary(summary: MutationBatchSummary): void {
+    // The rrweb log already has every change; its summary would only mix two schemas.
+    if (this.domRecorder.isRecording) {
+      return;
+    }
+
     this.queueEvent("rrweb", buildRrwebMutationPayload(summary, this.capturePolicy.redaction));
   }
 

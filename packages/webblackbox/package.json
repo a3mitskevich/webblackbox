@@ -35,6 +35,14 @@
       "types": "./dist/lite-sdk.d.ts",
       "import": "./dist/lite-sdk.js"
     },
+    "./rrweb-page-recorder": {
+      "types": "./dist/rrweb-page-recorder.d.ts",
+      "import": "./dist/rrweb-page-recorder.js"
+    },
+    "./rrweb-recorder": {
+      "types": "./dist/rrweb-recorder.d.ts",
+      "import": "./dist/rrweb-recorder.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js"
@@ -67,8 +75,8 @@
   "author": "unadlib",
   "license": "MIT",
   "scripts": {
-    "dev": "tsup src/index.ts src/capture-scope.ts src/injected-hooks.ts src/input-value-policy.ts src/lite-capture-agent.ts src/lite-materializer.ts src/lite-sdk.ts src/types.ts --format esm --dts --watch --clean",
-    "build": "tsup src/index.ts src/capture-scope.ts src/injected-hooks.ts src/input-value-policy.ts src/lite-capture-agent.ts src/lite-materializer.ts src/lite-sdk.ts src/types.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts src/capture-scope.ts src/injected-hooks.ts src/input-value-policy.ts src/lite-capture-agent.ts src/lite-materializer.ts src/lite-sdk.ts src/rrweb-page-recorder.ts src/rrweb-recorder.ts src/types.ts --format esm --dts --watch --clean",
+    "build": "tsup src/index.ts src/capture-scope.ts src/injected-hooks.ts src/input-value-policy.ts src/lite-capture-agent.ts src/lite-materializer.ts src/lite-sdk.ts src/rrweb-page-recorder.ts src/rrweb-recorder.ts src/types.ts --format esm --dts --clean",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
@@ -79,6 +87,8 @@
     "jsdom": "^26.1.0"
   },
   "dependencies": {
+    "@rrweb/record": "2.1.7",
+    "@rrweb/types": "2.1.7",
     "@webblackbox/pipeline": "workspace:*",
     "@webblackbox/protocol": "workspace:*",
     "@webblackbox/recorder": "workspace:*",

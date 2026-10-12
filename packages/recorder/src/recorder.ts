@@ -2,6 +2,7 @@ import {
   DEFAULT_CAPTURE_POLICY,
   EventIdFactory,
   isContentRedactionEnabled,
+  isRrwebEventBatchPayload,
   stripUnreadablePointerDetail,
   type BodySkipReason,
   type CapturePolicy,
@@ -27,6 +28,7 @@ import {
 import { DefaultEventNormalizer } from "./normalizer.js";
 import type { RecorderPlugin, RecorderPluginContext } from "./plugins.js";
 import { createRedactionHashKey, redactPayload } from "./redaction.js";
+import { redactRrwebEventBatch } from "./rrweb-redaction.js";
 import { withUrlRules } from "./url-recording.js";
 import { applyValuePatterns } from "./value-pattern-rules.js";
 import { EventRingBuffer } from "./ring-buffer.js";
@@ -114,19 +116,22 @@ export class WebBlackboxRecorder {
     const shouldKeepBody = this.hooks.shouldKeepInlineNetworkBody;
     // The single masking switch of the recorder: with `contentRedaction: false` the payload is
     // kept as captured (categories still decide below what may be recorded at all).
-    const maskedPayload = isContentRedactionEnabled(rules)
-      ? applyValuePatterns(
-          normalized.eventType,
-          redactEventPayload(
+    // rrweb batches are masked in the page by rrweb itself; only their URLs are recorded here.
+    const maskedPayload = !isContentRedactionEnabled(rules)
+      ? detached.payload
+      : normalized.eventType === "dom.rrweb.event" && isRrwebEventBatchPayload(detached.payload)
+        ? redactRrwebEventBatch(detached.payload, rules)
+        : applyValuePatterns(
             normalized.eventType,
-            detached.payload,
-            this.config,
-            rules,
-            this.redactionHashKey
-          ),
-          rules
-        )
-      : detached.payload;
+            redactEventPayload(
+              normalized.eventType,
+              detached.payload,
+              this.config,
+              rules,
+              this.redactionHashKey
+            ),
+            rules
+          );
     const redactedPayload = attachInlineNetworkBody(maskedPayload, detached.body, {
       capturePolicy: this.config.capturePolicy,
       redaction: rules,

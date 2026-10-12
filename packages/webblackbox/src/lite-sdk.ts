@@ -30,6 +30,7 @@ import {
 } from "./injected-hooks.js";
 import { LiteCaptureAgent } from "./lite-capture-agent.js";
 import { materializeLiteRawEvent, shouldMaterializeLiteRawEvent } from "./lite-materializer.js";
+import { createRrwebDomRecorder } from "./rrweb-recorder.js";
 import type {
   WebBlackboxLiteExportOptions,
   WebBlackboxLiteExportResult,
@@ -118,7 +119,10 @@ export class WebBlackboxLiteSdk {
       emitBatch: (events) => {
         this.ingestRawEvents(events);
       },
-      showIndicator: options.showIndicator
+      showIndicator: options.showIndicator,
+      // The page world is where rrweb sees everything (CSS-in-JS included); on by default.
+      domRecorder:
+        options.domRecorder === false ? undefined : (options.domRecorder ?? createRrwebDomRecorder)
     });
 
     if (options.injectHooks !== false) {
