@@ -231,6 +231,56 @@ describe("LiteCaptureAgent with a DOM recorder", () => {
     agent.dispose();
   });
 
+  it("keeps one recorder across equal policies and replaces the agent's own DOM summaries", async () => {
+    document.body.innerHTML = `<div id="list"></div>`;
+    const emitBatch = vi.fn<(events: RawRecorderEvent[]) => void>();
+    const factory = vi.fn(() => ({ flush: vi.fn(), stop: vi.fn() }));
+    const agent = new LiteCaptureAgent({
+      emitBatch,
+      showIndicator: false,
+      frameScope: "top",
+      domRecorder: factory
+    });
+    const status = () => ({
+      active: true,
+      sid: "S-rrweb",
+      mode: "lite" as const,
+      capturePolicy: structuredClone(DEFAULT_CAPTURE_POLICY)
+    });
+
+    agent.setRecordingStatus(status());
+    agent.setRecordingStatus(status());
+    document.querySelector("#list")!.append(document.createElement("p"));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    agent.flush();
+
+    const rawTypes = emitBatch.mock.calls.flatMap(([events]) =>
+      events.map((event) => event.rawType)
+    );
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(rawTypes).not.toContain("mutation");
+    expect(rawTypes).not.toContain("rrweb");
+    expect(rawTypes).not.toContain("snapshot");
+    agent.dispose();
+  });
+
+  it("emits its own mutation summaries without a DOM recorder (control)", async () => {
+    document.body.innerHTML = `<div id="list"></div>`;
+    const emitBatch = vi.fn<(events: RawRecorderEvent[]) => void>();
+    const agent = new LiteCaptureAgent({ emitBatch, showIndicator: false, frameScope: "top" });
+
+    agent.setRecordingStatus({ active: true, sid: "S-now", mode: "lite" });
+    document.querySelector("#list")!.append(document.createElement("p"));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    agent.flush();
+
+    const rawTypes = emitBatch.mock.calls.flatMap(([events]) =>
+      events.map((event) => event.rawType)
+    );
+    expect(rawTypes).toContain("mutation");
+    agent.dispose();
+  });
+
   it("does not start the recorder when the profile records no DOM", () => {
     const factory = vi.fn(() => ({ flush: vi.fn(), stop: vi.fn() }));
     const agent = new LiteCaptureAgent({

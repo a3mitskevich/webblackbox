@@ -193,7 +193,8 @@ export class LiteCaptureAgent {
   private pendingQuietRecoverySummary = false;
   private stopScriptSourceMapScanner: (() => void) | null = null;
   private domRecorder: DomRecorder | null = null;
-  private domRecorderPolicy: CapturePolicy | null = null;
+  /** The policy the DOM recorder runs under, serialized: hosts resend equal policies as new objects. */
+  private domRecorderPolicy: string | null = null;
 
   /** Creates and installs capture hooks for the current page context. */
   public constructor(private readonly options: LiteCaptureAgentOptions) {
@@ -423,18 +424,26 @@ export class LiteCaptureAgent {
     );
   }
 
-  /** Full mode leaves DOM changes to CDP unless the profile records the raw DOM. */
+  /**
+   * Full mode leaves DOM changes to CDP unless the profile records the raw DOM; a DOM recorder
+   * (rrweb) replaces the summaries.
+   */
   private shouldCaptureMutationSignals(): boolean {
     return (
+      this.domRecorder === null &&
       (this.mode !== "full" || capturesRawDom(this.capturePolicy.categories)) &&
       this.isTopLevelFrame &&
       this.capturePolicy.categories.dom !== "off"
     );
   }
 
-  /** Full mode leaves the DOM to CDP unless the profile records the raw DOM. */
+  /**
+   * Full mode leaves the DOM to CDP unless the profile records the raw DOM; a DOM recorder
+   * (rrweb) replaces the snapshots.
+   */
   private shouldCaptureDomSnapshots(): boolean {
     return (
+      this.domRecorder === null &&
       (this.mode !== "full" || capturesRawDom(this.capturePolicy.categories)) &&
       this.isTopLevelFrame &&
       this.capturePolicy.categories.dom !== "off"
@@ -688,7 +697,9 @@ export class LiteCaptureAgent {
     const shouldRecord =
       factory !== undefined && this.isTopLevelFrame && this.capturePolicy.categories.dom !== "off";
 
-    if (this.domRecorder && (!shouldRecord || this.domRecorderPolicy !== this.capturePolicy)) {
+    const policyKey = JSON.stringify(this.capturePolicy);
+
+    if (this.domRecorder && (!shouldRecord || this.domRecorderPolicy !== policyKey)) {
       this.stopDomRecorder();
     }
 
@@ -696,7 +707,7 @@ export class LiteCaptureAgent {
       return;
     }
 
-    this.domRecorderPolicy = this.capturePolicy;
+    this.domRecorderPolicy = policyKey;
     this.domRecorder = factory({
       policy: this.capturePolicy,
       mode: this.mode === "full" ? "full" : "lite",
