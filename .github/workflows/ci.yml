@@ -161,7 +161,7 @@ jobs:
             command: pnpm --filter @webblackbox/extension e2e:memory:full:ci
             needsChrome: true
           - surface: injection
-            command: pnpm --filter @webblackbox/extension e2e:injection && pnpm --filter @webblackbox/extension e2e:fullchain:lite:on-demand
+            command: pnpm --filter @webblackbox/extension e2e:injection && pnpm --filter @webblackbox/extension e2e:page-globals && pnpm --filter @webblackbox/extension e2e:fullchain:lite:on-demand
             needsChrome: true
           - surface: tabs-context
             command: pnpm --filter @webblackbox/extension e2e:tabs-context

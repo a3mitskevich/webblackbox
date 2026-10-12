@@ -1,6 +1,6 @@
 import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 import { createDefaultRecorderPlugins } from "@webblackbox/recorder";
-import { describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import type { PortLike, RuntimeMessageSender } from "../shared/chrome-api.js";
 import { PORT_NAMES } from "../shared/messages.js";
@@ -15,6 +15,7 @@ import {
   type InboundRouterDeps
 } from "./inbound-router.js";
 import type { SessionPipelineClient } from "./offscreen-client.js";
+import { REJECTED_MESSAGE_LOG_MAX_PER_WINDOW } from "./inbound-messages.js";
 import { createPortRegistry, type PortRegistry } from "./port-registry.js";
 import { createPortTrafficMeter } from "./port-traffic.js";
 import {
@@ -406,6 +407,109 @@ describe("inbound kind gating", () => {
     expect(port.disconnect).toHaveBeenCalledOnce();
     expect(deps.ingestRawEvent).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("inbound message validation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function spyWarnings() {
+    return vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  }
+
+  function droppedWarnings(warn: ReturnType<typeof spyWarnings>): unknown[] {
+    return warn.mock.calls
+      .filter(([message]) => message === "[WebBlackbox] dropped an inbound message")
+      .map(([, details]) => details);
+  }
+
+  it("drops a malformed port message before any handler runs and says why", async () => {
+    const { router, deps } = createHarness();
+    const warn = spyWarnings();
+    const port = createPort(PORT_NAMES.content, contentSender(7, 2));
+    const origin = { port: PORT_NAMES.content, tabId: 7, frameId: 2 };
+
+    router.handlePortConnect(port);
+    port.emitMessage({ kind: "ui.start", tabId: 7, mode: "everything" });
+    port.emitMessage({ kind: "content.stop-drained", sid: 42 });
+    await flushMicrotasks();
+
+    expect(deps.sessionCommands.startSession).not.toHaveBeenCalled();
+    expect(droppedWarnings(warn)).toEqual([
+      { kind: "ui.start", reason: "mode", ...origin },
+      { kind: "content.stop-drained", reason: "sid", ...origin }
+    ]);
+  });
+
+  it("drops a malformed, unknown or disallowed one-shot message without answering", async () => {
+    const { router, deps, sendResponse } = createHarness();
+    const warn = spyWarnings();
+
+    expect(
+      router.handleRuntimeMessage(
+        { kind: "ui.export", sid: "S-1", policy: "everything" },
+        extensionPageSender(),
+        sendResponse
+      )
+    ).toBe(false);
+    expect(
+      router.handleRuntimeMessage({ kind: "ui.unknown" }, extensionPageSender(), sendResponse)
+    ).toBe(false);
+    expect(
+      router.handleRuntimeMessage({ kind: "content.ready" }, extensionPageSender(), sendResponse)
+    ).toBe(false);
+    await flushMicrotasks();
+
+    expect(deps.sessionExport.exportSession).not.toHaveBeenCalled();
+    expect(sendResponse).not.toHaveBeenCalled();
+    expect(droppedWarnings(warn)).toEqual([
+      { kind: "ui.export", reason: "policy" },
+      { kind: "ui.unknown", reason: "unknown kind" },
+      { kind: "content.ready", reason: "not allowed from extension-page" }
+    ]);
+  });
+
+  it("ingests only the valid events of a batch, with the sender's tab", async () => {
+    const { router, deps, sendResponse } = createHarness();
+    const warn = spyWarnings();
+    const valid = { source: "content", rawType: "click", sid: "S-1", t: 1, mono: 1, payload: {} };
+
+    router.handleRuntimeMessage(
+      {
+        kind: "content.events",
+        events: [
+          { ...valid, tabId: 99, targetId: "T-1" },
+          { ...valid, source: "cdp", rawType: "Network.requestWillBeSent" },
+          { ...valid, t: "now" }
+        ]
+      },
+      contentSender(7, 0),
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(deps.ingestRawEvent).toHaveBeenCalledTimes(1);
+    });
+    expect(deps.ingestRawEvent).toHaveBeenCalledWith({ ...valid, tabId: 7, frame: undefined });
+    expect(droppedWarnings(warn)).toEqual([
+      { kind: "content.events", reason: "malformed events", droppedEvents: 2, tabId: 7, frameId: 0 }
+    ]);
+  });
+
+  it("keeps a flood of malformed messages to a few warnings", () => {
+    const { router } = createHarness();
+    const warn = spyWarnings();
+    const port = createPort(PORT_NAMES.content, contentSender());
+
+    router.handlePortConnect(port);
+
+    for (let index = 0; index < 500; index += 1) {
+      port.emitMessage({ kind: "content.events", events: "not a list" });
+    }
+
+    expect(droppedWarnings(warn)).toHaveLength(REJECTED_MESSAGE_LOG_MAX_PER_WINDOW);
   });
 });
 
