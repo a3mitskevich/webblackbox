@@ -529,6 +529,100 @@ describe("LiteCaptureAgent", () => {
     agent.dispose();
   });
 
+  describe("accessibility snapshots", () => {
+    function a11ySnapshots(emitBatch: ReturnType<typeof vi.fn>): Array<Record<string, unknown>> {
+      return emitBatch.mock.calls.flatMap((call) => {
+        const [events] = call as [RawRecorderEvent[]];
+        return events
+          .filter((event) => event.rawType === "a11ySnapshot")
+          .map((event) => event.payload as Record<string, unknown>);
+      });
+    }
+
+    it("snapshots the page once it settled after a click", () => {
+      const { agent, emitBatch } = createAgent();
+      vi.advanceTimersByTime(5_000);
+      agent.flush();
+      emitBatch.mockClear();
+
+      document.getElementById("target")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      vi.advanceTimersByTime(300);
+      agent.flush();
+      expect(a11ySnapshots(emitBatch)).toHaveLength(0);
+
+      vi.advanceTimersByTime(1_000);
+      agent.flush();
+      const [snapshot] = a11ySnapshots(emitBatch);
+
+      expect(snapshot).toMatchObject({
+        trigger: { kind: "action", rawType: "click" },
+        scope: "viewport",
+        masking: "masked"
+      });
+      expect(snapshot?.tree).toContain('- button "Open"');
+      expect(snapshot?.tree).toContain('- textbox "Name"');
+
+      agent.dispose();
+    });
+
+    it("takes the document's settled state at start and the last state at stop", () => {
+      const { agent, emitBatch } = createAgent();
+      vi.advanceTimersByTime(2_000);
+      agent.flush();
+
+      expect(a11ySnapshots(emitBatch).map((snapshot) => snapshot.trigger)).toEqual([
+        { kind: "navigation", rawType: "document", delayMs: 1_200 }
+      ]);
+
+      emitBatch.mockClear();
+      agent.setRecordingStatus({ active: false, sid: "S-lite-agent-test", tabId: 7, mode: "lite" });
+
+      expect(a11ySnapshots(emitBatch).map((snapshot) => snapshot.trigger)).toEqual([
+        { kind: "stop" }
+      ]);
+
+      agent.dispose();
+    });
+
+    it("snapshots after a trigger the host reports (Full mode errors)", () => {
+      const { agent, emitBatch } = createAgent({ mode: "full" });
+      vi.advanceTimersByTime(5_000);
+      agent.flush();
+      emitBatch.mockClear();
+
+      agent.requestA11ySnapshot({
+        kind: "error",
+        rawType: "Runtime.exceptionThrown",
+        eventId: "E-9"
+      });
+      vi.advanceTimersByTime(1_000);
+      agent.flush();
+
+      expect(a11ySnapshots(emitBatch).map((snapshot) => snapshot.trigger)).toEqual([
+        { kind: "error", rawType: "Runtime.exceptionThrown", eventId: "E-9", delayMs: 300 }
+      ]);
+
+      agent.dispose();
+    });
+
+    it("records none when the profile records no DOM", () => {
+      const { agent, emitBatch } = createAgent({
+        capturePolicy: {
+          ...DEFAULT_CAPTURE_POLICY,
+          categories: { ...DEFAULT_CAPTURE_POLICY.categories, dom: "off" }
+        }
+      });
+
+      document.getElementById("target")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      vi.advanceTimersByTime(5_000);
+      agent.setRecordingStatus({ active: false, sid: "S-lite-agent-test", tabId: 7, mode: "lite" });
+
+      expect(a11ySnapshots(emitBatch)).toHaveLength(0);
+
+      agent.dispose();
+    });
+  });
+
   it("uses summary-only html for routine lite dom snapshots", () => {
     document.body.innerHTML = `
       <main>

@@ -1,3 +1,4 @@
+import type { A11ySnapshotTrigger } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 import type { LiteCaptureAgent } from "webblackbox/lite-capture-agent";
 import { capturesPageStorageInFullMode } from "webblackbox/capture-scope";
@@ -21,6 +22,8 @@ let captureAgentPromise: Promise<LiteCaptureAgent> | null = null;
 let contentAgentRequest: Promise<ContentAgentApi> | null = null;
 
 let recordingActive = false;
+/** The session this page records for; requests of another session are ignored. */
+let recordingSid: string | undefined;
 let recordingStatusVersion = 0;
 let pendingEvents: RawRecorderEvent[] = [];
 let pendingEventFlushTimer = 0;
@@ -309,6 +312,7 @@ async function handleSwMessage(message: ExtensionOutboundMessage): Promise<void>
 
     if (message.active) {
       recordingActive = true;
+      recordingSid = message.sid;
       connectContentPort();
       const agent = await ensureCaptureAgent();
 
@@ -359,6 +363,13 @@ async function handleSwMessage(message: ExtensionOutboundMessage): Promise<void>
 
   if (message.kind === "sw.freeze") {
     captureAgent?.setIndicatorState(message.sid, "freeze");
+    return;
+  }
+
+  if (message.kind === "sw.a11y-snapshot-request") {
+    if (recordingActive && message.sid === recordingSid && isA11ySnapshotTrigger(message.trigger)) {
+      captureAgent?.requestA11ySnapshot(message.trigger);
+    }
   }
 }
 
@@ -553,4 +564,18 @@ function normalizeBodyCaptureBudget(value: unknown): number {
   }
 
   return clampBodyCaptureMaxBytes(value);
+}
+
+/** The service worker builds the trigger; checked anyway before it reaches the agent. */
+function isA11ySnapshotTrigger(value: unknown): value is A11ySnapshotTrigger {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const trigger = value as Record<string, unknown>;
+  return (
+    trigger.kind === "error" &&
+    (trigger.rawType === undefined || typeof trigger.rawType === "string") &&
+    (trigger.eventId === undefined || typeof trigger.eventId === "string")
+  );
 }

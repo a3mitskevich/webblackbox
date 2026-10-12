@@ -1,3 +1,5 @@
+export * from "./a11y.js";
+export * from "./a11y-schemas.js";
 export * from "./archive.js";
 export * from "./archive-encryption.js";
 export * from "./blob.js";

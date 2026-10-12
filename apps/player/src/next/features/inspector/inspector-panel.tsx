@@ -334,6 +334,40 @@ function RequestSection({ inspection, t }: PartProps) {
   );
 }
 
+const PAGE_STATE_NOTES = {
+  self: "pageStateSelf",
+  linked: "pageStateLinked",
+  before: "pageStateBefore"
+} as const;
+
+/** The accessibility snapshot of the page at the event: roles, names, states, visible text. */
+function PageStateSection({ inspection, t }: PartProps) {
+  const { pageState } = inspection;
+
+  if (!pageState) {
+    return null;
+  }
+
+  const { snapshot } = pageState;
+
+  return (
+    <Section title={t("sectionPageState")} testId="inspector-page-state">
+      <p className="insp-note">
+        {t(PAGE_STATE_NOTES[pageState.relation], { trigger: snapshot.trigger.kind })}
+        {snapshot.truncated ? ` ${t("pageStateCut", { count: snapshot.omittedNodes })}` : ""}
+      </p>
+      <div className="insp-actions">
+        <CopyButton
+          label={t("copyPageState")}
+          getText={() => snapshot.tree}
+          testId="inspector-copy-page-state"
+        />
+      </div>
+      <CodeView text={snapshot.tree} language="plain" testId="inspector-page-state-tree" inline />
+    </Section>
+  );
+}
+
 function InspectorBody({ inspection }: { inspection: Inspection }) {
   const t = useFeatureI18n(inspectorMessages);
   const i18n = useI18n();
@@ -374,6 +408,7 @@ function InspectorBody({ inspection }: { inspection: Inspection }) {
       <CausedSection inspection={inspection} t={t} />
       <RequestSection inspection={inspection} t={t} />
       <ReproduceSection inspection={inspection} t={t} />
+      <PageStateSection inspection={inspection} t={t} />
       <Section title={t("sectionRaw")} testId="inspector-raw">
         {inspection.raw.truncated ? (
           <p className="insp-note">

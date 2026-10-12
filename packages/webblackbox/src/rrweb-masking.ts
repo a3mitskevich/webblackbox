@@ -12,7 +12,7 @@ import {
   isDroppedRawDomAttribute,
   sanitizeCss,
   sanitizeRawDomAttribute,
-  sanitizeRawDomText
+  sanitizeVisibleText
 } from "./raw-dom-snapshot.js";
 
 /**
@@ -126,7 +126,7 @@ export function buildRrwebTextMask(policy: CapturePolicy): RrwebTextMask | null 
     }
 
     return context.heuristics
-      ? sanitizeRawDomText(text, policy.redaction, context.extraNameParts)
+      ? sanitizeVisibleText(text, policy.redaction, context.extraNameParts)
       : maskDomText(text, policy.redaction);
   };
 }

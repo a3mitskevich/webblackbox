@@ -422,17 +422,6 @@ export function sanitizeRawDomAttribute(
   return maskDomText(sanitizeAttributeValue(name, value, extraNameParts), rules);
 }
 
-/** A text node's value under the built-in heuristics and the DOM value patterns. */
-export function sanitizeRawDomText(
-  text: string,
-  rules: RedactionRules,
-  extraNameParts: readonly string[]
-): string {
-  return isSecretJson(text, extraNameParts)
-    ? MASKED_TEXT
-    : maskDomText(enforceTextInvariant(text, MASKED_TEXT, false), rules);
-}
-
 function sanitizeAttributeValue(
   name: string,
   value: string,
@@ -488,6 +477,20 @@ function enforceTextInvariant(text: string, replacement: string, maskWhole: bool
   return maskWhole ? stripped : redactCredentials(stripped, replacement);
 }
 
+/**
+ * Visible text under the built-in heuristics keeps its words; URLs lose their queries, credentials
+ * are masked, and JSON page state naming a secret field is masked whole.
+ */
+export function sanitizeVisibleText(
+  text: string,
+  rules: RedactionRules,
+  extraNameParts: readonly string[]
+): string {
+  return isSecretJson(text, extraNameParts)
+    ? MASKED_TEXT
+    : maskDomText(enforceTextInvariant(text, MASKED_TEXT, false), rules);
+}
+
 /** Visible text keeps its words; URLs lose their queries and credentials are masked. */
 function sanitizeTextNodes(root: Element | DocumentFragment, context: SanitizeContext): void {
   for (const node of collectNodes(root, NodeFilter.SHOW_TEXT)) {
@@ -496,7 +499,7 @@ function sanitizeTextNodes(root: Element | DocumentFragment, context: SanitizeCo
     }
 
     const text = node.nodeValue ?? "";
-    const sanitized = sanitizeRawDomText(text, context.rules, context.extraNameParts);
+    const sanitized = sanitizeVisibleText(text, context.rules, context.extraNameParts);
 
     if (sanitized !== text) {
       node.nodeValue = sanitized;

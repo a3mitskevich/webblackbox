@@ -254,6 +254,67 @@ export function checkCompleteness(player, expectations) {
   return { ok: failures.length === 0, failures, report, lines: format ? format(report) : [] };
 }
 
+/** The schema's tree cap (`A11Y_SNAPSHOT_LIMITS.maxTreeChars` plus the cut marker line). */
+const A11Y_MAX_TREE_CHARS = 24_256;
+/**
+ * Page time of one snapshot: the walk stops at 40 ms; formatting and a loaded shared runner get
+ * the rest.
+ */
+const A11Y_MAX_DURATION_MS = 250;
+
+const A11Y_ERROR_EVENT_TYPES = new Set([
+  "console.entry",
+  "error.exception",
+  "error.unhandledrejection"
+]);
+
+/**
+ * Accessibility snapshots: one linked to the scenario's click that shows what the click caused
+ * (`alertText`), one linked to its error, and the last state at Stop; all within their budget.
+ */
+export function checkA11ySnapshots(player, { alertText }) {
+  const events = player.query({});
+  const byId = new Map(events.map((event) => [event.id, event]));
+  const snapshots = events.filter((event) => event.type === "dom.a11y.snapshot");
+  const linkedType = (snapshot) => byId.get(snapshot.data?.trigger?.eventId)?.type;
+  const action = snapshots.find(
+    (snapshot) =>
+      snapshot.data?.trigger?.kind === "action" &&
+      linkedType(snapshot) === "user.click" &&
+      String(snapshot.data?.tree ?? "").includes(alertText)
+  );
+  const error = snapshots.find(
+    (snapshot) =>
+      snapshot.data?.trigger?.kind === "error" && A11Y_ERROR_EVENT_TYPES.has(linkedType(snapshot))
+  );
+  const stop = snapshots.find((snapshot) => snapshot.data?.trigger?.kind === "stop");
+  const durations = snapshots.map((snapshot) => Number(snapshot.data?.durationMs ?? 0));
+  const maxDurationMs = Math.max(0, ...durations);
+  const maxTreeChars = Math.max(
+    0,
+    ...snapshots.map((snapshot) => String(snapshot.data?.tree ?? "").length)
+  );
+  const withinBudget = maxDurationMs <= A11Y_MAX_DURATION_MS && maxTreeChars <= A11Y_MAX_TREE_CHARS;
+
+  return {
+    ok: Boolean(action && error && stop) && withinBudget,
+    snapshots: snapshots.length,
+    triggers: snapshots.map(
+      (snapshot) => `${snapshot.data?.trigger?.kind}:${snapshot.data?.trigger?.rawType ?? ""}`
+    ),
+    action: action ? { id: action.id, linked: action.data.trigger.eventId } : null,
+    error: error ? { id: error.id, linked: linkedType(error) } : null,
+    stop: Boolean(stop),
+    maxDurationMs,
+    maxTreeChars,
+    withinBudget,
+    droppedTriggers: snapshots.reduce(
+      (sum, snapshot) => sum + Number(snapshot.data?.droppedTriggers ?? 0),
+      0
+    )
+  };
+}
+
 function safeStringify(value) {
   try {
     return JSON.stringify(value);

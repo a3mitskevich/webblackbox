@@ -5,8 +5,11 @@ import {
   buildRouteChapters,
   createClickReactionLookup,
   describeEventPhrase,
+  findPageStateAt,
+  listA11ySnapshots,
   inspectEventTarget,
   summarizeActionConsequences,
+  type A11ySnapshotEntry,
   type ActionConsequences,
   type ActionTimelineEntry,
   type ClickReaction,
@@ -64,7 +67,15 @@ export type Inspection = {
   reqId: string | null;
   /** Range for "Playwright from …": the page the action happened on, up to the action's end. */
   playwrightRange: TimeRange;
+  /** What the page showed: the event's own accessibility snapshot, the one it triggered, or the latest one before it. */
+  pageState: PageState | null;
   raw: { text: string; truncated: boolean };
+};
+
+/** An accessibility snapshot shown with the event, and how it relates to it. */
+export type PageState = {
+  relation: "self" | "linked" | "before";
+  snapshot: A11ySnapshotEntry;
 };
 
 type ArchiveIndex = {
@@ -76,6 +87,7 @@ const indexCache = new WeakMap<LoadedArchive, ArchiveIndex>();
 const inspectionCache = new WeakMap<LoadedArchive, Map<string, Inspection>>();
 const routeChapterCache = new WeakMap<LoadedArchive, RouteChapter[]>();
 const reactionLookupCache = new WeakMap<LoadedArchive, ClickReactionLookup>();
+const a11ySnapshotCache = new WeakMap<LoadedArchive, A11ySnapshotEntry[]>();
 
 function indexOf(archive: LoadedArchive): ArchiveIndex {
   const cached = indexCache.get(archive);
@@ -165,6 +177,43 @@ function reactionLookupOf(archive: LoadedArchive): ClickReactionLookup {
   });
   reactionLookupCache.set(archive, lookup);
   return lookup;
+}
+
+function a11ySnapshotsOf(archive: LoadedArchive): A11ySnapshotEntry[] {
+  const cached = a11ySnapshotCache.get(archive);
+
+  if (cached) {
+    return cached;
+  }
+
+  const snapshots = listA11ySnapshots(archive.model.events);
+  a11ySnapshotCache.set(archive, snapshots);
+  return snapshots;
+}
+
+function pageStateOf(archive: LoadedArchive, event: WebBlackboxEvent): PageState | null {
+  const snapshots = a11ySnapshotsOf(archive);
+
+  if (snapshots.length === 0) {
+    return null;
+  }
+
+  const own =
+    event.type === "dom.a11y.snapshot"
+      ? snapshots.find((entry) => entry.eventId === event.id)
+      : undefined;
+
+  if (own) {
+    return { relation: "self", snapshot: own };
+  }
+
+  const state = findPageStateAt(archive.model.events, { eventId: event.id }, snapshots);
+
+  if (state?.linked) {
+    return { relation: "linked", snapshot: state.linked };
+  }
+
+  return state?.before ? { relation: "before", snapshot: state.before } : null;
 }
 
 function isFrameEvent(event: WebBlackboxEvent): boolean {
@@ -257,6 +306,7 @@ function buildInspection(archive: LoadedArchive, event: WebBlackboxEvent): Inspe
       startMono: Math.min(chapter?.startMono ?? model.minMono, event.mono),
       endMono
     },
+    pageState: pageStateOf(archive, event),
     raw: rawText(event)
   };
 }
