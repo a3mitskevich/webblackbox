@@ -108,6 +108,8 @@ export type PageStateSnapshot = {
   masking: A11ySnapshotEntry["masking"];
   /** Nodes the capture left out (its own budget). */
   omittedNodes: number;
+  /** The capture cut this snapshot at its budget: nodes past the cut are missing. */
+  truncated?: true;
   tree: string;
   /** Lines this tool left out to stay within `maxChars`. */
   treeLinesCut?: number;
@@ -279,6 +281,7 @@ function toSnapshot(entry: A11ySnapshotEntry, maxChars: number): PageStateSnapsh
     viewport: entry.viewport,
     masking: entry.masking,
     omittedNodes: entry.omittedNodes,
+    ...(entry.truncated ? { truncated: true as const } : {}),
     tree: cut.tree,
     ...(cut.linesCut > 0 ? { treeLinesCut: cut.linesCut } : {})
   };
