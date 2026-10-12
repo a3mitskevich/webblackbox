@@ -56,4 +56,17 @@ describe("export passphrase store", () => {
     await expect(store.get()).resolves.toBe("correct horse battery");
     await expect(memoryOnly.get()).resolves.toBe("another long passphrase");
   });
+
+  it("forgets even when the area cannot remove the key, so a new worker does not read it back", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const area = createSessionArea();
+    area.remove.mockRejectedValue(new Error("remove failed"));
+    const store = createExportPassphraseStore(area);
+    await store.remember("correct horse battery");
+
+    await expect(store.forget()).resolves.toBeUndefined();
+
+    await expect(store.get()).resolves.toBeUndefined();
+    await expect(createExportPassphraseStore(area).get()).resolves.toBeUndefined();
+  });
 });

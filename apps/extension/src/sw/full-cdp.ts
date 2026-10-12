@@ -210,6 +210,12 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
       });
       await enableScriptDebugger(runtime, router, { tabId: runtime.tabId });
 
+      // The debugger left while it was being set up and the recording went on in Light: the
+      // fallback cleaned up already, so do not bring back the router or the Full timers.
+      if (runtime.captureFallback) {
+        return { ok: true };
+      }
+
       runtime.cdpRouter = router;
 
       deps.enqueue(

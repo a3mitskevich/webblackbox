@@ -37,6 +37,8 @@
   "popupExportPassphraseBody": "归档始终加密（AES-GCM）。请输入至少 8 个字符的口令，打开归档时需要它。口令会保留到浏览器关闭，之后的导出不再询问。",
   "popupPassphraseLabel": "口令",
   "popupPassphraseRequired": "请输入至少 8 个字符的口令：归档始终加密。",
+  "popupPassphraseConfirmLabel": "再次输入口令",
+  "popupPassphraseMismatch": "两次输入的口令不一致。之后的导出也会沿用此口令，请输入相同的口令两次。",
   "popupCancel": "取消",
   "popupExporting": "正在导出...",
   "popupExported": "已导出：{name}",

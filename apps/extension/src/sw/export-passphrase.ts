@@ -53,14 +53,19 @@ export function createExportPassphraseStore(
   }
 
   async function forget(): Promise<void> {
-    cached = undefined;
-
-    if (area?.remove) {
-      await area.remove(EXPORT_PASSPHRASE_STORAGE_KEY);
-      return;
+    // Storage first: a later worker must not read back what this one forgot.
+    try {
+      if (area?.remove) {
+        await area.remove(EXPORT_PASSPHRASE_STORAGE_KEY);
+      } else {
+        await area?.set({ [EXPORT_PASSPHRASE_STORAGE_KEY]: "" });
+      }
+    } catch (error) {
+      console.warn("[WebBlackbox] failed to drop the remembered export passphrase", error);
+      await area?.set({ [EXPORT_PASSPHRASE_STORAGE_KEY]: "" }).catch(() => undefined);
     }
 
-    await area?.set({ [EXPORT_PASSPHRASE_STORAGE_KEY]: "" });
+    cached = undefined;
   }
 
   return { get, remember, forget };

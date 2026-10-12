@@ -563,7 +563,9 @@ async function exportWithDialog(container: HTMLElement, session: SessionListItem
     label: t("popupPassphraseLabel"),
     submitLabel: t("popupExport"),
     cancelLabel: t("popupCancel"),
-    requiredMessage: t("popupPassphraseRequired")
+    requiredMessage: t("popupPassphraseRequired"),
+    confirmLabel: t("popupPassphraseConfirmLabel"),
+    mismatchMessage: t("popupPassphraseMismatch")
   });
 
   if (passphrase !== null) {

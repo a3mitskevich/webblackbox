@@ -292,8 +292,10 @@ export function createSessionExportController(deps: SessionExportDeps): SessionE
         privacyWarning
       });
 
-      if (givenPassphrase) {
-        await deps.passphrases?.remember(givenPassphrase);
+      if (givenPassphrase && deps.passphrases) {
+        await deps.passphrases.remember(givenPassphrase);
+        // Open pages stop asking for it.
+        deps.broadcast({ kind: "sw.passphrase-status", remembered: true });
       }
 
       // The profile decides whether the local copy goes now or stays until it is deleted.

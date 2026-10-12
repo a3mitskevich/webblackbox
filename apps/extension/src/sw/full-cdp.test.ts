@@ -11,6 +11,7 @@ import { DEFAULT_CAPTURE_POLICY, DEFAULT_RECORDER_CONFIG } from "@webblackbox/pr
 import { createDefaultRecorderPlugins, type RawRecorderEvent } from "@webblackbox/recorder";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createCaptureFallback } from "../shared/capture-fallback.js";
 import { DEFAULT_PERFORMANCE_BUDGET } from "../shared/performance-budget.js";
 import type { RecordingProfile } from "../shared/profiles/model.js";
 import { createDefaultProfile } from "../shared/profiles/presets.js";
@@ -435,6 +436,39 @@ describe("attachCdp", () => {
         ([message]) => message === "[WebBlackbox] failed to enable script source map capture"
       )
     ).toBe(true);
+  });
+
+  it("starts no Full timers when the recording fell back to Light during the attach", async () => {
+    vi.useFakeTimers();
+    const holder: { runtime?: SessionRuntime } = {};
+    const harness = createDepsHarness({
+      router: {
+        sendError: (method) => {
+          if (method === "Debugger.enable" && holder.runtime) {
+            holder.runtime.captureFallback = createCaptureFallback({
+              at: 1,
+              reason: "canceled-by-user"
+            });
+          }
+
+          return null;
+        }
+      }
+    });
+    const runtime = createRuntime(harness.controller, {
+      config: {
+        ...DEFAULT_RECORDER_CONFIG,
+        sampling: { ...DEFAULT_RECORDER_CONFIG.sampling, screenshotIdleMs: 30_000 }
+      }
+    });
+    holder.runtime = runtime;
+
+    await expect(harness.controller.attachCdp(runtime)).resolves.toEqual({ ok: true });
+
+    expect(runtime.screenshotInterval).toBeNull();
+    vi.advanceTimersByTime(30_000);
+    expect(harness.screenshotReasons).toEqual([]);
+    expect(harness.artifactReasons).toEqual([]);
   });
 
   it("reports a debugger detach from its tab with Chrome's reason", async () => {

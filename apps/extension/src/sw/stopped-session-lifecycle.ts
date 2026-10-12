@@ -68,6 +68,8 @@ export type StoppedSessionLifecycleDeps = {
   toSessionMetadata: (runtime: SessionRuntime) => SessionMetadata;
   flushBufferedPipelineEvents: (runtime: SessionRuntime) => Promise<void>;
   refreshActionBadge: () => Promise<void>;
+  /** Drops the recording's "export it now" notification once the recording is gone. */
+  clearSessionNotification?: (sid: string) => void;
   pushSessionList: () => void;
   persistRuntimeState: () => Promise<void>;
   notifyOffscreenPipelineStatus: () => void;
@@ -606,6 +608,7 @@ export function createStoppedSessionLifecycle(
       }
     );
     deps.sessionRegistry.unregisterSid(runtime.sid);
+    deps.clearSessionNotification?.(runtime.sid);
     await forgetStoppedSessionRecord(runtime.sid).catch((error) => {
       console.warn("[WebBlackbox] failed to drop stopped session record", error);
     });

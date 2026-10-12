@@ -2292,8 +2292,10 @@ async function exportSessionFromPopup(popupClient, sid, useUiActions) {
           const passphraseInput = document.querySelector('#wb-passphrase-input');
 
           if (passphraseInput instanceof HTMLInputElement) {
-            passphraseInput.value = ${JSON.stringify(exportPassphrase)};
-            passphraseInput.dispatchEvent(new Event('input', { bubbles: true }));
+            for (const field of document.querySelectorAll('#wb-passphrase-input, #wb-passphrase-confirm')) {
+              field.value = ${JSON.stringify(exportPassphrase)};
+              field.dispatchEvent(new Event('input', { bubbles: true }));
+            }
 
             const form = passphraseInput.closest('form');
 

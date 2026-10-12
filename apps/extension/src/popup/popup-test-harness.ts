@@ -182,9 +182,11 @@ export async function submitExport(passphrase?: string, flush = flushPopup): Pro
   await flush();
 
   if (passphrase !== undefined) {
-    const input = query<HTMLInputElement>("#wb-passphrase-input");
-    input.value = passphrase;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+    for (const selector of ["#wb-passphrase-input", "#wb-passphrase-confirm"]) {
+      const input = query<HTMLInputElement>(selector);
+      input.value = passphrase;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
   }
 
   query<HTMLButtonElement>("[data-passphrase-submit]").click();

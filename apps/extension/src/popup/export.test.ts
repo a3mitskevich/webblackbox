@@ -276,6 +276,25 @@ describe("popup export", () => {
 
     passphraseInput.value = "long-enough";
     passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
+    const confirmInput = document.querySelector<HTMLInputElement>("#wb-passphrase-confirm");
+
+    if (!confirmInput) {
+      throw new Error("missing passphrase confirmation");
+    }
+
+    // It is remembered for later exports: a typo in the repeat stops the export.
+    confirmInput.value = "long-enuogh";
+    confirmInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
+    await flushPopup();
+
+    expect(port.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "ui.export" })
+    );
+    expect(confirmInput.validationMessage).toContain("differ");
+
+    confirmInput.value = "long-enough";
+    confirmInput.dispatchEvent(new Event("input", { bubbles: true }));
     document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
     await flushPopup();
 
@@ -319,9 +338,9 @@ describe("popup export", () => {
 
     getButton("export").click();
     await flushPopup();
-    const input = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (input) {
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      "#wb-passphrase-input, #wb-passphrase-confirm"
+    )) {
       input.value = "double-secret";
     }
 

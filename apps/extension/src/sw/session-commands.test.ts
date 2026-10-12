@@ -117,6 +117,7 @@ function createHarness(
     tabUrl?: string;
     attach?: CdpAttachResult;
     screenRecording?: { allowed: boolean; error?: Error };
+    action?: SessionCommandsDeps["action"];
   } = {}
 ): Harness {
   const registry = createSessionRegistry();
@@ -198,7 +199,7 @@ function createHarness(
       sendMessage
     } as unknown as SessionCommandsDeps["tabs"],
     scripting: undefined,
-    action: undefined,
+    action: options.action,
     storageLocal: storageLocal as unknown as SessionCommandsDeps["storageLocal"],
     broadcast,
     notifyOffscreenPipelineStatus: vi.fn(),
@@ -365,6 +366,25 @@ describe("restoreRuntimeState", () => {
     expect(harness.deps.stoppedSessionLifecycle.restoreStoppedSessions).toHaveBeenCalledTimes(1);
     expect(harness.pushSessionList).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps the SAVE badge for a restored recording that still waits for its export", async () => {
+    const setBadgeText = vi.fn(async () => undefined);
+    const harness = createHarness({
+      action: { setBadgeText, setBadgeBackgroundColor: vi.fn(async () => undefined) }
+    });
+    vi.mocked(harness.deps.stoppedSessionLifecycle.restoreStoppedSessions).mockImplementation(
+      async () => {
+        const runtime = createRuntime();
+        runtime.stoppedAt = 1_000;
+        runtime.exportPrompt = true;
+        harness.registry.registerBySid(runtime);
+      }
+    );
+
+    await harness.commands.restoreRuntimeState();
+
+    expect(setBadgeText).toHaveBeenLastCalledWith({ text: "SAVE" });
+  });
 });
 
 function maximumSelection(): ProfileSelection {
@@ -459,6 +479,24 @@ describe("Full → Light fallback", () => {
     expect(ingestedOfType(harness, "debugger-detach")).toEqual([{ reason: "canceled_by_user" }]);
     expect(harness.deps.fullCdp.cleanupCdpInstrumentation).toHaveBeenCalledTimes(1);
     expect(harness.registry.getByTab(TAB_ID)).toBe(runtime);
+  });
+
+  it("leaves a recording that Stop finished while the fallback was under way", async () => {
+    const harness = createHarness({ selection: maximumSelection() });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await harness.commands.startSession(TAB_ID, "full");
+    const runtime = harness.registry.getByTab(TAB_ID) as SessionRuntime;
+    vi.mocked(harness.deps.liteNetworkBaseline.install).mockClear();
+    vi.mocked(harness.deps.fullCdp.cleanupCdpInstrumentation).mockImplementationOnce(async () => {
+      runtime.stopping = true;
+    });
+
+    await harness.commands.handleDebuggerDetach(runtime, "canceled_by_user");
+
+    expect(runtime.mode).toBe("full");
+    expect(harness.deps.liteNetworkBaseline.install).not.toHaveBeenCalled();
+    expect(ingestedOfType(harness, "config")).toHaveLength(1);
+    expect(harness.deps.notifications?.notifyCaptureFallback).not.toHaveBeenCalled();
   });
 
   it("stops the recording when the debugger left because the tab is gone", async () => {

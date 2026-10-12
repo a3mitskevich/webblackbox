@@ -86,6 +86,12 @@ export function createCaptureFallbackController(
       await deps.loadEnterprisePolicy()
     );
 
+    // Stop may have come in while the debugger was cleaned up or the policy read: a finished
+    // recording must not switch engines or reinstall the Light network baseline.
+    if (isFinishing(runtime)) {
+      return;
+    }
+
     runtime.mode = "lite";
     runtime.config = config;
     // Later profile checks compare Light against Light: the fallback is no profile edit.
@@ -109,9 +115,7 @@ export function createCaptureFallbackController(
       }
     });
 
-    if (!runtime.stopping && !runtime.stoppedAt) {
-      await deps.announce(runtime);
-    }
+    await deps.announce(runtime);
   }
 
   async function handleDebuggerDetach(
@@ -126,6 +130,10 @@ export function createCaptureFallbackController(
 
     if (reason === "target-closed" && !(await deps.tabExists(runtime.tabId))) {
       await deps.stopSession(runtime.tabId);
+      return;
+    }
+
+    if (isFinishing(runtime)) {
       return;
     }
 
@@ -145,7 +153,9 @@ export function createCaptureFallbackController(
 }
 
 function canFallBack(runtime: SessionRuntime): boolean {
-  return (
-    runtime.mode === "full" && !runtime.captureFallback && !runtime.stopping && !runtime.stoppedAt
-  );
+  return runtime.mode === "full" && !runtime.captureFallback && !isFinishing(runtime);
+}
+
+function isFinishing(runtime: SessionRuntime): boolean {
+  return runtime.stopping === true || runtime.stoppedAt !== undefined;
 }

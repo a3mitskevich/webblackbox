@@ -119,13 +119,17 @@ export type PassphraseDialogOptions = {
   cancelLabel: string;
   /** Shown on the input while the passphrase is too short to encrypt an export. */
   requiredMessage: string;
+  /** The second field: the passphrase is remembered for later exports, so a typo must not slip in. */
+  confirmLabel: string;
+  /** Shown on the second field while it differs from the first. */
+  mismatchMessage: string;
   /** Optional monospace line, e.g. the session id. */
   detail?: string;
 };
 
 /**
  * Resolves the typed passphrase, or null when cancelled. Archives are always encrypted, so it
- * only resolves with a passphrase long enough to encrypt an export.
+ * only resolves with a passphrase long enough to encrypt an export, typed the same way twice.
  */
 export function openPassphraseDialog(options: PassphraseDialogOptions): Promise<string | null> {
   return openDialog<string | null>(null, (finish) => {
@@ -133,10 +137,20 @@ export function openPassphraseDialog(options: PassphraseDialogOptions): Promise<
       className: "wb-input wb-prompt-field",
       attrs: { id: "wb-passphrase-input", type: "password", autocomplete: "off" }
     });
+    const confirmInput = el("input", {
+      className: "wb-input wb-prompt-field",
+      attrs: { id: "wb-passphrase-confirm", type: "password", autocomplete: "off" }
+    });
     const submit = (): void => {
       if (!isValidExportPassphrase(input.value)) {
         input.setCustomValidity(options.requiredMessage);
         input.reportValidity();
+        return;
+      }
+
+      if (confirmInput.value !== input.value) {
+        confirmInput.setCustomValidity(options.mismatchMessage);
+        confirmInput.reportValidity();
         return;
       }
 
@@ -158,19 +172,27 @@ export function openPassphraseDialog(options: PassphraseDialogOptions): Promise<
           attrs: { for: "wb-passphrase-input" }
         }),
         input,
+        el("label", {
+          className: "wb-field-label",
+          text: options.confirmLabel,
+          attrs: { for: "wb-passphrase-confirm" }
+        }),
+        confirmInput,
         el("div", { className: "wb-confirm-actions" }, [cancelButton, submitButton])
       ]
     );
 
     cancelButton.addEventListener("click", () => finish(null));
     submitButton.addEventListener("click", submit);
-    input.addEventListener("input", () => input.setCustomValidity(""));
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        submit();
-      }
-    });
+    for (const field of [input, confirmInput]) {
+      field.addEventListener("input", () => field.setCustomValidity(""));
+      field.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          submit();
+        }
+      });
+    }
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       submit();

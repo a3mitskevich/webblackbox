@@ -5,8 +5,10 @@
 // debugger while the tab stays: the recording goes on in Light instead of ending (LITE badge,
 // `captureFallback` on the session). Back on the site, page-side capture and the browser-side
 // network baseline still record. The exported archive says when and why Full stopped (a
-// `sys.debugger.detach` event, `meta.config.captureFallback`, the completeness report) and keeps
-// what Full recorded before (the first response body).
+// `sys.debugger.detach` event, `meta.config.captureFallback`, the completeness report), keeps
+// what Full recorded before (the first response body) and has page-side events from after the
+// switch. (A start on the Web Store, Light from the first event, is covered by unit tests: it needs
+// the network.)
 
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -18,7 +20,7 @@ import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e
 const root = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
-const harness = createProfileE2eHarness({ name: "capture-fallback", defaultPort: "9241" });
+const harness = createProfileE2eHarness({ name: "capture-fallback", defaultPort: "9243" });
 const passphrase = "webblackbox-fallback-e2e";
 const BEFORE_MARKER = "before-fallback-body-3c1d";
 const AFTER_MARKER = "after-fallback-body-8e2a";
@@ -163,6 +165,17 @@ async function main() {
   assert(after, "The request made after the fallback is missing", {
     urls: requests.map((r) => r.url)
   });
+  // The debugger is gone by then: only page-side (Light) capture records the page's console.
+  assert(
+    events.some(
+      (event) =>
+        event.type === "console.entry" &&
+        event.t > fallbackConfig.t &&
+        JSON.stringify(event.data).includes("/api/after")
+    ),
+    "Page-side capture recorded nothing after the switch to Light"
+  );
+
   assert(swExceptions.length === 0, "Service worker threw", swExceptions);
 
   console.log(`Fallback: ${JSON.stringify(fallen.captureFallback)}`);

@@ -410,7 +410,8 @@ describe("dispatch of inbound message kinds", () => {
   it("says whether an export passphrase is remembered and forgets it on request", async () => {
     const passphrases = createExportPassphraseStore(undefined);
     await passphrases.remember("correct horse battery");
-    const { router, sendResponse } = createHarness({ passphrases });
+    const { router, sendResponse, portRegistry } = createHarness({ passphrases });
+    const broadcast = vi.spyOn(portRegistry, "broadcast");
 
     router.handleRuntimeMessage(
       { kind: "ui.passphrase-status" },
@@ -436,6 +437,8 @@ describe("dispatch of inbound message kinds", () => {
       });
     });
     await expect(passphrases.get()).resolves.toBeUndefined();
+    // Another open page (the Sessions page) learns it too and asks for a passphrase again.
+    expect(broadcast).toHaveBeenCalledWith({ kind: "sw.passphrase-status", remembered: false });
   });
 
   it("ui.request-session-list answers the one-shot message with the list", async () => {

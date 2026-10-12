@@ -424,7 +424,8 @@ describe("expireStoppedSession / scheduleStoppedRuntimeCleanup", () => {
 
 describe("disposeStoppedSession / purge", () => {
   it("runs the full purge path and closes the offscreen document once unused", async () => {
-    const harness = createHarness();
+    const clearSessionNotification = vi.fn();
+    const harness = createHarness({ clearSessionNotification });
     const runtime = registerStopped(harness);
     await harness.lifecycle.rememberStoppedSession(runtime);
     await harness.lifecycle.rememberStoppedSessionRecord(runtime);
@@ -440,6 +441,8 @@ describe("disposeStoppedSession / purge", () => {
     expect(storedRecords(harness.localArea)).toEqual([]);
     expect(harness.alarms.clear).toHaveBeenCalledWith(retentionAlarmName("S-1"));
     expect(harness.refreshActionBadge).toHaveBeenCalledTimes(1);
+    // An export that deleted the recording, or its expiry, leaves no notification behind.
+    expect(clearSessionNotification).toHaveBeenCalledWith("S-1");
     expect(harness.closeOffscreenDocument).toHaveBeenCalledTimes(1);
     expect(harness.pushSessionList).toHaveBeenCalledTimes(1);
     expect(harness.persistRuntimeState).toHaveBeenCalledTimes(1);

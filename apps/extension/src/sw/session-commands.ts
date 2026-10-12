@@ -884,7 +884,8 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     }
 
     await deps.stoppedSessionLifecycle.restoreStoppedSessions();
-    await setIdleBadge();
+    // A restored recording may still wait for its export: keep its SAVE badge.
+    await refreshActionBadge();
     deps.pushSessionList();
     deps.notifyOffscreenPipelineStatus();
     await deps.stoppedSessionLifecycle.sweepStalePipelineSessions().catch((error) => {

@@ -37,6 +37,8 @@
   "popupExportPassphraseBody": "Archives are always encrypted (AES-GCM). Enter a passphrase of at least 8 characters: you need it to open the archive. It is remembered until the browser closes, so later exports do not ask.",
   "popupPassphraseLabel": "Passphrase",
   "popupPassphraseRequired": "Enter a passphrase of at least 8 characters: archives are always encrypted.",
+  "popupPassphraseConfirmLabel": "Repeat the passphrase",
+  "popupPassphraseMismatch": "The passphrases differ. It is reused for later exports, so type the same one twice.",
   "popupCancel": "Cancel",
   "popupExporting": "Exporting...",
   "popupExported": "Exported: {name}",

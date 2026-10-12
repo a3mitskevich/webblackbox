@@ -4,8 +4,9 @@
 // the session asks for its export (`exportPrompt`, SAVE badge); its stopped record never expires
 // and no retention alarm is set (the old default deleted it after 10 minutes). It is still listed
 // after the service worker restarts. "Later" puts the prompt off and keeps the recording; the
-// export deletes it. The export passphrase is remembered for the browser session, so a second
-// recording exports without one.
+// export deletes it. The export passphrase is remembered for the browser session (never in
+// storage.local), so a second recording exports without one; after "Forget passphrase" an export
+// needs one again.
 
 import { createServer } from "node:http";
 
@@ -96,6 +97,11 @@ async function main() {
     "The stopped recording is not listed after the service worker restart"
   );
   assert(restored.exportPrompt === true, "The export prompt was lost in the restart", restored);
+  await waitFor(
+    async () => ((await badge()) === "SAVE" ? true : null),
+    10_000,
+    "The SAVE badge was lost in the restart"
+  );
 
   // "Later": the prompt and the badge go, the recording stays.
   await popup.evaluate(
@@ -126,6 +132,8 @@ async function main() {
     15_000,
     "The exported recording was not deleted"
   );
+  const onDisk = await popup.evaluate(`chrome.storage.local.get(null).then(JSON.stringify)`);
+  assert(!onDisk.includes(passphrase), "The export passphrase reached chrome.storage.local (disk)");
 
   // The passphrase is remembered for the browser session: the next export does not need it.
   const secondSid = await recordAndStop(popup, tabId, listSessions);
@@ -133,6 +141,16 @@ async function main() {
     chrome.runtime.sendMessage({ kind: "ui.export", sid: ${JSON.stringify(secondSid)}, saveAs: false })
   `);
   assert(second?.ok === true, "Export with the remembered passphrase failed", second);
+
+  const forgotten = await popup.evaluate(
+    `chrome.runtime.sendMessage({ kind: "ui.forget-passphrase" })`
+  );
+  assert(forgotten?.remembered === false, "Forget passphrase did not forget it", forgotten);
+  const thirdSid = await recordAndStop(popup, tabId, listSessions);
+  const third = await popup.evaluate(`
+    chrome.runtime.sendMessage({ kind: "ui.export", sid: ${JSON.stringify(thirdSid)}, saveAs: false })
+  `);
+  assert(third?.ok === false, "An export without a passphrase worked after Forget", third);
   assert(swExceptions.length === 0, "Service worker threw", swExceptions);
 
   console.log(`Kept record: ${JSON.stringify(record)}`);

@@ -161,9 +161,9 @@ describe("sessions page export", () => {
 
     port.emit({ kind: "sw.passphrase-status", remembered: false });
     await flush();
-    const input = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (input) {
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      "#wb-passphrase-input, #wb-passphrase-confirm"
+    )) {
       input.value = "team-secret";
     }
 

@@ -302,6 +302,7 @@ export function startServiceWorker(): void {
     toSessionMetadata,
     flushBufferedPipelineEvents: pipelineBuffer.flushBufferedPipelineEvents,
     refreshActionBadge: () => sessionCommands.refreshActionBadge(),
+    clearSessionNotification: (sid) => sessionNotifications.clear(sid),
     pushSessionList,
     persistRuntimeState: () => sessionCommands.persistRuntimeState(),
     notifyOffscreenPipelineStatus: () => {
@@ -476,7 +477,7 @@ export function startServiceWorker(): void {
   });
 
   chromeApi?.runtime?.onInstalled.addListener(() => {
-    void sessionCommands.setIdleBadge();
+    void sessionCommands.refreshActionBadge();
     void extensionUpdates.check();
   });
 

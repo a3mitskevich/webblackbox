@@ -23,7 +23,7 @@ import { logPortSendFailure, type PortRegistry } from "./port-registry.js";
 import {
   classifyMessageSender,
   classifyPortSender,
-  isInboundKindAllowed,
+  isInboundMessageAllowed,
   type InboundSenderContext,
   type SenderTrustContext
 } from "./port-sender.js";
@@ -253,7 +253,7 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
 
     const { message, droppedEvents } = parsed;
 
-    if (!isInboundKindAllowed(message.kind, senderContext)) {
+    if (!isInboundMessageAllowed(message, senderContext)) {
       logRejectedMessage({
         kind: message.kind,
         reason: `not allowed from ${senderContext}`,
@@ -386,6 +386,12 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
         kind: "sw.passphrase-status" as const,
         remembered: (await deps.passphrases.get()) !== undefined
       };
+
+      if (message.kind === "ui.forget-passphrase") {
+        // Every open page (popup, Sessions) asks for the passphrase again from now on.
+        portRegistry.broadcast(status);
+        return port ? undefined : status;
+      }
 
       if (port) {
         portRegistry.sendPortMessage(port, status);

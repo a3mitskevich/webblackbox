@@ -567,6 +567,8 @@ function askPassphrase(detail: string): Promise<string | null> {
     submitLabel: t("sessionsActionExport"),
     cancelLabel: t("popupCancel"),
     requiredMessage: t("popupPassphraseRequired"),
+    confirmLabel: t("popupPassphraseConfirmLabel"),
+    mismatchMessage: t("popupPassphraseMismatch"),
     detail
   });
 }

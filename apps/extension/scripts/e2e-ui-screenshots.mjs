@@ -228,6 +228,7 @@ const POPUP_STATES = [
     steps: [
       { click: ["[data-action='export']"] },
       { type: { selector: "#wb-passphrase-input", value: "ui-shots-passphrase" } },
+      { type: { selector: "#wb-passphrase-confirm", value: "ui-shots-passphrase" } },
       { click: ["[data-passphrase-submit]"] }
     ]
   },

@@ -570,6 +570,7 @@ describe("exportSession", () => {
       ok: true
     });
     await expect(passphrases.get()).resolves.toBe("remembered-1");
+    expect(first.broadcasts).toContainEqual({ kind: "sw.passphrase-status", remembered: true });
 
     const later = createHarness(createRuntime({ pipeline }), { passphrases });
 
@@ -579,6 +580,23 @@ describe("exportSession", () => {
     expect(pipeline.exportAndDownload).toHaveBeenLastCalledWith(
       expect.objectContaining({ passphrase: "remembered-1" })
     );
+  });
+
+  it("does not remember the passphrase of a failed export", async () => {
+    const passphrases = createExportPassphraseStore(undefined);
+    const pipeline = createPipelineStub({
+      exportAndDownload: vi.fn(async () => {
+        throw new Error("download refused");
+      })
+    });
+    const { controller } = createHarness(createRuntime({ pipeline }), { passphrases });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(controller.exportSession("S-1", "mistyped-passphrase")).resolves.toMatchObject({
+      ok: false
+    });
+
+    await expect(passphrases.get()).resolves.toBeUndefined();
   });
 
   it("refuses an export without a passphrase when none is remembered", async () => {
