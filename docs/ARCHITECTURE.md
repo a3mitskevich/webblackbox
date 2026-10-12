@@ -155,7 +155,7 @@ WebBlackbox captures events from these sources:
 - **DOM snapshots** — Page snapshots at intervals (top frame)
 - **Screenshots** — Lite only: SnapDOM captures on idle, off by default (`screenshotIdleMs: 0`); Full takes screenshots through CDP
 
-In Full mode the content script skips DOM mutations and DOM/storage snapshots unless the profile records the raw DOM or page storage.
+In Full mode the content script records DOM mutations and DOM snapshots at the default DOM level (`masked`, recorded through the profile's masking rules like `allow`); it skips them when the profile sets the DOM to `wireframe` or `off`, and skips storage snapshots unless the profile records page storage.
 
 #### Injected Script
 

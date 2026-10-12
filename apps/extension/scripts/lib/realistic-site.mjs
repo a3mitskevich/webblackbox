@@ -13,6 +13,7 @@
 
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
+import { gzipSync } from "node:zlib";
 
 export const REALISTIC_PAGE_PATH = "/app/";
 export const REALISTIC_HUB_PATH = "/hubs/lobby";
@@ -24,6 +25,20 @@ export const REALISTIC_BUNDLES = [
   { name: "app.js", bytes: 180_000 }
 ];
 export const REALISTIC_STYLESHEETS = 24;
+/**
+ * The heavy burst (`run(durationMs, { heavy: true })`):
+ * - JSON reports the profile keeps, sent with binary media that only fills the browser's body
+ *   buffer: together past Chrome's default 200 MB buffer while the reports are being read;
+ * - one gzip JSON export, small on the wire but over Chrome's 20 MB per-response buffer once
+ *   decoded: the browser never keeps it, which a read used to report as `not-retained`.
+ */
+export const REALISTIC_HEAVY_BURST = {
+  reports: 120,
+  reportBytes: 128 * 1024,
+  media: 110,
+  mediaBytes: 2_000_000,
+  exportBytes: 24_000_000
+};
 /**
  * Requests the page sends at load that the server holds until `releaseHeld()`. They go to the
  * `localhost` name of the server, whose connection pool (6 per host) they fill without blocking
@@ -167,6 +182,23 @@ async function handleRequest(request, response, bundles, held) {
     return sendJson(response, buildItems(path.slice("/api/items/".length)));
   }
 
+  if (path.startsWith("/api/report/")) {
+    return sendJson(response, buildReport(path.slice("/api/report/".length)));
+  }
+
+  if (path === "/api/export.json") {
+    return send(response, 200, "application/json", buildHeavyExport(), {
+      "cache-control": "no-store",
+      "content-encoding": "gzip"
+    });
+  }
+
+  if (path.startsWith("/media/")) {
+    return send(response, 200, "application/octet-stream", HEAVY_MEDIA, {
+      "cache-control": "no-store"
+    });
+  }
+
   if (path.startsWith("/api/text/")) {
     const row = `row ${path.slice("/api/text/".length)}\n`;
     return send(response, 200, "text/plain; charset=utf-8", row.repeat(40), {
@@ -257,6 +289,27 @@ function readBody(request) {
 }
 
 /** About 1.4 KB of JSON, like the small API responses of the real site. */
+const HEAVY_MEDIA = Buffer.alloc(REALISTIC_HEAVY_BURST.mediaBytes, 0x5a);
+let heavyExport = null;
+
+/** The gzip export (built on first use): `[` + rows + `]`, decoded to `exportBytes`. */
+function buildHeavyExport() {
+  if (!heavyExport) {
+    const row = JSON.stringify({ table: 64, note: "e".repeat(200) });
+    const count = Math.floor((REALISTIC_HEAVY_BURST.exportBytes - 2) / (row.length + 1));
+    heavyExport = gzipSync(Buffer.from(`[${Array.from({ length: count }, () => row).join(",")}]`));
+  }
+
+  return heavyExport;
+}
+
+/** A JSON report of about `REALISTIC_HEAVY_BURST.reportBytes`. */
+function buildReport(id) {
+  const row = { id, note: "r".repeat(240) };
+  const rows = Math.ceil(REALISTIC_HEAVY_BURST.reportBytes / (JSON.stringify(row).length + 1));
+  return { id, rows: Array.from({ length: rows }, (_, index) => ({ ...row, index })) };
+}
+
 function buildItems(id) {
   return {
     id,
@@ -454,6 +507,7 @@ function buildPage(heldOrigin) {
 <link rel="stylesheet" href="/boot/boot.css">
 <script src="/boot/boot.js"></script>
 <script>window.__realisticAssets = ${JSON.stringify(assets)};</script>
+<script>window.__realisticHeavy = ${JSON.stringify(REALISTIC_HEAVY_BURST)};</script>
 <script>window.__realisticHeldOrigin = ${JSON.stringify(heldOrigin)};</script>
 <script>${HELD_SCRIPT}</script>
 </head>
@@ -537,7 +591,7 @@ const PAGE_SCRIPT = `
   const summary = {
     fetches: 0, xhrs: 0, posts: 0, serviceWorker: 0, polls: 0,
     wsSent: 0, wsReceived: 0, domMutations: 0, svgLoads: 0, dataUrls: 0,
-    heldRequests: 0, heldCompleted: 0, errors: []
+    heldRequests: 0, heldCompleted: 0, heavyReports: 0, heavyMedia: 0, errors: []
   };
 
   function track(promise, label) {
@@ -735,7 +789,31 @@ const PAGE_SCRIPT = `
     ]);
   }
 
-  async function run(durationMs) {
+  // Reports and media at once: the media fills the browser's body buffer while reports wait.
+  async function heavyBurst() {
+    const plan = window.__realisticHeavy;
+    const tasks = [];
+
+    for (let index = 0; index < Math.max(plan.reports, plan.media); index += 1) {
+      if (index < plan.reports) {
+        summary.heavyReports += 1;
+        tasks.push(getJson('/api/report/' + index));
+      }
+
+      if (index < plan.media) {
+        summary.heavyMedia += 1;
+        tasks.push(track(
+          fetch('/media/' + index + '.bin', { cache: 'no-store' }).then((r) => r.arrayBuffer()),
+          'media ' + index
+        ));
+      }
+    }
+
+    await Promise.all(tasks);
+    await getJson('/api/export.json');
+  }
+
+  async function run(durationMs, options = {}) {
     const startedAt = Date.now();
     const deadline = startedAt + durationMs;
 
@@ -763,6 +841,11 @@ const PAGE_SCRIPT = `
     const pingTimer = setInterval(() => hub.ping(), 2000);
 
     await burst('w1', 120);
+
+    if (options.heavy) {
+      await heavyBurst();
+    }
+
     await postVariants();
     await Promise.all(Array.from({ length: 10 }, (_, i) => {
       summary.serviceWorker += 1;
