@@ -73,9 +73,20 @@ export type UiAckProfileCancelMessage = {
   sid: string;
 };
 
+/**
+ * A raw event as the content script sends it. The service worker sets the tab (and the frame when
+ * the event has none) from the port's sender, never from the event.
+ */
+export type ContentRawEvent = Pick<
+  RawRecorderEvent,
+  "rawType" | "sid" | "t" | "mono" | "nav" | "frame" | "payload"
+> & {
+  source: "content";
+};
+
 export type ContentEventBatchMessage = {
   kind: "content.events";
-  events: RawRecorderEvent[];
+  events: ContentRawEvent[];
 };
 
 export type ContentMarkerMessage = {
