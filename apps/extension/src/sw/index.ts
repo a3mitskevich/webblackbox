@@ -5,6 +5,7 @@ import { BODY_REDACTION_TOKEN } from "@webblackbox/protocol";
 import { PIPELINE_DB_NAME } from "../shared/at-rest.js";
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { CONTENT_INJECTION_STORAGE_KEY } from "../shared/content-injection.js";
+import { EXTENSION_FILES } from "../shared/extension-files.js";
 import { PORT_NAMES } from "../shared/messages.js";
 import { OFFSCREEN_CONNECT_REQUEST_KIND } from "../shared/offscreen-messages.js";
 import {
@@ -61,12 +62,7 @@ import { TabsContextTracker, type TabsContextEmission } from "./tabs-context/tra
 import { resolveUiActionTabId } from "./ui-action-target.js";
 import { createExtensionUpdateChecker, EXTENSION_UPDATE_ALARM } from "./update-check.js";
 
-const chromeApi = getChromeApi();
-
-const sessionRegistry = createSessionRegistry();
-
-const OFFSCREEN_PATH = "offscreen.html";
-const SERVICE_WORKER_BOOTED_AT = Date.now();
+const OFFSCREEN_PATH = EXTENSION_FILES.offscreenPage;
 const BEST_EFFORT_QUEUE_MAX_PENDING = 80;
 /** Shortest gap between session-list pushes driven by recorded events (counters, errors). */
 const SESSION_LIST_EVENT_PUSH_INTERVAL_MS = 500;
@@ -77,481 +73,494 @@ const OFFSCREEN_PORT_READY_WAIT_MS = 25;
 // Chrome can hold `storage.managed` reads back while the browser starts; see the reader.
 const ENTERPRISE_POLICY_READ_TIMEOUT_MS = 3_000;
 
-const tabsContextTracker = createTabsContextTracker();
+/**
+ * Starts the service worker: creates its controllers and registers every Chrome event listener.
+ * Called once from the background entrypoint's `main()`, synchronously on the worker's first turn,
+ * as MV3 requires for listeners that wake the worker.
+ */
+export function startServiceWorker(): void {
+  const chromeApi = getChromeApi();
 
-console.info("[WebBlackbox] service worker booted");
+  const sessionRegistry = createSessionRegistry();
 
-const contentInjection = createContentInjectionController(chromeApi);
-const offscreenPortTraffic = createPortTrafficMeter();
-const portRegistry = createPortRegistry({
-  offscreenPortTraffic,
-  shouldLogPortDebug
-});
-const stopDrain = createStopDrainTracker({
-  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid)
-});
-const sessionListView = createSessionListView({
-  sessionRegistry,
-  broadcast: (message) => {
-    portRegistry.broadcast(message);
-  }
-});
-const { enqueue, enqueueWithResult } = createSessionQueue({
-  bestEffortQueueMaxPending: BEST_EFFORT_QUEUE_MAX_PENDING,
-  shouldLogPerf
-});
-const pipelineBuffer = createPipelineBuffer({
-  enqueue,
-  enqueueWithResult,
-  wait,
-  shouldLogPerf
-});
-const sessionListPush = createThrottledPush(
-  () => sessionListView.broadcastSessionList(),
-  SESSION_LIST_EVENT_PUSH_INTERVAL_MS
-);
+  const serviceWorkerBootedAt = Date.now();
 
-function pushSessionList(): void {
-  sessionListPush.now();
-}
+  const tabsContextTracker = createTabsContextTracker();
 
-function resolveUiActionTarget(
-  requestedTabId: number | undefined,
-  senderTabId: number | undefined
-): Promise<number | undefined> {
-  return resolveUiActionTabId({
-    requestedTabId,
-    senderTabId,
-    queryActiveTabId: async () => {
-      const activeTabs =
-        (await chromeApi?.tabs?.query?.({ active: true, currentWindow: true })) ?? [];
-      return activeTabs[0]?.id;
-    },
-    fallbackTabId: () => sessionRegistry.byTab.keys().next().value
+  console.info("[WebBlackbox] service worker booted");
+
+  const contentInjection = createContentInjectionController(chromeApi);
+  const offscreenPortTraffic = createPortTrafficMeter();
+  const portRegistry = createPortRegistry({
+    offscreenPortTraffic,
+    shouldLogPortDebug
   });
-}
-
-const offscreenDocuments = createOffscreenDocumentController({
-  offscreen: chromeApi?.offscreen,
-  runtime: chromeApi?.runtime,
-  offscreenPath: OFFSCREEN_PATH,
-  sidCount: () => sessionRegistry.sidCount()
-});
-const { ingestRawEvent } = createPipelineIngest({
-  byTab: sessionRegistry.byTab,
-  bySid: sessionRegistry.bySid,
-  enqueue,
-  getFullCdp: () => fullCdp,
-  getScreenshotArtifacts: () => screenshotArtifacts
-});
-const recordedTabWatch = createRecordedTabWatch(chromeApi, {
-  onTabUpdated: (tabId, changeInfo) => {
-    navigationRouter.handleRecordedTabUpdated(tabId, changeInfo);
-  },
-  onTabRemoved: (tabId) => {
-    void sessionCommands.stopSession(tabId);
-  },
-  onFrameCommitted: (details) => {
-    navigationRouter.handleRecordedFrameCommitted(details);
-  }
-});
-const screenshotArtifacts = createScreenshotArtifactsController({
-  ingestRawEvent,
-  bestEffortQueueMaxPending: BEST_EFFORT_QUEUE_MAX_PENDING
-});
-const screenRecording = createScreenRecordingController({
-  tabCapture: chromeApi?.tabCapture,
-  // The offscreen client is created below; recordings only start after a session does.
-  getOffscreenClient: () => offscreenClient,
-  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
-  ingestRawEvent
-});
-const storageArtifacts = createStorageArtifactsController({ ingestRawEvent });
-const profileArtifacts = createProfileArtifactsController({ ingestRawEvent, wait });
-const artifacts = createArtifactsController({
-  captureScreenshot: screenshotArtifacts.captureScreenshot,
-  captureTraceMetrics: profileArtifacts.captureTraceMetrics,
-  captureAdvancedProfiles: profileArtifacts.captureAdvancedProfiles,
-  captureStorageSnapshots: storageArtifacts.captureStorageSnapshots,
-  captureCookieValues: storageArtifacts.captureCookieValues,
-  broadcast: (message) => {
-    portRegistry.broadcast(message);
-  },
-  setFreezeBadge: () => sessionCommands.setFreezeBadge()
-});
-const fullCdp = createFullCdpController({
-  createRouter: () => createCdpRouter(createChromeDebuggerTransport()),
-  ingestRawEvent,
-  enqueue,
-  onDebuggerDetach: (runtime, reason) => sessionCommands.handleDebuggerDetach(runtime, reason),
-  captureFullModeArtifacts: artifacts.captureFullModeArtifacts,
-  captureScreenshot: screenshotArtifacts.captureScreenshot,
-  shouldCaptureIncidentArtifacts: artifacts.shouldCaptureIncidentArtifacts,
-  captureIncidentArtifacts: artifacts.captureIncidentArtifacts,
-  resolveBodyRule: (runtime, url, mimeType) =>
-    sessionCommands.resolveFullBodyCaptureRule(runtime, url, mimeType),
-  bodyRedactedToken: BODY_REDACTION_TOKEN
-});
-const liteNetworkBaseline = createLiteNetworkBaselineController({
-  webRequest: chromeApi?.webRequest,
-  ingestRawEvent,
-  getRuntimeByTab: (tabId) => sessionRegistry.getByTab(tabId),
-  tabRuntimes: () => sessionRegistry.tabRuntimes()
-});
-const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
-  {
-    getPort: () => portRegistry.getOffscreenPort(),
-    hasDocument: offscreenDocuments.hasOffscreenDocument,
-    createDocument: offscreenDocuments.createOffscreenDocument,
-    closeDocument: async () => {
-      await chromeApi?.offscreen?.closeDocument();
-    },
-    requestReconnect: async () => {
-      await chromeApi?.runtime?.sendMessage({ kind: OFFSCREEN_CONNECT_REQUEST_KIND });
-    },
-    wait
-  },
-  {
-    portWaitMs: OFFSCREEN_PORT_READY_TIMEOUT_MS,
-    pollMs: OFFSCREEN_PORT_READY_WAIT_MS
-  }
-);
-const offscreenRecovery = createOffscreenSessionRecovery({
-  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
-  tabRuntimes: () => sessionRegistry.tabRuntimes(),
-  offscreenClient: {
-    requestOnce: (request) => offscreenClient.requestOnce(request)
-  },
-  notifyOffscreenPipelineStatus: () => {
-    inboundRouter.notifyOffscreenPipelineStatus();
-  }
-});
-const offscreenClient = createOffscreenClient({
-  ensurePort: ensureOffscreenPortReady,
-  recoverSession: offscreenRecovery.recoverOffscreenSession,
-  traffic: offscreenPortTraffic,
-  shouldLogPerf
-});
-const readEnterprisePolicy = createBoundedManagedPolicyReader(
-  () => readManagedEnterprisePolicy(chromeApi?.storage?.managed),
-  {
-    timeoutMs: ENTERPRISE_POLICY_READ_TIMEOUT_MS,
-    onTimeout: () => {
-      console.warn("[WebBlackbox] enterprise policy not available yet; continuing without it");
+  const stopDrain = createStopDrainTracker({
+    getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid)
+  });
+  const sessionListView = createSessionListView({
+    sessionRegistry,
+    broadcast: (message) => {
+      portRegistry.broadcast(message);
     }
-  }
-);
-const { getAtRestKey, isAtRestKeyFresh, sendAtRestKeyToOffscreen } = createAtRestKeyService({
-  storageArea: chromeApi?.storage?.session,
-  indexedDb: globalThis.indexedDB,
-  dbName: PIPELINE_DB_NAME,
-  post: (port, message) => offscreenClient.post(port, message)
-});
+  });
+  const { enqueue, enqueueWithResult } = createSessionQueue({
+    bestEffortQueueMaxPending: BEST_EFFORT_QUEUE_MAX_PENDING,
+    shouldLogPerf
+  });
+  const pipelineBuffer = createPipelineBuffer({
+    enqueue,
+    enqueueWithResult,
+    wait,
+    shouldLogPerf
+  });
+  const sessionListPush = createThrottledPush(
+    () => sessionListView.broadcastSessionList(),
+    SESSION_LIST_EVENT_PUSH_INTERVAL_MS
+  );
 
-void getAtRestKey().catch((error) => {
-  console.warn("[WebBlackbox] at-rest encryption key unavailable", error);
-});
-// v1 options move into the profiles store once; profile and budget reads wait for it.
-const settingsMigrated = migrateSettingsStorage(chromeApi?.storage?.local).then((result) => {
-  if (result.status === "failed") {
-    console.warn(
-      "[WebBlackbox] settings migration failed; retried at the next start",
-      result.error
-    );
-  }
-});
-
-const annotations = createSessionAnnotations({
-  sessionStorageArea: chromeApi?.storage?.session,
-  localStorageArea: chromeApi?.storage?.local,
-  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
-  pushSessionList
-});
-const profileReevaluation = createProfileReevaluation({
-  chromeApi,
-  settingsMigrated,
-  readEnterprisePolicy,
-  resolveUiActionTarget,
-  ingestRawEvent,
-  stopSession: (tabId) => sessionCommands.stopSession(tabId),
-  monotonicTime
-});
-const stoppedSessionLifecycle: StoppedSessionLifecycleController = createStoppedSessionLifecycle({
-  sessionRegistry,
-  alarms: chromeApi?.alarms,
-  sessionStorageArea: chromeApi?.storage?.session,
-  localStorageArea: chromeApi?.storage?.local,
-  closeOffscreenDocument: async () => {
-    await chromeApi?.offscreen?.closeDocument?.();
-  },
-  getAtRestKey,
-  isAtRestKeyFresh,
-  waitForRuntimeState: () => runtimeStateRestored,
-  loadPerformanceBudgetConfig,
-  getSessionAnnotation: (sid) => annotations.get(sid),
-  createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
-  createFullBodyCapture: fullCdp.createFullBodyCapture,
-  toSessionMetadata,
-  flushBufferedPipelineEvents: pipelineBuffer.flushBufferedPipelineEvents,
-  refreshActionBadge: () => sessionCommands.refreshActionBadge(),
-  pushSessionList,
-  persistRuntimeState: () => sessionCommands.persistRuntimeState(),
-  notifyOffscreenPipelineStatus: () => {
-    inboundRouter.notifyOffscreenPipelineStatus();
-  },
-  indexedDB: globalThis.indexedDB,
-  sweepStoredSessions: (shouldDelete) =>
-    sweepPipelineSessions(new IndexedDbPipelineStorage(PIPELINE_DB_NAME), shouldDelete),
-  bootedAt: SERVICE_WORKER_BOOTED_AT
-});
-const exportPassphrases = createExportPassphraseStore(chromeApi?.storage?.session);
-const sessionNotifications = createSessionNotifications({
-  notifications: chromeApi?.notifications,
-  getMessage: (key) => chromeApi?.i18n?.getMessage?.(key) ?? "",
-  getURL: (path) => chromeApi?.runtime?.getURL(path) ?? path,
-  isPopupOpen: () => portRegistry.hasPortNamed(PORT_NAMES.popup),
-  openTab: async (url) => {
-    await chromeApi?.tabs?.create?.({ url, active: true });
-  }
-});
-const sessionExport = createSessionExportController({
-  getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
-  stopSession: (tabId) => sessionCommands.stopSession(tabId),
-  flushBufferedPipelineEvents: pipelineBuffer.flushBufferedPipelineEvents,
-  attachStoppedPipeline: (runtime) => stoppedSessionLifecycle.attachStoppedPipeline(runtime),
-  disposeStoppedSession: (runtime) => stoppedSessionLifecycle.disposeStoppedSession(runtime),
-  enqueueWithResult,
-  downloads: chromeApi?.downloads,
-  auditStorageArea: chromeApi?.storage?.local,
-  broadcast: (message) => {
-    portRegistry.broadcast(message);
-  },
-  passphrases: exportPassphrases,
-  onExported: (runtime) => sessionCommands.markExported(runtime)
-});
-const sessionCommands = createSessionCommands({
-  sessionRegistry,
-  annotations,
-  stopDrain,
-  pipelineBuffer,
-  profile: profileReevaluation,
-  fullCdp,
-  screenRecording,
-  storageArtifacts,
-  liteNetworkBaseline,
-  recordedTabWatch,
-  tabsContextTracker,
-  stoppedSessionLifecycle,
-  tabs: chromeApi?.tabs,
-  scripting: chromeApi?.scripting,
-  action: chromeApi?.action,
-  storageLocal: chromeApi?.storage?.local,
-  broadcast: (message) => {
-    portRegistry.broadcast(message);
-  },
-  notifyOffscreenPipelineStatus: () => {
-    inboundRouter.notifyOffscreenPipelineStatus();
-  },
-  pushSessionList,
-  scheduleSessionListPush: () => {
-    sessionListPush.schedule();
-  },
-  ingestRawEvent,
-  enqueueWithResult,
-  updateSessionMetadataFromEvent: (runtime, event) => {
-    navigationRouter.updateSessionMetadataFromEvent(runtime, event);
-  },
-  handleFreezeNotice: (runtime, reason) => {
-    artifacts.handleFreezeNotice(runtime, reason);
-  },
-  getAtRestKey,
-  ensureOffscreenDocument: offscreenDocuments.ensureOffscreenDocument,
-  createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
-  loadPerformanceBudgetConfig,
-  monotonicTime,
-  idleBadgeNotice: () => extensionUpdates.badge(),
-  notifications: sessionNotifications
-});
-const extensionUpdates = createExtensionUpdateChecker({
-  storageLocal: chromeApi?.storage?.local,
-  alarms: chromeApi?.alarms,
-  loadPlayerUrl: () => loadKnownPlayerUrl(chromeApi?.storage),
-  fetch: typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : undefined,
-  installedVersion: chromeApi?.runtime?.getManifest?.().version ?? "",
-  now: () => Date.now(),
-  refreshBadge: () => sessionCommands.refreshNoticeBadge()
-});
-const navigationRouter = createNavigationRouter({
-  sessionRegistry,
-  sessionCommands,
-  profile: profileReevaluation,
-  contentInjection,
-  storageArtifacts,
-  tabsContextTracker,
-  runtime: chromeApi?.runtime,
-  scripting: chromeApi?.scripting,
-  pushSessionList
-});
-const inboundRouter = createInboundRouter({
-  sessionRegistry,
-  portRegistry,
-  stopDrain,
-  offscreenClient,
-  screenRecording,
-  sessionCommands,
-  sessionList: sessionListView,
-  sessionExport,
-  passphrases: exportPassphrases,
-  annotations,
-  profile: profileReevaluation,
-  runtime: chromeApi?.runtime,
-  tabs: chromeApi?.tabs,
-  scripting: chromeApi?.scripting,
-  offscreenPath: OFFSCREEN_PATH,
-  resolveUiActionTarget,
-  ingestRawEvent,
-  sendAtRestKeyToOffscreen,
-  recoverActiveOffscreenPipelines: offscreenRecovery.recoverAllActiveOffscreenPipelines,
-  markStoppedPipelinesDetached: () => {
-    stoppedSessionLifecycle.markStoppedPipelinesDetached();
-  },
-  waitForRuntimeState: () => runtimeStateRestored,
-  pushSessionList,
-  wait,
-  monotonicTime,
-  perfNow,
-  shouldLogPortDebug
-});
-
-const runtimeStateRestored = sessionCommands.restoreRuntimeState().catch((error) => {
-  console.warn("[WebBlackbox] failed to restore runtime state", error);
-});
-
-// Retention of stopped, unexported recordings: alarms outlive the worker, timers do not.
-chromeApi?.alarms?.onAlarm.addListener((alarm) => {
-  if (alarm.name === EXTENSION_UPDATE_ALARM) {
-    void extensionUpdates.check();
-    return;
+  function pushSessionList(): void {
+    sessionListPush.now();
   }
 
-  const sid = sidFromRetentionAlarm(alarm.name);
-
-  if (sid) {
-    void stoppedSessionLifecycle.expireStoppedSession(sid).catch((error) => {
-      console.warn("[WebBlackbox] failed to delete an expired recording", error);
+  function resolveUiActionTarget(
+    requestedTabId: number | undefined,
+    senderTabId: number | undefined
+  ): Promise<number | undefined> {
+    return resolveUiActionTabId({
+      requestedTabId,
+      senderTabId,
+      queryActiveTabId: async () => {
+        const activeTabs =
+          (await chromeApi?.tabs?.query?.({ active: true, currentWindow: true })) ?? [];
+        return activeTabs[0]?.id;
+      },
+      fallbackTabId: () => sessionRegistry.byTab.keys().next().value
     });
   }
-});
 
-// Wakes the worker at browser start, so the previous browser session's leftovers are deleted
-// right away instead of on the first click.
-chromeApi?.runtime?.onStartup?.addListener(() => {
-  void getAtRestKey().catch((error) => {
-    console.warn("[WebBlackbox] at-rest encryption key unavailable at browser start", error);
+  const offscreenDocuments = createOffscreenDocumentController({
+    offscreen: chromeApi?.offscreen,
+    runtime: chromeApi?.runtime,
+    offscreenPath: OFFSCREEN_PATH,
+    sidCount: () => sessionRegistry.sidCount()
   });
-  void extensionUpdates.check();
-});
-
-// The newer-version notice: checked at browser start, on install/update, every few hours and
-// when the Player URL changes. The alarm survives worker restarts; it is created once.
-void extensionUpdates.ensureAlarm();
-
-// Every boot re-applies the setting: it also restores a registration an update dropped.
-void contentInjection.sync();
-
-chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
-  if (areaName === "local" && Object.hasOwn(changes, CONTENT_INJECTION_STORAGE_KEY)) {
-    void contentInjection.sync();
-  }
-
-  extensionUpdates.handleStorageChange(changes, areaName);
-});
-
-chromeApi?.runtime?.onInstalled.addListener(() => {
-  void sessionCommands.setIdleBadge();
-  void extensionUpdates.check();
-});
-
-chromeApi?.runtime?.onConnect.addListener((port) => {
-  inboundRouter.handlePortConnect(port);
-});
-
-chromeApi?.runtime?.onMessage.addListener((rawMessage, sender, sendResponse) => {
-  return inboundRouter.handleRuntimeMessage(rawMessage, sender, sendResponse);
-});
-
-chromeApi?.commands?.onCommand.addListener((command) => {
-  if (command !== "mark-bug") {
-    return;
-  }
-
-  void inboundRouter.relayMarkerCommand();
-});
-
-// Deleting or editing a profile, or a policy change, re-checks running recordings at once.
-chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
-  if (!isProfileSettingsChange(changes, areaName)) {
-    return;
-  }
-
-  for (const runtime of sessionRegistry.tabRuntimes()) {
-    profileReevaluation.scheduleProfileReevaluation(runtime, "settings-changed");
-  }
-});
-
-function createTabsContextTracker(): TabsContextTracker | null {
-  const tabs = chromeApi?.tabs;
-
-  if (!tabs?.onCreated || !tabs.onUpdated || !tabs.onRemoved || !tabs.onActivated) {
-    return null;
-  }
-
-  return new TabsContextTracker(
+  const { ingestRawEvent } = createPipelineIngest({
+    byTab: sessionRegistry.byTab,
+    bySid: sessionRegistry.bySid,
+    enqueue,
+    getFullCdp: () => fullCdp,
+    getScreenshotArtifacts: () => screenshotArtifacts
+  });
+  const recordedTabWatch = createRecordedTabWatch(chromeApi, {
+    onTabUpdated: (tabId, changeInfo) => {
+      navigationRouter.handleRecordedTabUpdated(tabId, changeInfo);
+    },
+    onTabRemoved: (tabId) => {
+      void sessionCommands.stopSession(tabId);
+    },
+    onFrameCommitted: (details) => {
+      navigationRouter.handleRecordedFrameCommitted(details);
+    }
+  });
+  const screenshotArtifacts = createScreenshotArtifactsController({
+    ingestRawEvent,
+    bestEffortQueueMaxPending: BEST_EFFORT_QUEUE_MAX_PENDING
+  });
+  const screenRecording = createScreenRecordingController({
+    tabCapture: chromeApi?.tabCapture,
+    // The offscreen client is created below; recordings only start after a session does.
+    getOffscreenClient: () => offscreenClient,
+    getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
+    ingestRawEvent
+  });
+  const storageArtifacts = createStorageArtifactsController({ ingestRawEvent });
+  const profileArtifacts = createProfileArtifactsController({ ingestRawEvent, wait });
+  const artifacts = createArtifactsController({
+    captureScreenshot: screenshotArtifacts.captureScreenshot,
+    captureTraceMetrics: profileArtifacts.captureTraceMetrics,
+    captureAdvancedProfiles: profileArtifacts.captureAdvancedProfiles,
+    captureStorageSnapshots: storageArtifacts.captureStorageSnapshots,
+    captureCookieValues: storageArtifacts.captureCookieValues,
+    broadcast: (message) => {
+      portRegistry.broadcast(message);
+    },
+    setFreezeBadge: () => sessionCommands.setFreezeBadge()
+  });
+  const fullCdp = createFullCdpController({
+    createRouter: () => createCdpRouter(createChromeDebuggerTransport()),
+    ingestRawEvent,
+    enqueue,
+    onDebuggerDetach: (runtime, reason) => sessionCommands.handleDebuggerDetach(runtime, reason),
+    captureFullModeArtifacts: artifacts.captureFullModeArtifacts,
+    captureScreenshot: screenshotArtifacts.captureScreenshot,
+    shouldCaptureIncidentArtifacts: artifacts.shouldCaptureIncidentArtifacts,
+    captureIncidentArtifacts: artifacts.captureIncidentArtifacts,
+    resolveBodyRule: (runtime, url, mimeType) =>
+      sessionCommands.resolveFullBodyCaptureRule(runtime, url, mimeType),
+    bodyRedactedToken: BODY_REDACTION_TOKEN
+  });
+  const liteNetworkBaseline = createLiteNetworkBaselineController({
+    webRequest: chromeApi?.webRequest,
+    ingestRawEvent,
+    getRuntimeByTab: (tabId) => sessionRegistry.getByTab(tabId),
+    tabRuntimes: () => sessionRegistry.tabRuntimes()
+  });
+  const offscreenPortConnector = createOffscreenPortConnector<PortLike>(
     {
-      tabs: {
-        query: (queryInfo) => tabs.query(queryInfo),
-        get: (tabId) => tabs.get(tabId),
-        onCreated: tabs.onCreated,
-        onUpdated: tabs.onUpdated,
-        onRemoved: tabs.onRemoved,
-        onActivated: tabs.onActivated
+      getPort: () => portRegistry.getOffscreenPort(),
+      hasDocument: offscreenDocuments.hasOffscreenDocument,
+      createDocument: offscreenDocuments.createOffscreenDocument,
+      closeDocument: async () => {
+        await chromeApi?.offscreen?.closeDocument();
       },
-      windows: chromeApi?.windows
+      requestReconnect: async () => {
+        await chromeApi?.runtime?.sendMessage({ kind: OFFSCREEN_CONNECT_REQUEST_KIND });
+      },
+      wait
     },
     {
-      emit: ingestTabsContext,
-      onError: (error) => {
-        console.warn("[WebBlackbox] other tabs of the site could not be read", error);
+      portWaitMs: OFFSCREEN_PORT_READY_TIMEOUT_MS,
+      pollMs: OFFSCREEN_PORT_READY_WAIT_MS
+    }
+  );
+  const offscreenRecovery = createOffscreenSessionRecovery({
+    getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
+    tabRuntimes: () => sessionRegistry.tabRuntimes(),
+    offscreenClient: {
+      requestOnce: (request) => offscreenClient.requestOnce(request)
+    },
+    notifyOffscreenPipelineStatus: () => {
+      inboundRouter.notifyOffscreenPipelineStatus();
+    }
+  });
+  const offscreenClient = createOffscreenClient({
+    ensurePort: ensureOffscreenPortReady,
+    recoverSession: offscreenRecovery.recoverOffscreenSession,
+    traffic: offscreenPortTraffic,
+    shouldLogPerf
+  });
+  const readEnterprisePolicy = createBoundedManagedPolicyReader(
+    () => readManagedEnterprisePolicy(chromeApi?.storage?.managed),
+    {
+      timeoutMs: ENTERPRISE_POLICY_READ_TIMEOUT_MS,
+      onTimeout: () => {
+        console.warn("[WebBlackbox] enterprise policy not available yet; continuing without it");
       }
     }
   );
-}
+  const { getAtRestKey, isAtRestKeyFresh, sendAtRestKeyToOffscreen } = createAtRestKeyService({
+    storageArea: chromeApi?.storage?.session,
+    indexedDb: globalThis.indexedDB,
+    dbName: PIPELINE_DB_NAME,
+    post: (port, message) => offscreenClient.post(port, message)
+  });
 
-function ingestTabsContext(recordedTabId: number, emission: TabsContextEmission): void {
-  const runtime = sessionRegistry.getByTab(recordedTabId);
+  void getAtRestKey().catch((error) => {
+    console.warn("[WebBlackbox] at-rest encryption key unavailable", error);
+  });
+  // v1 options move into the profiles store once; profile and budget reads wait for it.
+  const settingsMigrated = migrateSettingsStorage(chromeApi?.storage?.local).then((result) => {
+    if (result.status === "failed") {
+      console.warn(
+        "[WebBlackbox] settings migration failed; retried at the next start",
+        result.error
+      );
+    }
+  });
 
-  if (!runtime || runtime.stoppedAt) {
-    return;
+  const annotations = createSessionAnnotations({
+    sessionStorageArea: chromeApi?.storage?.session,
+    localStorageArea: chromeApi?.storage?.local,
+    getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
+    pushSessionList
+  });
+  const profileReevaluation = createProfileReevaluation({
+    chromeApi,
+    settingsMigrated,
+    readEnterprisePolicy,
+    resolveUiActionTarget,
+    ingestRawEvent,
+    stopSession: (tabId) => sessionCommands.stopSession(tabId),
+    monotonicTime
+  });
+  const stoppedSessionLifecycle: StoppedSessionLifecycleController = createStoppedSessionLifecycle({
+    sessionRegistry,
+    alarms: chromeApi?.alarms,
+    sessionStorageArea: chromeApi?.storage?.session,
+    localStorageArea: chromeApi?.storage?.local,
+    closeOffscreenDocument: async () => {
+      await chromeApi?.offscreen?.closeDocument?.();
+    },
+    getAtRestKey,
+    isAtRestKeyFresh,
+    waitForRuntimeState: () => runtimeStateRestored,
+    loadPerformanceBudgetConfig,
+    getSessionAnnotation: (sid) => annotations.get(sid),
+    createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
+    createFullBodyCapture: fullCdp.createFullBodyCapture,
+    toSessionMetadata,
+    flushBufferedPipelineEvents: pipelineBuffer.flushBufferedPipelineEvents,
+    refreshActionBadge: () => sessionCommands.refreshActionBadge(),
+    pushSessionList,
+    persistRuntimeState: () => sessionCommands.persistRuntimeState(),
+    notifyOffscreenPipelineStatus: () => {
+      inboundRouter.notifyOffscreenPipelineStatus();
+    },
+    indexedDB: globalThis.indexedDB,
+    sweepStoredSessions: (shouldDelete) =>
+      sweepPipelineSessions(new IndexedDbPipelineStorage(PIPELINE_DB_NAME), shouldDelete),
+    bootedAt: serviceWorkerBootedAt
+  });
+  const exportPassphrases = createExportPassphraseStore(chromeApi?.storage?.session);
+  const sessionNotifications = createSessionNotifications({
+    notifications: chromeApi?.notifications,
+    getMessage: (key) => chromeApi?.i18n?.getMessage?.(key) ?? "",
+    getURL: (path) => chromeApi?.runtime?.getURL(path) ?? path,
+    isPopupOpen: () => portRegistry.hasPortNamed(PORT_NAMES.popup),
+    openTab: async (url) => {
+      await chromeApi?.tabs?.create?.({ url, active: true });
+    }
+  });
+  const sessionExport = createSessionExportController({
+    getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
+    stopSession: (tabId) => sessionCommands.stopSession(tabId),
+    flushBufferedPipelineEvents: pipelineBuffer.flushBufferedPipelineEvents,
+    attachStoppedPipeline: (runtime) => stoppedSessionLifecycle.attachStoppedPipeline(runtime),
+    disposeStoppedSession: (runtime) => stoppedSessionLifecycle.disposeStoppedSession(runtime),
+    enqueueWithResult,
+    downloads: chromeApi?.downloads,
+    auditStorageArea: chromeApi?.storage?.local,
+    broadcast: (message) => {
+      portRegistry.broadcast(message);
+    },
+    passphrases: exportPassphrases,
+    onExported: (runtime) => sessionCommands.markExported(runtime)
+  });
+  const sessionCommands = createSessionCommands({
+    sessionRegistry,
+    annotations,
+    stopDrain,
+    pipelineBuffer,
+    profile: profileReevaluation,
+    fullCdp,
+    screenRecording,
+    storageArtifacts,
+    liteNetworkBaseline,
+    recordedTabWatch,
+    tabsContextTracker,
+    stoppedSessionLifecycle,
+    tabs: chromeApi?.tabs,
+    scripting: chromeApi?.scripting,
+    action: chromeApi?.action,
+    storageLocal: chromeApi?.storage?.local,
+    broadcast: (message) => {
+      portRegistry.broadcast(message);
+    },
+    notifyOffscreenPipelineStatus: () => {
+      inboundRouter.notifyOffscreenPipelineStatus();
+    },
+    pushSessionList,
+    scheduleSessionListPush: () => {
+      sessionListPush.schedule();
+    },
+    ingestRawEvent,
+    enqueueWithResult,
+    updateSessionMetadataFromEvent: (runtime, event) => {
+      navigationRouter.updateSessionMetadataFromEvent(runtime, event);
+    },
+    handleFreezeNotice: (runtime, reason) => {
+      artifacts.handleFreezeNotice(runtime, reason);
+    },
+    getAtRestKey,
+    ensureOffscreenDocument: offscreenDocuments.ensureOffscreenDocument,
+    createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
+    loadPerformanceBudgetConfig,
+    monotonicTime,
+    idleBadgeNotice: () => extensionUpdates.badge(),
+    notifications: sessionNotifications
+  });
+  const extensionUpdates = createExtensionUpdateChecker({
+    storageLocal: chromeApi?.storage?.local,
+    alarms: chromeApi?.alarms,
+    loadPlayerUrl: () => loadKnownPlayerUrl(chromeApi?.storage),
+    fetch: typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : undefined,
+    installedVersion: chromeApi?.runtime?.getManifest?.().version ?? "",
+    now: () => Date.now(),
+    refreshBadge: () => sessionCommands.refreshNoticeBadge()
+  });
+  const navigationRouter = createNavigationRouter({
+    sessionRegistry,
+    sessionCommands,
+    profile: profileReevaluation,
+    contentInjection,
+    storageArtifacts,
+    tabsContextTracker,
+    runtime: chromeApi?.runtime,
+    scripting: chromeApi?.scripting,
+    pushSessionList
+  });
+  const inboundRouter = createInboundRouter({
+    sessionRegistry,
+    portRegistry,
+    stopDrain,
+    offscreenClient,
+    screenRecording,
+    sessionCommands,
+    sessionList: sessionListView,
+    passphrases: exportPassphrases,
+    sessionExport,
+    annotations,
+    profile: profileReevaluation,
+    runtime: chromeApi?.runtime,
+    tabs: chromeApi?.tabs,
+    scripting: chromeApi?.scripting,
+    offscreenPath: OFFSCREEN_PATH,
+    resolveUiActionTarget,
+    ingestRawEvent,
+    sendAtRestKeyToOffscreen,
+    recoverActiveOffscreenPipelines: offscreenRecovery.recoverAllActiveOffscreenPipelines,
+    markStoppedPipelinesDetached: () => {
+      stoppedSessionLifecycle.markStoppedPipelinesDetached();
+    },
+    waitForRuntimeState: () => runtimeStateRestored,
+    pushSessionList,
+    wait,
+    monotonicTime,
+    perfNow,
+    shouldLogPortDebug
+  });
+
+  const runtimeStateRestored = sessionCommands.restoreRuntimeState().catch((error) => {
+    console.warn("[WebBlackbox] failed to restore runtime state", error);
+  });
+
+  // Retention of stopped, unexported recordings: alarms outlive the worker, timers do not.
+  chromeApi?.alarms?.onAlarm.addListener((alarm) => {
+    if (alarm.name === EXTENSION_UPDATE_ALARM) {
+      void extensionUpdates.check();
+      return;
+    }
+
+    const sid = sidFromRetentionAlarm(alarm.name);
+
+    if (sid) {
+      void stoppedSessionLifecycle.expireStoppedSession(sid).catch((error) => {
+        console.warn("[WebBlackbox] failed to delete an expired recording", error);
+      });
+    }
+  });
+
+  // Wakes the worker at browser start, so the previous browser session's leftovers are deleted
+  // right away instead of on the first click.
+  chromeApi?.runtime?.onStartup?.addListener(() => {
+    void getAtRestKey().catch((error) => {
+      console.warn("[WebBlackbox] at-rest encryption key unavailable at browser start", error);
+    });
+    void extensionUpdates.check();
+  });
+
+  // The newer-version notice: checked at browser start, on install/update, every few hours and
+  // when the Player URL changes. The alarm survives worker restarts; it is created once.
+  void extensionUpdates.ensureAlarm();
+
+  // Every boot re-applies the setting: it also restores a registration an update dropped.
+  void contentInjection.sync();
+
+  chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
+    if (areaName === "local" && Object.hasOwn(changes, CONTENT_INJECTION_STORAGE_KEY)) {
+      void contentInjection.sync();
+    }
+
+    extensionUpdates.handleStorageChange(changes, areaName);
+  });
+
+  chromeApi?.runtime?.onInstalled.addListener(() => {
+    void sessionCommands.setIdleBadge();
+    void extensionUpdates.check();
+  });
+
+  chromeApi?.runtime?.onConnect.addListener((port) => {
+    inboundRouter.handlePortConnect(port);
+  });
+
+  chromeApi?.runtime?.onMessage.addListener((rawMessage, sender, sendResponse) => {
+    return inboundRouter.handleRuntimeMessage(rawMessage, sender, sendResponse);
+  });
+
+  chromeApi?.commands?.onCommand.addListener((command) => {
+    if (command !== "mark-bug") {
+      return;
+    }
+
+    void inboundRouter.relayMarkerCommand();
+  });
+
+  // Deleting or editing a profile, or a policy change, re-checks running recordings at once.
+  chromeApi?.storage?.onChanged?.addListener((changes, areaName) => {
+    if (!isProfileSettingsChange(changes, areaName)) {
+      return;
+    }
+
+    for (const runtime of sessionRegistry.tabRuntimes()) {
+      profileReevaluation.scheduleProfileReevaluation(runtime, "settings-changed");
+    }
+  });
+
+  function createTabsContextTracker(): TabsContextTracker | null {
+    const tabs = chromeApi?.tabs;
+
+    if (!tabs?.onCreated || !tabs.onUpdated || !tabs.onRemoved || !tabs.onActivated) {
+      return null;
+    }
+
+    return new TabsContextTracker(
+      {
+        tabs: {
+          query: (queryInfo) => tabs.query(queryInfo),
+          get: (tabId) => tabs.get(tabId),
+          onCreated: tabs.onCreated,
+          onUpdated: tabs.onUpdated,
+          onRemoved: tabs.onRemoved,
+          onActivated: tabs.onActivated
+        },
+        windows: chromeApi?.windows
+      },
+      {
+        emit: ingestTabsContext,
+        onError: (error) => {
+          console.warn("[WebBlackbox] other tabs of the site could not be read", error);
+        }
+      }
+    );
   }
 
-  ingestRawEvent({
-    source: "system",
-    rawType: emission.rawType,
-    sid: runtime.sid,
-    tabId: recordedTabId,
-    t: Date.now(),
-    mono: monotonicTime(),
-    payload: emission.payload
-  });
-}
+  function ingestTabsContext(recordedTabId: number, emission: TabsContextEmission): void {
+    const runtime = sessionRegistry.getByTab(recordedTabId);
 
-async function ensureOffscreenPortReady(): Promise<PortLike> {
-  await offscreenDocuments.orphanedCleanup;
-  return offscreenPortConnector.ensurePort();
-}
+    if (!runtime || runtime.stoppedAt) {
+      return;
+    }
 
-async function loadPerformanceBudgetConfig(): Promise<PerformanceBudgetConfig> {
-  await settingsMigrated;
-  const storedValues = await chromeApi?.storage?.local?.get(PERFORMANCE_BUDGET_STORAGE_KEY);
-  return normalizePerformanceBudget(storedValues?.[PERFORMANCE_BUDGET_STORAGE_KEY]);
+    ingestRawEvent({
+      source: "system",
+      rawType: emission.rawType,
+      sid: runtime.sid,
+      tabId: recordedTabId,
+      t: Date.now(),
+      mono: monotonicTime(),
+      payload: emission.payload
+    });
+  }
+
+  async function ensureOffscreenPortReady(): Promise<PortLike> {
+    await offscreenDocuments.orphanedCleanup;
+    return offscreenPortConnector.ensurePort();
+  }
+
+  async function loadPerformanceBudgetConfig(): Promise<PerformanceBudgetConfig> {
+    await settingsMigrated;
+    const storedValues = await chromeApi?.storage?.local?.get(PERFORMANCE_BUDGET_STORAGE_KEY);
+    return normalizePerformanceBudget(storedValues?.[PERFORMANCE_BUDGET_STORAGE_KEY]);
+  }
 }

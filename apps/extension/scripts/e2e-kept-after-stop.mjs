@@ -8,14 +8,11 @@
 // recording exports without one.
 
 import { createServer } from "node:http";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
+import { EXTENSION_FILES } from "./lib/extension-paths.mjs";
 import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e2e-harness.mjs";
 
-const root = dirname(fileURLToPath(import.meta.url));
-const appRoot = resolve(root, "..");
-const harness = createProfileE2eHarness({ name: "kept-after-stop", appRoot, defaultPort: "9242" });
+const harness = createProfileE2eHarness({ name: "kept-after-stop", defaultPort: "9242" });
 const passphrase = "webblackbox-kept-e2e";
 const STOPPED_SESSIONS_KEY = "webblackbox.runtime.stoppedSessions";
 const RETENTION_ALARM_PREFIX = "webblackbox.retention:";
@@ -80,7 +77,7 @@ async function main() {
   // Chrome stops idle workers: the recording and its prompt survive that.
   const origin = `chrome-extension://${extensionId}`;
   const swTarget = (await harness.listTargets()).find(
-    (target) => target.type === "service_worker" && target.url === `${origin}/sw.js`
+    (target) => target.type === "service_worker" && target.url === `${origin}/${EXTENSION_FILES.serviceWorker}`
   );
   assert(swTarget, "Extension service worker target not found");
   await browser.send("Target.closeTarget", { targetId: swTarget.id });

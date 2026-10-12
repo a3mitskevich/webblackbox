@@ -27,6 +27,7 @@ import {
   type InboundSenderContext,
   type SenderTrustContext
 } from "./port-sender.js";
+import { answerContentAgentRequest } from "./content-agent-request.js";
 import type { ProfileReevaluationController } from "./profile-reevaluation.js";
 import {
   ensureInjectedHooks,
@@ -474,6 +475,15 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
         pointer: toStatusPointer(runtime),
         ...toScriptScanStatus(runtime)
       };
+    }
+
+    if (message.kind === "content.agent-request") {
+      return answerContentAgentRequest(
+        sessionRegistry,
+        deps.scripting,
+        senderTabId ?? port?.sender?.tab?.id,
+        senderFrameId ?? port?.sender?.frameId
+      );
     }
 
     if (message.kind === "content.stop-drained") {

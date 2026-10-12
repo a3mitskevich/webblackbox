@@ -1,6 +1,6 @@
 # Chrome Web Store Disclosure Source
 
-> Inherited from upstream. This fork is not listed on the Chrome Web Store. The text is kept because the `store-safe` build profile still exists (`node scripts/build-extension.mjs --profile store-safe` in `apps/extension`) and describes that build, not the default one.
+> Inherited from upstream. This fork is not listed on the Chrome Web Store. The text is kept because the `store-safe` build profile still exists (`pnpm --filter @webblackbox/extension build:store-safe` in `apps/extension`) and describes that build, not the default one.
 
 ## Single Purpose
 

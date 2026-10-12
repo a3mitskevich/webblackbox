@@ -1,3 +1,4 @@
+import { EXTENSION_FILES } from "../shared/extension-files.js";
 import type { SessionRuntime } from "./session-registry.js";
 
 /**
@@ -36,7 +37,7 @@ export type SessionNotifications = {
 
 /** `sessions.html` opened on the export of one recording. */
 export function exportPagePath(sid: string): string {
-  return `sessions.html#export=${encodeURIComponent(sid)}`;
+  return `${EXTENSION_FILES.sessionsPage}#export=${encodeURIComponent(sid)}`;
 }
 
 export function createSessionNotifications(deps: SessionNotificationsDeps): SessionNotifications {

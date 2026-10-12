@@ -22,7 +22,6 @@ const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
 const harness = createProfileE2eHarness({
   name: "profile-maximum",
-  appRoot,
   defaultPort: "9232"
 });
 const passphrase = "webblackbox-maximum-e2e";

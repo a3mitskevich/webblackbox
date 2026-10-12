@@ -20,7 +20,6 @@ const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
 const harness = createProfileE2eHarness({
   name: "full-start-reload",
-  appRoot,
   defaultPort: "9236"
 });
 const passphrase = "webblackbox-full-reload-e2e";

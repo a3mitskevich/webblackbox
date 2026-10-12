@@ -5,9 +5,6 @@
   "extensionDescription": {
     "message": "Flight recorder and time-travel debugger for web apps."
   },
-  "extensionActionTitle": {
-    "message": "WebBlackbox"
-  },
   "extensionCommandMarkBug": {
     "message": "Create user marker"
   },

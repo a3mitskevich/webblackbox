@@ -5,6 +5,7 @@ import { createServer as createNetServer } from "node:net";
 import { isAbsolute, resolve } from "node:path";
 
 import { fetchJson, formatErrorMessage, readLogTail, sleep, waitFor } from "./e2e-utils.mjs";
+import { EXTENSION_FILES } from "./extension-paths.mjs";
 
 export const DEFAULT_CHROME_CANDIDATES = [
   process.env.WB_E2E_CHROME_BIN,
@@ -58,7 +59,7 @@ const LOG_TAIL_LINES = 40;
 export async function ensureExtensionBuildReady(dir) {
   await access(dir, constants.R_OK);
   await access(resolve(dir, "manifest.json"), constants.R_OK);
-  await access(resolve(dir, "sw.js"), constants.R_OK);
+  await access(resolve(dir, EXTENSION_FILES.serviceWorker), constants.R_OK);
 }
 
 export async function resolveChromeBinary(candidates = DEFAULT_CHROME_CANDIDATES) {

@@ -39,12 +39,12 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Package Chrome extension
-        run: pnpm --filter @webblackbox/extension package:chrome
+        run: pnpm --filter @webblackbox/extension zip
 
       - name: Resolve Chrome extension archive
         id: archive
         run: |
-          archive_path=$(ls -t apps/extension/dist/*-chrome.zip | head -n 1)
+          archive_path=$(ls -t apps/extension/.output/*-chrome.zip | head -n 1)
           if [ -z "$archive_path" ]; then
             echo "Could not find packaged Chrome extension archive." >&2
             exit 1

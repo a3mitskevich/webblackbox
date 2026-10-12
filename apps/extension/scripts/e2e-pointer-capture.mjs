@@ -12,13 +12,15 @@ import { access, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, extname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isExtensionServiceWorkerTarget, requireExtensionId } from "./lib/devtools-targets.mjs";
+import { DEFAULT_EXTENSION_DIR, EXTENSION_FILES } from "./lib/extension-paths.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
 const demoDir = resolve(appRoot, "e2e-demo");
 
-const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? resolve(appRoot, "build");
+const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? DEFAULT_EXTENSION_DIR;
 const remotePort = Number(process.env.WB_E2E_REMOTE_PORT ?? "9233");
 const headless = (process.env.WB_E2E_HEADLESS ?? "1") !== "0";
 const modes = (process.env.WB_E2E_POINTER_MODES ?? "lite,full")
@@ -152,16 +154,16 @@ async function main() {
     eventsEnabled: true
   });
 
+  const extensionId = await requireExtensionId(extensionDir);
   const swTarget = await waitFor(
     async () =>
-      (await fetchJson(`${baseUrl}/json/list`)).find(
-        (target) => target?.type === "service_worker" && target.url?.endsWith("/sw.js")
+      (await fetchJson(`${baseUrl}/json/list`)).find((target) =>
+        isExtensionServiceWorkerTarget(target, extensionId)
       ) ?? null,
     20_000,
     "Extension service worker not found"
   );
   step("service worker found");
-  const extensionId = /^chrome-extension:\/\/([^/]+)\//.exec(swTarget.url)?.[1];
   const sw = await connect(swTarget.webSocketDebuggerUrl);
   const swExceptions = [];
   await sw.send("Runtime.enable");
@@ -173,7 +175,8 @@ async function main() {
   // A regular page has to exist before the extension page target answers CDP (as in the QA e2e).
   await openTarget(demoUrl);
   const popup = await connect(
-    (await openTarget(`chrome-extension://${extensionId}/popup.html`)).webSocketDebuggerUrl
+    (await openTarget(`chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`))
+      .webSocketDebuggerUrl
   );
   step("popup opened");
   await popup.send("Runtime.enable");

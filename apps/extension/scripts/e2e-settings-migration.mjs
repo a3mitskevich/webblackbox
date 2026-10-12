@@ -10,16 +10,11 @@
 //    rule for QA, a deleted Full): after a restart they point at Maximum, Light stays deleted.
 
 import { createServer } from "node:http";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { assert, createProfileE2eHarness, waitFor } from "./lib/profile-e2e-harness.mjs";
 
-const root = dirname(fileURLToPath(import.meta.url));
-const appRoot = resolve(root, "..");
 const harness = createProfileE2eHarness({
   name: "settings-migration",
-  appRoot,
   defaultPort: "9240"
 });
 

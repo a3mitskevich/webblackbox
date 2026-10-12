@@ -18,7 +18,7 @@ import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e
 const root = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
-const harness = createProfileE2eHarness({ name: "capture-fallback", appRoot, defaultPort: "9241" });
+const harness = createProfileE2eHarness({ name: "capture-fallback", defaultPort: "9241" });
 const passphrase = "webblackbox-fallback-e2e";
 const BEFORE_MARKER = "before-fallback-body-3c1d";
 const AFTER_MARKER = "after-fallback-body-8e2a";

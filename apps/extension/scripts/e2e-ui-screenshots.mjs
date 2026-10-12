@@ -15,7 +15,7 @@
  *
  * Env:
  *   WB_E2E_CHROME_BIN       Chrome binary (required on Linux; defaults to macOS Chrome path)
- *   WB_UI_SHOTS_EXTENSION   unpacked extension dir (default: apps/extension/build)
+ *   WB_UI_SHOTS_EXTENSION   unpacked extension dir (default: apps/extension/.output/chrome-mv3)
  *   WB_UI_SHOTS_OUT         output dir for actual/diff images (default: OS temp dir)
  *   WB_UI_SHOTS_UPDATE=1    write actual images as the new baselines
  *   WB_UI_SHOTS_STRICT=1    fail on pixel mismatch even when the fingerprint differs
@@ -37,10 +37,11 @@ import { fileURLToPath } from "node:url";
 import { runOptionsGuardChecks } from "./lib/options-guard-e2e.mjs";
 import { runOptionsProfilesChecks } from "./lib/options-profiles-e2e.mjs";
 import { connectBrowser, launchChrome, resolveExtensionId } from "./lib/ui-shots-chrome.mjs";
+import { DEFAULT_EXTENSION_DIR, EXTENSION_FILES } from "./lib/extension-paths.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(scriptDir, "..");
-const extensionDir = resolve(process.env.WB_UI_SHOTS_EXTENSION ?? join(extensionRoot, "build"));
+const extensionDir = resolve(process.env.WB_UI_SHOTS_EXTENSION ?? DEFAULT_EXTENSION_DIR);
 const baselineDir = join(extensionRoot, "e2e-baselines", "ui");
 const chromeBin =
   process.env.WB_E2E_CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -261,11 +262,11 @@ const OPTIONS_DIRTY_STEPS = [
   { type: { selector: "#budgetLcpWarnMs", value: "3000" } }
 ];
 const PAGE_SHOTS = [
-  { name: "options-420", page: "options.html", width: 420, height: 900 },
-  { name: "options-1440", page: "options.html", width: 1440, height: 900 },
+  { name: "options-420", page: EXTENSION_FILES.optionsPage, width: 420, height: 900 },
+  { name: "options-1440", page: EXTENSION_FILES.optionsPage, width: 1440, height: 900 },
   ...OPTIONS_SECTIONS.map((section) => ({
     name: `options-1440-${section}`,
-    page: "options.html",
+    page: EXTENSION_FILES.optionsPage,
     width: 1440,
     height: 900,
     hash: section,
@@ -273,7 +274,7 @@ const PAGE_SHOTS = [
   })),
   {
     name: "options-1440-unsaved",
-    page: "options.html",
+    page: EXTENSION_FILES.optionsPage,
     width: 1440,
     height: 900,
     hash: "rules",
@@ -281,7 +282,7 @@ const PAGE_SHOTS = [
   },
   {
     name: "options-1440-leave-prompt",
-    page: "options.html",
+    page: EXTENSION_FILES.optionsPage,
     width: 1440,
     height: 900,
     hash: "rules",
@@ -289,7 +290,7 @@ const PAGE_SHOTS = [
   },
   {
     name: "options-420-unsaved",
-    page: "options.html",
+    page: EXTENSION_FILES.optionsPage,
     width: 420,
     height: 900,
     hash: "rules",
@@ -297,14 +298,14 @@ const PAGE_SHOTS = [
   },
   {
     name: "sessions-420",
-    page: "sessions.html",
+    page: EXTENSION_FILES.sessionsPage,
     width: 420,
     height: 900,
     sessions: SESSIONS_PAGE_FIXTURE
   },
   {
     name: "sessions-1440",
-    page: "sessions.html",
+    page: EXTENSION_FILES.sessionsPage,
     width: 1440,
     height: 900,
     sessions: SESSIONS_PAGE_FIXTURE
@@ -397,7 +398,7 @@ async function capturePopupState(browser, extensionId, state, outDir) {
   });
 
   try {
-    await navigate(page, `chrome-extension://${extensionId}/popup.html`);
+    await navigate(page, `chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`);
     await runSteps(page, state.name, state.steps);
 
     const result = await screenshot(page, state.name, POPUP_WIDTH, POPUP_HEIGHT, outDir);
@@ -644,7 +645,7 @@ async function measureFingerprint(browser, extensionId) {
   const page = await openPage(browser, 800, 600, null);
 
   try {
-    await navigate(page, `chrome-extension://${extensionId}/options.html`);
+    await navigate(page, `chrome-extension://${extensionId}/${EXTENSION_FILES.optionsPage}`);
     const fontProbe = await page.evaluate(`(() => {
       const context = document.createElement("canvas").getContext("2d");
       const family = getComputedStyle(document.body).fontFamily;

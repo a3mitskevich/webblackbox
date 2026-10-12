@@ -75,6 +75,7 @@ export function parseExtensionInboundMessage(raw: unknown): InboundParseResult {
     case "ui.passphrase-status":
     case "ui.forget-passphrase":
     case "content.ready":
+    case "content.agent-request":
       return accept({ kind: row.kind });
     case "ui.resolve-profile":
       return parseUiResolveProfile(row);

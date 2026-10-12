@@ -7,6 +7,7 @@ import {
   injectContentScriptIntoFrame,
   isInjectableFrameUrl
 } from "./content-injection.js";
+import { EXTENSION_FILES } from "../shared/extension-files.js";
 
 type FakeOptions = {
   stored?: unknown;
@@ -157,7 +158,7 @@ describe("content injection controller", () => {
     expect(chrome.api.scripting.executeScript).toHaveBeenCalledWith({
       target: { tabId: 7, frameIds: [3] },
       world: "ISOLATED",
-      files: ["content.js"],
+      files: [EXTENSION_FILES.contentScript],
       injectImmediately: true
     });
   });

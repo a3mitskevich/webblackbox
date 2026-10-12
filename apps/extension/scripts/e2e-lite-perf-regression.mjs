@@ -2,8 +2,6 @@
 
 import { createServer } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { CdpClient, closeClient, DEFAULT_CDP_COMMAND_TIMEOUT_MS } from "./lib/cdp-client.mjs";
 import {
@@ -34,11 +32,9 @@ import {
   evaluateSeriesBudget,
   mergeBudgetAttempts
 } from "./lib/perf-budgets.mjs";
+import { DEFAULT_EXTENSION_DIR, EXTENSION_FILES } from "./lib/extension-paths.mjs";
 
-const root = dirname(fileURLToPath(import.meta.url));
-const extensionRoot = resolve(root, "..");
-
-const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? resolve(extensionRoot, "build");
+const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? DEFAULT_EXTENSION_DIR;
 const remotePort = Number(process.env.WB_E2E_REMOTE_PORT ?? "9235");
 const headless = (process.env.WB_E2E_HEADLESS ?? "1") !== "0";
 const profileDir =
@@ -207,7 +203,7 @@ async function main() {
     serverPort: server.port
   });
 
-  const popupUrl = `chrome-extension://${extensionId}/popup.html`;
+  const popupUrl = `chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`;
   const popupStart = await openPopupRuntimeTarget(popupUrl);
   state.popupClient = popupStart.client;
 
@@ -217,7 +213,7 @@ async function main() {
     (target) =>
       target.type === "service_worker" &&
       typeof target.url === "string" &&
-      target.url === `chrome-extension://${extensionId}/sw.js`,
+      target.url === `chrome-extension://${extensionId}/${EXTENSION_FILES.serviceWorker}`,
     20_000,
     "Extension service worker target not found after popup warmup"
   );

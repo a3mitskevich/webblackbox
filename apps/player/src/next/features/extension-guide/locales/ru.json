@@ -9,7 +9,7 @@
   "downloadFacts": "Версия {version} · {size}",
   "downloadSha256": "SHA-256",
   "downloadMissing": "В этой сборке Player нет расширения.",
-  "downloadMissingHow": "Попросите того, кто раздаёт этот Player, собрать его с расширением, или соберите сами: выполните pnpm --filter @webblackbox/extension package:chrome перед pnpm build.",
+  "downloadMissingHow": "Попросите того, кто раздаёт этот Player, собрать его с расширением, или соберите сами: выполните pnpm --filter @webblackbox/extension zip перед pnpm build.",
   "copy": "Копировать",
   "copySha256": "Копировать SHA-256",
   "copyPlayerUrl": "Копировать URL этого Player",
