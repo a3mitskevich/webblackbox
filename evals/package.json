@@ -1,0 +1,19 @@
+{
+  "name": "@webblackbox/evals",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bug zoo fixture site, archive recorder and the MCP analysis evaluation.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "site": "tsx src/serve.ts",
+    "record": "tsx src/record.ts",
+    "eval": "tsx src/run-eval.ts",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@webblackbox/player-sdk": "workspace:*"
+  }
+}
