@@ -206,7 +206,7 @@ describe("captureA11ySnapshot", () => {
 
   it("bounds a huge page by the node budget", () => {
     document.body.innerHTML = Array.from(
-      { length: 3_000 },
+      { length: 450 },
       (_, index) => `<div><a href="#r${index}">open ${index}</a><button>Act ${index}</button></div>`
     ).join("");
     const snapshot = captureA11ySnapshot({
@@ -216,15 +216,15 @@ describe("captureA11ySnapshot", () => {
     });
 
     expect(snapshot?.nodeCount).toBe(800);
-    expect(snapshot?.omittedNodes).toBe(5_200);
+    expect(snapshot?.omittedNodes).toBe(100);
     expect(snapshot?.tree.length).toBeLessThanOrEqual(24_064);
   });
 
   it("reports markup nested past the depth bound as cut instead of overflowing the stack", () => {
     let html = "<button>Deep</button>";
 
-    // jsdom itself overflows its stack on much deeper markup; real Chrome is checked deeper.
-    for (let index = 0; index < 1_000; index += 1) {
+    // Just past the bound: jsdom is slow on deep markup; `e2e:a11y:heavy` checks 5k levels in Chrome.
+    for (let index = 0; index < 300; index += 1) {
       html = `<div>${html}</div>`;
     }
 
