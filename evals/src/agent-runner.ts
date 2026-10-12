@@ -198,38 +198,81 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function spawnWithTimeout(
+export type SpawnResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+};
+
+/** After the timeout's SIGTERM: how long until SIGKILL, and again until we stop waiting. */
+const KILL_GRACE_MS = 10_000;
+
+/**
+ * Runs `command` with `stdin` and collects its output. On timeout it sends SIGTERM, then SIGKILL,
+ * and settles even when a grandchild (an MCP server) still holds the output pipes open.
+ */
+export function spawnWithTimeout(
   command: string,
   args: readonly string[],
   stdin: string,
   cwd: string,
-  timeoutMs: number
-): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
+  timeoutMs: number,
+  killGraceMs = KILL_GRACE_MS
+): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
+    const timers: NodeJS.Timeout[] = [];
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, timeoutMs);
+    let settled = false;
+    const finish = (): boolean => {
+      if (settled) {
+        return false;
+      }
 
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (exitCode) => {
-      clearTimeout(timer);
+      settled = true;
+      timers.forEach(clearTimeout);
+      return true;
+    };
+    const settle = (exitCode: number | null) => {
+      if (!finish()) {
+        return;
+      }
+
+      child.stdout.destroy();
+      child.stderr.destroy();
       resolve({
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: Buffer.concat(stderr).toString("utf8"),
         exitCode,
         timedOut
       });
+    };
+    const after = (ms: number, action: () => void) => {
+      timers.push(setTimeout(action, ms));
+    };
+
+    after(timeoutMs, () => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      after(killGraceMs, () => {
+        child.kill("SIGKILL");
+        after(killGraceMs, () => settle(child.exitCode));
+      });
     });
+
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("error", (error) => {
+      if (finish()) {
+        reject(error);
+      }
+    });
+    child.on("close", (exitCode) => settle(exitCode));
+    // A child that exits before reading its input must not crash the runner with EPIPE.
+    child.stdin.on("error", () => undefined);
     child.stdin.end(stdin);
   });
 }

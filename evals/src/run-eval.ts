@@ -16,7 +16,12 @@ import { parseArgs } from "node:util";
 
 import { runAgent } from "./agent-runner.js";
 import { inspectArchive } from "./archive-facts.js";
-import { type ArchiveManifest, type ManifestEntry, readManifest } from "./archive-manifest.js";
+import {
+  type ArchiveManifest,
+  type ManifestEntry,
+  partitionEvaluable,
+  readManifest
+} from "./archive-manifest.js";
 import { judgeAnswer } from "./judge.js";
 import {
   ARCHIVE_MANIFEST,
@@ -112,12 +117,21 @@ async function main(): Promise<void> {
   }
 
   const scenarios = selectScenarios(values.scenario);
-  const entries = manifest.entries.filter(
-    (entry) =>
-      !entry.error &&
-      scenarios.some((scenario) => scenario.id === entry.scenarioId) &&
-      (values.profile.length === 0 || values.profile.includes(entry.profile))
+  const { evaluable: entries, skipped } = partitionEvaluable(
+    manifest.entries.filter(
+      (entry) =>
+        scenarios.some((scenario) => scenario.id === entry.scenarioId) &&
+        (values.profile.length === 0 || values.profile.includes(entry.profile))
+    )
   );
+
+  for (const entry of skipped) {
+    console.warn(
+      `Skipping ${entry.profile}/${entry.caseId}: ` +
+        (entry.error ? `recording failed (${entry.error})` : "the bug did not reproduce") +
+        "; record it again"
+    );
+  }
 
   if (entries.length === 0) {
     throw new Error("No recorded archives match the selection");

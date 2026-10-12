@@ -52,6 +52,22 @@ export function mergeEntries(
   );
 }
 
+/**
+ * Splits entries into the ones an evaluation can score and the ones it must skip: a failed
+ * recording, or one where the bug did not reproduce, would count as a miss of the agent.
+ */
+export function partitionEvaluable(entries: readonly ManifestEntry[]): {
+  evaluable: readonly ManifestEntry[];
+  skipped: readonly ManifestEntry[];
+} {
+  const isEvaluable = (entry: ManifestEntry) => !entry.error && entry.symptomReproduced;
+
+  return {
+    evaluable: entries.filter(isEvaluable),
+    skipped: entries.filter((entry) => !isEvaluable(entry))
+  };
+}
+
 export function parseManifest(value: unknown): ArchiveManifest {
   if (!isRecord(value) || value.version !== 1 || typeof value.passphrase !== "string") {
     throw new Error("Archive manifest: unsupported format");
