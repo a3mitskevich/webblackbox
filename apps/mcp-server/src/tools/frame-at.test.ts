@@ -257,6 +257,28 @@ describe("frame_at", () => {
     expect(forcedVideo.images).toEqual([]);
   });
 
+  it("tries the tab video when the close screenshot has no image in the archive", async () => {
+    const video = fixtureBlob(new Uint8Array([1, 2, 3, 4]), "webm");
+    const player = await WebBlackboxPlayer.open(
+      await buildArchiveBytes(
+        [
+          ...recordingEvents(video),
+          fixtureEvent("S-1", "screen.screenshot", 1_990, { shotId: "missing", format: "webp" })
+        ],
+        [video]
+      )
+    );
+    const calls: DecoderCall[] = [];
+    const result = await renderFrameAt(player, "a", { mono: 2_000 }, fakeDecoder(calls));
+    const withoutDecoder = await renderFrameAt(player, "a", { mono: 2_000 }, NO_DECODER);
+
+    expect(result.data.frame).toMatchObject({ source: "video", recordingId: "V-1" });
+    expect(result.images).toHaveLength(1);
+    expect(result.data.notes).toContainEqual(expect.stringMatching(/S-1 has no image/));
+    expect(withoutDecoder.data.frame).toMatchObject({ source: "screenshot", eventId: "S-1" });
+    expect(withoutDecoder.images).toEqual([]);
+  });
+
   it("asks for exactly one known anchor", async () => {
     await expect(renderFrameAt(checkout, "a", {}, NO_DECODER)).rejects.toThrow(/exactly one/);
     await expect(

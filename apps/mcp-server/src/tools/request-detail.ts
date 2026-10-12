@@ -11,7 +11,7 @@ import * as z from "zod";
 
 import { findActionByTime, findActionSpan } from "./archive-lookup.js";
 import { missingBody, viewBodyBytes, viewBodyText, type BodyView } from "./body-view.js";
-import { capList, cutText, paginate } from "./budget.js";
+import { capList, cutText, decodeCursor, encodeCursor, fitRows } from "./budget.js";
 import { defineArchiveTool, type ArchiveToolOutput } from "./registry.js";
 import { asNumber, asRecord, asString, round2 } from "./values.js";
 
@@ -284,23 +284,25 @@ async function pageFrames(
 ): Promise<Record<string, unknown>> {
   const maxFrameBytes = args.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const url = realtime.find((frame) => frame.url)?.url;
-  const page = paginate(realtime, {
-    cursor: args.frameCursor,
-    limit: args.frameLimit ?? DEFAULT_FRAME_LIMIT,
-    maxBytes: FRAMES_PAGE_MAX_BYTES
-  });
-  const items = await Promise.all(
-    page.rows.map((frame) => describeFrame(player, frame, maxFrameBytes))
+  const offset = Math.min(decodeCursor(args.frameCursor), realtime.length);
+  const described = await Promise.all(
+    realtime
+      .slice(offset, offset + (args.frameLimit ?? DEFAULT_FRAME_LIMIT))
+      .map((frame) => describeFrame(player, frame, maxFrameBytes))
   );
+  // The page budget counts the payloads as returned, not the recorded previews.
+  const fitted = fitRows(described, FRAMES_PAGE_MAX_BYTES);
+  const next = offset + fitted.rows.length;
+  const hasMore = next < realtime.length;
 
   return {
     protocol: realtime[0]?.protocol ?? null,
     url: url ? capValue(url, URL_MAX_BYTES) : null,
-    total: page.total,
-    offset: page.offset,
-    truncated: page.truncated,
-    nextCursor: page.nextCursor,
-    items
+    total: realtime.length,
+    offset,
+    truncated: hasMore,
+    nextCursor: hasMore ? encodeCursor(next) : null,
+    items: fitted.rows
   };
 }
 

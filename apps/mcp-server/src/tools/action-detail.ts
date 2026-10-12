@@ -20,7 +20,7 @@ import {
   toScreenshotPointer,
   type ActionTimeWindow
 } from "./archive-lookup.js";
-import { capList, cutText, shrinkListsToBudget } from "./budget.js";
+import { capList, cutText, jsonBytes, shrinkListsToBudget } from "./budget.js";
 import { defineArchiveTool, type ArchiveToolOutput } from "./registry.js";
 import { asNumber, asRecord, asString, compactLabel, round2 } from "./values.js";
 
@@ -194,9 +194,34 @@ export function buildActionDetail(
     },
     eventTypes: countTypes(linked.filter(({ link }) => link === "ref").map(({ event }) => event))
   };
-  const truncatedLists = shrinkListsToBudget(data, args.maxBytes ?? DEFAULT_MAX_BYTES);
+  const maxBytes = args.maxBytes ?? DEFAULT_MAX_BYTES;
+  const truncatedLists = shrinkListsToBudget(data, maxBytes);
+  const fitted = jsonBytes(data) > maxBytes ? withoutRawTarget(data) : data;
 
-  return { data: { ...data, truncatedLists } };
+  return {
+    data: { ...fitted, truncatedLists, withinBudget: jsonBytes(fitted) <= maxBytes }
+  };
+}
+
+/** The result without the raw target JSON, the largest part the list halving cannot reach. */
+function withoutRawTarget(data: Record<string, unknown>): Record<string, unknown> {
+  const target = asRecord(data.target);
+
+  if (!target?.recorded) {
+    return data;
+  }
+
+  return {
+    ...data,
+    target: {
+      ...target,
+      recorded: {
+        json: null,
+        truncated: true,
+        note: "Left out to fit maxBytes; ask again with a larger maxBytes to see it."
+      }
+    }
+  };
 }
 
 type Link = "ref" | "time";

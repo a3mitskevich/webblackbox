@@ -2,6 +2,7 @@ import { WebBlackboxPlayer } from "@webblackbox/player-sdk";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { BodyView } from "./body-view.js";
+import { jsonBytes } from "./budget.js";
 import { buildRequestDetail } from "./request-detail.js";
 import { buildArchiveBytes, fixtureBlob, fixtureEvent } from "./test-archive.js";
 import { checkoutScenario, PAY_RESPONSE_BODY, WS_FRAME_COUNT } from "./test-scenario.js";
@@ -209,6 +210,50 @@ describe("request_detail", () => {
 
     expect(message?.payload).toHaveLength(64);
     expect(message?.note).toMatch(/^64 of \d+ bytes$/);
+  });
+
+  it("keeps a page of large socket messages within the page budget", async () => {
+    // Payloads live in blobs behind a short preview, so only the returned items show their size.
+    const payload = fixtureBlob("q".repeat(60_000), "txt");
+    const big = await WebBlackboxPlayer.open(
+      await buildArchiveBytes(
+        Array.from({ length: 10 }, (_, index) =>
+          fixtureEvent(
+            `B-${index}`,
+            "network.ws.frame",
+            100 + index,
+            {
+              requestId: "WS-B",
+              direction: "received",
+              frame: {
+                opcode: 1,
+                payloadLength: 60_000,
+                payloadPreview: "qqqq",
+                payloadHash: payload.hash
+              }
+            },
+            { ref: { req: "WS-B" } }
+          )
+        ),
+        [payload]
+      )
+    );
+    const args = { requestId: "WS-B", frameLimit: 10, maxFrameBytes: 65_536 };
+    type Frames = {
+      truncated: boolean;
+      nextCursor: string | null;
+      items: Array<{ eventId: string }>;
+    };
+    const first = (await buildRequestDetail(big, "a", args)).data.frames as Frames;
+    const second = (
+      await buildRequestDetail(big, "a", { ...args, frameCursor: first.nextCursor ?? undefined })
+    ).data.frames as Frames;
+
+    expect(first.items.length).toBeGreaterThan(0);
+    expect(first.items.length).toBeLessThan(10);
+    expect(jsonBytes(first.items)).toBeLessThanOrEqual(256_000);
+    expect(first.truncated).toBe(true);
+    expect(second.items[0]?.eventId).toBe(`B-${first.items.length}`);
   });
 
   it("rejects an unknown request id", async () => {

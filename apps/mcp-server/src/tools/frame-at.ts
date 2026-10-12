@@ -224,8 +224,16 @@ async function chooseFrame(input: ChooseFrameInput): Promise<FrameChoice> {
     Math.abs(near.nearest.mono - anchor.mono) <= AUTO_SCREENSHOT_TOLERANCE_MS;
   const notes: string[] = [];
 
-  if (source === "screenshot" || (source === "auto" && screenshotIsClose)) {
+  if (source === "screenshot") {
     return screenshotChoice(input, notes);
+  }
+
+  // A close screenshot wins in auto, unless its image is missing: then the video may still show it.
+  const close =
+    source === "auto" && screenshotIsClose ? await screenshotChoice(input, notes) : null;
+
+  if (close && (close.image || !input.includeImage)) {
+    return close;
   }
 
   const videoReason = videoUnavailableReason(input);
@@ -244,7 +252,7 @@ async function chooseFrame(input: ChooseFrameInput): Promise<FrameChoice> {
     return { frame: null, image: null, decodedWidth: null, notes };
   }
 
-  return screenshotChoice(input, notes);
+  return close ?? screenshotChoice(input, notes);
 }
 
 function videoUnavailableReason(input: ChooseFrameInput): string | null {

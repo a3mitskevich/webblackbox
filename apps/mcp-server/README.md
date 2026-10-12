@@ -131,10 +131,12 @@ action, at most 1.5 s, with the `recordedActionId` the recorder gave them), and 
 - `timeline` pages with `limit` (default 50) and a `maxBytes` budget (default 32 KB); `truncated` and `nextCursor`
   continue. Pointer noise (moves, hovers, scrolls) is hidden unless `kinds` includes `pointer`.
 - `action_detail` caps every linked list at `limit` (default 10) and then halves the largest lists until the result
-  fits `maxBytes` (default 24 KB); each list keeps its `total`, and `truncatedLists` names what was cut.
+  fits `maxBytes` (default 24 KB); each list keeps its `total`, and `truncatedLists` names what was cut. If that is
+  not enough, the raw target JSON is left out; `withinBudget` says whether the result fits.
 - `request_detail` returns `maxBodyBytes` of each body (default 16 KB) with `"N of M bytes"`; header values stop at
-  2 KB; socket messages page with `frameLimit` / `frameCursor`, `maxFrameBytes` each. `capturedPrefixOnly` marks a
-  body the recorder itself cut at the profile limit, and `missingReason` says why a body is absent.
+  2 KB and URLs at 4 KB; socket messages page with `frameLimit` / `frameCursor`, `maxFrameBytes` each, and a page
+  stops at 256 KB of messages. `capturedPrefixOnly` marks a body the recorder itself cut at the profile limit, and
+  `missingReason` says why a body is absent.
 - `frame_at` returns at most `maxBytes` of image (default 1 MB). `includeImage: false` returns only the metadata.
 
 **Images and video frames.** Node has no WebCodecs and an image library would be a heavy native dependency, so

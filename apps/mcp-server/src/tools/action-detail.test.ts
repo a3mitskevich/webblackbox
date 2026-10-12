@@ -115,6 +115,28 @@ describe("action_detail", () => {
     );
   });
 
+  it("leaves out the raw target JSON when the lists alone cannot meet maxBytes", async () => {
+    const wide = await WebBlackboxPlayer.open(
+      await buildArchiveBytes([
+        fixtureEvent(
+          "W-1",
+          "user.click",
+          1_000,
+          { target: { tag: "DIV", padding: "w".repeat(5_000) } },
+          { ref: { act: "W-A" } }
+        )
+      ])
+    );
+    const roomy = buildActionDetail(wide, "a", { actionId: "W-A", maxBytes: 20_000 }).data;
+    const tight = buildActionDetail(wide, "a", { actionId: "W-A", maxBytes: 4_000 }).data;
+
+    expect(roomy.withinBudget).toBe(true);
+    expect((roomy.target as { recorded: { truncated: boolean } }).recorded.truncated).toBe(true);
+    expect(tight.target).toMatchObject({ tag: "div", recorded: { json: null, truncated: true } });
+    expect(tight.withinBudget).toBe(true);
+    expect(jsonBytes(tight)).toBeLessThanOrEqual(4_000);
+  });
+
   it("adds requests and errors of the action's time window the recorder did not link to it", async () => {
     // As in Full-mode archives: the click's own request carries no ref.act, and the next
     // click's request is linked to this action by arrival order.
