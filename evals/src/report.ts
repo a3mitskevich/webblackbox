@@ -3,7 +3,8 @@
 
 import type { TokenUsage } from "./agent-runner.js";
 import type { JudgeVerdict } from "./judge.js";
-import type { AgentAnswer, FactResult } from "./rubric.js";
+import { type AgentAnswer, type FactResult, scoreAnswer } from "./rubric.js";
+import type { Rubric } from "./types.js";
 
 export type EvalResult = {
   caseId: string;
@@ -62,6 +63,45 @@ const PROFILE_LABELS: Readonly<Record<string, string>> = {
   default: "Default (Lite)",
   "full-capture": "Full capture"
 };
+
+/**
+ * The same answer scored with the (possibly updated) rubric. A judge verdict is kept only while
+ * the rubric still leaves the answer undecided.
+ */
+export function rescoreResult(result: EvalResult, rubric: Rubric): EvalResult {
+  const score = scoreAnswer(result.answer, rubric);
+  const judge = score.partial ? result.judge : undefined;
+  return {
+    ...result,
+    pass: judge ? judge.pass : score.pass,
+    rubricPass: score.pass,
+    partial: score.partial,
+    score: score.score,
+    required: score.required,
+    bonus: score.bonus,
+    forbidden: score.forbidden,
+    judge
+  };
+}
+
+/** Reads a report written by the runner; only the shape the re-scoring relies on is checked. */
+export function parseReport(value: unknown): EvalReport {
+  const report = value as Partial<EvalReport> | null;
+
+  if (
+    !report ||
+    typeof report.meta !== "object" ||
+    !Array.isArray(report.results) ||
+    !report.results.every(
+      (result) =>
+        typeof result?.scenarioId === "string" && typeof result.answer?.rootCause === "string"
+    )
+  ) {
+    throw new Error("Not an evaluation report");
+  }
+
+  return report as EvalReport;
+}
 
 export function totalsByProfile(results: readonly EvalResult[]): readonly ProfileTotals[] {
   const profiles = [...new Set(results.map((result) => result.profile))];

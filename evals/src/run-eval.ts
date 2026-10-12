@@ -5,11 +5,12 @@
 //
 //   pnpm --filter @webblackbox/evals eval [--model sonnet] [--lang ru|en] [--label baseline]
 //     [--scenario <id|case>]... [--profile <id>]... [--judge] [--concurrency 2]
+//   pnpm --filter @webblackbox/evals eval --rescore evals/reports/<report>.json
 //
 // Needs `pnpm build` (the MCP server), recorded archives (`record`), and the `claude` CLI.
 
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -26,9 +27,16 @@ import {
   RUNS_DIR
 } from "./paths.js";
 import { fillTemplate, loadPrompt } from "./prompts.js";
-import { type EvalReport, type EvalResult, renderMarkdown, totalsByProfile } from "./report.js";
+import {
+  type EvalReport,
+  type EvalResult,
+  parseReport,
+  renderMarkdown,
+  rescoreResult,
+  totalsByProfile
+} from "./report.js";
 import { parseAgentAnswer, scoreAnswer } from "./rubric.js";
-import { selectScenarios } from "./scenarios/index.js";
+import { SCENARIOS, selectScenarios } from "./scenarios/index.js";
 import type { Scenario } from "./types.js";
 
 const DEFAULT_MODEL = "sonnet";
@@ -71,9 +79,15 @@ async function main(): Promise<void> {
       concurrency: { type: "string", default: "2" },
       "timeout-ms": { type: "string", default: String(DEFAULT_TIMEOUT_MS) },
       "max-budget-usd": { type: "string", default: String(DEFAULT_MAX_BUDGET_USD) },
-      bare: { type: "boolean", default: false }
+      bare: { type: "boolean", default: false },
+      rescore: { type: "string" }
     }
   });
+
+  if (values.rescore) {
+    await rescoreReportFile(resolve(values.rescore));
+    return;
+  }
 
   if (values.lang !== "ru" && values.lang !== "en") {
     throw new Error("--lang must be ru or en");
@@ -151,8 +165,33 @@ async function main(): Promise<void> {
       `${a.caseId}/${a.profile}`.localeCompare(`${b.caseId}/${b.profile}`)
     )
   };
-  const base = join(options.reportDir, `${report.meta.date}-${options.label}`);
   await mkdir(options.reportDir, { recursive: true });
+  await writeReport(join(options.reportDir, `${report.meta.date}-${options.label}`), report);
+}
+
+/**
+ * Scores the answers stored in a report again with the current rubrics (after a rubric fix),
+ * without running any agent. Rewrites the report's JSON and Markdown in place.
+ */
+async function rescoreReportFile(jsonPath: string): Promise<void> {
+  const report = parseReport(JSON.parse(await readFile(jsonPath, "utf8")));
+  const rescored: EvalReport = {
+    ...report,
+    results: report.results.map((result) => {
+      const scenario = SCENARIOS.find((candidate) => candidate.id === result.scenarioId);
+
+      if (!scenario) {
+        throw new Error(`Scenario ${result.scenarioId} is not defined`);
+      }
+
+      return rescoreResult(result, scenario.rubric);
+    })
+  };
+
+  await writeReport(jsonPath.replace(/\.json$/, ""), rescored);
+}
+
+async function writeReport(base: string, report: EvalReport): Promise<void> {
   await writeFile(`${base}.json`, `${JSON.stringify(report, null, 2)}\n`);
   await writeFile(`${base}.md`, renderMarkdown(report));
 

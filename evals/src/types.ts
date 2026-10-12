@@ -49,6 +49,11 @@ export type RubricFact = {
   id: string;
   description: string;
   patterns: readonly RegExp[];
+  /**
+   * Where a required or bonus fact is looked for: the whole answer (default) or only the stated
+   * root cause, for facts the evidence often mentions in passing or negated ("no close event").
+   */
+  scope?: "answer" | "rootCause";
 };
 
 export type Rubric = {

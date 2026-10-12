@@ -59,7 +59,13 @@ socket.addEventListener("close", () => {
       {
         id: "closed",
         description: "Finds that the socket closed/dropped",
-        patterns: [/clos|disconnect|drop|terminat|lost|ended/i]
+        patterns: [
+          /\b(was|is|got|gets|been|being) (closed|disconnected|dropped|terminated|lost)/i,
+          /\b(closed|disconnected|dropped|terminated) (by|after|about|~|at|with)\b/i,
+          /\b(server|backend|socket|connection) (closes|closed|drops|dropped|disconnects|disconnected)/i,
+          /\b1011\b|upstream restart/i
+        ],
+        scope: "rootCause"
       }
     ],
     bonus: [

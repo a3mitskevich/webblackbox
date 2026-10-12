@@ -70,7 +70,8 @@ form.addEventListener("submit", async (event) => {
       {
         id: "client-validation",
         description: "Names client-side validation (pattern/format check) as the blocker",
-        patterns: [/valid/i, /regex|pattern|format check/i]
+        patterns: [/valid/i, /regex|pattern|format check/i],
+        scope: "rootCause"
       },
       {
         id: "email-field",

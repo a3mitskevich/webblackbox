@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { type EvalReport, type EvalResult, renderMarkdown, totalsByProfile } from "./report.js";
+import {
+  type EvalReport,
+  type EvalResult,
+  parseReport,
+  renderMarkdown,
+  rescoreResult,
+  totalsByProfile
+} from "./report.js";
+import type { Rubric } from "./types.js";
 
 const result = (overrides: Partial<EvalResult>): EvalResult => ({
   caseId: "case-01",
@@ -133,5 +141,42 @@ describe("renderMarkdown", () => {
     const failed = renderMarkdown({ meta: META, results: [result({ pass: false })] });
 
     expect(failed).toContain("A \\| B");
+  });
+});
+
+describe("rescoreResult", () => {
+  const rubric: Rubric = {
+    rootCause: "",
+    keyEvidence: [],
+    required: [
+      { id: "a", description: "Finds A", patterns: [/\bA\b/] },
+      { id: "c", description: "Finds C", patterns: [/\bC\b/] }
+    ],
+    bonus: [],
+    forbidden: []
+  };
+
+  it("scores the stored answer with the current rubric and keeps the run data", () => {
+    const rescored = rescoreResult(result({ judge: { pass: true, reason: "ok" } }), rubric);
+
+    expect(rescored.partial).toBe(true);
+    expect(rescored.pass).toBe(true);
+    expect(rescored.judge).toEqual({ pass: true, reason: "ok" });
+    expect(rescored.tokens.total).toBe(2_000);
+  });
+
+  it("drops a judge verdict once the rubric decides on its own", () => {
+    const rescored = rescoreResult(result({ judge: { pass: false, reason: "no" } }), {
+      ...rubric,
+      required: [rubric.required[0]!]
+    });
+
+    expect(rescored.pass).toBe(true);
+    expect(rescored.judge).toBeUndefined();
+  });
+
+  it("rejects a file that is not a report", () => {
+    expect(() => parseReport({ meta: {}, results: [{ scenarioId: 1 }] })).toThrow(/report/);
+    expect(parseReport({ meta: META, results: [result({})] }).results).toHaveLength(1);
   });
 });

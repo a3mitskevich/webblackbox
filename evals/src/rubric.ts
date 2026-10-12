@@ -27,6 +27,17 @@ export type RubricScore = {
 };
 
 const BONUS_WEIGHT = 0.5;
+
+/** Wrong for every scenario: an answer that opens by declaring the cause unknown names none. */
+export const UNDETERMINED_CAUSE: RubricFact = {
+  id: "undetermined",
+  description: "Declares the root cause undetermined",
+  patterns: [
+    /^\s*(the )?(recording|data|archive) (does not|doesn't|cannot|can't) (show|reveal|determine) the (root )?cause/i,
+    /^\s*(the )?(root )?cause (is |remains )?(unknown|undetermined|not (established|determined))/i,
+    /^\s*не установлен/i
+  ]
+};
 const FENCED_BLOCK_PATTERN = /```[a-z]*[ \t]*\r?\n([\s\S]*?)```/gi;
 
 /**
@@ -63,15 +74,18 @@ export function parseAgentAnswer(text: string): AgentAnswer {
 }
 
 /**
- * Required and bonus facts are looked for in the root cause and the evidence together;
- * forbidden conclusions only in the root cause, so evidence that rules something out
- * ("no 500 responses") does not count against the answer.
+ * Required and bonus facts are looked for in the root cause and the evidence together (unless
+ * scoped to the root cause); forbidden conclusions only in the root cause, so evidence that rules
+ * something out ("no 500 responses") does not count against the answer.
  */
 export function scoreAnswer(answer: AgentAnswer, rubric: Rubric): RubricScore {
   const fullText = [answer.rootCause, ...answer.evidence].join("\n");
-  const required = rubric.required.map((fact) => matchFact(fact, fullText));
-  const bonus = rubric.bonus.map((fact) => matchFact(fact, fullText));
-  const forbidden = rubric.forbidden.map((fact) => matchFact(fact, answer.rootCause));
+  const textFor = (fact: RubricFact) => (fact.scope === "rootCause" ? answer.rootCause : fullText);
+  const required = rubric.required.map((fact) => matchFact(fact, textFor(fact)));
+  const bonus = rubric.bonus.map((fact) => matchFact(fact, textFor(fact)));
+  const forbidden = [...rubric.forbidden, UNDETERMINED_CAUSE].map((fact) =>
+    matchFact(fact, answer.rootCause)
+  );
   const requiredMatched = required.filter((fact) => fact.matched).length;
   const bonusMatched = bonus.filter((fact) => fact.matched).length;
   const hasForbidden = forbidden.some((fact) => fact.matched);

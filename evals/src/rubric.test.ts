@@ -131,6 +131,35 @@ describe("scoreAnswer", () => {
     expect(scoreAnswer(answer("500"), rubric).pass).toBe(true);
   });
 
+  it("looks for a root-cause-scoped fact only in the stated root cause", () => {
+    const rubric: Rubric = {
+      ...RUBRIC,
+      required: [
+        { id: "closed", description: "closed", patterns: [/closed/i], scope: "rootCause" }
+      ],
+      forbidden: []
+    };
+
+    expect(scoreAnswer(answer("No updates arrived", ["no socket closed event"]), rubric).pass).toBe(
+      false
+    );
+    expect(scoreAnswer(answer("The socket closed after 1.5 s"), rubric).pass).toBe(true);
+  });
+
+  it("fails an answer that opens by declaring the cause undetermined", () => {
+    const score = scoreAnswer(
+      answer("The recording does not show the cause. Maybe /api/profile 500."),
+      RUBRIC
+    );
+
+    expect(score.pass).toBe(false);
+    expect(score.forbidden.find((fact) => fact.id === "undetermined")?.matched).toBe(true);
+    expect(scoreAnswer(answer("Не установлена. /api/profile 500"), RUBRIC).pass).toBe(false);
+    expect(
+      scoreAnswer(answer("PUT /api/profile returned 500; the exact cause is unknown"), RUBRIC).pass
+    ).toBe(true);
+  });
+
   it("fails an empty answer", () => {
     const score = scoreAnswer(answer(""), RUBRIC);
 

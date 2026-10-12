@@ -136,6 +136,8 @@ describe("prompts", () => {
       fillTemplate(judge, { rootCause: "c", keyEvidence: "e", answer: "a" })
     ).not.toThrow();
     expect(task).toMatch(/"rootCause"/);
+    // The rubric patterns are English: the analysis must be too, whatever the report language.
+    expect(task).toMatch(/in English/);
     expect(await loadPrompt("agent-system")).toMatch(/MCP/);
   });
 });

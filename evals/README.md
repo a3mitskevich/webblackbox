@@ -18,7 +18,8 @@ The pipeline:
 5. **Evaluation** (`src/run-eval.ts`): for each archive, `claude -p` with **only** our MCP server
    (`--strict-mcp-config`, no built-in tools, user/project settings ignored, MCP limited to
    `--allow-dir evals/archives`) gets the report, the archive path and the passphrase, and ends
-   with a JSON answer (`rootCause`, `evidence`, `missingData`, `confidence`). The answer is scored
+   with a JSON answer (`rootCause`, `evidence`, `missingData`, `confidence`), always in English
+   because the rubric patterns are English (the report itself may be Russian). The answer is scored
    deterministically; an LLM judge (`--judge`, prompt in `prompts/judge.md`) is asked only when
    some but not all required facts matched.
 6. **Report** (`reports/<date>-<label>.md|json`): pass/fail and score per scenario and profile,
@@ -58,7 +59,13 @@ The recorder writes `evals/archives/manifest.json` (which archive is which scena
 whether the symptom reproduced, the passphrase). It exits non-zero when a recording failed or the
 bug did not reproduce. Raw agent transcripts (stream-json) go to `evals/runs/` (git-ignored).
 
-Commit the report (`reports/*.md` and `*.json`), never the archives.
+Commit the report (`reports/*.md` and `*.json`), never the archives. Run
+`pnpm exec prettier --write evals/reports/*.md` first (CI checks Markdown formatting; the JSON is
+exempt). A hand-written findings section at the end of the Markdown is worth keeping: `--rescore`
+rewrites the file, so copy it back.
+
+After a rubric fix, `eval --rescore evals/reports/<report>.json` scores the stored answers again
+without running any agent.
 
 ## Cost and time
 
