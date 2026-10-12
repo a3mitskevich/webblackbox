@@ -442,6 +442,22 @@ describe("capture completeness", () => {
     );
   });
 
+  it("formats a fallback whose time is outside the Date range without throwing", async () => {
+    const player = await openArchive([
+      META_CONFIG,
+      {
+        type: "meta.config",
+        mono: 1,
+        data: { mode: "lite", captureFallback: { at: 1e20, reason: "detached" } }
+      }
+    ]);
+
+    expect(formatCaptureCompletenessReport(player.getCaptureCompleteness())).toContain(
+      "Engine: full → lite at 100000000000000000000 (detached); bodies, full console, screenshots " +
+        "and DevTools data are missing after that"
+    );
+  });
+
   it("reports no fallback for a recording that stayed in its engine", async () => {
     const report = (await openArchive([META_CONFIG])).getCaptureCompleteness();
 

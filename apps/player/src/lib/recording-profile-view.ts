@@ -75,11 +75,6 @@ export function formatRecordingProfileSummary(
     .join(" → ");
 }
 
-/**
- * Warnings for the top of the summary: the recording was stopped because its profile changed,
- * an old archive ran with a downgraded profile, or the enterprise policy capped the profile.
- * Empty when the archive recorded exactly what its profile asks for.
- */
 type CaptureFallbackMessages = {
   locale: string;
   t: (key: "profileBannerFallback", values?: Record<string, string | number>) => string;
@@ -107,6 +102,11 @@ export function formatCaptureFallbackBanner(
   return [i18n.t("profileBannerFallback", { time, reason })];
 }
 
+/**
+ * Warnings for the top of the summary: the recording was stopped because its profile changed,
+ * an old archive ran with a downgraded profile, or the enterprise policy capped the profile.
+ * Empty when the archive recorded exactly what its profile asks for.
+ */
 export function formatRecordingProfileBanner(
   entries: readonly RecordingProfileEntry[],
   cancellation: ProfileCancellationInfo | null,

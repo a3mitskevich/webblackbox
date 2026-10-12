@@ -289,7 +289,10 @@ function formatExport(report: ExportCompleteness): string[] {
 }
 
 function isoTime(ms: number): string {
-  return Number.isFinite(ms) ? new Date(ms).toISOString() : String(ms);
+  const date = new Date(ms);
+
+  // Archive times are untrusted: a finite value outside the Date range must not throw.
+  return Number.isNaN(date.getTime()) ? String(ms) : date.toISOString();
 }
 
 /**
