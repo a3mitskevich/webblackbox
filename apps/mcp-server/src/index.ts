@@ -97,7 +97,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "session_summary",
-    "Open an archive and return session-level summary metrics, top issues, the other tabs of the recorded site that were open in parallel, and the capture completeness report (including what the export left out and whether the recording was interrupted).",
+    "Open an archive and return session-level summary metrics, top issues, the other tabs of the recorded site that were open in parallel, and the capture completeness report (including what the export left out, whether the recording was interrupted, and when and why it fell back from Full to Light: `completeness.captureFallback`).",
     sessionSummaryInput,
     async ({ path, passphrase, slowRequestMs, topN }) => {
       return toTextPayload(

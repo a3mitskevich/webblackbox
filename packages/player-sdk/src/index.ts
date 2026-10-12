@@ -31,6 +31,7 @@ import {
 import { comparePlayers, compareStorageTimelines } from "./compare.js";
 import { buildDomDiff, buildDomDiffTimeline, loadDomPaths, toDomSnapshotRefs } from "./dom-diff.js";
 import { mergeSortedEventLists } from "./event-order.js";
+import { readCaptureFallback } from "./recording-profile.js";
 import {
   chunkSourceIntersectsRange,
   collectInvertedCandidateIds,
@@ -614,7 +615,9 @@ export class WebBlackboxPlayer {
       events: this.query({ range }),
       waterfall: this.getNetworkWaterfall(range),
       realtime: this.getRealtimeNetworkTimeline(range),
-      manifest: this.archive.manifest
+      manifest: this.archive.manifest,
+      // Like the export section, the engine fallback describes the whole archive.
+      captureFallback: readCaptureFallback(this.events)
     });
   }
 

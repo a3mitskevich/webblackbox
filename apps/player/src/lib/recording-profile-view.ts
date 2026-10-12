@@ -1,10 +1,13 @@
 import {
   describePrivacyViolation,
+  type CaptureFallbackInfo,
   type PrivacyViolationSubject,
   type ProfileCancellationInfo,
   type RecordingProfileEntry
 } from "@webblackbox/player-sdk";
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
+
+import { formatRecordedAt } from "../core/format.js";
 
 type ProfileBannerKey =
   | "profileBannerCancelRuleChanged"
@@ -77,6 +80,33 @@ export function formatRecordingProfileSummary(
  * an old archive ran with a downgraded profile, or the enterprise policy capped the profile.
  * Empty when the archive recorded exactly what its profile asks for.
  */
+type CaptureFallbackMessages = {
+  locale: string;
+  t: (key: "profileBannerFallback", values?: Record<string, string | number>) => string;
+  messages: { captureFallbackReasons: Record<string, string> };
+};
+
+/** "Full capture stopped at … (why): the recording went on in Light …", or nothing. */
+export function formatCaptureFallbackBanner(
+  fallback: CaptureFallbackInfo | null,
+  i18n: CaptureFallbackMessages
+): string[] {
+  if (!fallback) {
+    return [];
+  }
+
+  const reasons = i18n.messages.captureFallbackReasons;
+  const reason = Object.hasOwn(reasons, fallback.reason)
+    ? (reasons[fallback.reason] ?? fallback.reason)
+    : fallback.reason;
+  const date = new Date(fallback.at);
+  const time = Number.isNaN(date.getTime())
+    ? ""
+    : formatRecordedAt(date.toISOString(), i18n.locale);
+
+  return [i18n.t("profileBannerFallback", { time, reason })];
+}
+
 export function formatRecordingProfileBanner(
   entries: readonly RecordingProfileEntry[],
   cancellation: ProfileCancellationInfo | null,
