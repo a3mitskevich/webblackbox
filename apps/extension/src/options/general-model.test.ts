@@ -1,4 +1,8 @@
+import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 import { describe, expect, it } from "vitest";
+
+import { MAX_BODY_CAPTURE_BYTES } from "../shared/body-capture-limits.js";
+import { MAX_BODY_CAPTURE_BYTES as PROFILE_MAX_BODY_CAPTURE_BYTES } from "../shared/profiles/model.js";
 
 import {
   changedGeneralSections,
@@ -9,6 +13,7 @@ import {
   isPerformanceBudgetChanged,
   isPlayerUrlChanged,
   isRecorderFieldsChanged,
+  normalizeOptionsConfig,
   resetGeneralSection,
   type TextFieldSpec,
   toGeneralFormFields
@@ -23,6 +28,22 @@ function injectionField(): ChoiceFieldSpec {
 
   return spec;
 }
+
+describe("body capture limit setting", () => {
+  it("shares the profile model's 8 MiB ceiling", () => {
+    const spec = findField("bodyCaptureMaxBytes");
+
+    expect(MAX_BODY_CAPTURE_BYTES).toBe(8 * 1024 * 1024);
+    expect(PROFILE_MAX_BODY_CAPTURE_BYTES).toBe(MAX_BODY_CAPTURE_BYTES);
+    expect(spec?.kind === "number" ? spec.max : undefined).toBe(MAX_BODY_CAPTURE_BYTES);
+
+    const config = normalizeOptionsConfig({
+      ...DEFAULT_RECORDER_CONFIG,
+      sampling: { ...DEFAULT_RECORDER_CONFIG.sampling, bodyCaptureMaxBytes: 4 * 1024 * 1024 }
+    });
+    expect(config.sampling.bodyCaptureMaxBytes).toBe(4 * 1024 * 1024);
+  });
+});
 
 describe("content injection setting", () => {
   it("defaults to injecting into every page and lives in Performance & sampling", () => {

@@ -9,6 +9,8 @@ import {
   type RecorderConfig
 } from "@webblackbox/protocol";
 
+import { clampBodyCaptureMaxBytes } from "../shared/body-capture-limits.js";
+
 export { isTextualMimeType, normalizeMimeType };
 
 export type BodyCaptureRule = {
@@ -213,11 +215,7 @@ export function normalizeBodyCaptureMaxBytes(
     return fallbackMaxBytes;
   }
 
-  if (value <= 0) {
-    return 0;
-  }
-
-  return Math.max(4 * 1024, Math.min(8 * 1024 * 1024, Math.round(value)));
+  return clampBodyCaptureMaxBytes(value);
 }
 
 export function normalizeMimeAllowlist(values: string[]): string[] {

@@ -4,6 +4,7 @@ import { capturesPageStorageInFullMode } from "webblackbox/capture-scope";
 import { watchPasswordFieldReveals } from "webblackbox/input-value-policy";
 import type { LiteCaptureAgentOptions } from "webblackbox/types";
 
+import { clampBodyCaptureMaxBytes } from "../shared/body-capture-limits.js";
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { PORT_NAMES, type ExtensionOutboundMessage } from "../shared/messages.js";
 import { CONTENT_EVENT_FLUSH_CHUNK, resolveContentEventFlushDelay } from "./flush-policy.js";
@@ -502,5 +503,5 @@ function normalizeBodyCaptureBudget(value: unknown): number {
     return 0;
   }
 
-  return Math.max(4 * 1024, Math.min(8 * 1024 * 1024, Math.round(value)));
+  return clampBodyCaptureMaxBytes(value);
 }

@@ -6,10 +6,10 @@ import {
   type RecorderConfig
 } from "@webblackbox/protocol";
 
+import { FULL_MODE_BODY_CAPTURE_MAX_BYTES } from "./body-capture-limits.js";
 import type { FullModeVisualCapture } from "./messages.js";
 
-/** Default body capture cap for CDP-backed (full) sessions. */
-export const FULL_MODE_BODY_CAPTURE_MAX_BYTES = 128 * 1024;
+export { FULL_MODE_BODY_CAPTURE_MAX_BYTES };
 
 /**
  * The last step of every extension recorder config (every profile): no ring

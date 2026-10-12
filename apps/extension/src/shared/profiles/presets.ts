@@ -4,6 +4,7 @@ import {
   type RedactionProfile
 } from "@webblackbox/protocol";
 
+import { FULL_MODE_BODY_CAPTURE_MAX_BYTES } from "../body-capture-limits.js";
 import { completeCaptureCategories, type CaptureCategories } from "./categories.js";
 import { FULL_CAPTURE_LOCAL_DATA_SETTINGS } from "./local-data.js";
 import {
@@ -21,7 +22,8 @@ export const BUILT_IN_PROFILE_IDS = {
 } as const;
 
 const QA_BODY_MAX_BYTES = 256 * 1024;
-const FULL_CAPTURE_BODY_MAX_BYTES = 1024 * 1024;
+// The Full mode default: a profile that turns bodies on without a limit gets the same.
+const FULL_CAPTURE_BODY_MAX_BYTES = FULL_MODE_BODY_CAPTURE_MAX_BYTES;
 const FULL_CAPTURE_MOUSEMOVE_HZ = 60;
 
 const QA_BODY_MIME_ALLOWLIST = [
