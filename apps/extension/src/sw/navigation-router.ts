@@ -21,6 +21,7 @@ import type { ProfileReevaluationController } from "./profile-reevaluation.js";
 import {
   ensureContentScriptInjected,
   ensureInjectedHooks,
+  recordsDom,
   toStatusPointer,
   toStatusSampling,
   type ScriptingApiLike
@@ -101,7 +102,9 @@ export function createNavigationRouter(deps: NavigationRouterDeps): NavigationRo
     }
 
     await ensureContentScriptInjected(deps.scripting, tabId);
-    await ensureInjectedHooks(deps.scripting, tabId, runtime.injectedBridgeNonce);
+    await ensureInjectedHooks(deps.scripting, tabId, runtime.injectedBridgeNonce, undefined, {
+      domRecorder: recordsDom(runtime.config.capturePolicy)
+    });
     await deps.sessionCommands.notifyTabStatus(
       tabId,
       true,

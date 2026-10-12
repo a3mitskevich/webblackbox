@@ -3,9 +3,14 @@ import { basename } from "node:path";
 /**
  * Bundles that Chrome runs as classic scripts although tsup emits them as ESM:
  * - `content.js`, the content script (isolated world);
- * - `injected.js`, the page hooks injected with `scripting.executeScript({ world: "MAIN", files })`.
+ * - `injected.js`, the page hooks injected with `scripting.executeScript({ world: "MAIN", files })`;
+ * - `injected-dom.js`, the rrweb DOM recorder, injected the same way into the top frame.
  */
-export const CLASSIC_SCRIPT_CHUNKS = Object.freeze(["content.js", "injected.js"]);
+export const CLASSIC_SCRIPT_CHUNKS = Object.freeze([
+  "content.js",
+  "injected.js",
+  "injected-dom.js"
+]);
 
 // The prefix takes a line of its own, so the bundle keeps its columns (minified, almost all of it
 // is on its first line) and its source map only moves down by that line. Strict mode: an

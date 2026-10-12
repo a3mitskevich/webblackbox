@@ -32,7 +32,10 @@ const ALLOWED_PAGE_GLOBALS = new Set([
   "__WEBBLACKBOX_INJECTED__",
   // Non-enumerable, non-writable setter through which the service worker hands the hooks the
   // per-session bridge nonce (scripting.executeScript, never a DOM event).
-  "__WEBBLACKBOX_SET_BRIDGE_NONCE__"
+  "__WEBBLACKBOX_SET_BRIDGE_NONCE__",
+  // The same for the rrweb DOM recorder (`injected-dom.js`, top frame); it also marks the
+  // recorder as installed (packages/webblackbox/src/dom-recorder-bridge.ts).
+  "__WEBBLACKBOX_SET_DOM_RECORDER_NONCE__"
 ]);
 
 /** Page-owned globals whose identity must survive the recording: a function and objects. */

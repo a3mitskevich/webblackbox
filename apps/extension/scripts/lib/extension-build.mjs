@@ -45,6 +45,7 @@ const REQUIRED_BUILD_FILES = [
   "content.js",
   "content-agent.js",
   "injected.js",
+  "injected-dom.js",
   "offscreen.html",
   "offscreen.js",
   "options.html",

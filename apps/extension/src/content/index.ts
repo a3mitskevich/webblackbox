@@ -1,3 +1,4 @@
+import { RRWEB_RAW_TYPE } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 import type { LiteCaptureAgent } from "webblackbox/lite-capture-agent";
 import { capturesPageStorageInFullMode } from "webblackbox/capture-scope";
@@ -173,7 +174,12 @@ function trimPendingEvents(): void {
     return;
   }
 
-  pendingEvents.splice(0, pendingEvents.length - PENDING_EVENT_MAX);
+  const dropped = pendingEvents.splice(0, pendingEvents.length - PENDING_EVENT_MAX);
+
+  // A lost rrweb batch breaks DOM replay until the next full snapshot: take one now.
+  if (dropped.some((event) => event.rawType === RRWEB_RAW_TYPE)) {
+    captureAgent?.requestDomCheckpoint();
+  }
 }
 
 function flushPendingEventsChunk(): boolean {

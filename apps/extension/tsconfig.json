@@ -25,6 +25,8 @@
       "webblackbox/lite-capture-agent": ["../../packages/webblackbox/src/lite-capture-agent.ts"],
       "webblackbox/lite-materializer": ["../../packages/webblackbox/src/lite-materializer.ts"],
       "webblackbox/lite-sdk": ["../../packages/webblackbox/src/lite-sdk.ts"],
+      "webblackbox/dom-recorder-bridge": ["../../packages/webblackbox/src/dom-recorder-bridge.ts"],
+      "webblackbox/rrweb-page-recorder": ["../../packages/webblackbox/src/rrweb-page-recorder.ts"],
       "webblackbox/types": ["../../packages/webblackbox/src/types.ts"],
       "@zumer/snapdom": ["./node_modules/@zumer/snapdom/types/snapdom.d.ts"]
     }

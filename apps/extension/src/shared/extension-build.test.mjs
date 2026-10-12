@@ -121,11 +121,11 @@ describe("content script scope", () => {
     expect(isWrappedInScriptScope(`(() => {\n${code}\n})();\n`)).toBe(false);
   });
 
-  it("wraps content.js and injected.js only and moves their source maps with them", () => {
+  it("wraps the classic scripts only and moves their source maps with them", () => {
     const plugin = contentScriptScopePlugin();
     const map = { version: 3, sources: ["a.ts"], names: [], mappings: "AAAA;AACA" };
 
-    for (const file of ["content.js", "injected.js"]) {
+    for (const file of ["content.js", "injected.js", "injected-dom.js"]) {
       const code = `// module\nvar a = 1;\n//# sourceMappingURL=${file}.map`;
       const result = plugin.renderChunk(code, {
         path: `/x/build/${file}`,
@@ -158,6 +158,11 @@ describe("content script scope", () => {
     try {
       await writeBuildFixture(root, createExtensionManifest({ version: "1.2.3" }));
       await expect(assertExtensionBuild(root, { version: "1.2.3" })).resolves.toBeTruthy();
+
+      await writeFile(resolve(root, "injected-dom.js"), "var $=!1;\n");
+      await expect(assertExtensionBuild(root, { version: "1.2.3" })).rejects.toThrow(
+        /injected-dom\.js/
+      );
 
       await writeFile(resolve(root, "injected.js"), "var $=!1;\n");
       await expect(assertExtensionBuild(root, { version: "1.2.3" })).rejects.toThrow(
@@ -333,6 +338,7 @@ async function writeBuildFixture(outputDir, manifest) {
     "content-agent.js": "export {};\n",
     "content.js": wrapInScriptScope("void 0;"),
     "injected.js": wrapInScriptScope("void 0;"),
+    "injected-dom.js": wrapInScriptScope("void 0;"),
     "offscreen.html": "<!doctype html><title>offscreen</title>\n",
     "offscreen.js": "export {};\n",
     "options.html": "<!doctype html><title>options</title>\n",

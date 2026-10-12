@@ -29,6 +29,7 @@ import {
 import type { ProfileReevaluationController } from "./profile-reevaluation.js";
 import {
   ensureInjectedHooks,
+  recordsDom,
   toStatusPointer,
   toStatusSampling,
   type ScriptingApiLike
@@ -426,7 +427,8 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
         deps.scripting,
         tabId,
         runtime.injectedBridgeNonce,
-        senderFrameId ?? port?.sender?.frameId
+        senderFrameId ?? port?.sender?.frameId,
+        { domRecorder: recordsDom(runtime.config.capturePolicy) }
       );
 
       const sampling = toStatusSampling(runtime);
@@ -534,7 +536,8 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
       deps.scripting,
       tabId,
       runtime.injectedBridgeNonce,
-      port.sender?.frameId
+      port.sender?.frameId,
+      { domRecorder: recordsDom(runtime.config.capturePolicy) }
     );
 
     syncContentPortRecordingState(port);

@@ -19,7 +19,8 @@ export default defineConfig({
     popup: "src/popup/index.ts",
     options: "src/options/index.ts",
     sessions: "src/sessions/index.ts",
-    injected: "src/injected/index.ts"
+    injected: "src/injected/index.ts",
+    "injected-dom": "src/injected-dom/index.ts"
   },
   format: ["esm"],
   target: "es2022",
