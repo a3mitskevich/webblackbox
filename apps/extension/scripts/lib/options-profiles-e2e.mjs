@@ -20,23 +20,17 @@ const PROFILES_KEY = "webblackbox.profiles";
 const DIALOG = "[role='dialog']";
 const WAIT_MS = 4_000;
 const NO_DIALOG_WAIT_MS = 1_000;
-const RECOMMENDED_IDS = [
-  "default",
-  "builtin:lite",
-  "builtin:full",
-  "builtin:qa",
-  "builtin:full-capture"
-];
-const LAST_ID = "builtin:full-capture";
+const RECOMMENDED_IDS = ["builtin:maximum", "builtin:lite"];
+const LAST_ID = "builtin:lite";
 const SEEDED_STORE = {
   schemaVersion: 2,
-  defaultProfileId: "default",
+  defaultProfileId: "builtin:maximum",
   profiles: [],
   rules: [
     {
       id: "rule-checkout",
       name: "Checkout",
-      profileId: "default",
+      profileId: "builtin:maximum",
       priority: 2,
       enabled: true,
       match: { hosts: ["shop.example.com"] }
@@ -44,7 +38,7 @@ const SEEDED_STORE = {
     {
       id: "rule-stage",
       name: "Stage",
-      profileId: "builtin:qa",
+      profileId: "builtin:lite",
       priority: 1,
       enabled: true,
       match: { hosts: ["*.stage.example.com"] }
@@ -103,20 +97,20 @@ async function seedProfiles(deps, page, optionsUrl, store) {
 }
 
 async function checkDeleteDownToOne(deps, page, check) {
-  check((await profileIds(page)).length === 5, "the seeded store does not list 5 profiles");
+  check((await profileIds(page)).length === 2, "the seeded store does not list 2 profiles");
   check(await isTrue(page, restoreDisabled()), "Restore is enabled with nothing deleted");
 
-  await click(page, deleteOf("default"));
-  check(await waitUntil(page, exists(DIALOG), WAIT_MS), "deleting Default: no prompt");
+  await click(page, deleteOf("builtin:maximum"));
+  check(await waitUntil(page, exists(DIALOG), WAIT_MS), "deleting Maximum: no prompt");
   const items = await page.evaluate(
     `[...document.querySelectorAll("[data-confirm-item]")].map((item) => item.textContent)`
   );
   check(
     JSON.stringify(items) === JSON.stringify(["Checkout"]),
-    `the delete prompt does not name the rule that uses Default (${JSON.stringify(items)})`
+    `the delete prompt does not name the rule that uses Maximum (${JSON.stringify(items)})`
   );
   await deps.capture(page, "options-1440-profile-delete-prompt");
-  await acceptDelete(page, "default", check);
+  await acceptDelete(page, "builtin:maximum", check);
 
   check(await isTrue(page, savebarDirty()), "a deleted profile did not mark the page unsaved");
   check(
@@ -125,19 +119,13 @@ async function checkDeleteDownToOne(deps, page, check) {
   );
   check(
     await isTrue(page, exists("[data-rule-id='rule-checkout'].wb-rule--orphan")),
-    "the rule to the deleted Default is not flagged"
+    "the rule to the deleted Maximum is not flagged"
   );
   check(await unloadPrompts(deps, page), "unsaved delete → navigate away: no beforeunload prompt");
 
-  for (const id of ["builtin:lite", "builtin:full", "builtin:qa"]) {
-    await click(page, deleteOf(id));
-    check(await waitUntil(page, exists(DIALOG), WAIT_MS), `deleting ${id}: no prompt`);
-    await acceptDelete(page, id, check);
-  }
-
   check(
     JSON.stringify(await profileIds(page)) === JSON.stringify([LAST_ID]),
-    "deleting four profiles did not leave Full capture alone"
+    "deleting Maximum did not leave Light alone"
   );
   check(
     await isTrue(page, `${q(deleteOf(LAST_ID))}?.disabled === true`),
@@ -172,8 +160,8 @@ async function checkOrphanedRulesAndRestore(deps, page, check) {
     `saved deletions are wrong (${JSON.stringify(saved)})`
   );
   check(
-    await isTrue(page, `${q("[data-rules-orphaned]")}?.textContent.startsWith("2 ")`),
-    "the rules list does not count the 2 rules to deleted profiles"
+    await isTrue(page, `${q("[data-rules-orphaned]")}?.textContent.startsWith("1 ")`),
+    "the rules list does not count the rule to the deleted profile"
   );
   await deps.capture(page, "options-1440-rules-orphaned");
 
@@ -205,9 +193,9 @@ async function checkOrphanedRulesAndRestore(deps, page, check) {
 /** Item 1's guard keeps working: deleting another profile keeps the open form and its edits. */
 async function checkOpenFormSurvivesDelete(deps, page, check) {
   // A deleted preset that is not the default changes only the deleted-preset list.
-  await click(page, deleteOf("builtin:qa"));
-  check(await waitUntil(page, exists(DIALOG), WAIT_MS), "deleting QA: no prompt");
-  await acceptDelete(page, "builtin:qa", check);
+  await click(page, deleteOf("builtin:lite"));
+  check(await waitUntil(page, exists(DIALOG), WAIT_MS), "deleting Light: no prompt");
+  await acceptDelete(page, "builtin:lite", check);
   check(
     await isTrue(page, `${q("[data-section-link='profiles']")}?.dataset.dirty === "true"`),
     "deleting a preset that is not the default did not mark the Profiles nav link"
@@ -217,13 +205,13 @@ async function checkOpenFormSurvivesDelete(deps, page, check) {
 
   await click(page, "[data-profile-id='builtin:lite'] [data-action='profile-duplicate']");
   check(await waitUntil(page, exists("[data-profile-form]"), WAIT_MS), "Duplicate opened no form");
-  await typeText(page, "#pf-name", "Lite copy edited");
+  await typeText(page, "#pf-name", "Light copy edited");
 
-  await click(page, deleteOf("builtin:full"));
-  check(await waitUntil(page, exists(DIALOG), WAIT_MS), "deleting Full: no prompt");
-  await acceptDelete(page, "builtin:full", check);
+  await click(page, deleteOf("builtin:maximum"));
+  check(await waitUntil(page, exists(DIALOG), WAIT_MS), "deleting Maximum: no prompt");
+  await acceptDelete(page, "builtin:maximum", check);
   check(
-    await isTrue(page, `${q("#pf-name")}?.value === "Lite copy edited"`),
+    await isTrue(page, `${q("#pf-name")}?.value === "Light copy edited"`),
     "deleting another profile closed the open form or lost its edits"
   );
 
@@ -280,7 +268,11 @@ async function checkEmptyState(deps, page, optionsUrl, deepLink, check) {
 
   await click(page, "[data-profiles-empty] [data-action='profiles-restore']");
   check(
-    await waitUntil(page, `document.querySelectorAll("[data-profile-id]").length === 5`, WAIT_MS),
+    await waitUntil(
+      page,
+      `document.querySelectorAll("[data-profile-id]").length === ${RECOMMENDED_IDS.length}`,
+      WAIT_MS
+    ),
     "Restore in the empty state did not bring the profiles back"
   );
   await click(page, "[data-action='settings-save']");

@@ -93,13 +93,15 @@ const recordScreenInFullMode =
   captureMode === "full" && (fullVisualCapture === "recording" || fullVisualCapture === "both");
 const captureScreenshotsInFullMode =
   captureMode === "full" && (fullVisualCapture === "screenshots" || fullVisualCapture === "both");
-// The run records through a recording profile, as users do: Full uses the Full capture profile,
-// Lite the Default profile. `WB_E2E_CONFIGURE_OPTIONS=0` writes no profiles store at all.
+// The run records through a recording profile, as users do: Full uses Maximum, Lite uses Light.
+// `WB_E2E_CONFIGURE_OPTIONS=0` writes no profiles store at all: a fresh install records with Maximum.
 const configureRecordingProfile = (process.env.WB_E2E_CONFIGURE_OPTIONS ?? "1") !== "0";
-const E2E_PROFILE_IDS = { full: "builtin:full-capture", lite: "default" };
-const expectedProfileId = configureRecordingProfile ? E2E_PROFILE_IDS[captureMode] : "default";
+const E2E_PROFILE_IDS = { full: "builtin:maximum", lite: "builtin:lite" };
+const expectedProfileId = configureRecordingProfile
+  ? E2E_PROFILE_IDS[captureMode]
+  : "builtin:maximum";
 // `e2e:completeness:full`: records the realistic fixture site (lib/realistic-site.mjs) with the
-// Full capture profile and checks that the archive holds every body the profile asked for, or says
+// Maximum profile and checks that the archive holds every body the profile asked for, or says
 // why one is missing; the demo page scenarios are skipped.
 const completenessMode = captureMode === "full" && (process.env.WB_E2E_COMPLETENESS ?? "0") === "1";
 // `e2e:completeness:full:heavy`: the realistic page also sends a burst of JSON reports with about
@@ -115,10 +117,10 @@ const completenessDurationMs = readPositiveInteger(
   process.env.WB_E2E_COMPLETENESS_MS,
   REALISTIC_DEFAULT_DURATION_MS
 );
-// Full capture asks for bodies (`body-allowlist`), console text and WebSocket payloads. Lite records
-// none of them: the Default profile keeps console metadata, and a profile asking for console text
-// or bodies starts in Full.
-const bodiesRequested = captureMode === "full" && configureRecordingProfile;
+// Maximum asks for bodies (`body-allowlist`), console text and WebSocket payloads, with or without a
+// stored profiles store. Lite records none of them: Light keeps console metadata, and a profile
+// asking for console text or bodies starts in Full.
+const bodiesRequested = captureMode === "full";
 const checkCaptureFidelity = bodiesRequested && !completenessMode;
 const playerSdkEntry = resolve(workspaceRoot, "packages/player-sdk/dist/index.js");
 const usePopupUiActions =
@@ -620,7 +622,7 @@ async function main() {
   const requiredEventTypes = completenessMode
     ? ["console.entry", "network.body", "network.ws.frame", "perf.vitals", "screen.screenshot"]
     : captureMode === "lite"
-      ? // The Default profile masks the DOM: Lite takes summary snapshots only, and those are not
+      ? // Light masks the DOM: Lite takes summary snapshots only, and those are not
         // in the archive today (the service worker stores them as blobs, which the recorder keeps
         // only under `dom: allow`). The old v1 harness hid that by recording the raw DOM.
         ["user.mousemove", "console.entry", "network.request", "storage.local.snapshot"]
@@ -1965,17 +1967,7 @@ async function startSessionFromPopup(popupClient, mode, expectedUrl, useUiAction
         const tabLine = (document.querySelector('.wb-popup__tab')?.textContent ?? '').trim() || null;
         const statusLine =
           (document.querySelector('.wb-popup__state')?.textContent ?? '').trim() || null;
-        const engineInput = document.querySelector(
-          'input[name="capture-mode"][value=${JSON.stringify(mode)}]'
-        );
-
-        if (!(engineInput instanceof HTMLInputElement)) {
-          return { ok: false, reason: 'engine-option-not-found', selector, tabLine, statusLine };
-        }
-
-        // Picking the engine re-renders the start panel; query the button afterwards.
-        engineInput.checked = true;
-        engineInput.dispatchEvent(new Event('change', { bubbles: true }));
+        // One Record button: the profile decides the engine and visuals.
         const button = document.querySelector(selector);
 
         if (!(button instanceof HTMLButtonElement)) {
@@ -1984,19 +1976,6 @@ async function startSessionFromPopup(popupClient, mode, expectedUrl, useUiAction
 
         if (button.disabled) {
           return { ok: false, reason: 'start-button-disabled', selector, tabLine, statusLine };
-        }
-
-        if (visualCapture) {
-          const visualCaptureInput = document.querySelector(
-            \`input[name='full-visual-capture'][value='\${visualCapture}']\`
-          );
-
-          if (!(visualCaptureInput instanceof HTMLInputElement)) {
-            return { ok: false, reason: 'visual-capture-option-not-found', visualCapture, selector, tabLine, statusLine };
-          }
-
-          visualCaptureInput.checked = true;
-          visualCaptureInput.dispatchEvent(new Event('change', { bubbles: true }));
         }
 
         button.click();

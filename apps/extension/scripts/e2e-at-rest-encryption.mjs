@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // E2E: local recordings are encrypted at rest and do not outlive the browser session.
-// 1. Full capture (raw content) records planted fake secrets; the extension's IndexedDB is read
+// 1. Maximum (raw content) records planted fake secrets; the extension's IndexedDB is read
 //    directly over CDP (IndexedDB.requestData): no secret, URL or title is readable, every chunk
 //    and blob carries the AES-GCM frame, session rows hold only ids and timestamps. The key's
 //    chrome.storage.session area is out of reach of the content script.
@@ -48,7 +48,7 @@ const WORKER_IDLE_WAIT_MS = 35_000;
 const FULL_CAPTURE_RULE = {
   id: "e2e-at-rest-full-capture",
   name: "Local full capture",
-  profileId: "builtin:full-capture",
+  profileId: "builtin:maximum",
   priority: 10,
   enabled: true,
   match: { hosts: ["127.0.0.1:*"] }
@@ -99,7 +99,7 @@ async function main() {
     chrome.storage.local.set({
       "webblackbox.profiles": {
         schemaVersion: 2,
-        defaultProfileId: "default",
+        defaultProfileId: "builtin:maximum",
         profiles: [],
         rules: [${JSON.stringify(FULL_CAPTURE_RULE)}],
         extendedCaptureHosts: []
@@ -154,7 +154,7 @@ async function main() {
     "chrome.storage.local holds a secret or the key"
   );
 
-  // 2. Export: decrypts to the raw secrets; Full capture deletes the recording afterwards.
+  // 2. Export: decrypts to the raw secrets; Maximum deletes the recording afterwards.
   const exported = await popup.evaluate(`
     chrome.runtime.sendMessage({
       kind: "ui.export",
@@ -339,7 +339,7 @@ async function readExportedArchive(WebBlackboxPlayer, archivePath, secrets) {
   return { bytes, events, missing };
 }
 
-/** Starts a Full capture recording, plants `secrets`, stops it and returns its sid. */
+/** Starts a Maximum recording, plants `secrets`, stops it and returns its sid. */
 async function recordSession({ page, popup }, tabId, secrets) {
   await page.send("Page.reload");
   await waitFor(

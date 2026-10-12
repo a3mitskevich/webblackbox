@@ -24,6 +24,18 @@
       "width": 360,
       "height": 600
     },
+    "popup-fallback": {
+      "width": 360,
+      "height": 600
+    },
+    "popup-export-step": {
+      "width": 360,
+      "height": 600
+    },
+    "popup-export-step-remembered": {
+      "width": 360,
+      "height": 600
+    },
     "popup-passphrase": {
       "width": 360,
       "height": 600
@@ -40,11 +52,7 @@
       "width": 360,
       "height": 600
     },
-    "popup-lite-reload": {
-      "width": 360,
-      "height": 600
-    },
-    "popup-full-reload": {
+    "popup-reload": {
       "width": 360,
       "height": 600
     },

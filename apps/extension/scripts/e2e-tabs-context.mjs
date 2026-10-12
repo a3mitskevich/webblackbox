@@ -4,7 +4,7 @@
 // is in the start snapshot; during the session a same-site tab (other port) is opened, navigated
 // and closed, a second same-origin tab is opened and closed, the pre-existing tab navigates to
 // another site and back, and a tab of another site
-// (localhost vs 127.0.0.1) is opened and closed. The QA profile (picked by a site rule) records
+// (localhost vs 127.0.0.1) is opened and closed. Maximum (picked by a site rule) records
 // paths and titles; the other site never appears anywhere in the archive.
 
 import { readFile } from "node:fs/promises";
@@ -23,8 +23,8 @@ const passphrase = "webblackbox-tabs-e2e-passphrase";
 const FOREIGN_MARKER = "foreign-site-marker-5b7e";
 const QA_RULE = {
   id: "e2e-local-qa",
-  name: "Local QA",
-  profileId: "builtin:qa",
+  name: "Local site",
+  profileId: "builtin:maximum",
   priority: 10,
   enabled: true,
   match: { hosts: ["127.0.0.1:*"] }
@@ -52,7 +52,7 @@ async function main() {
     chrome.storage.local.set({
       "webblackbox.profiles": {
         schemaVersion: 2,
-        defaultProfileId: "default",
+        defaultProfileId: "builtin:maximum",
         profiles: [],
         rules: [${JSON.stringify(QA_RULE)}],
         extendedCaptureHosts: []
@@ -151,7 +151,7 @@ async function main() {
   assert(snapshot, "No meta.tabs.snapshot in the archive", {
     types: [...new Set(events.map((event) => event.type))]
   });
-  assert(snapshot.data.level === "allow", "QA did not record the allow level", snapshot.data);
+  assert(snapshot.data.level === "allow", "Maximum did not record the allow level", snapshot.data);
   assert(
     snapshot.data.tabs.length === 1 &&
       snapshot.data.tabs[0].tabId === existingTabId &&
