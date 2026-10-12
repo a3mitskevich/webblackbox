@@ -8,6 +8,7 @@ import { inspectorFeature } from "./inspector/index.js";
 import { mergeFeatureCatalog, type FeatureCatalog } from "./messages.js";
 import { networkFeature } from "./network/index.js";
 import { perfFeature } from "./perf/index.js";
+import { replayFeature } from "./replay/index.js";
 import { shareFeature } from "./share/index.js";
 import { storageFeature } from "./storage/index.js";
 import { tabsFeature } from "./tabs/index.js";
@@ -28,7 +29,8 @@ export const PLAYER_FEATURES: readonly PlayerFeature[] = [
   shareFeature,
   inspectorFeature,
   generateFeature,
-  extensionGuideFeature
+  extensionGuideFeature,
+  replayFeature
 ];
 
 /**

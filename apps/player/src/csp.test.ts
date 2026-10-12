@@ -10,6 +10,8 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 // Vite's HTML entry; the build copies it (with hashed asset links) to build/index.html.
 const indexPath = resolve(testDir, "../index.html");
 const html = readFileSync(indexPath, "utf8");
+// The sandboxed DOM replay frame (spike, task 56) has its own page and policy.
+const replayHtml = readFileSync(resolve(testDir, "../public/replay/index.html"), "utf8");
 
 function sourcesOf(policy: string, directive: string): string[] {
   return parseCsp(policy).find(([name]) => name === directive)?.[1] ?? [];
@@ -50,7 +52,34 @@ describe("player CSP", () => {
     expect(readCsp(withCsp(html, dev))).toBe(dev);
   });
 
+  it("frames only same-origin pages (the sandboxed DOM replay frame)", () => {
+    expect(sourcesOf(readCsp(html), "frame-src")).toEqual(["'self'"]);
+  });
+
   it("refuses to rewrite a page without a CSP meta tag", () => {
     expect(() => withCsp("<html></html>", "default-src 'self'")).toThrow(/no Content-Security/u);
+  });
+});
+
+describe("DOM replay frame CSP", () => {
+  const csp = readCsp(replayHtml);
+
+  it("runs only its own classic script, never inline or eval", () => {
+    expect(sourcesOf(csp, "default-src")).toEqual(["'none'"]);
+    expect(sourcesOf(csp, "script-src")).toEqual(["'self'"]);
+    expect(csp).not.toMatch(/unsafe-eval|wasm-unsafe-eval/u);
+    expect(replayHtml).toMatch(/<script defer src="\.\/replay\.js"><\/script>/u);
+    expect(replayHtml).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/u);
+  });
+
+  it("allows inline styles for the rebuilt page but loads nothing from the recorded site", () => {
+    expect(sourcesOf(csp, "style-src")).toEqual(["'self'", "'unsafe-inline'", "blob:"]);
+    expect(sourcesOf(csp, "img-src")).toEqual(["blob:", "data:"]);
+    expect(sourcesOf(csp, "font-src")).toEqual(["blob:", "data:"]);
+    expect(sourcesOf(csp, "media-src")).toEqual(["blob:", "data:"]);
+    expect(sourcesOf(csp, "connect-src")).toEqual(["'none'"]);
+    expect(sourcesOf(csp, "frame-src")).toEqual(["'none'"]);
+    expect(sourcesOf(csp, "form-action")).toEqual(["'none'"]);
+    expect(csp).not.toMatch(/https?:|\*/u);
   });
 });

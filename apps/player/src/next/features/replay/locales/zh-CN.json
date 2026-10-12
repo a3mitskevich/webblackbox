@@ -1,0 +1,16 @@
+{
+  "tabLabel": "DOM 回放",
+  "spikeNote": "原型（rrweb）。页面在无脚本、无网络的沙箱中根据录制的 DOM 日志重建。",
+  "empty": "此录制没有 rrweb DOM 日志。请使用 WB_SPIKE_RRWEB=1 构建的扩展或 SDK 的 domRecorder 选项录制。",
+  "frameTitle": "录制页面的 DOM 回放",
+  "loading": "正在加载 DOM 日志…",
+  "loaded": "rrweb 事件 {events} 个，完整快照 {snapshots} 个，来自存档的资源 {resources} 个",
+  "unresolved": "{count} 个资源不在存档中，未加载",
+  "otherTabs": "显示标签页 {tab}；其他有 DOM 日志的标签页：{tabs}",
+  "clicks": "点击",
+  "noClicks": "DOM 日志中没有点击。",
+  "clickRow": "在 {time} 点击节点 {node}",
+  "highlightFound": "点击目标：<{tag}>，位置 {x}, {y}（{width}×{height}）",
+  "highlightMissing": "被点击的节点 {node} 此刻不在 DOM 中",
+  "error": "回放错误：{message}"
+}

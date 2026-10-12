@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="referrer" content="no-referrer" />
+    <!--
+      DOM replay frame (spike, task 56). Loaded by the Player in <iframe sandbox="allow-scripts">
+      (opaque origin). Its own policy: scripts only from this page's bundle; inline styles and
+      blob: stylesheets for the rebuilt page; images, fonts and media only from blob:/data: (the
+      archive), never from the recorded site; no fetch/XHR/WebSocket, no frames from elsewhere.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>WebBlackbox DOM replay</title>
+    <link rel="stylesheet" href="./replay.css" />
+    <script defer src="./replay.js"></script>
+  </head>
+  <body>
+    <div id="replay-root"></div>
+  </body>
+</html>
