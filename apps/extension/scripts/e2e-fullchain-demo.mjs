@@ -102,6 +102,9 @@ const expectedProfileId = configureRecordingProfile ? E2E_PROFILE_IDS[captureMod
 // Full capture profile and checks that the archive holds every body the profile asked for, or says
 // why one is missing; the demo page scenarios are skipped.
 const completenessMode = captureMode === "full" && (process.env.WB_E2E_COMPLETENESS ?? "0") === "1";
+// `e2e:completeness:full:heavy`: the realistic page also sends a burst of JSON reports with about
+// 220 MB of binary media, past Chrome's default 200 MB body buffer (lib/realistic-site.mjs).
+const heavyBurst = completenessMode && (process.env.WB_E2E_HEAVY_BURST ?? "0") === "1";
 // Full mode records script → source map references unless a profile turns them off. The
 // completeness run records the realistic fixture site, which has no minified demo bundle.
 const verifySourceMaps =
@@ -500,7 +503,7 @@ async function main() {
   }
 
   const scenarioResult = completenessMode
-    ? await runRealisticScenario(demoClient, completenessDurationMs)
+    ? await runRealisticScenario(demoClient, completenessDurationMs, { heavy: heavyBurst })
     : await runDemoScenario(demoClient);
   assert(scenarioResult?.ok === true, "Demo scenario failed", scenarioResult);
   assert(
@@ -710,7 +713,7 @@ async function main() {
   const completenessResult = completenessMode
     ? checkCompleteness(
         archive,
-        realisticCompletenessExpectations(scenarioResult, { reloadAfterStart })
+        realisticCompletenessExpectations(scenarioResult, { reloadAfterStart, heavy: heavyBurst })
       )
     : bodiesRequested
       ? checkCompleteness(archive, {
@@ -2603,7 +2606,7 @@ async function waitForExportedArchiveFile(sid, startedAtMs, timeoutMs) {
   );
 }
 
-async function runRealisticScenario(demoClient, durationMs) {
+async function runRealisticScenario(demoClient, durationMs, options = {}) {
   return demoClient.evaluate(
     `
       (async () => {
@@ -2611,7 +2614,7 @@ async function runRealisticScenario(demoClient, durationMs) {
           return { ok: false, reason: 'realistic-site-script-missing' };
         }
 
-        return window.__realistic.run(${JSON.stringify(durationMs)});
+        return window.__realistic.run(${JSON.stringify(durationMs)}, ${JSON.stringify(options)});
       })()
     `,
     { timeoutMs: durationMs + 60_000 }
@@ -2621,7 +2624,9 @@ async function runRealisticScenario(demoClient, durationMs) {
 /** Every burst, poll and XHR request the realistic page reports is in the waterfall. */
 function checkRealisticTraffic(archive, scenario) {
   const urls = archive.getNetworkWaterfall().map((entry) => entry.url);
-  const recorded = urls.filter((url) => /\/api\/(items|text|slow|poll)\b/.test(url)).length;
+  const recorded = urls.filter((url) =>
+    /\/api\/(items|text|slow|poll|report|export)\b/.test(url)
+  ).length;
   const sent = Number(scenario?.fetches ?? 0) + Number(scenario?.xhrs ?? 0);
 
   return { ok: sent > 0 && recorded >= sent, sent, recorded };
@@ -2642,13 +2647,18 @@ function checkDuplicatedContentTypeBody(archive) {
 }
 
 /**
- * What the realistic site must leave in a Full-capture archive. Bodies: none lost silently, the
- * 2.6 MB bundle recorded as too large, no reads lost to load, SVG kept as text, `data:` URLs not
- * counted. Requests the server held from page load: started before the capture (recorded as
+ * What the realistic site must leave in a Full-capture archive. Bodies: none lost silently, both
+ * bundles over the 1 MiB limit kept cut at it (the browser keeps them whole, so they are read and
+ * cut), none too large (but the heavy burst's export), no reads lost to load, SVG kept as text, `data:` URLs not counted. Requests the server held from page load: started before the capture (recorded as
  * such), or, when Start reloads the page, inside it with their bodies. Traffic: at least what the
  * page reports it sent, every WebSocket frame whole, perf and console signals present.
  */
-function realisticCompletenessExpectations(scenario, { reloadAfterStart = false } = {}) {
+function realisticCompletenessExpectations(
+  scenario,
+  { reloadAfterStart = false, heavy = false } = {}
+) {
+  // The heavy burst's gzip export decodes past what the browser keeps for one response.
+  const tooLarge = heavy ? 1 : 0;
   const frames = Number(scenario?.wsSent ?? 0) + Number(scenario?.wsReceived ?? 0);
   const held = Number(scenario?.heldRequests ?? 0);
 
@@ -2661,11 +2671,13 @@ function realisticCompletenessExpectations(scenario, { reloadAfterStart = false 
     // string, JSON, JSON with Content-Type sent twice, untyped Blob, typed Blob, ArrayBuffer,
     // URLSearchParams, PUT, XHR, beacon.
     minRequestBodies: 10,
+    minCutResponseBodies: 2,
     minSkipReasons: {
-      "too-large": 1,
+      "too-large": tooLarge,
       "started-before-capture": reloadAfterStart ? 0 : held
     },
     maxSkipReasons: {
+      "too-large": tooLarge,
       backlog: 0,
       "session-limit": 0,
       "not-retained": 0,

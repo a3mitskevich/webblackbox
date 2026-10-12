@@ -1,9 +1,16 @@
-import type { CdpRouter } from "@webblackbox/cdp-router";
+import type { BaselineDomainOptions, CdpRouter } from "@webblackbox/cdp-router";
 import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 import { BODY_SKIPPED_RAW_TYPE, type RawRecorderEvent } from "@webblackbox/recorder";
 
 import { resolveSourceMapCapture, type SourceMapCapture } from "../shared/profiles/resolve.js";
-import { transformResponseBodyForCapture, type BodyCaptureRule } from "./body-capture-utils.js";
+import {
+  decodeBase64,
+  normalizeBodyCaptureMaxBytes,
+  readContentLength,
+  transformResponseBodyForCapture,
+  transformResponseBytesForCapture,
+  type BodyCaptureRule
+} from "./body-capture-utils.js";
 import { withCdpCommandTimeout, type CdpCommandOutcome } from "./cdp-command.js";
 import { primeChildSession } from "./child-session-prime.js";
 import {
@@ -13,6 +20,7 @@ import {
   type FinishedResponse,
   type ReadBody
 } from "./full-body-capture.js";
+import { resolveNetworkEnableParams } from "./network-buffers.js";
 import {
   buildRequestMetaKey,
   deleteRequestMeta,
@@ -115,6 +123,16 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
           }
         }
 
+        // One event per received chunk, which carries the bytes of a streamed body: only body
+        // capture reads it (the recorder has no event for it).
+        if (event.method === "Network.dataReceived") {
+          if (!runtime.stopping) {
+            trackFullModeNetworkEvent(runtime, event.method, asRecord(cdpPayload), event.sessionId);
+          }
+
+          return;
+        }
+
         // One event per parsed script (eval and extension code included): handled inline instead
         // of through the recorder or the best-effort follow-up queue.
         if (event.method === "Debugger.scriptParsed") {
@@ -169,7 +187,7 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
       // Set before the domains are enabled: their first events already read bodies through it.
       runtime.cdpRouter = router;
       runtime.enabledCdpSessions.clear();
-      await router.enableBaseline(runtime.tabId);
+      await router.enableBaseline(runtime.tabId, undefined, resolveBaselineOptions(runtime));
       runtime.enabledCdpSessions.add("root");
       await router.enableAutoAttach(runtime.tabId);
       await router.send({ tabId: runtime.tabId }, "DOMStorage.enable").catch((error: unknown) => {
@@ -277,7 +295,8 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
       runtime.cdpRouter,
       runtime.tabId,
       childSessionId,
-      CHILD_SESSION_PRIME_TIMEOUT_MS
+      CHILD_SESSION_PRIME_TIMEOUT_MS,
+      resolveBaselineOptions(runtime)
     );
 
     if (!primed) {
@@ -418,6 +437,15 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
     });
   }
 
+  /** Network buffers sized from the session's body limit, so bodies are still held when read. */
+  function resolveBaselineOptions(runtime: SessionRuntime): BaselineDomainOptions {
+    const bodyLimitBytes = isFullBodyCaptureEnabled(runtime)
+      ? normalizeBodyCaptureMaxBytes(runtime.config.sampling.bodyCaptureMaxBytes)
+      : 0;
+
+    return { network: resolveNetworkEnableParams(bodyLimitBytes) };
+  }
+
   function isFullBodyCaptureEnabled(runtime: SessionRuntime): boolean {
     return (
       runtime.mode === "full" &&
@@ -431,6 +459,8 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
       resolveRule: (url, mimeType) => deps.resolveBodyRule(getRuntime(), url, mimeType),
       readResponseBody: (requestId, sessionId) =>
         readCdpForBodies(getRuntime(), sessionId, "Network.getResponseBody", { requestId }),
+      streamResponseBody: (requestId, sessionId) =>
+        readCdpForBodies(getRuntime(), sessionId, "Network.streamResourceContent", { requestId }),
       storeBody: (response, read, rule, mimeType) =>
         storeFullModeResponseBody(getRuntime(), response, read, rule.maxBytes, mimeType),
       emitSkip: (payload) => {
@@ -477,15 +507,25 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
     maxBytes: number,
     mimeType: string | undefined
   ): Promise<number> {
-    const transformed = transformResponseBodyForCapture({
-      body: read.body,
-      base64Encoded: read.base64Encoded,
+    const transformArgs = {
       redaction: runtime.config.redaction,
       maxBytes,
       mimeType,
-      redactionToken: deps.bodyRedactedToken,
-      decodeBase64
-    });
+      redactionToken: deps.bodyRedactedToken
+    };
+    const transformed =
+      "head" in read
+        ? transformResponseBytesForCapture(read.head, transformArgs)
+        : transformResponseBodyForCapture({
+            ...transformArgs,
+            body: read.body,
+            base64Encoded: read.base64Encoded,
+            decodeBase64
+          });
+    // A streamed body keeps only its start: its size is what the browser received.
+    const size = "head" in read ? read.totalBytes : transformed.originalBytes.byteLength;
+    const truncated =
+      transformed.truncated || ("head" in read && read.totalBytes > read.head.byteLength);
     const rawMimeType = response.meta?.mimeType;
     const hash = await runtime.pipeline.putBlob(
       rawMimeType ?? "application/octet-stream",
@@ -503,10 +543,10 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
         reqId: response.requestId,
         contentHash: hash,
         mimeType: rawMimeType,
-        size: transformed.originalBytes.byteLength,
+        size,
         sampledSize: transformed.sampledBytes.byteLength,
         redacted: transformed.redacted,
-        truncated: transformed.truncated
+        truncated
       }
     });
 
@@ -550,8 +590,19 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
       runtime.fullBodyCapture.onResponseReceived({
         requestId,
         sessionId,
+        contentLength: readContentLength(response?.headers),
         meta: getRequestMeta(runtime.requestMeta, metaKey)
       });
+      return;
+    }
+
+    if (method === "Network.dataReceived") {
+      runtime.fullBodyCapture.onDataReceived(
+        requestId,
+        sessionId,
+        asFiniteNumber(payload?.dataLength) ?? 0,
+        typeof payload?.data === "string" ? payload.data : undefined
+      );
       return;
     }
 
@@ -706,21 +757,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function decodeBase64(value: string): Uint8Array {
-  if (typeof atob !== "function") {
-    return new TextEncoder().encode(value);
-  }
-
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-
-  return bytes;
 }
 
 function normalizeOptionalSamplingInterval(candidate: unknown, fallback: number): number {

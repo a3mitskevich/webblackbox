@@ -214,7 +214,10 @@ export type NetworkWaterfallEntry = {
   /** Why the request body the policy asked for is not in the archive. */
   requestBodySkipReason?: BodySkipReason;
   responseBodyHash?: string;
+  /** Bytes of the whole response body as received. */
   responseBodySize?: number;
+  /** Bytes of the stored response body: the kept prefix when it was cut. */
+  responseBodySampledSize?: number;
   /** The stored response body is a prefix cut at the profile limit. */
   responseBodyTruncated?: true;
   /** Why the response body the policy asked for is not in the archive. */

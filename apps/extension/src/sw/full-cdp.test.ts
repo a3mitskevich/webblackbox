@@ -41,12 +41,15 @@ type SentCommand = {
   params?: Record<string, unknown>;
 };
 
+/** An `enableBaseline` call; `network` only when buffer sizes were sent. */
+type BaselineCall = { tabId: number; sessionId?: string; network?: Record<string, unknown> };
+
 type FakeRouterKit = {
   router: CdpRouter;
   sent: SentCommand[];
   attachedTabs: number[];
   detachedTabs: number[];
-  baselineCalls: Array<{ tabId: number; sessionId?: string }>;
+  baselineCalls: BaselineCall[];
   emit: (event: RawCdpEvent) => void;
   emitDetach: (info: DetachInfo) => void;
   disposed: () => boolean;
@@ -66,7 +69,7 @@ function createFakeRouter(
   const sent: SentCommand[] = [];
   const attachedTabs: number[] = [];
   const detachedTabs: number[] = [];
-  const baselineCalls: Array<{ tabId: number; sessionId?: string }> = [];
+  const baselineCalls: BaselineCall[] = [];
   let isDisposed = false;
 
   const router: CdpRouter = {
@@ -90,8 +93,13 @@ function createFakeRouter(
         ? Promise.reject(new Error(error))
         : Promise.resolve(options.sendResult?.(method) as TResult);
     },
-    enableBaseline: (tabId, sessionId) => {
-      baselineCalls.push({ tabId, sessionId });
+    enableBaseline: (tabId, sessionId, baselineOptions) => {
+      const network = baselineOptions?.network ?? {};
+      baselineCalls.push({
+        tabId,
+        sessionId,
+        ...(Object.keys(network).length > 0 ? { network } : {})
+      });
       return options.childBaselineError && sessionId
         ? Promise.reject(new Error(options.childBaselineError))
         : Promise.resolve();
@@ -315,6 +323,32 @@ describe("attachCdp", () => {
     expect(harness.artifactReasons).toEqual(["session-start"]);
     await harness.flushTasks();
     expect(runtime.screenshotInterval).toBeNull();
+  });
+
+  it("sizes the network buffers from the body limit when the session keeps bodies", async () => {
+    const harness = createDepsHarness();
+    const config = fullBodyConfig();
+    const runtime = createRuntime(harness.controller, {
+      config: { ...config, sampling: { ...config.sampling, bodyCaptureMaxBytes: 1024 * 1024 } }
+    });
+
+    await harness.controller.attachCdp(runtime);
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Target.attachedToTarget",
+      params: { sessionId: "child-1" }
+    });
+    await harness.flushTasks();
+
+    const network = {
+      maxTotalBufferSize: 256 * 1024 * 1024,
+      maxResourceBufferSize: 20 * 1000 * 1000,
+      maxPostDataSize: 1024 * 1024
+    };
+    expect(harness.routerKit.baselineCalls).toEqual([
+      { tabId: TAB_ID, sessionId: undefined, network },
+      { tabId: TAB_ID, sessionId: "child-1", network }
+    ]);
   });
 
   it("skips the script debugger when the profile turns source maps off", async () => {
@@ -706,6 +740,83 @@ describe("full-mode body capture", () => {
     expect(harness.ruleCalls).toEqual([{ url: "https://example.test/", mimeType: "text/html" }]);
     // The metadata of the finished request is forgotten.
     expect(runtime.requestMeta.size).toBe(0);
+  });
+
+  it("streams the start of a response the browser would not keep and records it truncated", async () => {
+    const harness = createDepsHarness({
+      rule: { ...TEXT_RULE, maxBytes: 4096 },
+      router: {
+        sendResult: (method) =>
+          method === "Network.streamResourceContent"
+            ? { bufferedData: Buffer.from("hello").toString("base64") }
+            : {}
+      }
+    });
+    const runtime = createRuntime(harness.controller, { config: fullBodyConfig() });
+    await harness.controller.attachCdp(runtime);
+
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Network.requestWillBeSent",
+      params: { requestId: "big", request: { url: "https://example.test/big", method: "GET" } }
+    });
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Network.responseReceived",
+      params: {
+        requestId: "big",
+        type: "Fetch",
+        response: {
+          url: "https://example.test/big",
+          mimeType: "text/plain",
+          status: 200,
+          headers: { "Content-Length": "30000000" },
+          encodedDataLength: 100
+        }
+      }
+    });
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Network.dataReceived",
+      params: { requestId: "big", dataLength: 5, encodedDataLength: 5 }
+    });
+    await vi.waitFor(() => {
+      expect(harness.routerKit.sent.map(({ method }) => method)).toContain(
+        "Network.streamResourceContent"
+      );
+    });
+    await Promise.resolve();
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Network.dataReceived",
+      params: {
+        requestId: "big",
+        dataLength: 29_999_995,
+        data: Buffer.from("x".repeat(8_000)).toString("base64")
+      }
+    });
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Network.loadingFinished",
+      params: { requestId: "big", encodedDataLength: 30_000_100 }
+    });
+
+    await vi.waitFor(() => {
+      expect(cdpEventsOf(harness).some((event) => event.rawType === "cdp.network.body")).toBe(true);
+    });
+
+    expect(
+      cdpEventsOf(harness).find((event) => event.rawType === "cdp.network.body")
+    ).toMatchObject({
+      payload: { reqId: "big", size: 30_000_000, sampledSize: 4096, truncated: true }
+    });
+    expect(harness.routerKit.sent.map(({ method }) => method)).not.toContain(
+      "Network.getResponseBody"
+    );
+    // The chunks (and their bytes) never reach the recorder.
+    expect(cdpEventsOf(harness).some((event) => event.rawType === "Network.dataReceived")).toBe(
+      false
+    );
   });
 
   it("records a skip when the browser no longer holds the body", async () => {

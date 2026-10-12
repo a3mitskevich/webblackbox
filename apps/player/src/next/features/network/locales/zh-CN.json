@@ -97,6 +97,8 @@
   "bodyNone": "无正文。",
   "cutBadge": "截断于 {size}",
   "cutNote": "录制器只保留了此正文的前 {size}。",
+  "cutBadgeOf": "截断于 {kept}（共 {total}）",
+  "cutNoteOf": "录制器只保留了此正文（共 {total}）的前 {kept}。",
   "requestBodyCut": "请求正文在配置文件限制处被截断。",
   "bodyLoading": "正在加载正文…",
   "bodyLoadFailed": "无法读取正文：{error}",

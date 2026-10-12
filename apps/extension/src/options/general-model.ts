@@ -19,6 +19,7 @@ import {
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
 import { DEFAULT_START_RELOAD_OFFER } from "../shared/start-reload-offer.js";
+import { MAX_BODY_CAPTURE_BYTES } from "../shared/body-capture-limits.js";
 
 /**
  * Pure model of the general settings (everything outside the profiles editor): the draft being
@@ -44,7 +45,6 @@ export type GeneralDraft = {
 
 export type GeneralSectionId = "sensitivity" | "pointer" | "sampling" | "budgets" | "export";
 
-const MAX_BODY_CAPTURE_BYTES = 1_048_576;
 const MIN_SCREENSHOT_IDLE_MS = 250;
 
 type SpecText = {

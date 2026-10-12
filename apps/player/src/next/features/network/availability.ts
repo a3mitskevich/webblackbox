@@ -17,6 +17,22 @@ export type BodyAvailability =
 
 const NO_BODY_STATUSES = new Set([204, 205, 304]);
 
+/**
+ * Sizes of a response body cut at the profile limit: the bytes kept and, when the recording knows
+ * it and it is larger, the size of the whole body.
+ */
+export function responseBodyCutSizes(entry: NetworkWaterfallEntry): {
+  keptBytes: number;
+  totalBytes?: number;
+} {
+  const keptBytes = entry.responseBodySampledSize ?? entry.responseBodySize ?? 0;
+  const totalBytes = entry.responseBodySize;
+
+  return totalBytes !== undefined && totalBytes > keptBytes
+    ? { keptBytes, totalBytes }
+    : { keptBytes };
+}
+
 export function responseBodyAvailability(entry: NetworkWaterfallEntry): BodyAvailability {
   if (entry.responseBodyHash) {
     return { state: "captured", truncated: entry.responseBodyTruncated === true };

@@ -9,6 +9,8 @@ import {
   type RecorderConfig
 } from "@webblackbox/protocol";
 
+import { clampBodyCaptureMaxBytes } from "../shared/body-capture-limits.js";
+
 export { isTextualMimeType, normalizeMimeType };
 
 export type BodyCaptureRule = {
@@ -32,12 +34,22 @@ type RuleResolutionOptions = {
 type TransformResponseBodyArgs = {
   body: string;
   base64Encoded: boolean;
+  decodeBase64: (value: string) => Uint8Array;
+} & TransformResponseBytesArgs;
+
+type TransformResponseBytesArgs = {
   /** The profile's redaction rules (key and value patterns; none when masking is off). */
   redaction: RedactionRules;
   maxBytes: number;
-  decodeBase64: (value: string) => Uint8Array;
   mimeType?: string;
   redactionToken?: string;
+};
+
+type TransformedResponseBody = {
+  originalBytes: Uint8Array;
+  sampledBytes: Uint8Array;
+  redacted: boolean;
+  truncated: boolean;
 };
 
 export const DEFAULT_BODY_CAPTURE_MAX_BYTES = 256 * 1024;
@@ -213,11 +225,7 @@ export function normalizeBodyCaptureMaxBytes(
     return fallbackMaxBytes;
   }
 
-  if (value <= 0) {
-    return 0;
-  }
-
-  return Math.max(4 * 1024, Math.min(8 * 1024 * 1024, Math.round(value)));
+  return clampBodyCaptureMaxBytes(value);
 }
 
 export function normalizeMimeAllowlist(values: string[]): string[] {
@@ -312,18 +320,27 @@ export function isLikelyTextualResourceType(resourceType?: string): boolean {
   );
 }
 
-export function transformResponseBodyForCapture(args: TransformResponseBodyArgs): {
-  originalBytes: Uint8Array;
-  sampledBytes: Uint8Array;
-  redacted: boolean;
-  truncated: boolean;
-} {
+export function transformResponseBodyForCapture(
+  args: TransformResponseBodyArgs
+): TransformedResponseBody {
   const originalBytes = args.base64Encoded
     ? args.decodeBase64(args.body)
     : new TextEncoder().encode(args.body);
-  const { bytes: candidateBytes, redacted } = maskBodyBytes(originalBytes, args.redaction, {
+
+  return transformResponseBytesForCapture(originalBytes, {
+    ...args,
     // Plain (non-base64) CDP bodies are always text, whatever the declared MIME type.
-    mimeType: args.base64Encoded ? args.mimeType : "text/plain",
+    mimeType: args.base64Encoded ? args.mimeType : "text/plain"
+  });
+}
+
+/** Masks body bytes with the profile's rules and keeps at most `maxBytes` of them. */
+export function transformResponseBytesForCapture(
+  originalBytes: Uint8Array,
+  args: TransformResponseBytesArgs
+): TransformedResponseBody {
+  const { bytes: candidateBytes, redacted } = maskBodyBytes(originalBytes, args.redaction, {
+    mimeType: args.mimeType,
     redactionToken: args.redactionToken ?? BODY_REDACTION_TOKEN
   });
 
@@ -337,6 +354,41 @@ export function transformResponseBodyForCapture(args: TransformResponseBodyArgs)
     redacted,
     truncated
   };
+}
+
+/** The `Content-Length` of CDP response headers (any case), or undefined without a valid one. */
+export function readContentLength(headers: unknown): number | undefined {
+  if (!headers || typeof headers !== "object") {
+    return undefined;
+  }
+
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() !== "content-length" || typeof value !== "string") {
+      continue;
+    }
+
+    // Repeated headers arrive joined; a valid length is one run of digits.
+    const match = /^\s*(\d{1,15})\s*$/.exec(value);
+    return match ? Number(match[1]) : undefined;
+  }
+
+  return undefined;
+}
+
+/** Bytes of a base64 CDP payload. */
+export function decodeBase64(value: string): Uint8Array {
+  if (typeof atob !== "function") {
+    return new TextEncoder().encode(value);
+  }
+
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
 }
 
 function buildDefaultRule(

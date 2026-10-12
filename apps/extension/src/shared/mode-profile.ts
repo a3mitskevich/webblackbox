@@ -6,10 +6,10 @@ import {
   type RecorderConfig
 } from "@webblackbox/protocol";
 
+import { FULL_MODE_BODY_CAPTURE_MAX_BYTES } from "./body-capture-limits.js";
 import type { FullModeVisualCapture } from "./messages.js";
 
-/** Default body capture cap for CDP-backed (full) sessions. */
-export const FULL_MODE_BODY_CAPTURE_MAX_BYTES = 128 * 1024;
+export { FULL_MODE_BODY_CAPTURE_MAX_BYTES };
 
 /**
  * The last step of every extension recorder config (every profile): no ring
@@ -107,6 +107,18 @@ export function applyFullModeVisualCapture(
   };
 }
 
+/**
+ * Full mode records the page DOM by default: the default DOM level (`masked`) records it through
+ * the page snapshot/mutation path, masked by the profile's own rules (blocked selectors, content
+ * masking, no field values unless `inputs: allow`). `off` and `wireframe` keep it out, and
+ * enterprise caps still lower it afterwards. Lite keeps `masked` as a summary.
+ */
+export function resolveFullModeDomLevel(
+  level: CapturePolicy["categories"]["dom"]
+): CapturePolicy["categories"]["dom"] {
+  return level === "masked" ? "allow" : level;
+}
+
 function applyFullModeCapturePolicy(policy: CapturePolicy | undefined): CapturePolicy {
   const basePolicy = policy ?? DEFAULT_CAPTURE_POLICY;
 
@@ -119,6 +131,7 @@ function applyFullModeCapturePolicy(policy: CapturePolicy | undefined): CaptureP
         : basePolicy.unmaskPolicySource,
     categories: {
       ...basePolicy.categories,
+      dom: resolveFullModeDomLevel(basePolicy.categories.dom),
       screenshots: "allow",
       screenRecordings: basePolicy.categories.screenRecordings,
       cdp: basePolicy.categories.cdp === "full" ? "full" : "safe-subset"

@@ -181,6 +181,12 @@ const COMPLETENESS_BOUNDS = [
     (r) => r.network.responseBodies.captured
   ],
   ["minRequestBodies", "min", "captured request bodies", (r) => r.network.requestBodies.captured],
+  [
+    "minCutResponseBodies",
+    "min",
+    "response bodies kept cut at the limit",
+    (r) => r.network.responseBodies.truncated
+  ],
   ["maxInternalRequests", "max", "extension/internal requests", (r) => r.network.internalRequests],
   ["minRequests", "min", "requests", (r) => r.network.requests],
   ["minDomCoveragePercent", "min", "DOM coverage %", (r) => Math.round(r.dom.coverage * 100)],

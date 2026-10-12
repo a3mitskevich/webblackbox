@@ -6,6 +6,7 @@ import {
   applyBodyUrlFilters,
   isInlineRequestBodyAllowed,
   isMimeAllowed,
+  readContentLength,
   resolveFullBodyCaptureRule,
   resolveLiteBodyCaptureRule,
   transformResponseBodyForCapture
@@ -322,5 +323,20 @@ describe("applyBodyUrlFilters", () => {
     expect(
       applyBodyUrlFilters(disabled, "https://a.test/", { includeUrls: ["*"], excludeUrls: [] })
     ).toBe(disabled);
+  });
+});
+
+describe("readContentLength", () => {
+  it("reads the declared length in any header case", () => {
+    expect(readContentLength({ "content-length": "1234" })).toBe(1234);
+    expect(readContentLength({ "Content-Length": " 42 " })).toBe(42);
+  });
+
+  it("ignores missing, joined or malformed lengths", () => {
+    expect(readContentLength(undefined)).toBeUndefined();
+    expect(readContentLength({ "content-type": "text/plain" })).toBeUndefined();
+    expect(readContentLength({ "content-length": "10, 10" })).toBeUndefined();
+    expect(readContentLength({ "content-length": "-1" })).toBeUndefined();
+    expect(readContentLength({ "content-length": 7 })).toBeUndefined();
   });
 });

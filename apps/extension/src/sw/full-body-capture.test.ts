@@ -14,8 +14,16 @@ import {
   type FinishedResponse,
   type ResponseBodyRead
 } from "./full-body-capture.js";
+import { CHROME_DEFAULT_RESOURCE_BUFFER_BYTES } from "./network-buffers.js";
+import {
+  FULL_BODY_MAX_ACTIVE_STREAMS,
+  FULL_BODY_STREAM_MAX_RESPONSE_BYTES,
+  type StreamStartRead
+} from "./full-body-stream.js";
 
 const LIMIT = 1024 * 1024;
+/** What Chrome keeps of one response with a 1 MiB body limit (its own default). */
+const KEPT = CHROME_DEFAULT_RESOURCE_BUFFER_BYTES;
 const TEXT_RULE: BodyCaptureRule = {
   enabled: true,
   maxBytes: LIMIT,
@@ -27,6 +35,8 @@ type Harness = {
   skips: NetworkBodySkippedPayload[];
   stored: string[];
   reads: string[];
+  streams: string[];
+  startStream: (requestId: string, outcome: CdpReadOutcome<StreamStartRead>) => void;
   release: (requestId: string, outcome?: CdpReadOutcome<ResponseBodyRead>) => void;
   settle: () => Promise<void>;
 };
@@ -41,7 +51,9 @@ function createHarness(
   const skips: NetworkBodySkippedPayload[] = [];
   const stored: string[] = [];
   const reads: string[] = [];
+  const streams: string[] = [];
   const waiting = new Map<string, (outcome: CdpReadOutcome<ResponseBodyRead>) => void>();
+  const streamStarts = new Map<string, (outcome: CdpReadOutcome<StreamStartRead>) => void>();
 
   const capture = new FullBodyCapture({
     isEnabled: () => options.enabled ?? true,
@@ -55,7 +67,19 @@ function createHarness(
 
       return new Promise((resolve) => waiting.set(requestId, resolve));
     },
+    streamResponseBody: (requestId) => {
+      streams.push(requestId);
+      return new Promise((resolve) => streamStarts.set(requestId, resolve));
+    },
     storeBody: async (response, read) => {
+      if ("head" in read) {
+        const text = new TextDecoder().decode(read.head);
+        stored.push(
+          `${response.requestId}:head ${text.slice(0, 8)} ${read.head.byteLength}/${read.totalBytes}`
+        );
+        return read.head.byteLength;
+      }
+
       stored.push(`${response.requestId}:${read.body}`);
       return read.body.length;
     },
@@ -67,6 +91,11 @@ function createHarness(
     skips,
     stored,
     reads,
+    streams,
+    startStream: (requestId, outcome) => {
+      streamStarts.get(requestId)?.(outcome);
+      streamStarts.delete(requestId);
+    },
     release: (requestId, outcome = { ok: true, value: { body: `body-${requestId}` } }) => {
       waiting.get(requestId)?.(outcome);
       waiting.delete(requestId);
@@ -100,6 +129,244 @@ function finished(
           }
   };
 }
+
+describe("FullBodyCapture — large responses", () => {
+  const OVER = KEPT + 1;
+
+  function base64(text: string): string {
+    return Buffer.from(text).toString("base64");
+  }
+
+  function received(requestId: string, contentLength?: number): FinishedResponse {
+    return { ...finished(requestId), encodedDataLength: undefined, contentLength };
+  }
+
+  it("reads a body the browser keeps whole and leaves the cut to the store", async () => {
+    const harness = createHarness();
+
+    harness.capture.onRequestWillBeSent("bundle", undefined);
+    harness.capture.onResponseReceived(received("bundle"));
+    harness.capture.onDataReceived("bundle", undefined, 3 * LIMIT, undefined);
+    harness.capture.onLoadingFinished(finished("bundle", {}, 3 * LIMIT));
+    await harness.capture.drain(1_000);
+
+    expect(harness.streams).toEqual([]);
+    expect(harness.reads).toEqual(["bundle"]);
+    expect(harness.skips).toEqual([]);
+  });
+
+  it("reads large bodies one at a time, in order", async () => {
+    const harness = createHarness({ autoRead: false });
+
+    harness.capture.onLoadingFinished(finished("large-1", {}, 3 * LIMIT));
+    harness.capture.onLoadingFinished(finished("large-2", {}, 3 * LIMIT));
+    harness.capture.onLoadingFinished(finished("small", {}, 1_000));
+    await harness.settle();
+    expect(harness.reads).toEqual(["large-1"]);
+
+    harness.release("large-1");
+    await harness.settle();
+    expect(harness.reads).toEqual(["large-1", "large-2", "small"]);
+
+    harness.release("large-2");
+    harness.release("small");
+    await harness.capture.drain(1_000);
+    expect(harness.stored).toHaveLength(3);
+  });
+
+  it("counts the decoded size of a compressed body as a large read", async () => {
+    const harness = createHarness({ autoRead: false });
+
+    for (const id of ["gzip-1", "gzip-2"]) {
+      harness.capture.onRequestWillBeSent(id, undefined);
+      harness.capture.onResponseReceived(received(id));
+      harness.capture.onDataReceived(id, undefined, 3 * LIMIT, undefined);
+      // Compressed: only the decoded bytes say the read holds several times the limit.
+      harness.capture.onLoadingFinished(finished(id, {}, LIMIT));
+    }
+
+    await harness.settle();
+    expect(harness.reads).toEqual(["gzip-1"]);
+
+    harness.release("gzip-1");
+    await harness.settle();
+    expect(harness.reads).toEqual(["gzip-1", "gzip-2"]);
+
+    harness.release("gzip-2");
+    await harness.capture.drain(1_000);
+    expect(harness.stored).toHaveLength(2);
+  });
+
+  it("records a body the browser dropped for its size as too-large", async () => {
+    const harness = createHarness({ autoRead: false });
+
+    harness.capture.onRequestWillBeSent("chunked", undefined);
+    harness.capture.onResponseReceived(received("chunked"));
+    harness.capture.onDataReceived("chunked", undefined, OVER, undefined);
+    // Compressed: its encoded size alone looks small enough to read.
+    harness.capture.onLoadingFinished(finished("chunked", {}, LIMIT));
+    harness.release("chunked", {
+      ok: false,
+      error: "Request content was evicted from inspector cache"
+    });
+    await harness.capture.drain(1_000);
+
+    expect(harness.skips).toEqual([
+      expect.objectContaining({
+        reqId: "chunked",
+        reason: "too-large",
+        size: OVER,
+        limit: LIMIT,
+        detail: "larger than the browser keeps for one response"
+      })
+    ]);
+  });
+
+  it("streams a response that declares a length the browser would not keep", async () => {
+    const harness = createHarness();
+
+    harness.capture.onRequestWillBeSent("big", undefined);
+    harness.capture.onResponseReceived(received("big", OVER));
+    expect(harness.streams).toEqual(["big"]);
+
+    harness.capture.onDataReceived("big", undefined, 6, undefined);
+    harness.startStream("big", { ok: true, value: { bufferedData: base64('{"a":1') } });
+    await harness.settle();
+    harness.capture.onDataReceived("big", undefined, LIMIT, base64("x".repeat(LIMIT)));
+    harness.capture.onDataReceived("big", undefined, OVER, base64("y".repeat(16)));
+    harness.capture.onLoadingFinished(finished("big", {}, OVER));
+    await harness.capture.drain(1_000);
+
+    expect(harness.reads).toEqual([]);
+    expect(harness.skips).toEqual([]);
+    expect(harness.stored).toEqual([`big:head {"a":1xx ${LIMIT}/${OVER + LIMIT + 6}`]);
+  });
+
+  it("records too-large when the browser dropped the start before streaming began", async () => {
+    const harness = createHarness();
+
+    harness.capture.onRequestWillBeSent("late", undefined);
+    harness.capture.onResponseReceived(received("late", OVER));
+    harness.capture.onDataReceived("late", undefined, 900, undefined);
+    harness.startStream("late", { ok: true, value: { bufferedData: "" } });
+    await harness.settle();
+    harness.capture.onDataReceived("late", undefined, 10, base64("z".repeat(10)));
+    harness.capture.onLoadingFinished(finished("late", {}, OVER));
+    await harness.capture.drain(1_000);
+
+    expect(harness.stored).toEqual([]);
+    expect(harness.skips).toEqual([
+      expect.objectContaining({
+        reqId: "late",
+        reason: "too-large",
+        size: OVER,
+        limit: LIMIT,
+        detail: expect.stringContaining("dropped the start of the body")
+      })
+    ]);
+  });
+
+  it("records too-large with the CDP error when streaming cannot start", async () => {
+    const harness = createHarness();
+
+    harness.capture.onRequestWillBeSent("nostream", undefined);
+    harness.capture.onResponseReceived(received("nostream", OVER));
+    harness.startStream("nostream", { ok: false, error: "No resource with given identifier" });
+    harness.capture.onLoadingFinished(finished("nostream", {}, OVER));
+    await harness.capture.drain(1_000);
+
+    expect(harness.skips).toEqual([
+      expect.objectContaining({
+        reason: "too-large",
+        detail: "streaming its start failed: No resource with given identifier"
+      })
+    ]);
+  });
+
+  it("says why a response the browser would not keep was not streamed", async () => {
+    const harness = createHarness();
+    const huge = FULL_BODY_STREAM_MAX_RESPONSE_BYTES + 1;
+
+    harness.capture.onRequestWillBeSent("huge", undefined);
+    harness.capture.onResponseReceived(received("huge", huge));
+    harness.capture.onRequestWillBeSent("chunked", undefined);
+    harness.capture.onResponseReceived(received("chunked"));
+    harness.capture.onLoadingFinished(finished("huge", {}, huge));
+    harness.capture.onLoadingFinished(finished("chunked", {}, OVER));
+    await harness.capture.drain(1_000);
+
+    expect(harness.streams).toEqual([]);
+    expect(harness.skips.map(({ reqId, reason, detail }) => ({ reqId, reason, detail }))).toEqual([
+      {
+        reqId: "huge",
+        reason: "too-large",
+        detail: `over the ${FULL_BODY_STREAM_MAX_RESPONSE_BYTES} byte limit for streaming its start`
+      },
+      {
+        reqId: "chunked",
+        reason: "too-large",
+        detail: "larger than the browser keeps for one response"
+      }
+    ]);
+  });
+
+  it("streams a few responses at once and records the rest too-large", async () => {
+    const harness = createHarness();
+    const ids = Array.from({ length: FULL_BODY_MAX_ACTIVE_STREAMS + 1 }, (_, index) => `s${index}`);
+
+    for (const id of ids) {
+      harness.capture.onRequestWillBeSent(id, undefined);
+      harness.capture.onResponseReceived(received(id, OVER));
+    }
+
+    expect(harness.streams).toEqual(ids.slice(0, FULL_BODY_MAX_ACTIVE_STREAMS));
+    harness.capture.onLoadingFinished(finished(ids.at(-1)!, {}, OVER));
+    await harness.capture.drain(1_000);
+
+    // The streams still loading are recorded as unavailable when the recording stops.
+    expect(harness.skips.find(({ reqId }) => reqId === ids.at(-1))).toMatchObject({
+      reason: "too-large",
+      detail: "too many large responses were streaming at once"
+    });
+  });
+
+  it("does not stream bodies it can read, started before capture, kept out, or event streams", () => {
+    const harness = createHarness({
+      rule: (url) => ({ ...TEXT_RULE, enabled: !url.endsWith("/filtered") })
+    });
+
+    harness.capture.onRequestWillBeSent("small", undefined);
+    harness.capture.onResponseReceived(received("small", KEPT));
+    harness.capture.onResponseReceived(received("before", OVER));
+    harness.capture.onRequestWillBeSent("filtered", undefined);
+    harness.capture.onResponseReceived(received("filtered", OVER));
+    harness.capture.onRequestWillBeSent("image", undefined);
+    harness.capture.onResponseReceived({
+      ...received("image", OVER),
+      meta: { ...finished("image").meta!, mimeType: "image/png", resourceType: "Image" }
+    });
+    harness.capture.onRequestWillBeSent("sse", undefined);
+    harness.capture.onResponseReceived({
+      ...received("sse", OVER),
+      meta: { ...finished("sse").meta!, mimeType: "text/event-stream", resourceType: "EventSource" }
+    });
+
+    expect(harness.streams).toEqual([]);
+  });
+
+  it("forgets a stream when its request fails", async () => {
+    const harness = createHarness();
+
+    harness.capture.onRequestWillBeSent("failed", undefined);
+    harness.capture.onResponseReceived(received("failed", OVER));
+    harness.capture.onLoadingFailed("failed", undefined);
+    harness.startStream("failed", { ok: true, value: { bufferedData: "" } });
+    await harness.capture.drain(1_000);
+
+    expect(harness.skips).toEqual([]);
+    expect(harness.stored).toEqual([]);
+  });
+});
 
 describe("FullBodyCapture", () => {
   it("captures every body of a burst far beyond the old 80-per-minute cap", async () => {
@@ -178,7 +445,7 @@ describe("FullBodyCapture", () => {
             : TEXT_RULE
     });
 
-    harness.capture.onLoadingFinished(finished("big", { mimeType: "text/javascript" }, LIMIT * 3));
+    harness.capture.onLoadingFinished(finished("big", { mimeType: "text/javascript" }, KEPT + 1));
     harness.capture.onLoadingFinished(
       finished("policy", { url: "https://app.example/blocked/x", mimeType: "application/json" })
     );
@@ -190,7 +457,11 @@ describe("FullBodyCapture", () => {
       ["policy", "filtered"],
       ["csv", "mime-not-allowed"]
     ]);
-    expect(harness.skips[0]).toMatchObject({ size: LIMIT * 3, limit: LIMIT });
+    expect(harness.skips[0]).toMatchObject({
+      size: KEPT + 1,
+      limit: LIMIT,
+      detail: "larger than the browser keeps for one response"
+    });
   });
 
   it("records read failures with the CDP error and empty bodies", async () => {
