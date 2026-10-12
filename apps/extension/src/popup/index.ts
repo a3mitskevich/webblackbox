@@ -1,5 +1,6 @@
-import type { CaptureMode, ExportPolicy, FreezeReason } from "@webblackbox/protocol";
+import type { ExportPolicy, FreezeReason } from "@webblackbox/protocol";
 
+import { ranInFullEngine } from "../shared/capture-fallback.js";
 import { getChromeApi } from "../shared/chrome-api.js";
 import {
   exportsWholeSession,
@@ -18,23 +19,23 @@ import {
   type ExportPrivacyWarning,
   type ExtensionInboundMessage,
   type ExtensionOutboundMessage,
-  type FullModeVisualCapture,
   type ProfilePreviewResponse,
   type SessionListItem
 } from "../shared/messages.js";
-import { loadStartReloadOffer } from "../shared/start-reload-offer.js";
-import { openChoiceDialog, openPassphraseDialog } from "../shared/ui/dialogs.js";
+import {
+  loadStartReloadOffer,
+  START_RELOAD_OFFER_STORAGE_KEY,
+  type StartReloadChoice
+} from "../shared/start-reload-offer.js";
+import { openPassphraseDialog, openRememberedChoiceDialog } from "../shared/ui/dialogs.js";
 import { el } from "../shared/ui/dom.js";
 import { preserveFocus } from "../shared/ui/focus.js";
+import { createCaptureFallbackWarning, createExportStepPanel } from "./export-step.js";
 import {
   createProfileCancelSection,
-  createProfilePickerSection,
+  createProfileLine,
   createProfileRequirementSection,
-  hasNoRecordingProfiles,
-  loadProfileChoice,
-  PROFILE_CHOICE_AUTO,
-  saveProfileChoice,
-  toStartProfileId
+  hasNoRecordingProfiles
 } from "./profile-picker.js";
 import {
   createUpdateBanner,
@@ -48,7 +49,7 @@ import {
   createPopupHeader,
   createPrivacyWarning,
   createRecordingPanel,
-  createStartPanel,
+  createRecordPanel,
   createStateLine,
   type BadgeKind,
   type PopupFormatters
@@ -73,7 +74,6 @@ const format: PopupFormatters = {
 };
 
 const root = document.getElementById("popup-root");
-const POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY = "webblackbox.popup.full-visual-capture";
 const START_PENDING_TIMEOUT_MS = 45_000;
 const EXPORT_ACK_TIMEOUT_MS = 120_000;
 const RECENT_FREEZE_WINDOW_MS = 10 * 60 * 1000;
@@ -82,12 +82,10 @@ const MARKER_COMMAND = { kind: "sw.marker-command" } as const;
 const state: {
   tabId: number | null;
   sessions: SessionListItem[];
-  fullModeVisualCapture: FullModeVisualCapture;
-  profileChoice: string;
   profilePreview?: ProfilePreviewResponse;
-  /** Engine picked in the popup; unset = the selected profile's recommendation. */
-  engineOverride?: CaptureMode;
-  pendingStart?: { tabId: number; mode: CaptureMode; requestedAt: number };
+  /** An export passphrase is remembered until the browser closes (the service worker keeps it). */
+  passphraseRemembered: boolean;
+  pendingStart?: { tabId: number; requestedAt: number };
   pendingExportSid?: string;
   exportPrivacyWarning?: ExportPrivacyWarning;
   statusText?: string;
@@ -97,8 +95,7 @@ const state: {
 } = {
   tabId: null,
   sessions: [],
-  fullModeVisualCapture: "screenshots",
-  profileChoice: PROFILE_CHOICE_AUTO
+  passphraseRemembered: false
 };
 
 let pendingStartTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -121,8 +118,6 @@ if (root) {
 
 async function bootstrap(container: HTMLElement): Promise<void> {
   state.tabId = await getActiveTabId();
-  state.fullModeVisualCapture = loadPopupFullVisualCapture();
-  state.profileChoice = loadProfileChoice();
 
   container.after(liveRegion);
   port?.onMessage.addListener((message) => {
@@ -135,6 +130,7 @@ async function bootstrap(container: HTMLElement): Promise<void> {
     render(container);
   });
   postUiMessage({ kind: "ui.request-session-list" });
+  postUiMessage({ kind: "ui.passphrase-status" });
   requestProfilePreview();
   void loadExtensionUpdateNotice(chromeApi?.storage?.local, extensionVersion).then((notice) => {
     state.updateNotice = notice;
@@ -144,12 +140,11 @@ async function bootstrap(container: HTMLElement): Promise<void> {
   render(container);
 }
 
-/** The service worker answers on the popup port with `sw.profile-preview`. */
+/** The service worker answers on the popup port with `sw.profile-preview` (site rules decide). */
 function requestProfilePreview(): void {
   postUiMessage({
     kind: "ui.resolve-profile",
-    ...(typeof state.tabId === "number" ? { tabId: state.tabId } : {}),
-    profileId: state.profileChoice
+    ...(typeof state.tabId === "number" ? { tabId: state.tabId } : {})
   });
 }
 
@@ -217,6 +212,8 @@ type PopupSessions = {
   recordingHere: boolean;
   /** Stopped session the Export button exports (the current tab's latest first). */
   exportSession?: SessionListItem;
+  /** The export step: a stopped recording that waits for its export (`exportPrompt`). */
+  exportStep: boolean;
   /** Session the service worker stopped because its profile changed (the current tab's first). */
   cancelledSession?: SessionListItem;
 };
@@ -226,33 +223,27 @@ function selectSessions(): PopupSessions {
   const onTab = byRecency.filter((item) => item.tabId === state.tabId);
   const activeSession = onTab.find((item) => item.active) ?? byRecency.find((item) => item.active);
   const recordingHere = Boolean(activeSession && activeSession.tabId === state.tabId);
+  const prompting = byRecency.find((item) => !item.active && item.exportPrompt);
   const exportSession = recordingHere
     ? undefined
-    : (onTab.find((item) => !item.active) ?? byRecency.find((item) => !item.active));
+    : (prompting ?? onTab.find((item) => !item.active) ?? byRecency.find((item) => !item.active));
   const cancelledSession =
     onTab.find((item) => item.profileCancel) ?? byRecency.find((item) => item.profileCancel);
 
-  return { activeSession, recordingHere, exportSession, cancelledSession };
-}
-
-/**
- * The engine Start uses: Full for a profile that needs it (a pick made for another profile does not
- * carry over), else the popup's pick, else the profile's recommendation, else Lite.
- */
-function resolveEngine(): CaptureMode {
-  const selection = state.profilePreview?.selection;
-
-  if (selection?.requiresFull) {
-    return "full";
-  }
-
-  return state.engineOverride ?? selection?.base ?? "lite";
+  return {
+    activeSession,
+    recordingHere,
+    exportSession,
+    exportStep: Boolean(exportSession?.exportPrompt),
+    cancelledSession
+  };
 }
 
 function render(container: HTMLElement): void {
   const now = Date.now();
   const pendingStart = getFreshPendingStart(now);
-  const { activeSession, recordingHere, exportSession, cancelledSession } = selectSessions();
+  const { activeSession, recordingHere, exportSession, exportStep, cancelledSession } =
+    selectSessions();
   const recentFreeze =
     state.lastFreeze && now - state.lastFreeze.at <= RECENT_FREEZE_WINDOW_MS
       ? state.lastFreeze
@@ -288,27 +279,49 @@ function render(container: HTMLElement): void {
     section.append(
       createRecordingPanel({ session: activeSession, onCurrentTab: recordingHere, now, format })
     );
+
+    if (recordingHere && activeSession.captureFallback) {
+      section.append(createCaptureFallbackWarning(activeSession.captureFallback, t));
+    }
   }
 
-  if (!recordingHere) {
+  // Right after Stop the export is the one thing to do: Record comes back once it is done or put
+  // off ("Later"); the recording is kept either way.
+  if (exportSession && exportStep) {
     section.append(
-      hasNoRecordingProfiles(state.profilePreview)
-        ? createProfileRequirementSection(t)
-        : createStartArea(Boolean(pendingStart && pendingStart.tabId === state.tabId))
-    );
-  }
-
-  if (exportSession) {
-    const prefs = loadExportPolicyPrefs();
-    section.append(
-      createLastSessionPanel({
+      createExportStepPanel({
         session: exportSession,
         now,
         format,
         exporting: Boolean(state.pendingExportSid),
-        limitsText: formatArchiveLimits(prefs)
+        passphraseRemembered: state.passphraseRemembered,
+        limitsText: formatArchiveLimits(loadExportPolicyPrefs())
       })
     );
+  } else {
+    if (!recordingHere) {
+      section.append(
+        hasNoRecordingProfiles(state.profilePreview)
+          ? createProfileRequirementSection(t)
+          : createRecordPanel({
+              t,
+              profileLine: createProfileLine(state.profilePreview, t),
+              pending: Boolean(pendingStart && pendingStart.tabId === state.tabId)
+            })
+      );
+    }
+
+    if (exportSession) {
+      section.append(
+        createLastSessionPanel({
+          session: exportSession,
+          now,
+          format,
+          exporting: Boolean(state.pendingExportSid),
+          limitsText: formatArchiveLimits(loadExportPolicyPrefs())
+        })
+      );
+    }
   }
 
   section.append(
@@ -372,24 +385,6 @@ function describeStatus(
       });
 }
 
-function createStartArea(pending: boolean): HTMLElement {
-  return createStartPanel({
-    t,
-    profilePicker: createProfilePickerSection({
-      preview: state.profilePreview,
-      choice: state.profileChoice,
-      disabled: pending,
-      t,
-      formatMode
-    }),
-    engine: resolveEngine(),
-    visualCapture: state.fullModeVisualCapture,
-    pinnedVisual: state.profilePreview?.selection?.visual,
-    engineLocked: state.profilePreview?.selection?.requiresFull === true,
-    pending
-  });
-}
-
 function bindActions(
   container: HTMLElement,
   activeSession?: SessionListItem,
@@ -421,6 +416,21 @@ function bindActions(
   on("export", () =>
     exportSession ? runDialogFlow(() => exportWithDialog(container, exportSession)) : undefined
   );
+  on("export-later", () => {
+    if (exportSession && !postUiMessage({ kind: "ui.dismiss-export", sid: exportSession.sid })) {
+      setStatus(t("popupDisconnected"), true);
+      render(container);
+    }
+  });
+  on("forget-passphrase", () => {
+    if (postUiMessage({ kind: "ui.forget-passphrase" })) {
+      setStatus(t("popupPassphraseForgotten"), false);
+    } else {
+      setStatus(t("popupDisconnected"), true);
+    }
+
+    render(container);
+  });
   on(OPEN_UPDATE_GUIDE_ACTION, () => openUpdateGuide());
   on(DISMISS_UPDATE_ACTION, async () => {
     if (state.updateNotice) {
@@ -449,36 +459,6 @@ function bindActions(
         render(container);
       }
     });
-
-  container
-    .querySelector<HTMLSelectElement>("[data-profile-select]")
-    ?.addEventListener("change", (event) => {
-      const select = event.currentTarget as HTMLSelectElement;
-      state.profileChoice = select.value || PROFILE_CHOICE_AUTO;
-      state.engineOverride = undefined;
-      saveProfileChoice(state.profileChoice);
-      requestProfilePreview();
-    });
-
-  container.querySelectorAll<HTMLInputElement>("input[name='capture-mode']").forEach((input) => {
-    input.addEventListener("change", () => {
-      if (input.checked && (input.value === "lite" || input.value === "full")) {
-        state.engineOverride = input.value;
-        render(container);
-      }
-    });
-  });
-
-  container
-    .querySelectorAll<HTMLInputElement>("input[name='full-visual-capture']")
-    .forEach((input) => {
-      input.addEventListener("change", () => {
-        if (input.checked && isFullModeVisualCapture(input.value)) {
-          state.fullModeVisualCapture = input.value;
-          savePopupFullVisualCapture(state.fullModeVisualCapture);
-        }
-      });
-    });
 }
 
 /** Runs one dialog flow at a time; clicks while one is open (or awaiting the tab) are ignored. */
@@ -505,31 +485,30 @@ async function startFromPopup(container: HTMLElement): Promise<void> {
   }
 
   state.tabId = tabId;
-  const mode = resolveEngine();
   const reloadPage = await askReloadOnStart();
 
   if (reloadPage === null) {
     return;
   }
 
-  await startRecordingFromPopup(container, tabId, mode, {
-    reloadPage,
-    ...(mode === "full" ? { visualCapture: state.fullModeVisualCapture } : {})
-  });
+  await startRecordingFromPopup(container, tabId, { reloadPage });
 }
 
 /**
  * Whether to reload the page once recording started, in either engine; null when cancelled.
- * Asks only while the offer is on (Options), read on every Start so a change applies at once.
+ * Read on every Start so a change in Options applies at once. "Don't ask again" stores the answer.
  */
 async function askReloadOnStart(): Promise<boolean | null> {
-  if (!(await loadStartReloadOffer(chromeApi?.storage?.local))) {
-    return false;
+  const offer = await loadStartReloadOffer(chromeApi?.storage?.local);
+
+  if (offer !== "ask") {
+    return offer === "always";
   }
 
-  const startAction = await openChoiceDialog<"reload" | "direct">({
+  const answer = await openRememberedChoiceDialog<"reload" | "direct">({
     title: t("popupReloadTitle"),
     body: t("popupReloadBody"),
+    rememberLabel: t("popupReloadRemember"),
     cancelLabel: t("popupCancel"),
     cancelAction: "start-cancel",
     choices: [
@@ -549,17 +528,44 @@ async function askReloadOnStart(): Promise<boolean | null> {
     ]
   });
 
-  return startAction === null ? null : startAction === "reload";
+  if (answer === null) {
+    return null;
+  }
+
+  if (answer.remember) {
+    await rememberReloadChoice(answer.value === "reload" ? "always" : "never");
+  }
+
+  return answer.value === "reload";
 }
 
+async function rememberReloadChoice(choice: StartReloadChoice): Promise<void> {
+  try {
+    await chromeApi?.storage?.local.set({ [START_RELOAD_OFFER_STORAGE_KEY]: choice });
+  } catch {
+    // The answer still applies to this Start; the question comes back next time.
+  }
+}
+
+/**
+ * Exports with the passphrase remembered for this browser session, or asks for one first (the
+ * service worker remembers it until the browser closes).
+ */
 async function exportWithDialog(container: HTMLElement, session: SessionListItem): Promise<void> {
+  if (state.passphraseRemembered) {
+    await exportSessionFromPopup(container, session.sid, undefined, buildExportPolicy(session));
+    return;
+  }
+
   const passphrase = await openPassphraseDialog({
     title: t("popupExportPassphraseTitle"),
     body: t("popupExportPassphraseBody"),
     label: t("popupPassphraseLabel"),
     submitLabel: t("popupExport"),
     cancelLabel: t("popupCancel"),
-    requiredMessage: t("popupPassphraseRequired")
+    requiredMessage: t("popupPassphraseRequired"),
+    confirmLabel: t("popupPassphraseConfirmLabel"),
+    mismatchMessage: t("popupPassphraseMismatch")
   });
 
   if (passphrase !== null) {
@@ -608,25 +614,21 @@ async function openUpdateGuide(): Promise<void> {
   }
 }
 
+/** The profile (site rules, else the default profile) decides the engine and what is captured. */
 async function startRecordingFromPopup(
   container: HTMLElement,
   tabId: number,
-  mode: CaptureMode,
-  options: { reloadPage?: boolean; visualCapture?: FullModeVisualCapture } = {}
+  options: { reloadPage?: boolean } = {}
 ): Promise<void> {
   state.statusText = undefined;
   state.statusIsError = undefined;
-  setPendingStart(container, tabId, mode);
-  const profileId = toStartProfileId(state.profileChoice);
+  setPendingStart(container, tabId);
 
   try {
     await sendUiMessage({
       kind: "ui.start",
       tabId,
-      mode,
-      ...(profileId ? { profileId } : {}),
-      ...(options.reloadPage ? { reloadPage: true } : {}),
-      ...(mode === "full" && options.visualCapture ? { visualCapture: options.visualCapture } : {})
+      ...(options.reloadPage ? { reloadPage: true } : {})
     });
   } catch (error) {
     clearPendingStart();
@@ -635,9 +637,9 @@ async function startRecordingFromPopup(
   }
 }
 
-function setPendingStart(container: HTMLElement, tabId: number, mode: CaptureMode): void {
+function setPendingStart(container: HTMLElement, tabId: number): void {
   clearPendingStart();
-  state.pendingStart = { tabId, mode, requestedAt: Date.now() };
+  state.pendingStart = { tabId, requestedAt: Date.now() };
   pendingStartTimeout = setTimeout(() => {
     if (!state.pendingStart) {
       return;
@@ -676,10 +678,7 @@ function clearPendingStartIfActivated(sessions: SessionListItem[]): void {
 
   if (
     pendingStart &&
-    sessions.some(
-      (session) =>
-        session.active && session.tabId === pendingStart.tabId && session.mode === pendingStart.mode
-    )
+    sessions.some((session) => session.active && session.tabId === pendingStart.tabId)
   ) {
     clearPendingStart();
   }
@@ -697,7 +696,7 @@ function isRejectedRuntimeResponse(value: unknown): value is { ok: false; error:
 async function exportSessionFromPopup(
   container: HTMLElement,
   sid: string,
-  passphrase: string,
+  passphrase: string | undefined,
   policy: ExportPolicy
 ): Promise<void> {
   state.pendingExportSid = sid;
@@ -710,7 +709,7 @@ async function exportSessionFromPopup(
       sendUiMessage({
         kind: "ui.export",
         sid,
-        passphrase,
+        ...(passphrase ? { passphrase } : {}),
         saveAs: false,
         policy
       })
@@ -721,6 +720,8 @@ async function exportSessionFromPopup(
       setStatus(t("popupExported", { name: response.fileName ?? sid }), false);
       // Findings are reported inline, never blocking: the archive is encrypted either way.
       state.exportPrivacyWarning = response.privacyWarning;
+      // The service worker now remembers the passphrase: later exports do not ask.
+      postUiMessage({ kind: "ui.passphrase-status" });
     }
 
     render(container);
@@ -745,11 +746,9 @@ function formatArchiveLimits(prefs: ExportPolicyPrefs): string {
     .join(" · ");
 }
 
+/** The archive limits from Options; the service worker keeps whatever visuals were recorded. */
 function buildExportPolicy(session: SessionListItem): ExportPolicy {
-  return toExportPolicy(
-    loadExportPolicyPrefs(),
-    session.mode === "full" ? state.fullModeVisualCapture : "none"
-  );
+  return toExportPolicy(loadExportPolicyPrefs(), ranInFullEngine(session) ? "both" : "none");
 }
 
 function isSuccessfulExportResponse(value: unknown): value is {
@@ -774,9 +773,12 @@ function applyMessage(message: ExtensionOutboundMessage): void {
       clearPendingStartIfActivated(message.sessions);
       return;
     case "sw.recording-status":
-      if (message.active && state.pendingStart && message.mode === state.pendingStart.mode) {
+      if (message.active && state.pendingStart) {
         clearPendingStart();
       }
+      return;
+    case "sw.passphrase-status":
+      state.passphraseRemembered = message.remembered;
       return;
     case "sw.export-status":
       if (state.pendingExportSid === message.sid) {
@@ -844,27 +846,6 @@ function isRecordableTabUrl(url: string | undefined): boolean {
     !url.startsWith("chrome://") &&
     url !== "about:blank"
   );
-}
-
-function loadPopupFullVisualCapture(): FullModeVisualCapture {
-  try {
-    const raw = globalThis.localStorage?.getItem(POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY);
-    return raw && isFullModeVisualCapture(raw) ? raw : "screenshots";
-  } catch {
-    return "screenshots";
-  }
-}
-
-function savePopupFullVisualCapture(value: FullModeVisualCapture): void {
-  try {
-    globalThis.localStorage?.setItem(POPUP_FULL_VISUAL_CAPTURE_STORAGE_KEY, value);
-  } catch {
-    // ignore storage write failures
-  }
-}
-
-function isFullModeVisualCapture(value: string): value is FullModeVisualCapture {
-  return value === "screenshots" || value === "recording" || value === "both" || value === "none";
 }
 
 function errorMessage(error: unknown): string {

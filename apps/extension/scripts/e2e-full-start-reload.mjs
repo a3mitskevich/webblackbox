@@ -5,7 +5,7 @@
 // the tab, so the archive holds the page load from scratch: the document request, the first
 // script and its console line, and the first request that script makes. The reload of the same
 // URL keeps the recording going (no "profile changed" cancel) and the content script comes back.
-// A Full start without the reload leaves the page alone. The Full capture profile is chosen so the
+// A Full start without the reload leaves the page alone. The Maximum profile is chosen so the
 // archive keeps URLs and console text as they were (the Default profile masks both).
 
 import { readFile } from "node:fs/promises";
@@ -23,7 +23,7 @@ const harness = createProfileE2eHarness({
   defaultPort: "9236"
 });
 const passphrase = "webblackbox-full-reload-e2e";
-const FULL_CAPTURE_ID = "builtin:full-capture";
+const MAXIMUM_ID = "builtin:maximum";
 const PAGE_PATH = "/reload/";
 /** The page load number is in the paths, so each load's requests and console line are unique. */
 const bootScriptPath = (load) => `/reload/boot-${load}.js`;
@@ -62,7 +62,7 @@ async function main() {
 
   // --- Full start with reload ----------------------------------------------------------------
   const started = await popup.evaluate(
-    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "full", visualCapture: "none", profileId: ${JSON.stringify(FULL_CAPTURE_ID)}, reloadPage: true })`
+    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "full", visualCapture: "none", profileId: ${JSON.stringify(MAXIMUM_ID)}, reloadPage: true })`
   );
   assert(started?.ok !== false, "Full start with reload was rejected", started);
 

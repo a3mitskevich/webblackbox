@@ -66,11 +66,14 @@ export function parseExtensionInboundMessage(raw: unknown): InboundParseResult {
       return parseUiExport(row);
     case "ui.delete":
     case "ui.ack-profile-cancel":
+    case "ui.dismiss-export":
     case "content.stop-drained":
       return parseSidOnly(row, row.kind);
     case "ui.annotate":
       return parseUiAnnotate(row);
     case "ui.request-session-list":
+    case "ui.passphrase-status":
+    case "ui.forget-passphrase":
     case "content.ready":
     case "content.agent-request":
       return accept({ kind: row.kind });
@@ -91,8 +94,9 @@ function parseUiStart(row: Record<string, unknown>): InboundParseResult {
   const reloadPage = readOptional(row.reloadPage, isBoolean);
   const visualCapture = readOptional(row.visualCapture, isFullModeVisualCapture);
   const profileId = readOptional(row.profileId, isId);
+  const mode = readOptional(row.mode, isCaptureMode);
 
-  if (!isCaptureMode(row.mode)) {
+  if (mode === INVALID) {
     return reject("ui.start", "mode");
   }
 
@@ -114,8 +118,7 @@ function parseUiStart(row: Record<string, unknown>): InboundParseResult {
 
   return accept({
     kind: "ui.start",
-    mode: row.mode,
-    ...defined({ tabId, reloadPage, visualCapture, profileId })
+    ...defined({ mode, tabId, reloadPage, visualCapture, profileId })
   });
 }
 
@@ -181,7 +184,7 @@ function parseExportPolicy(value: unknown): Partial<ExportPolicy> | typeof INVAL
 
 function parseSidOnly(
   row: Record<string, unknown>,
-  kind: "ui.delete" | "ui.ack-profile-cancel" | "content.stop-drained"
+  kind: "ui.delete" | "ui.ack-profile-cancel" | "ui.dismiss-export" | "content.stop-drained"
 ): InboundParseResult {
   return isId(row.sid) ? accept({ kind, sid: row.sid }) : reject(kind, "sid");
 }

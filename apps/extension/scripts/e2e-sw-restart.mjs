@@ -255,7 +255,7 @@ async function startRecording(popupClient, pageClient, pageUrl) {
       if (!target || typeof target.id !== 'number') {
         return { ok: false, reason: 'target-tab-not-found' };
       }
-      const response = await chrome.runtime.sendMessage({ kind: 'ui.start', tabId: target.id, mode: 'lite' });
+      const response = await chrome.runtime.sendMessage({ kind: 'ui.start', tabId: target.id, mode: 'lite', profileId: 'builtin:lite' });
       return { ok: response?.ok !== false, tabId: target.id, response };
     })()
   `);

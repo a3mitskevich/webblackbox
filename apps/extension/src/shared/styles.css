@@ -390,81 +390,6 @@ input[type="radio"] {
   accent-color: var(--wb-brand);
 }
 
-/* Segmented control: native radios, visually hidden but focusable. */
-.wb-segmented {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.wb-segmented__label {
-  flex: none;
-  min-width: 46px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--wb-text-muted);
-}
-
-.wb-segmented__options {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  padding: 2px;
-  gap: 2px;
-  border-radius: var(--wb-radius-sm);
-  background: var(--wb-surface-3);
-  border: 1px solid var(--wb-border);
-}
-
-.wb-segmented__option {
-  position: relative;
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.wb-segmented__input {
-  position: absolute;
-  inset: 0;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.wb-segmented__option span {
-  display: block;
-  padding: 4px 6px;
-  border-radius: 4px;
-  text-align: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--wb-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition:
-    background-color 120ms var(--wb-ease),
-    color 120ms var(--wb-ease);
-}
-
-.wb-segmented__input:checked + span {
-  color: var(--wb-brand-ink);
-  background: var(--wb-surface);
-  box-shadow: var(--wb-shadow-sm);
-}
-
-.wb-segmented__input:focus-visible + span {
-  box-shadow: var(--wb-focus-ring);
-}
-
-.wb-segmented__input:disabled {
-  cursor: not-allowed;
-}
-
-.wb-segmented__input:disabled + span {
-  opacity: 0.55;
-}
-
 /* ---------- Badges, chips, stats ---------- */
 
 .wb-badge {
@@ -728,19 +653,61 @@ input[type="radio"] {
   color: var(--wb-warn-ink);
 }
 
-.wb-popup__profile {
-  display: grid;
-  gap: 4px;
+/* "Profile: Maximum · Change" above the Record button. */
+.wb-popup__profile-line {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--wb-text-muted);
+}
+
+.wb-popup__profile-line strong {
+  color: var(--wb-text);
+}
+
+.wb-popup__profile-capped {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--wb-warn-ink);
+}
+
+/* A text-like button inside a sentence ("Change", "Forget passphrase"). */
+.wb-link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--wb-brand-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.wb-link-btn:hover {
+  color: var(--wb-brand);
+}
+
+.wb-link-btn:focus-visible {
+  outline: none;
+  border-radius: 2px;
+  box-shadow: var(--wb-focus-ring);
+}
+
+/* Right after Stop: export the recording now (or later). */
+.wb-popup__export-step {
+  border-color: color-mix(in srgb, var(--wb-brand) 35%, var(--wb-border));
+  box-shadow: inset 3px 0 0 var(--wb-brand);
+}
+
+.wb-popup__export-step .wb-popup__hint {
+  margin: 0;
 }
 
 .wb-popup__hint {
   font-size: 11.5px;
   line-height: 1.35;
   color: var(--wb-text-subtle);
-}
-
-.wb-popup__profile-hint:empty {
-  display: none;
 }
 
 .wb-popup__row {
@@ -864,6 +831,15 @@ input[type="radio"] {
 .wb-confirm-body {
   font-size: 12.5px;
   color: var(--wb-text-muted);
+}
+
+.wb-confirm-remember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--wb-text-muted);
+  cursor: pointer;
 }
 
 .wb-confirm-list {

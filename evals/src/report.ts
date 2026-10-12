@@ -60,6 +60,9 @@ export type ProfileTotals = {
 };
 
 const PROFILE_LABELS: Readonly<Record<string, string>> = {
+  maximum: "Maximum (default)",
+  light: "Light",
+  // Reports recorded before Maximum and Light became the built-in profiles.
   default: "Default (Lite)",
   "full-capture": "Full capture"
 };

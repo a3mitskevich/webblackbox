@@ -75,6 +75,18 @@ async function importSessionsModule(): Promise<void> {
   await flushSessions();
 }
 
+/** The export dialog asks for the passphrase twice: it is remembered for later exports. */
+function typeConfirmation(value: string): void {
+  const input = document.querySelector<HTMLInputElement>("#wb-passphrase-confirm");
+
+  if (!input) {
+    throw new Error("missing passphrase confirmation");
+  }
+
+  input.value = value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 describe("sessions page rendering", () => {
   beforeEach(() => {
     document.body.innerHTML = `<main id="sessions-root"></main>`;
@@ -193,6 +205,7 @@ describe("sessions page rendering", () => {
 
     passphraseInput.value = " session-secret ";
     passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
+    typeConfirmation(" session-secret ");
     document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
     await flushSessions();
 
@@ -227,6 +240,7 @@ describe("sessions page rendering", () => {
     }
     passphraseInput.value = "secret-passphrase";
     passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
+    typeConfirmation("secret-passphrase");
     document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
     await flushSessions();
 

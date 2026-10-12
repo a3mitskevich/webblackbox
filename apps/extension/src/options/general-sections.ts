@@ -1,4 +1,5 @@
 import { EXTENSION_UNIT_LABEL_KEYS, type ExtensionMessageKey } from "../shared/i18n.js";
+import { PROFILES_SECTION_ID } from "../shared/messages.js";
 import { el } from "../shared/ui/dom.js";
 import {
   chipListField,
@@ -27,25 +28,33 @@ import {
 
 type Translate = (key: ExtensionMessageKey, vars?: Record<string, string | number>) => string;
 
+type SectionGroup = {
+  title: ExtensionMessageKey | null;
+  fields: string[];
+  /** The fields belong to the editable Default profile (shown only when it exists). */
+  profileFields?: true;
+};
+
 /** Field ids per section, grouped; a null title renders the group without a heading. */
-const SECTION_LAYOUT: Record<
-  GeneralSectionId,
-  Array<{ title: ExtensionMessageKey | null; fields: string[] }>
-> = {
+const SECTION_LAYOUT: Record<GeneralSectionId, SectionGroup[]> = {
   sensitivity: [
     {
       title: "optionsGroupMasking",
-      fields: ["blockedSelectors", "redactHeaders", "redactBodyPatterns", "hashSensitiveValues"]
+      fields: ["blockedSelectors", "redactHeaders", "redactBodyPatterns", "hashSensitiveValues"],
+      profileFields: true
     }
   ],
-  pointer: [{ title: null, fields: ["mousemoveHz", "scrollHz", "actionWindowMs"] }],
+  pointer: [
+    { title: null, fields: ["mousemoveHz", "scrollHz", "actionWindowMs"], profileFields: true }
+  ],
   sampling: [
     { title: "optionsGroupInjection", fields: ["contentInjection"] },
     { title: "optionsGroupStart", fields: ["startReloadOffer"] },
-    { title: "optionsGroupIncidents", fields: ["freezeOnError"] },
+    { title: "optionsGroupIncidents", fields: ["freezeOnError"], profileFields: true },
     {
       title: "optionsGroupSampling",
-      fields: ["domFlushMs", "snapshotIntervalMs", "screenshotIdleMs", "bodyCaptureMaxBytes"]
+      fields: ["domFlushMs", "snapshotIntervalMs", "screenshotIdleMs", "bodyCaptureMaxBytes"],
+      profileFields: true
     }
   ],
   budgets: [
@@ -150,17 +159,29 @@ function renderField(
   }
 }
 
-/** Field groups of a general section, filled from the draft. */
+/**
+ * Field groups of a general section, filled from the draft. The fields of the editable Default
+ * profile show only while it exists (installs from before Maximum), under a notice that they edit
+ * that kept profile, not the one recording by default; otherwise one notice points to the
+ * profiles, where they are set per profile.
+ */
 export function renderGeneralSection(
   section: GeneralSectionId,
   draft: GeneralDraft,
   t: Translate,
   managed: ManagedGeneralValues = {}
 ): HTMLElement {
-  return el(
-    "div",
-    { className: "wb-section__groups", dataset: { generalSection: section } },
-    SECTION_LAYOUT[section].map((group) =>
+  const groups = SECTION_LAYOUT[section].filter(
+    (group) => draft.hasDefaultProfile || !group.profileFields
+  );
+  const hidesProfileFields = groups.length < SECTION_LAYOUT[section].length;
+  const showsProfileFields = groups.some((group) => group.profileFields);
+
+  return el("div", { className: "wb-section__groups", dataset: { generalSection: section } }, [
+    ...(showsProfileFields
+      ? [createProfilesLinkNotice(t, "optionsKeptDefaultFieldsNotice", "keptDefaultNotice")]
+      : []),
+    ...groups.map((group) =>
       fieldGroup(
         group.title ? t(group.title) : null,
         group.fields.flatMap((id) => {
@@ -168,8 +189,26 @@ export function renderGeneralSection(
           return spec ? [renderField(spec, draft, managed, t)] : [];
         })
       )
-    )
-  );
+    ),
+    ...(hidesProfileFields
+      ? [createProfilesLinkNotice(t, "optionsProfileFieldsNotice", "profileFieldsNotice")]
+      : [])
+  ]);
+}
+
+function createProfilesLinkNotice(
+  t: Translate,
+  message: ExtensionMessageKey,
+  marker: string
+): HTMLElement {
+  return el("div", { className: "wb-notice", dataset: { [marker]: "" } }, [
+    el("p", { text: t(message) }),
+    el("a", {
+      className: "wb-btn wb-btn--surface",
+      text: t("optionsOpenProfiles"),
+      attrs: { href: `#${PROFILES_SECTION_ID}` }
+    })
+  ]);
 }
 
 export type GeneralFieldUpdate = {

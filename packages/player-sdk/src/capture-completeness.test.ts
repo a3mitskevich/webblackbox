@@ -423,6 +423,59 @@ describe("capture completeness", () => {
     );
   });
 
+  it("reports a fall back from Full to Light for the whole archive, whatever the range", async () => {
+    const fallback = {
+      at: Date.UTC(2026, 0, 1, 10, 5, 0),
+      reason: "attach-failed",
+      from: "full",
+      to: "lite",
+      detail: "Another debugger is already attached"
+    };
+    const player = await openArchive([
+      META_CONFIG,
+      { type: "meta.config", mono: 1, data: { mode: "lite", captureFallback: fallback } },
+      { type: "sys.notice", mono: 50, data: { code: "late" } }
+    ]);
+    const report = player.getCaptureCompleteness({ monoStart: 40, monoEnd: 60 });
+
+    expect(report.captureFallback).toMatchObject({
+      reason: "attach-failed",
+      from: "full",
+      to: "lite",
+      detail: "Another debugger is already attached"
+    });
+    expect(formatCaptureCompletenessReport(report)).toContain(
+      "Engine: full → lite at 2026-01-01T10:05:00.000Z (attach-failed: Another debugger is " +
+        "already attached); bodies, full console, screenshots and DevTools data are missing " +
+        "after that"
+    );
+  });
+
+  it("formats a fallback whose time is outside the Date range without throwing", async () => {
+    const player = await openArchive([
+      META_CONFIG,
+      {
+        type: "meta.config",
+        mono: 1,
+        data: { mode: "lite", captureFallback: { at: 1e20, reason: "detached" } }
+      }
+    ]);
+
+    expect(formatCaptureCompletenessReport(player.getCaptureCompleteness())).toContain(
+      "Engine: full → lite at 100000000000000000000 (detached); bodies, full console, screenshots " +
+        "and DevTools data are missing after that"
+    );
+  });
+
+  it("reports no fallback for a recording that stayed in its engine", async () => {
+    const report = (await openArchive([META_CONFIG])).getCaptureCompleteness();
+
+    expect(report.captureFallback).toBeNull();
+    expect(formatCaptureCompletenessReport(report).some((line) => line.startsWith("Engine:"))).toBe(
+      false
+    );
+  });
+
   it("reads the export record from a manifest alone", () => {
     expect(readExportCompleteness(undefined, 7)).toMatchObject({
       recorded: false,

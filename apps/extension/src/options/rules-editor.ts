@@ -11,6 +11,7 @@ import {
   isRecommendedProfileId
 } from "../shared/profiles/presets.js";
 import { icon } from "../shared/ui/icons.js";
+import { displayProfileName } from "../shared/profiles/display-name.js";
 import { button, el, iconButton, unsavedItemBadge } from "./dom.js";
 import {
   chipListField,
@@ -50,7 +51,10 @@ function profileOptions(
   catalog: readonly RecordingProfile[],
   t: Translate
 ): Array<{ value: string; label: string }> {
-  const options = catalog.map((profile) => ({ value: profile.id, label: profile.name }));
+  const options = catalog.map((profile) => ({
+    value: profile.id,
+    label: displayProfileName(profile, t)
+  }));
 
   // A rule may target a profile that was deleted or dropped from managed policy; keep its id
   // selectable so the next sync does not blank it and block saving.
@@ -172,7 +176,9 @@ function createRuleRow(rule: ProfileRule, index: number, options: RulesViewOptio
   const { t } = options;
   const open = options.openRuleIds.has(rule.id);
   const profile = options.catalog.find((entry) => entry.id === rule.profileId);
-  const profileName = profile?.name ?? missingProfileLabel(rule.profileId, t);
+  const profileName = profile
+    ? displayProfileName(profile, t)
+    : missingProfileLabel(rule.profileId, t);
   const grip = el(
     "span",
     {
@@ -241,7 +247,9 @@ function missingProfileLabel(profileId: string, t: Translate): string {
   const recommended =
     profileId === DEFAULT_PROFILE_ID ? createDefaultProfile() : findBuiltInProfile(profileId);
 
-  return t("optionsRuleProfileMissing", { id: recommended?.name ?? profileId });
+  return t("optionsRuleProfileMissing", {
+    id: recommended ? displayProfileName(recommended, t) : profileId
+  });
 }
 
 /** Why the rule is skipped and how to fix it: Restore brings back a deleted Default or preset. */

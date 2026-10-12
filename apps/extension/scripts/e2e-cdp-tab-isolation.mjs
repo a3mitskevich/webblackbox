@@ -160,8 +160,8 @@ async function main() {
   await control.send("Runtime.enable");
   await waitForPopupRuntimeReady(control, 20_000);
 
-  const configured = await configureFullCaptureProfile(control);
-  assert(configured === true, "Failed to make Full capture the default profile.", configured);
+  const configured = await configureMaximumProfile(control);
+  assert(configured === true, "Failed to make Maximum the default profile.", configured);
 
   const port = fixture.port;
   const crossSite = await runIsolationScenario(control, fixture, "cross-site", [
@@ -370,7 +370,7 @@ function verifyArchiveIsolation(name, archive, foreignTabs) {
     );
   }
 
-  // Full capture lists the other tabs of the site on purpose (`tabsContext: allow`): their paths
+  // Maximum lists the other tabs of the site on purpose (`tabsContext: allow`): their paths
   // and titles in `meta.tabs.*` come from the tabs API, not from another tab's CDP events.
   const leakCandidates = serialized.filter((entry) => !entry.type?.startsWith("meta.tabs."));
   const leaks = foreignTabs.flatMap((foreign) =>
@@ -517,14 +517,14 @@ async function findCompletedArchiveDownload(control, requestedAtMs) {
   return download.filename;
 }
 
-/** Records with the Full capture profile (CDP, bodies, DOM, storage), picked as the default. */
-async function configureFullCaptureProfile(control) {
+/** Records with the Maximum profile (CDP, bodies, DOM, storage), picked as the default. */
+async function configureMaximumProfile(control) {
   return control.evaluate(`
     chrome.storage.local
       .set({
         "webblackbox.profiles": {
           schemaVersion: 2,
-          defaultProfileId: "builtin:full-capture",
+          defaultProfileId: "builtin:maximum",
           profiles: [],
           rules: [],
           extendedCaptureHosts: []

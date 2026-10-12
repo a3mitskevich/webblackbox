@@ -81,6 +81,7 @@ export function classifyMessageSender(
  * - content scripts: capture traffic and, for now, `ui.*` as well — the headless e2e
  *   harness drives sessions from the content-script world, so restricting `ui.*` to
  *   extension pages needs the harness moved to popup control first,
+ *   (except the remembered-passphrase and export-prompt commands, which no content script needs),
  * - offscreen document and untrusted senders: nothing (the offscreen port only carries
  *   pipeline responses, handled separately).
  */
@@ -90,10 +91,34 @@ export function isInboundKindAllowed(kind: string, context: InboundSenderContext
   }
 
   if (context === "content") {
-    return kind.startsWith("content.") || kind.startsWith("ui.");
+    return (
+      kind.startsWith("content.") ||
+      (kind.startsWith("ui.") && !EXTENSION_PAGE_ONLY_UI_KINDS.has(kind))
+    );
   }
 
   return false;
+}
+
+const EXTENSION_PAGE_ONLY_UI_KINDS: ReadonlySet<string> = new Set([
+  "ui.passphrase-status",
+  "ui.forget-passphrase",
+  "ui.dismiss-export"
+]);
+
+/**
+ * `isInboundKindAllowed`, plus: only an extension page may export with the passphrase remembered
+ * for the browser session (an export without a passphrase of its own).
+ */
+export function isInboundMessageAllowed(
+  message: { kind: string; passphrase?: unknown },
+  context: InboundSenderContext
+): boolean {
+  if (!isInboundKindAllowed(message.kind, context)) {
+    return false;
+  }
+
+  return !(context === "content" && message.kind === "ui.export" && !message.passphrase);
 }
 
 /**

@@ -391,7 +391,11 @@ export function createProfileForm(profile: RecordingProfile, t: Translate): HTML
           id: "pf-unexportedRetentionMinutes",
           name: "unexportedRetentionMinutes",
           label: t("optionsProfileUnexportedRetention"),
-          value: String(localData.unexportedRetentionMinutes),
+          value:
+            localData.unexportedRetentionMinutes === undefined
+              ? ""
+              : String(localData.unexportedRetentionMinutes),
+          placeholder: t("optionsProfileUnexportedRetentionKeep"),
           min: MIN_UNEXPORTED_RETENTION_MINUTES,
           max: MAX_UNEXPORTED_RETENTION_MINUTES,
           unit: t(EXTENSION_UNIT_LABEL_KEYS.min)

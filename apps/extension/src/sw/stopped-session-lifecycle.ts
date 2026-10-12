@@ -30,9 +30,11 @@ import {
   type StoppedSessionSnapshot
 } from "./stopped-session-store.js";
 import {
+  isKeptUntilExported,
   parseStoppedSessionRecords,
   pruneStoppedSessionRecords,
   removeStoppedSessionRecord,
+  resolveExpiresAt,
   resolveStoppedSessionTtlMs,
   shouldSweepStoredSession,
   STOPPED_SESSIONS_STORAGE_KEY,
@@ -66,6 +68,8 @@ export type StoppedSessionLifecycleDeps = {
   toSessionMetadata: (runtime: SessionRuntime) => SessionMetadata;
   flushBufferedPipelineEvents: (runtime: SessionRuntime) => Promise<void>;
   refreshActionBadge: () => Promise<void>;
+  /** Drops the recording's "export it now" notification once the recording is gone. */
+  clearSessionNotification?: (sid: string) => void;
   pushSessionList: () => void;
   persistRuntimeState: () => Promise<void>;
   notifyOffscreenPipelineStatus: () => void;
@@ -249,7 +253,8 @@ export function createStoppedSessionLifecycle(
       ...toSessionSnapshotCore(runtime),
       stoppedAt: runtime.stoppedAt ?? Date.now(),
       expiresAt: resolveStoppedSessionExpiresAt(runtime),
-      ...(runtime.interruption ? { interruption: { ...runtime.interruption } } : {})
+      ...(runtime.interruption ? { interruption: { ...runtime.interruption } } : {}),
+      ...(runtime.exportPrompt ? { exportPrompt: true } : {})
     };
   }
 
@@ -344,6 +349,8 @@ export function createStoppedSessionLifecycle(
         startedAt: snapshot.startedAt,
         stoppedAt: snapshot.stoppedAt,
         interruption: snapshot.interruption,
+        captureFallback: snapshot.captureFallback,
+        exportPrompt: snapshot.exportPrompt,
         pipeline: deps.createPipeline(snapshot.sid),
         recorderPlugins: createDefaultRecorderPlugins(),
         performanceBudget,
@@ -455,6 +462,14 @@ export function createStoppedSessionLifecycle(
 
     const expiresAt = resolveStoppedSessionExpiresAt(runtime);
 
+    if (isKeptUntilExported(expiresAt)) {
+      // Waits for its export or deletion; a retention alarm of an earlier profile is dropped.
+      void clearRetentionAlarm(deps.alarms, runtime.sid).catch((error) => {
+        console.warn("[WebBlackbox] failed to clear the recording's retention", error);
+      });
+      return;
+    }
+
     if (deps.alarms) {
       void scheduleRetentionAlarm(deps.alarms, runtime.sid, expiresAt).catch((error) => {
         console.warn("[WebBlackbox] failed to schedule the recording's retention", error);
@@ -471,11 +486,7 @@ export function createStoppedSessionLifecycle(
   }
 
   function resolveStoppedSessionExpiresAt(runtime: SessionRuntime): number {
-    return (runtime.stoppedAt ?? Date.now()) + resolveRuntimeStoppedSessionTtlMs(runtime);
-  }
-
-  function resolveRuntimeStoppedSessionTtlMs(runtime: SessionRuntime): number {
-    return resolveSnapshotTtlMs(runtime);
+    return resolveExpiresAt(runtime.stoppedAt ?? Date.now(), resolveSnapshotTtlMs(runtime));
   }
 
   async function rememberStoppedSessionRecord(runtime: SessionRuntime): Promise<void> {
@@ -531,7 +542,9 @@ export function createStoppedSessionLifecycle(
     const liveSids = new Set([
       ...deps.sessionRegistry.bySid.keys(),
       ...(await liveStore.list())
-        .filter((snapshot) => snapshot.lastSeenAt + resolveSnapshotTtlMs(snapshot) > now)
+        .filter(
+          (snapshot) => resolveExpiresAt(snapshot.lastSeenAt, resolveSnapshotTtlMs(snapshot)) > now
+        )
         .map((snapshot) => snapshot.sid)
     ]);
     const result = await deps.sweepStoredSessions((session) =>
@@ -595,6 +608,7 @@ export function createStoppedSessionLifecycle(
       }
     );
     deps.sessionRegistry.unregisterSid(runtime.sid);
+    deps.clearSessionNotification?.(runtime.sid);
     await forgetStoppedSessionRecord(runtime.sid).catch((error) => {
       console.warn("[WebBlackbox] failed to drop stopped session record", error);
     });
@@ -642,8 +656,13 @@ export function createStoppedSessionLifecycle(
   };
 }
 
-/** Unexported-recording lifetime of a session: its profile's retention, capped by policy. */
-function resolveSnapshotTtlMs(session: Pick<SessionSnapshotCore, "profile" | "config">): number {
+/**
+ * Unexported-recording lifetime of a session: its profile's retention, capped by policy; null
+ * keeps it until it is exported or deleted.
+ */
+function resolveSnapshotTtlMs(
+  session: Pick<SessionSnapshotCore, "profile" | "config">
+): number | null {
   return resolveStoppedSessionTtlMs(
     resolveUnexportedRetentionMs(session.profile.selection.profile),
     session.config.capturePolicy?.retention.localTtlMs
@@ -678,6 +697,7 @@ function toSessionSnapshotCore(runtime: SessionRuntime): SessionSnapshotCore {
       errorCount: runtime.capturedErrorCount,
       sizeBytes: runtime.capturedSizeBytes,
       budgetAlertCount: runtime.budgetAlertCount
-    }
+    },
+    ...(runtime.captureFallback ? { captureFallback: { ...runtime.captureFallback } } : {})
   };
 }

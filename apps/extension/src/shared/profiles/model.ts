@@ -77,8 +77,11 @@ export type ProfileSourceMapSettings = {
 export type ProfileLocalDataSettings = {
   /** Delete the local recording once its export has been handed to the browser's downloads. */
   deleteAfterExport: boolean;
-  /** Minutes a stopped, unexported recording is kept before it is deleted. */
-  unexportedRetentionMinutes: number;
+  /**
+   * Minutes a stopped, unexported recording is kept before it is deleted; absent = kept until it
+   * is exported or deleted.
+   */
+  unexportedRetentionMinutes?: number;
 };
 
 export type RecordingProfile = {
@@ -103,7 +106,7 @@ export type RecordingProfile = {
   sitePolicies: SiteCapturePolicy[];
   /** Capture policy envelope migrated from v1 options (consent, context, retention); optional. */
   basePolicy?: CapturePolicy;
-  /** Absent = the defaults (delete after export, today's 10-minute retention). */
+  /** Absent = the defaults (delete after export, keep unexported recordings until exported). */
   localData?: ProfileLocalDataSettings;
 };
 
@@ -247,6 +250,7 @@ export const recordingProfileSchema = z
           .int()
           .min(MIN_UNEXPORTED_RETENTION_MINUTES)
           .max(MAX_UNEXPORTED_RETENTION_MINUTES)
+          .optional()
       })
       .strict()
       .optional()

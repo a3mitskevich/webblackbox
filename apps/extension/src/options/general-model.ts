@@ -18,7 +18,11 @@ import {
   normalizePerformanceBudget,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
-import { DEFAULT_START_RELOAD_OFFER } from "../shared/start-reload-offer.js";
+import {
+  DEFAULT_START_RELOAD_OFFER,
+  isStartReloadChoice,
+  type StartReloadChoice
+} from "../shared/start-reload-offer.js";
 import { MAX_BODY_CAPTURE_BYTES } from "../shared/body-capture-limits.js";
 
 /**
@@ -29,13 +33,18 @@ import { MAX_BODY_CAPTURE_BYTES } from "../shared/body-capture-limits.js";
 export type GeneralDraft = {
   /** Shows and edits the Default profile's sampling, freeze-on-error and redaction lists. */
   recorderConfig: RecorderConfig;
+  /**
+   * The stored profiles hold an editable Default profile (installs from before Maximum): only
+   * then do the recorder fields show. Read from storage, never edited by the form.
+   */
+  hasDefaultProfile: boolean;
   /** Stored under its own key (`webblackbox.performanceBudget`). */
   performanceBudget: PerformanceBudgetConfig;
   archive: ExportPolicyPrefs;
   /** Stored under its own key (`webblackbox.injection`). */
   injection: ContentInjectionMode;
   /** Stored under its own key (`webblackbox.startReloadOffer`). */
-  startReloadOffer: boolean;
+  startReloadOffer: StartReloadChoice;
   /**
    * The user's own Player URL ("" = none), stored under `webblackbox.playerUrl`. A managed value
    * is shown instead of it but never copied into the draft.
@@ -211,13 +220,31 @@ export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
     set: (draft, value) => (isContentInjectionMode(value) ? { ...draft, injection: value } : draft)
   },
   {
-    kind: "toggle",
+    kind: "choice",
     id: "startReloadOffer",
     section: "sampling",
     label: "optionsStartReloadOffer",
     hint: "optionsStartReloadOfferHint",
+    options: [
+      {
+        value: "ask",
+        label: "optionsStartReloadAsk",
+        description: "optionsStartReloadAskDescription"
+      },
+      {
+        value: "always",
+        label: "optionsStartReloadAlways",
+        description: "optionsStartReloadAlwaysDescription"
+      },
+      {
+        value: "never",
+        label: "optionsStartReloadNever",
+        description: "optionsStartReloadNeverDescription"
+      }
+    ],
     get: (draft) => draft.startReloadOffer,
-    set: (draft, value) => ({ ...draft, startReloadOffer: value })
+    set: (draft, value) =>
+      isStartReloadChoice(value) ? { ...draft, startReloadOffer: value } : draft
   },
   redactionList("blockedSelectors", {
     label: "optionsBlockedSelectors",
@@ -460,6 +487,7 @@ export function normalizeOptionsConfig(config: RecorderConfig): RecorderConfig {
 export function createDefaultGeneralDraft(): GeneralDraft {
   return {
     recorderConfig: normalizeOptionsConfig(structuredClone(DEFAULT_RECORDER_CONFIG)),
+    hasDefaultProfile: false,
     performanceBudget: { ...DEFAULT_PERFORMANCE_BUDGET },
     archive: { ...DEFAULT_EXPORT_POLICY_PREFS },
     injection: DEFAULT_CONTENT_INJECTION_MODE,

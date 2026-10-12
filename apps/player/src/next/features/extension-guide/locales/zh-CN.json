@@ -29,13 +29,13 @@
   "connectPolicy": "管理员可以通过受管策略键 playerUrl 为所有人设置相同的地址。",
   "connectThisUrl": "此播放器的 URL",
   "recordTitle": "录制与分享",
-  "recordStepProfile": "打开扩展弹窗并选择录制配置：“Default”、“Lite”、“Full”、“QA”或“Full capture” — 或保留“自动（站点规则）”，让站点规则来选择。",
-  "recordStepStart": "点击“开始录制”。如果询问“开始录制时刷新页面？”，选择“刷新并开始”，以便从头捕获页面加载（“不刷新，直接开始”则保持页面现状）。可以在设置中关闭此提问：“开始录制时提示刷新页面”。",
-  "recordStepStop": "完成后点击“停止”，然后点击“导出”。",
-  "recordStepPassphrase": "输入至少 8 个字符的口令。归档始终加密（AES-GCM），打开归档时需要该口令。",
+  "recordStepProfile": "打开扩展弹窗。默认使用“最大”配置录制——全部内容、不做遮罩，含截图和标签页视频；归档始终加密。“轻量”只在页面侧录制。可在扩展的设置（“录制配置”）中更改配置；站点规则仍可为特定站点选择配置。",
+  "recordStepStart": "点击“录制”。会询问“开始录制时刷新页面？”：“刷新并录制”会从头捕获页面加载（首轮请求和脚本）；“不刷新，直接录制”保持页面现状。勾选“不再询问”可记住你的选择（设置中的“开始时重新加载页面”）。使用“最大”录制时，Chrome 会显示“已开始调试此浏览器”提示栏：请保持打开——点击其中的“取消”会将录制切换为“轻量”（工具栏徽标显示 LITE）。",
+  "recordStepStop": "完成后点击“停止”。弹窗会切换到导出步骤：请立即点击“导出归档”。“稍后”会把录制保留在“会话”页面，直到你导出或删除它（直到浏览器关闭）；此期间工具栏徽标显示 SAVE。",
+  "recordStepPassphrase": "首次导出会要求输入至少 8 个字符的口令。归档始终加密（AES-GCM），打开归档时需要该口令。口令会保留到浏览器关闭，之后的导出不再询问；“忘记口令”可将其清除。",
   "recordStepOpen": "在此打开导出的 .webblackbox 文件：通过文件选择器选择，或将其拖到本页面任意位置 — 或使用扩展“会话”页面上的“导出并在播放器中打开”。播放器询问时输入相同的口令。",
   "troubleTitle": "故障排查",
   "troubleCrypto": "播放器使用 Web Crypto API 校验并解密归档，浏览器仅在 HTTPS 页面以及 http://localhost / 127.0.0.1 上提供该 API。在普通 HTTP 上无法打开任何归档（“Web Crypto API or Node crypto is required for SHA-256 hashing.”）。请通过 HTTPS 提供播放器。",
   "troubleIncomplete": "如果录制看起来不完整，打开“关于此录制”（标题栏中的会话块或 ⋯ 菜单），查看“存档包含的内容”：每种数据都标记为“完整”、“部分”或“未录制”。",
-  "troubleErrors": "错误会显示在弹窗中（例如“启动失败：…”）以及工具栏图标上的“ERR”徽标；技术细节在 service worker 控制台中（chrome://extensions → WebBlackbox →“service worker”）。"
+  "troubleErrors": "错误会显示在弹窗中（例如“启动失败：…”）以及工具栏图标上的“ERR”徽标。“LITE”表示完整捕获已停止、录制以“轻量”模式继续；弹窗会说明原因，归档也会记录。技术细节在 service worker 控制台中（chrome://extensions → WebBlackbox →“service worker”）。"
 }

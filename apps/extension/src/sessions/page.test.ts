@@ -139,8 +139,11 @@ function setControl(selector: string, value: string | boolean): void {
 }
 
 const click = (selector: string): void => document.querySelector<HTMLElement>(selector)?.click();
-/** Archives are always encrypted: the export dialog needs a passphrase of 8+ characters. */
-const typePassphrase = (value: string): void => setControl("#wb-passphrase-input", value);
+/** Archives are always encrypted: the export dialog needs a passphrase of 8+ characters, twice. */
+const typePassphrase = (value: string): void => {
+  setControl("#wb-passphrase-input", value);
+  setControl("#wb-passphrase-confirm", value);
+};
 const sids = (sessions: SessionListItem[]): string[] => sessions.map((session) => session.sid);
 
 describe("sessions model", () => {
@@ -209,11 +212,7 @@ describe("sessions page", () => {
 
     click("[data-bulk='export']");
     await flush();
-    const input = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (input) {
-      input.value = "team-secret";
-    }
+    typePassphrase("team-secret");
 
     click("[data-passphrase-submit]");
     await flush();

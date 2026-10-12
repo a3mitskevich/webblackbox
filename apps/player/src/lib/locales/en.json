@@ -108,6 +108,14 @@
   "profileBannerCancelUnknown": "Recording stopped early: the recording profile changed ({reason}).",
   "profileBannerDowngraded": "Recorded with {name} instead of {requested}: {requested} was not allowed on this site, so data only {requested} records is missing.",
   "profileBannerCapped": "The organization's policy limited {name}: {categories}.",
+  "profileBannerFallback": "Full capture stopped at {time} ({reason}): the recording went on in Light, so response bodies, full console, screenshots and DevTools data are missing after that.",
+  "captureFallbackReasons": {
+    "restricted-page": "the page does not allow the debugger",
+    "attach-failed": "the debugger could not attach",
+    "canceled-by-user": "Cancel was pressed on Chrome's debugging bar",
+    "target-closed": "the debugged page went away",
+    "detached": "Chrome detached the debugger"
+  },
   "profileBannerUnknownProfile": "an unknown profile",
   "summaryParallelTabs": "{count} other tabs of this site were open",
   "summaryParallelTabsDetail": "Up to {max} at once, {start} when recording started; {sameOrigin} same-origin, {sameSite} same-site. Click for details.",

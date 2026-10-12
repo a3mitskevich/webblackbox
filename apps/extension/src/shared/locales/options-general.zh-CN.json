@@ -46,8 +46,8 @@
   "optionsScreenshotIdleHint": "0 表示关闭空闲截图。",
   "optionsBodyCaptureHint": "Full 模式保留的最大响应正文。",
   "optionsFreezeOnErrorHint": "在工具栏图标上显示 ERR，并在弹出窗口中显示异常提示。",
-  "optionsStartReloadOffer": "开始录制时提示刷新页面",
-  "optionsStartReloadOfferHint": "开始录制前询问是否刷新页面，以录制页面加载过程。关闭后直接开始录制，不刷新页面。",
+  "optionsStartReloadOffer": "开始时重新加载页面",
+  "optionsStartReloadOfferHint": "重新加载会从第一个请求开始录制页面，并包含其脚本（用于 source map）。",
   "optionsLcpWarnHint": "最大内容绘制慢于此值。",
   "optionsRequestWarnHint": "慢于此值的请求视为慢请求。",
   "optionsErrorRateWarnHint": "失败请求所占比例。",
@@ -61,5 +61,14 @@
   "optionsPlayerUrlHint": "贵组织的播放器。“会话”页面中的“导出并在播放器中打开”会在导出后打开它；留空则隐藏该操作。只会打开页面，归档仍保存在本机。",
   "optionsPlayerUrlPlaceholder": "https://player.example.com/",
   "optionsPlayerUrlManaged": "由组织策略设置。",
-  "optionsErrorPlayerUrl": "请输入 https:// 地址（http:// 仅限 localhost 或 127.0.0.1）。"
+  "optionsErrorPlayerUrl": "请输入 https:// 地址（http:// 仅限 localhost 或 127.0.0.1）。",
+  "optionsProfileFieldsNotice": "遮罩、指针、采样和事件设置属于录制配置。内置配置（“最大”和“轻量”）不可编辑：请在“录制配置”中复制一个并修改副本。",
+  "optionsKeptDefaultFieldsNotice": "这些设置修改的是从旧版本保留下来的配置“Default (custom)”。只有在你选择它时，新录制才会使用它；否则将使用“录制配置”中设定的默认配置（未更改时为“最大”），或由规则选中的配置。",
+  "optionsOpenProfiles": "打开录制配置",
+  "optionsStartReloadAsk": "询问，默认重新加载",
+  "optionsStartReloadAskDescription": "开始时询问，主选项为“重新加载并录制”。勾选“不再询问”会选定下面的某一项。",
+  "optionsStartReloadAlways": "总是重新加载",
+  "optionsStartReloadAlwaysDescription": "开始时直接重新加载页面，不再询问。",
+  "optionsStartReloadNever": "从不重新加载",
+  "optionsStartReloadNeverDescription": "开始时按当前状态录制页面，不录制其加载过程。"
 }

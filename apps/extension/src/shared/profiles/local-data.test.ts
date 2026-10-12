@@ -10,46 +10,43 @@ import { recordingProfileSchema, type RecordingProfile } from "./model.js";
 import { BUILT_IN_PROFILE_IDS, BUILT_IN_PROFILES, findBuiltInProfile } from "./presets.js";
 import { parseManagedProfilesPolicy } from "./storage.js";
 
-function fullCapturePreset(): RecordingProfile {
-  const preset = findBuiltInProfile(BUILT_IN_PROFILE_IDS.fullCapture);
+function maximumPreset(): RecordingProfile {
+  const preset = findBuiltInProfile(BUILT_IN_PROFILE_IDS.maximum);
 
   if (!preset) {
-    throw new Error("Full capture preset is missing");
+    throw new Error("Maximum preset is missing");
   }
 
   return preset;
 }
 
 describe("profile local data settings", () => {
-  it("keeps today's behaviour for profiles without the setting", () => {
-    expect(DEFAULT_LOCAL_DATA_SETTINGS).toEqual({
-      deleteAfterExport: true,
-      unexportedRetentionMinutes: 10
-    });
+  it("deletes after export and keeps unexported recordings until exported by default", () => {
+    expect(DEFAULT_LOCAL_DATA_SETTINGS).toEqual({ deleteAfterExport: true });
     expect(resolveLocalDataSettings({})).toEqual(DEFAULT_LOCAL_DATA_SETTINGS);
-    expect(resolveUnexportedRetentionMs({})).toBe(10 * 60_000);
+    expect(resolveUnexportedRetentionMs({})).toBeNull();
     expect(isDefaultLocalDataSettings(resolveLocalDataSettings({}))).toBe(true);
   });
 
-  it("deletes Full capture recordings after export and keeps unexported ones for less time", () => {
-    const fullCapture = fullCapturePreset();
-
-    expect(resolveLocalDataSettings(fullCapture)).toEqual({
-      deleteAfterExport: true,
-      unexportedRetentionMinutes: 5
-    });
-    expect(resolveUnexportedRetentionMs(fullCapture)).toBeLessThan(
-      resolveUnexportedRetentionMs({})
-    );
-
-    for (const preset of BUILT_IN_PROFILES.filter((entry) => entry.id !== fullCapture.id)) {
+  it("keeps every built-in profile's recordings until they are exported", () => {
+    for (const preset of BUILT_IN_PROFILES) {
       expect(preset.localData).toBeUndefined();
+      expect(resolveUnexportedRetentionMs(preset)).toBeNull();
     }
+  });
+
+  it("keeps a retention a profile sets", () => {
+    const profile = {
+      localData: { deleteAfterExport: false, unexportedRetentionMinutes: 5 }
+    };
+
+    expect(resolveUnexportedRetentionMs(profile)).toBe(5 * 60_000);
+    expect(isDefaultLocalDataSettings(resolveLocalDataSettings(profile))).toBe(false);
   });
 
   it("accepts profiles without the block and bounds the retention", () => {
     const withoutLocalData = Object.fromEntries(
-      Object.entries(fullCapturePreset()).filter(([key]) => key !== "localData")
+      Object.entries(maximumPreset()).filter(([key]) => key !== "localData")
     );
     const withRetention = (minutes: number): Record<string, unknown> => ({
       ...withoutLocalData,
@@ -62,12 +59,13 @@ describe("profile local data settings", () => {
     expect(recordingProfileSchema.safeParse(withRetention(0)).success).toBe(false);
     expect(recordingProfileSchema.safeParse(withRetention(1441)).success).toBe(false);
     expect(recordingProfileSchema.safeParse(withRetention(2.5)).success).toBe(false);
+    // No retention: kept until exported or deleted.
     expect(
       recordingProfileSchema.safeParse({
         ...withoutLocalData,
         localData: { deleteAfterExport: true }
       }).success
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("completes a partial managed block and leaves an absent one absent", () => {
@@ -80,10 +78,7 @@ describe("profile local data settings", () => {
     const byId = (id: string) => managed.profiles.find((profile) => profile.id === id);
 
     expect(managed.issues).toEqual([]);
-    expect(byId("managed:partial")?.localData).toEqual({
-      deleteAfterExport: false,
-      unexportedRetentionMinutes: 10
-    });
+    expect(byId("managed:partial")?.localData).toEqual({ deleteAfterExport: false });
     expect(byId("managed:plain")?.localData).toBeUndefined();
   });
 });

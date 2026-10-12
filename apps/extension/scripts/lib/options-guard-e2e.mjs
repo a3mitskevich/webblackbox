@@ -45,25 +45,26 @@ export async function runOptionsGuardChecks(deps) {
 }
 
 async function checkSectionGuardAndUnload(deps, page, optionsUrl, check) {
-  await deps.navigate(page, `${optionsUrl}#pointer`);
-  await typeText(page, "#scrollHz", "30");
+  // A field outside the profiles: a fresh install has no editable Default profile.
+  await deps.navigate(page, `${optionsUrl}#budgets`);
+  await typeText(page, "#budgetLcpWarnMs", "3000");
 
   check(await isTrue(page, savebarDirty()), "editing a field did not mark the save bar dirty");
   check(
-    await isTrue(page, `${q("[data-section-link='pointer']")}?.dataset.dirty === "true"`),
+    await isTrue(page, `${q("[data-section-link='budgets']")}?.dataset.dirty === "true"`),
     "editing a field did not mark its nav link"
   );
 
   await click(page, "[data-section-link='sampling']");
   check(await waitUntil(page, exists(DIALOG), PROMPT_WAIT_MS), "dirty → nav: no leave prompt");
-  check(await isTrue(page, shownSection("pointer")), "dirty → nav: the section switched anyway");
+  check(await isTrue(page, shownSection("budgets")), "dirty → nav: the section switched anyway");
 
   await click(page, "[data-action='leave-stay']");
   check(
     await waitUntil(page, `!${exists(DIALOG)}`, PROMPT_WAIT_MS),
     "Stay did not close the prompt"
   );
-  check(await isTrue(page, shownSection("pointer")), "Stay left the section");
+  check(await isTrue(page, shownSection("budgets")), "Stay left the section");
 
   check(await unloadPrompts(deps, page), "dirty → navigate away: no beforeunload prompt");
   check(
@@ -128,20 +129,35 @@ async function checkRuleCloseGuard(deps, page, optionsUrl, check) {
   );
 }
 
+/** An editable profile to guard: a saved copy of Light (built-ins are read-only). */
+async function createEditableProfile(page) {
+  await click(page, "[data-profile-id='builtin:lite'] [data-action='profile-duplicate']");
+  await waitUntil(page, exists("[data-profile-form]"), PROMPT_WAIT_MS);
+  await click(page, "[data-action='profile-apply']");
+  await click(page, "[data-action='settings-save']");
+  await waitUntil(page, `!(${savebarDirty()})`, PROMPT_WAIT_MS);
+  return page.evaluate(`chrome.storage.local
+    .get("webblackbox.profiles")
+    .then((values) => values["webblackbox.profiles"]?.profiles?.[0]?.id ?? null)`);
+}
+
 async function checkProfileCloseGuard(deps, page, optionsUrl, check) {
   await deps.navigate(page, `${optionsUrl}#profiles`);
-  await click(page, "[data-profile-id='default'] [data-action='profile-edit']");
+  const id = await createEditableProfile(page);
+  check(typeof id === "string", "the copy of Light was not saved as a profile");
+  const editOwn = `[data-profile-id='${id}'] [data-action='profile-edit']`;
+  await click(page, editOwn);
   await click(page, "[data-action='profile-apply']");
   await deps.sleep(NO_PROMPT_WAIT_MS / 3);
   check(!(await isTrue(page, exists(DIALOG))), "closing an unedited profile form prompted");
 
-  await click(page, "[data-profile-id='default'] [data-action='profile-edit']");
-  await typeText(page, "#pf-name", "Default edited");
+  await click(page, editOwn);
+  await typeText(page, "#pf-name", "Copy edited");
   await click(page, "[data-action='profile-apply']");
   check(await waitUntil(page, exists(DIALOG), PROMPT_WAIT_MS), "Apply with edits: no prompt");
   await click(page, "[data-action='editor-close-keep']");
   check(
-    await waitUntil(page, exists("[data-profile-form='default']"), 2_000),
+    await waitUntil(page, exists(`[data-profile-form='${id}']`), 2_000),
     "Keep editing closed the form"
   );
 

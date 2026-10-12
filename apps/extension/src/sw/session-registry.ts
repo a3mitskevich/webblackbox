@@ -7,6 +7,7 @@ import {
 } from "@webblackbox/protocol";
 import { WebBlackboxRecorder, type createDefaultRecorderPlugins } from "@webblackbox/recorder";
 
+import type { CaptureFallback } from "../shared/capture-fallback.js";
 import type { FullModeVisualCapture } from "../shared/messages.js";
 import type { PerformanceBudgetConfig } from "../shared/performance-budget.js";
 import type { ProfileSelection } from "../shared/profiles/resolve.js";
@@ -59,6 +60,10 @@ export type SessionRuntime = {
   stoppedAt?: number;
   /** A recording an earlier worker left running: it ended without Stop. */
   interruption?: SessionInterruption;
+  /** The recording left the Full engine (the debugger) and went on in Light; `mode` says lite. */
+  captureFallback?: CaptureFallback;
+  /** Stopped and not exported yet: the popup offers the export step and the badge says SAVE. */
+  exportPrompt?: boolean;
   /** Set once Stop received the page's last events; later page snapshots are dropped. */
   stopDrained?: boolean;
   /** Secret shared with the injected page hooks and the content script of this session. */
@@ -221,6 +226,8 @@ export type SessionRuntimeInit = {
   startedAt: number;
   stoppedAt?: number;
   interruption?: SessionInterruption;
+  captureFallback?: CaptureFallback;
+  exportPrompt?: boolean;
   pipeline: SessionPipelineClient;
   recorderPlugins: ReturnType<typeof createDefaultRecorderPlugins>;
   performanceBudget: PerformanceBudgetConfig;
@@ -260,6 +267,8 @@ export function createSessionRuntime(
     startedAt: init.startedAt,
     stoppedAt: init.stoppedAt,
     ...(init.interruption ? { interruption: { ...init.interruption } } : {}),
+    ...(init.captureFallback ? { captureFallback: { ...init.captureFallback } } : {}),
+    ...(init.exportPrompt ? { exportPrompt: true } : {}),
     injectedBridgeNonce: createInjectedBridgeNonce(),
     recorder: new WebBlackboxRecorder(
       {

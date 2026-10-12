@@ -4,7 +4,7 @@ import { DEFAULT_RECORDER_CONFIG, type RecorderConfig } from "@webblackbox/proto
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PROFILES_STORAGE_KEY } from "../shared/profiles/model.js";
-import { BUILT_IN_PROFILE_IDS } from "../shared/profiles/presets.js";
+import { BUILT_IN_PROFILE_IDS, createDefaultProfile } from "../shared/profiles/presets.js";
 import { createProfilesExportFile } from "../shared/profiles/transfer.js";
 import { translateExtensionMessage, type ExtensionMessageKey } from "../shared/i18n.js";
 import type { ChromeApi } from "../shared/chrome-api.js";
@@ -112,6 +112,19 @@ async function mountWithHandle(storage: ReturnType<typeof createStorage>) {
   return { container, handle };
 }
 
+/** Storage of an install from before Maximum that kept its customised Default profile. */
+function keptDefaultStorage(): ReturnType<typeof createStorage> {
+  return createStorage({
+    [PROFILES_STORAGE_KEY]: {
+      schemaVersion: 2,
+      defaultProfileId: "default",
+      profiles: [createDefaultProfile()],
+      rules: [],
+      extendedCaptureHosts: []
+    }
+  });
+}
+
 function savedStore(storage: ReturnType<typeof createStorage>) {
   return storage.data[PROFILES_STORAGE_KEY] as {
     profiles: Array<{ id: string; name: string; redaction: Record<string, unknown> }>;
@@ -136,28 +149,41 @@ describe("profiles editor", () => {
     vi.restoreAllMocks();
   });
 
-  it("lists Default and the read-only presets", async () => {
+  it("lists the read-only Maximum and Light presets on a fresh install", async () => {
     const container = await mount(createStorage());
     const rows = [...container.querySelectorAll<HTMLElement>("[data-profile-id]")];
 
     expect(rows.map((row) => row.dataset.profileId)).toEqual([
-      "default",
-      BUILT_IN_PROFILE_IDS.lite,
-      BUILT_IN_PROFILE_IDS.full,
-      BUILT_IN_PROFILE_IDS.qa,
-      BUILT_IN_PROFILE_IDS.fullCapture
+      BUILT_IN_PROFILE_IDS.maximum,
+      BUILT_IN_PROFILE_IDS.lite
     ]);
-    expect(rowOf(container, BUILT_IN_PROFILE_IDS.qa).textContent).toContain("read-only · extended");
+    expect(rowOf(container, BUILT_IN_PROFILE_IDS.maximum).textContent).toContain(
+      "read-only · extended"
+    );
     expect(
-      rowOf(container, BUILT_IN_PROFILE_IDS.qa).querySelector("[data-action='profile-edit']")
+      rowOf(container, BUILT_IN_PROFILE_IDS.maximum).querySelector("[data-action='profile-edit']")
     ).toBeNull();
   });
 
+  it("lists a kept Default profile first, editable, before the presets", async () => {
+    const container = await mount(keptDefaultStorage());
+    const rows = [...container.querySelectorAll<HTMLElement>("[data-profile-id]")];
+
+    expect(rows.map((row) => row.dataset.profileId)).toEqual([
+      "default",
+      BUILT_IN_PROFILE_IDS.maximum,
+      BUILT_IN_PROFILE_IDS.lite
+    ]);
+    expect(
+      rowOf(container, "default").querySelector("[data-action='profile-edit']")
+    ).not.toBeNull();
+  });
+
   it("duplicates a preset, edits it, adds a rule and saves a valid store", async () => {
-    const storage = createStorage();
+    const storage = keptDefaultStorage();
     const container = await mount(storage);
 
-    click(rowOf(container, BUILT_IN_PROFILE_IDS.qa), "[data-action='profile-duplicate']");
+    click(rowOf(container, BUILT_IN_PROFILE_IDS.lite), "[data-action='profile-duplicate']");
     setField(container, "name", "Stage QA");
     setField(container, "category-inputs", "allow");
     click(container, "[data-action='profile-apply']");
@@ -193,10 +219,10 @@ describe("profiles editor", () => {
   });
 
   it("edits the profile's own redaction rules and keeps no export switches", async () => {
-    const storage = createStorage();
+    const storage = keptDefaultStorage();
     const container = await mount(storage);
 
-    click(rowOf(container, BUILT_IN_PROFILE_IDS.full), "[data-action='profile-duplicate']");
+    click(rowOf(container, BUILT_IN_PROFILE_IDS.lite), "[data-action='profile-duplicate']");
 
     const checkbox = (name: string): HTMLInputElement => {
       const input = container.querySelector<HTMLInputElement>(`input[name="${name}"]`);
@@ -273,7 +299,7 @@ describe("profiles editor", () => {
       rules: [
         {
           id: "stage",
-          profileId: BUILT_IN_PROFILE_IDS.qa,
+          profileId: BUILT_IN_PROFILE_IDS.maximum,
           priority: 1,
           enabled: true,
           match: { hosts: ["*.stage.test"] }
@@ -312,10 +338,10 @@ describe("profiles editor", () => {
   });
 
   it("saves edits still open in the profile form, and Cancel discards them", async () => {
-    const storage = createStorage();
+    const storage = keptDefaultStorage();
     const container = await mount(storage);
 
-    click(rowOf(container, BUILT_IN_PROFILE_IDS.full), "[data-action='profile-duplicate']");
+    click(rowOf(container, BUILT_IN_PROFILE_IDS.lite), "[data-action='profile-duplicate']");
     setField(container, "name", "Not applied yet");
     await saveProfiles();
 
@@ -333,7 +359,7 @@ describe("profiles editor", () => {
   });
 
   it("rolls back form edits that another action already kept when Cancel is clicked", async () => {
-    const storage = createStorage();
+    const storage = keptDefaultStorage();
     const container = await mount(storage);
 
     click(rowOf(container, "default"), "[data-action='profile-edit']");
@@ -353,7 +379,7 @@ describe("profiles editor", () => {
   });
 
   it("keeps a general settings save when the open Default form is cancelled", async () => {
-    const storage = createStorage();
+    const storage = keptDefaultStorage();
     const { container, handle } = await mountWithHandle(storage);
 
     click(rowOf(container, "default"), "[data-action='profile-edit']");
@@ -393,7 +419,7 @@ describe("profiles editor", () => {
     const container = await mount(createStorage());
     const file = createProfilesExportFile({
       schemaVersion: 2,
-      defaultProfileId: BUILT_IN_PROFILE_IDS.qa,
+      defaultProfileId: BUILT_IN_PROFILE_IDS.lite,
       profiles: [],
       rules: [],
       extendedCaptureHosts: ["*.corp.test"]
@@ -409,14 +435,14 @@ describe("profiles editor", () => {
 
     expect(
       [...container.querySelectorAll("[data-import-detail]")].map((node) => node.textContent)
-    ).toEqual([`Default profile: default → ${BUILT_IN_PROFILE_IDS.qa}`]);
+    ).toEqual([`Default profile: ${BUILT_IN_PROFILE_IDS.maximum} → ${BUILT_IN_PROFILE_IDS.lite}`]);
   });
 
   it("folds a general settings save into the unsaved draft", async () => {
-    const storage = createStorage();
+    const storage = keptDefaultStorage();
     const { container, handle } = await mountWithHandle(storage);
 
-    click(rowOf(container, BUILT_IN_PROFILE_IDS.full), "[data-action='profile-duplicate']");
+    click(rowOf(container, BUILT_IN_PROFILE_IDS.lite), "[data-action='profile-duplicate']");
     click(container, "[data-action='profile-apply']");
     handle.applyGeneralOptions(generalForm([".from-general-form"]));
     await saveProfiles();
@@ -430,7 +456,7 @@ describe("profiles editor", () => {
   it("previews redaction with the selected profile", async () => {
     const container = await mount(createStorage());
 
-    setField(container, "sandboxProfile", BUILT_IN_PROFILE_IDS.qa);
+    setField(container, "sandboxProfile", BUILT_IN_PROFILE_IDS.lite);
     setField(container, "sandboxKind", "body");
     setField(container, "sandboxInput", '{"password":"hunter2","user":"ann"}');
     click(container, "[data-action='sandbox-run']");
@@ -440,11 +466,11 @@ describe("profiles editor", () => {
     );
   });
 
-  it("deletes presets and Default, keeps their rules flagged, and restores them", async () => {
-    const qaRule = {
-      id: "r-qa",
+  it("deletes a preset, keeps its rules flagged, and restores it", async () => {
+    const maximumRule = {
+      id: "r-max",
       name: "Stage",
-      profileId: BUILT_IN_PROFILE_IDS.qa,
+      profileId: BUILT_IN_PROFILE_IDS.maximum,
       priority: 1,
       enabled: true,
       match: { hosts: ["*.stage.test"] }
@@ -452,31 +478,25 @@ describe("profiles editor", () => {
     const storage = createStorage({
       [PROFILES_STORAGE_KEY]: {
         schemaVersion: 2,
-        defaultProfileId: "default",
+        defaultProfileId: BUILT_IN_PROFILE_IDS.maximum,
         profiles: [],
-        rules: [qaRule],
+        rules: [maximumRule],
         extendedCaptureHosts: []
       }
     });
     const container = await mount(storage);
 
     // Every delete asks first (backlog item 4).
-    click(rowOf(container, BUILT_IN_PROFILE_IDS.qa), "[data-action='profile-delete']");
-    await answerPrompt("[data-confirm-accept]");
-    click(rowOf(container, "default"), "[data-action='profile-delete']");
+    click(rowOf(container, BUILT_IN_PROFILE_IDS.maximum), "[data-action='profile-delete']");
     await answerPrompt("[data-confirm-accept]");
 
     expect(
       [...container.querySelectorAll<HTMLElement>("[data-profile-id]")].map(
         (row) => row.dataset.profileId
       )
-    ).toEqual([
-      BUILT_IN_PROFILE_IDS.lite,
-      BUILT_IN_PROFILE_IDS.full,
-      BUILT_IN_PROFILE_IDS.fullCapture
-    ]);
+    ).toEqual([BUILT_IN_PROFILE_IDS.lite]);
     expect(container.querySelector<HTMLSelectElement>('[name="ruleProfile"]')?.value).toBe(
-      BUILT_IN_PROFILE_IDS.qa
+      BUILT_IN_PROFILE_IDS.maximum
     );
     expect(container.querySelector("[data-rule-missing]")?.textContent).toContain(
       t("optionsRuleProfileMissingHint")
@@ -488,8 +508,8 @@ describe("profiles editor", () => {
       expect.objectContaining({
         defaultProfileId: BUILT_IN_PROFILE_IDS.lite,
         profiles: [],
-        rules: [qaRule],
-        removedRecommendedProfileIds: ["default", BUILT_IN_PROFILE_IDS.qa]
+        rules: [maximumRule],
+        removedRecommendedProfileIds: [BUILT_IN_PROFILE_IDS.maximum]
       })
     );
 
@@ -498,9 +518,9 @@ describe("profiles editor", () => {
 
     const restored = storage.data[PROFILES_STORAGE_KEY] as Record<string, unknown>;
     expect(restored.removedRecommendedProfileIds).toBeUndefined();
-    expect(savedStore(storage).profiles.map((profile) => profile.id)).toEqual(["default"]);
+    expect(savedStore(storage).profiles).toEqual([]);
     expect(container.querySelector("[data-rule-missing]")).toBeNull();
-    expect(container.querySelectorAll("[data-profile-id]")).toHaveLength(5);
+    expect(container.querySelectorAll("[data-profile-id]")).toHaveLength(2);
   });
 
   it("never offers to delete a profile from the enterprise policy", async () => {

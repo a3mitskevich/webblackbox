@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChromeApi } from "../shared/chrome-api.js";
 import { translateExtensionMessage, type ExtensionMessageKey } from "../shared/i18n.js";
 import { PROFILES_STORAGE_KEY, type ProfileRule } from "../shared/profiles/model.js";
+import { createDefaultProfile } from "../shared/profiles/presets.js";
 import { mountProfilesEditor } from "./profiles-editor.js";
 
 const t = (key: ExtensionMessageKey, vars?: Record<string, string | number>): string =>
@@ -30,7 +31,8 @@ async function mount(options: { requestSave?: () => Promise<boolean> } = {}) {
     [PROFILES_STORAGE_KEY]: {
       schemaVersion: 2,
       defaultProfileId: "default",
-      profiles: [],
+      // A Default profile kept from an earlier version: an editable user profile.
+      profiles: [createDefaultProfile()],
       rules: [SAVED_RULE],
       extendedCaptureHosts: []
     }
@@ -179,7 +181,7 @@ describe("profiles editor: unsaved edits guard", () => {
 
     editDefault(container);
     type(container, "#pf-name", "Renamed");
-    find(container, "[data-profile-id='builtin:full'] [data-action='profile-duplicate']").click();
+    find(container, "[data-profile-id='builtin:lite'] [data-action='profile-duplicate']").click();
     await flush();
 
     expect(dialog()).not.toBeNull();

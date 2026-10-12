@@ -186,7 +186,7 @@ async function main() {
     chrome.storage.local.set({
       "webblackbox.profiles": {
         schemaVersion: 2,
-        defaultProfileId: "default",
+        defaultProfileId: "builtin:maximum",
         profiles: [${JSON.stringify(pointerProfile)}],
         rules: [${JSON.stringify(POINTER_RULE)}],
         extendedCaptureHosts: []
@@ -222,7 +222,7 @@ async function main() {
   await cleanup();
 }
 
-/** The Full capture preset (1 MiB body cap) with every pointer stream on. */
+/** The Maximum preset (1 MiB body cap) with every pointer stream on. */
 function createPointerProfile(redaction) {
   return {
     id: POINTER_PROFILE_ID,

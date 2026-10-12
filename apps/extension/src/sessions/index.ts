@@ -60,6 +60,8 @@ type PendingExport = { playerUrl: string };
 type Page = {
   root: HTMLElement;
   count: HTMLElement;
+  /** The remembered passphrase and its "Forget" button. */
+  passphrase: HTMLElement;
   /** Privacy scanner findings of the last export: shown on the page, never blocking. */
   notice: HTMLElement;
   profileFilter: HTMLSelectElement;
@@ -74,12 +76,20 @@ const state: {
   expandedSid?: string;
   /** Configured Player ("" = none): Settings or the organization's policy. */
   playerUrl: string;
+  /** The service worker remembers an export passphrase until the browser closes. */
+  passphraseRemembered: boolean;
+  /** The service worker answered `ui.passphrase-status` (the deep-linked export waits for it). */
+  passphraseStatusKnown: boolean;
 } = {
   sessions: [],
   filters: { ...EMPTY_FILTERS },
   selected: new Set(),
-  playerUrl: playerSetting.url
+  playerUrl: playerSetting.url,
+  passphraseRemembered: false,
+  passphraseStatusKnown: false
 };
+/** `sessions.html#export=<sid>` (the "export it now" notification): exported once listed. */
+let pendingDeepLinkExport = readExportDeepLink(location.hash);
 /** Exports started on this page, by sid: their failures are reported here. */
 const pendingExports = new Map<string, PendingExport>();
 
@@ -98,6 +108,15 @@ if (root) {
       const known = new Set(typed.sessions.map((session) => session.sid));
       state.selected = new Set([...state.selected].filter((sid) => known.has(sid)));
       renderList(page);
+      exportDeepLinkedSession();
+      return;
+    }
+
+    if (typed.kind === "sw.passphrase-status") {
+      state.passphraseRemembered = typed.remembered;
+      state.passphraseStatusKnown = true;
+      renderPassphraseControl(page);
+      exportDeepLinkedSession();
       return;
     }
 
@@ -105,9 +124,61 @@ if (root) {
       handleExportStatus(page, typed);
     }
   });
+  postUiMessage({ kind: "ui.passphrase-status" });
 }
 
-function createTopBar(count: HTMLElement): HTMLElement {
+function readExportDeepLink(hash: string): string | null {
+  const match = /^#export=(.+)$/.exec(hash);
+
+  if (!match?.[1]) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+/** Starts the export the notification asked for, once its recording is listed (and stopped). */
+function exportDeepLinkedSession(): void {
+  const sid = pendingDeepLinkExport;
+  const session = sid ? state.sessions.find((item) => item.sid === sid) : undefined;
+
+  if (!session || session.active || !state.passphraseStatusKnown) {
+    return;
+  }
+
+  pendingDeepLinkExport = null;
+  history.replaceState(null, "", location.pathname + location.search);
+  void exportSessions([session.sid], shortenSessionId(session.sid), { playerUrl: "" });
+}
+
+/** "Passphrase remembered until the browser closes · Forget" in the top bar while one is kept. */
+function renderPassphraseControl(page: Page): void {
+  page.passphrase.replaceChildren(
+    ...(state.passphraseRemembered
+      ? [
+          el("span", {
+            className: "wb-sessions__passphrase",
+            text: t("popupPassphraseRemembered")
+          }),
+          el(
+            "button",
+            {
+              className: "wb-btn wb-btn--ghost wb-btn--small",
+              attrs: { type: "button" },
+              dataset: { forgetPassphrase: "" }
+            },
+            [t("popupPassphraseForget")]
+          )
+        ]
+      : [])
+  );
+}
+
+function createTopBar(count: HTMLElement, passphrase: HTMLElement): HTMLElement {
   return el("header", { className: "wb-page-topbar" }, [
     el("div", { className: "wb-brand-lockup" }, [
       el("img", {
@@ -123,6 +194,7 @@ function createTopBar(count: HTMLElement): HTMLElement {
       ])
     ]),
     el("div", { className: "wb-page-topbar__aside" }, [
+      passphrase,
       count,
       el(
         "a",
@@ -135,6 +207,10 @@ function createTopBar(count: HTMLElement): HTMLElement {
 
 function createPage(): Page {
   const count = el("span", { className: "wb-sessions__count", dataset: { sessionsCount: "" } });
+  const passphrase = el("span", {
+    className: "wb-sessions__passphrase-control",
+    dataset: { passphraseControl: "" }
+  });
   const notice = el("p", { className: "wb-sessions-notice", attrs: { role: "status" } });
   notice.hidden = true;
   const toolbar = createToolbar({ t, filters: state.filters, profiles: [] });
@@ -143,7 +219,7 @@ function createPage(): Page {
 
   return {
     root: el("div", { className: "wb-sessions" }, [
-      createTopBar(count),
+      createTopBar(count, passphrase),
       el("div", { className: "wb-sessions__body" }, [
         el("p", { className: "wb-sessions__subtitle", text: t("sessionsSubtitle") }),
         el("p", { className: "wb-sessions__subtitle", text: t("localDataRestartNotice") }),
@@ -153,6 +229,7 @@ function createPage(): Page {
       ])
     ]),
     count,
+    passphrase,
     notice,
     profileFilter:
       toolbar.querySelector<HTMLSelectElement>("[data-profile-filter]") ?? el("select"),
@@ -391,12 +468,14 @@ async function handleButton(page: Page, button: HTMLButtonElement): Promise<void
   const exportSid = data.export ?? data.player;
 
   if (exportSid) {
-    const passphrase = await askPassphrase(shortenSessionId(exportSid));
+    await exportSessions([exportSid], shortenSessionId(exportSid), {
+      playerUrl: data.player ? state.playerUrl : ""
+    });
+    return;
+  }
 
-    if (passphrase !== null) {
-      requestExport(exportSid, passphrase, { playerUrl: data.player ? state.playerUrl : "" });
-    }
-
+  if (data.forgetPassphrase !== undefined) {
+    postUiMessage({ kind: "ui.forget-passphrase" });
     return;
   }
 
@@ -441,11 +520,25 @@ async function exportSelected(): Promise<void> {
     return;
   }
 
-  const passphrase = await askPassphrase(t("sessionsSelectedCount", { count: sids.length }));
+  await exportSessions(sids, t("sessionsSelectedCount", { count: sids.length }), { playerUrl: "" });
+}
 
-  if (passphrase !== null) {
-    sids.forEach((sid) => requestExport(sid, passphrase, { playerUrl: "" }));
+/**
+ * Exports with the passphrase remembered for this browser session, or asks for one first (the
+ * service worker then remembers it).
+ */
+async function exportSessions(
+  sids: string[],
+  detail: string,
+  options: PendingExport
+): Promise<void> {
+  const passphrase = state.passphraseRemembered ? undefined : await askPassphrase(detail);
+
+  if (passphrase === null) {
+    return;
   }
+
+  sids.forEach((sid) => requestExport(sid, passphrase, options));
 }
 
 async function deleteSelected(page: Page): Promise<void> {
@@ -474,6 +567,8 @@ function askPassphrase(detail: string): Promise<string | null> {
     submitLabel: t("sessionsActionExport"),
     cancelLabel: t("popupCancel"),
     requiredMessage: t("popupPassphraseRequired"),
+    confirmLabel: t("popupPassphraseConfirmLabel"),
+    mismatchMessage: t("popupPassphraseMismatch"),
     detail
   });
 }
@@ -497,6 +592,10 @@ function handleExportStatus(
   if (status.ok) {
     pendingExports.delete(status.sid);
 
+    if (!state.passphraseRemembered) {
+      postUiMessage({ kind: "ui.passphrase-status" });
+    }
+
     // Findings are reported on the page, never blocking: the archive is encrypted either way.
     if (status.privacyWarning) {
       showNotice(page, formatExportPrivacyWarning(status.privacyWarning));
@@ -518,12 +617,12 @@ function handleExportStatus(
   window.alert(t("popupExportFailed", { error: status.error || t("unknownError") }));
 }
 
-function requestExport(sid: string, passphrase: string, options: PendingExport): void {
+function requestExport(sid: string, passphrase: string | undefined, options: PendingExport): void {
   pendingExports.set(sid, options);
   postUiMessage({
     kind: "ui.export",
     sid,
-    passphrase,
+    ...(passphrase ? { passphrase } : {}),
     saveAs: false,
     // Archive limits from Options, as in the popup; screenshots stay out as before.
     policy: toExportPolicy(loadExportPolicyPrefs(), "none")

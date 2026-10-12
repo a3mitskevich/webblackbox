@@ -323,3 +323,19 @@
     width: 100%;
   }
 }
+
+/* "Passphrase remembered until the browser closes" and its "Forget" button in the top bar. */
+.wb-sessions__passphrase-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wb-sessions__passphrase-control:empty {
+  display: none;
+}
+
+.wb-sessions__passphrase {
+  font-size: 12px;
+  color: var(--wb-text-muted);
+}

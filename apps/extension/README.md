@@ -1,6 +1,6 @@
 # WebBlackbox Chrome Extension
 
-Chrome Manifest V3 extension that records web sessions in the tabs where you press Start, using the Chrome DevTools Protocol and a content script. Nothing is recorded in other tabs; see [Page injection](#page-injection) for whether the content script runs there at all.
+Chrome Manifest V3 extension that records web sessions in the tabs where you press Record, using the Chrome DevTools Protocol and a content script. Nothing is recorded in other tabs; see [Page injection](#page-injection) for whether the content script runs there at all.
 
 ## Architecture
 
@@ -64,24 +64,22 @@ The extension consists of multiple main components:
 
 #### Popup (`popup.html`)
 
-- Quick controls for starting/stopping recording sessions; nothing is recorded until you press Start
-- Recording profile selector (`Auto` = site rules) with the selected profile, matching rule and enterprise caps
-- Engine switch (`Lite` / `Full`); a profile that records something only the Full engine captures (bodies, screenshots, tab video, whole console messages, CDP) locks it to `Full`
-- Full-engine visual capture choice (screenshots, tab video, both, none) unless the profile pins one
-- On Start, an offer to reload the page so the recording holds the page load ("Reload and Start" / "Start Without Reload"); the reload is issued only after the recording is live. It can be turned off in Options → Performance & sampling
+- One primary "Record" button; nothing is recorded until you press it. Above it, "Profile: Maximum · Change": the profile Record uses (the default profile, or the one a site rule picks, with enterprise caps), and a link to Options → Profiles where the choice lives. The profile decides the engine and the visual capture
+- On Record, the page reload choice ("Page reload on Start"): by default a dialog with "Reload and Record" as the main choice, "Record Without Reload", and "Don't ask again (change it in Settings)", which stores the answer; the reload is issued only after the recording is live
+- While recording: counters, Marker, Stop, and a warning when the recording fell back from Full to Light (why, and what is no longer captured)
+- After Stop, the export step: "Export archive" (the main action) or "Later", which keeps the recording on the Sessions page; the passphrase is asked once and remembered until the browser closes ("Forget passphrase")
 - Notice when a recording was stopped because its profile changed (what changed, how to fix it), and a "create a profile" requirement with a link to Options when no profile exists
 - Session status display
-- Export trigger (asks for the passphrase)
 
 #### Options Page (`options.html`)
 
-- Full recorder configuration UI (these general fields edit the `Default` profile)
-- Recording profiles: presets (read-only, duplicate to edit), capture level matrix, redaction / unmask lists, body filters, source maps, local retention of unexported recordings
-- Delete any profile (presets and `Default` included; not policy profiles) and "Restore recommended profiles"; recording needs at least one profile
+- General recorder fields (masking, pointer, sampling, incidents) edit a `Default (custom)` profile kept from an earlier version; without one they are hidden and a note points to the profiles
+- Recording profiles: the built-in `Maximum` (default) and `Light` (read-only, duplicate to edit), the default profile, capture level matrix, redaction / unmask lists, body filters, visual capture, source maps, local retention of unexported recordings (empty = keep until exported or deleted)
+- Delete any profile (built-ins included; not policy profiles) and "Restore recommended profiles"; recording needs at least one profile
 - Site rules that pick a profile (rules to a deleted profile are flagged and skipped)
 - Sensitivity: masking rules (blocked selectors, header names, body keys) and the redaction sandbox
 - Pointer & input: pointer and scroll sampling
-- Performance & sampling: page injection mode (see [Page injection](#page-injection)), the reload offer on Start, incident alerts (flag uncaught errors), sampling cadence, screenshot cadence and the network body capture byte cap
+- Performance & sampling: page injection mode (see [Page injection](#page-injection)), "Page reload on Start" ("Ask, reload by default", "Always reload", "Never reload"), incident alerts (flag uncaught errors), sampling cadence, screenshot cadence and the network body capture byte cap
 - Budgets: performance budget warnings and flagging broken budgets
 - Export & encryption: archive size cap and recent window, and the [Player URL](../../docs/ENTERPRISE_ADMIN.md#player-url) used by "Export and open in Player" (empty by default, which hides that action)
 - Language: `Auto` (Chrome's language), English, Russian or Simplified Chinese
@@ -91,12 +89,13 @@ The extension consists of multiple main components:
 
 - Browse, search and filter the recordings kept in this browser (live and stopped)
 - View session metadata and statistics, add tags and notes
-- Export (one or several), stop and delete sessions
+- Export (one or several, with the passphrase remembered for the browser session and a "Forget passphrase" button), stop and delete sessions; `sessions.html#export=<sid>` (the export notification) starts that recording's export
+- Badges for recordings that are not exported yet and for recordings that fell back from Full to Light
 - "Export and open in Player": exports the archive to the downloads folder, then opens the configured Player page; shown only when a Player URL is set
 
 ## Page injection
 
-Settings → Performance & sampling → **Inject into pages** decides when `content-script.js` runs. Recording itself always happens only in tabs where you press Start.
+Settings → Performance & sampling → **Inject into pages** decides when `content-script.js` runs. Recording itself always happens only in tabs where you press Record.
 
 | Mode                                          | What runs in pages you are not recording                                                                                                                                                          | Trade-off during a recording                                                                                                                                                                     |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -127,21 +126,22 @@ Idle cost, measured with `pnpm e2e:injection:idle` (50 tabs, each a page with on
 
 ## Permissions
 
-| Permission      | Purpose                                                                               |
-| --------------- | ------------------------------------------------------------------------------------- |
-| `debugger`      | CDP access for network, runtime, and page events                                      |
-| `tabs`          | Tab information and URL access, other tabs of the recorded site                       |
-| `scripting`     | Register the content script, or inject it on Start                                    |
-| `storage`       | Extension settings, the per-browser-session at-rest key and stopped-session snapshots |
-| `alarms`        | Delete stopped, unexported recordings when their retention ends                       |
-| `offscreen`     | Pipeline processing in background                                                     |
-| `tabCapture`    | Optional tab video in the Full engine                                                 |
-| `webRequest`    | Network request monitoring                                                            |
-| `webNavigation` | Re-inject the content script into frames a recorded tab commits                       |
-| `downloads`     | Archive file download                                                                 |
-| `<all_urls>`    | Host access for content script registration and injection, `webRequest`               |
+| Permission      | Purpose                                                                                              |
+| --------------- | ---------------------------------------------------------------------------------------------------- |
+| `debugger`      | CDP access for network, runtime, and page events                                                     |
+| `tabs`          | Tab information and URL access, other tabs of the recorded site                                      |
+| `scripting`     | Register the content script, or inject it on Start                                                   |
+| `storage`       | Extension settings, the per-browser-session at-rest key and stopped-session snapshots                |
+| `alarms`        | Delete stopped, unexported recordings of profiles that set a retention time                          |
+| `notifications` | Ask to export a stopped recording, and warn about a Full → Light fallback, while the popup is closed |
+| `offscreen`     | Pipeline processing in background                                                                    |
+| `tabCapture`    | Tab video (on in `Maximum`)                                                                          |
+| `webRequest`    | Network request monitoring                                                                           |
+| `webNavigation` | Re-inject the content script into frames a recorded tab commits                                      |
+| `downloads`     | Archive file download                                                                                |
+| `<all_urls>`    | Host access for content script registration and injection, `webRequest`                              |
 
-This is the default (`dev`) build. The `store-safe` build (`pnpm build:store-safe`, the WXT mode `store-safe`) requests `activeTab`, `alarms`, `downloads`, `offscreen`, `scripting`, `storage` and `tabCapture` only: no `debugger` (so no Full engine), `tabs`, `webRequest`, `webNavigation` or host permissions.
+This is the default (`dev`) build. The `store-safe` build (`pnpm build:store-safe`, the WXT mode `store-safe`) requests `activeTab`, `alarms`, `downloads`, `notifications`, `offscreen`, `scripting`, `storage` and `tabCapture` only: no `debugger` (so no Full engine: Full profiles fall back to Light), `tabs`, `webRequest`, `webNavigation` or host permissions.
 
 ## Keyboard Shortcuts
 
@@ -183,17 +183,19 @@ The service worker and the pages share code in `chunks/`. The three scripts that
 ## E2E
 
 - `pnpm e2e:fullchain:full` runs the full-mode end-to-end capture/export demo. `pnpm e2e:fullchain:lite:on-demand` (with a reload after Start) and `pnpm e2e:fullchain:full:on-demand` run it with injection on Start only (`WB_E2E_INJECTION_MODE=on-start`).
-- `pnpm e2e:full:reload` checks "Reload and Start" in the Full engine: the session starts (CDP attached) before the reload, so the archive holds the page load from scratch; a start without the reload leaves the page alone.
-- `pnpm e2e:completeness:full` (and `:reload`) records a realistic fixture site with Full capture and checks that the archive holds every body the policy asked for, or a `network.body.skipped` event saying why it is missing. `:heavy` adds a burst of JSON reports sent with about 220 MB of binary media, past Chrome's default 200 MB body buffer, and still expects no `not-retained` body.
+- `pnpm e2e:full:reload` checks "Reload and Record" in the Full engine: the session starts (CDP attached) before the reload, so the archive holds the page load from scratch; a start without the reload leaves the page alone.
+- `pnpm e2e:completeness:full` (and `:reload`) records a realistic fixture site with `Maximum` and checks that the archive holds every body the policy asked for, or a `network.body.skipped` event saying why it is missing. `:heavy` adds a burst of JSON reports sent with about 220 MB of binary media, past Chrome's default 200 MB body buffer, and still expects no `not-retained` body.
 - `pnpm e2e:pointer` checks pointer capture (clicks with targets and geometry, right/middle clicks, long press, drag, wheel, hover, mousemove samples) in both engines.
 - `pnpm e2e:tabs-context` checks that other tabs of the recorded site reach the archive and tabs of other sites never do.
 - `pnpm e2e:sw-restart` terminates the service worker mid-run — while a session records — and checks that the recording it left running is listed as interrupted and exports an archive player-sdk opens with its events and its interruption, that the next session starts and exports, and that orphaned IndexedDB sessions are swept.
 - `pnpm e2e:ui` compares screenshots of the popup, options and sessions pages against `e2e-baselines/ui/` (`pnpm e2e:ui:update` refreshes them).
 - `pnpm e2e:injection` checks over CDP which frames run `content-script.js` in both injection modes: before Start, after Start, in an iframe added later, after a reload and a navigation, in a tab that is not recorded and after Stop. `pnpm e2e:injection:idle` measures the idle cost of both modes with many tabs (`WB_E2E_INJECTION_BENCH_TABS`, default 50).
 - `pnpm e2e:page-globals` checks in Lite and Full that recording adds no page (MAIN world) globals and replaces none: it compares every own property of `window` and its descriptor before Start with after Start, after captured actions and after Stop. Only the hooks' install flag and nonce setter are allowed (`ALLOWED_PAGE_GLOBALS`).
-- `pnpm e2e:profile:qa` checks that a site rule selects the QA profile, that console text and value-masked JSON bodies reach the encrypted archive, that navigating to a host where the rules pick another profile stops the recording (reason in the archive, `!` badge, popup notice, nothing recorded afterwards), and that a plaintext export is refused.
-- `pnpm e2e:at-rest` reads the extension's IndexedDB over CDP after a Full capture recording with planted secrets and checks that nothing in it is readable (every chunk and blob AES-GCM framed, session rows without URL or title), that the export still decrypts to the secrets and deletes the recording, that stopped recordings stay listed, stored and exportable after the service worker is stopped and more than 30 s pass, and that an unexported recording is gone after Chrome restarts on the same profile.
-- `pnpm e2e:profile:full-capture` checks that the Full capture preset, chosen explicitly on a host without rules, records planted secrets (console, storage, URL token, headers, bodies, password field, WebSocket payload) and the raw DOM inside the encrypted archive, keeps doing so after the tab moves to another host, and that neither the secrets nor the site appear in the archive bytes.
+- `pnpm e2e:profile:rules` checks that a site rule selects a user QA-like profile, that console text and value-masked JSON bodies reach the encrypted archive, that navigating to a host whose rule picks another profile stops the recording (reason in the archive, `!` badge, popup notice, nothing recorded afterwards), and that a plaintext export is refused.
+- `pnpm e2e:at-rest` reads the extension's IndexedDB over CDP after a `Maximum` recording with planted secrets and checks that nothing in it is readable (every chunk and blob AES-GCM framed, session rows without URL or title), that the export still decrypts to the secrets and deletes the recording, that stopped recordings stay listed, stored and exportable after the service worker is stopped and more than 30 s pass, and that an unexported recording is gone after Chrome restarts on the same profile.
+- `pnpm e2e:profile:maximum` checks that `Maximum`, the default with no profiles stored, records planted secrets (console, storage, URL token, headers, bodies, password field, WebSocket payload) and the raw DOM, unmasked, inside the encrypted archive, keeps doing so after the tab moves to another host, and that neither the secrets nor the site appear in the archive bytes.
+- `pnpm e2e:capture-fallback` detaches the debugger mid-recording and checks that the recording switches to Light and goes on, that the archive (`meta.config.captureFallback`, `sys.debugger.detach`) and its completeness report say when and why, and that it exports.
+- `pnpm e2e:kept-after-stop` checks that a stopped, unexported recording waits for its export (export prompt, `SAVE` badge): it gets no expiry and no retention alarm, it is still listed with its badge after the service worker restarts, and its export deletes it. It also checks that the export passphrase is remembered for the browser session without reaching `chrome.storage.local`, and that "Forget passphrase" drops it.
 - `pnpm e2e:realworld` and `pnpm e2e:realworld:ci` run the real-world stability matrix across lite/full startup paths, reload recovery, iframe/child-target capture, downloads/uploads, large response previews, export, and player replay. Use `pnpm e2e:realworld:quick` for the reduced local smoke slice.
 - `pnpm e2e:memory:full` runs a synthetic long-session full-mode stress case and samples JS heap usage for the target page, service worker, and offscreen document.
 - `pnpm e2e:memory:full` and the fullchain runs (including `pnpm e2e:completeness:full`) also print the bytes that crossed the SW ↔ offscreen port (`Port traffic`): the JSON size per direction and per op, and how many wire bytes each byte of binary payload cost. They fail when a binary payload costs more than base64 plus a small envelope. The worker counts only while `globalThis.__WEBBLACKBOX_PORT_TRAFFIC__ = true`.
@@ -215,8 +217,8 @@ The service worker and the pages share code in `chunks/`. The three scripts that
 
 ### Recording
 
-1. User clicks **Start** in popup (and, while the reload offer is on, chooses whether to reload the page)
-2. Service worker resolves the profile (explicit choice or site rules), creates the session, initializes the recorder and, in `full` mode, attaches the CDP debugger; with "Reload and Start" it reloads the tab only once capture is live
+1. User clicks **Record** in the popup (and, unless "Page reload on Start" is set to always or never, chooses whether to reload the page)
+2. Service worker resolves the profile (site rules, then the default profile), creates the session in the profile's engine, initializes the recorder and, in `full` mode, attaches the CDP debugger (on a restricted page, or when the attach fails, it records in `lite` and says so); with "Reload and Record" it reloads the tab only once capture is live
 3. `content-script.js` is already running in every frame (registered at `document_start`) or, with injection on Start only, is injected into every frame of the tab now; frames the tab commits later get it as they commit
 4. Injected content capture begins streaming user events and DOM summaries
 5. In `lite` mode, the injected script captures console and storage events (its fetch/XHR hooks are off; network comes from the `webRequest` baseline)
@@ -227,11 +229,13 @@ The service worker and the pages share code in `chunks/`. The three scripts that
 
 ### Export
 
-1. User clicks **Export** in the popup or on the Sessions page and enters a passphrase (at least 8 characters)
+1. User clicks **Export archive** in the popup's export step (or **Export** on the Sessions page) and, on the first export of the browser session, enters a passphrase (at least 8 characters); the service worker remembers it until the browser closes
 2. The export policy from Options → Export & encryption is applied (default: the whole session — size limit and recent window are 0, off); in the Full engine, screenshots and tab video are included when the recording captured them. Whatever a limit leaves out is recorded in the archive, and the Player's "About this recording" shows it
 3. Service worker signals the pipeline to export with policy and the (required) passphrase
 4. Pipeline finalizes indexes and generates the encrypted archive (format 2: event chunks, indexes, blobs, `privacy/manifest.json` and the full `meta/manifest.json` are encrypted; only the `manifest.json` envelope with the encryption parameters and `integrity/hashes.json` stay plaintext)
-5. Service worker downloads the `.webblackbox` file via `chrome.downloads`; by default (per profile) the local recording is then deleted
+5. Service worker downloads the `.webblackbox` file via `chrome.downloads`; by default (per profile) the local recording is then deleted. A recording that is not exported stays (badge `SAVE`) until it is exported or deleted
+
+The toolbar badge shows one notice at a time, most urgent first: `REC` while recording (`LITE` after a Full → Light fallback), `ERR` after an incident, `!` for a profile-change notice, `SAVE` while a stopped recording waits for its export, then the new-version arrow.
 
 ### Freeze
 
@@ -266,7 +270,7 @@ Body capture sizing note:
 
 - Protocol baseline (`DEFAULT_RECORDER_CONFIG`) sets `bodyCaptureMaxBytes=0`.
 - Extension `lite` keeps `bodyCaptureMaxBytes=0` and disables runtime screenshots unless screenshot cadence is explicitly enabled.
-- Extension `full` defaults to `1 MiB` per body (the same as the Full capture preset). The options page and profiles accept up to `8 MiB` (one shared ceiling, `shared/body-capture-limits.ts`); a body over the limit keeps its first bytes and is flagged `truncated`, and the Player shows "Cut at N of M".
+- Extension `full` defaults to `1 MiB` per body (the same as the `Maximum` profile). The options page and profiles accept up to `8 MiB` (one shared ceiling, `shared/body-capture-limits.ts`); a body over the limit keeps its first bytes and is flagged `truncated`, and the Player shows "Cut at N of M".
 - When a session keeps bodies, `Network.enable` gets buffer sizes from the body limit (`sw/network-buffers.ts`): a total buffer of 256× the limit (Chrome's 200 MB at least, 512 MiB at most), a per-response buffer of 16× the limit (Chrome's 20 MB at least, 64 MiB at most) and request bodies up to the limit inline. Chrome then keeps bodies long enough to read them on heavy pages instead of evicting them (`not-retained`).
 - A body the browser keeps is read whole and cut at the limit (large reads run one at a time). A response that declares a length past the per-response buffer is streamed for its start (`Network.streamResourceContent`, up to 64 MiB, four at once); otherwise the skip says why (`too-large` with the size and a detail).
 
@@ -274,7 +278,7 @@ The SW ↔ offscreen pipeline path also uses ingest batching with chunked drain 
 
 Users can still tune other settings through the Options page.
 
-Recording profiles sit on top of this: the popup's engine switch picks the transport (`lite` / `full`), unless the profile needs the Full engine and locks it, and the profile chosen in the popup (or by a site rule) decides capture levels, redaction, sampling, body filters, visual capture, source maps and local retention. Every export is encrypted and the privacy scanner only reports, whatever a profile's `export` block says. Presets: `Lite`, `Full`, `QA`, `Full capture`, plus the editable `Default` and your own profiles. See [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#recording-profiles) and [docs/PRIVACY.md](../../docs/PRIVACY.md#recording-profiles).
+Recording profiles sit on top of this: the profile in effect (the default profile, `Maximum` out of the box, or the one a site rule picks) decides the transport (`lite` / `full`; a profile that needs the Full engine always gets it), capture levels, redaction, sampling, body filters, visual capture, source maps and local retention. When Full cannot run or stops, the recording falls back to `lite` and records why. Every export is encrypted and the privacy scanner only reports, whatever a profile's `export` block says. Built-ins: `Maximum` and `Light`, plus your own profiles (and a `Default (custom)` kept from an earlier version). See [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#recording-profiles) and [docs/PRIVACY.md](../../docs/PRIVACY.md#recording-profiles).
 
 ## Requirements
 

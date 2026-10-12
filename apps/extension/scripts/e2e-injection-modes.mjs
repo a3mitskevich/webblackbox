@@ -354,7 +354,7 @@ function createExtensionControl(popup, sw, swWarnings) {
     },
     start(tabId) {
       return popup.evaluate(
-        `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "lite" })`
+        `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "lite", profileId: "builtin:lite" })`
       );
     },
     stop(tabId) {

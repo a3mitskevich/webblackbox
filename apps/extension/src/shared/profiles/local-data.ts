@@ -3,19 +3,12 @@ import type { ProfileLocalDataSettings, RecordingProfile } from "./model.js";
 const MINUTE_MS = 60_000;
 
 /**
- * Defaults for profiles without `localData`. Every successful export already deleted its
- * recording before this setting existed, and a stopped recording was kept for 10 minutes; both
- * stay the default so no profile keeps data longer than it used to.
+ * Defaults for profiles without `localData`: a successful export deletes the local copy, and a
+ * stopped recording nobody exported stays on the device until it is exported or deleted (within
+ * the lifetime of the at-rest key, which ends with the browser).
  */
 export const DEFAULT_LOCAL_DATA_SETTINGS: Readonly<ProfileLocalDataSettings> = {
-  deleteAfterExport: true,
-  unexportedRetentionMinutes: 10
-};
-
-/** Full capture records content raw, so its unexported recordings are kept for less time. */
-export const FULL_CAPTURE_LOCAL_DATA_SETTINGS: Readonly<ProfileLocalDataSettings> = {
-  deleteAfterExport: true,
-  unexportedRetentionMinutes: 5
+  deleteAfterExport: true
 };
 
 export function resolveLocalDataSettings(
@@ -24,9 +17,15 @@ export function resolveLocalDataSettings(
   return { ...(profile.localData ?? DEFAULT_LOCAL_DATA_SETTINGS) };
 }
 
-/** How long a stopped, unexported recording of this profile stays on the device. */
-export function resolveUnexportedRetentionMs(profile: Pick<RecordingProfile, "localData">): number {
-  return resolveLocalDataSettings(profile).unexportedRetentionMinutes * MINUTE_MS;
+/**
+ * How long a stopped, unexported recording of this profile stays on the device; null keeps it
+ * until it is exported or deleted.
+ */
+export function resolveUnexportedRetentionMs(
+  profile: Pick<RecordingProfile, "localData">
+): number | null {
+  const minutes = resolveLocalDataSettings(profile).unexportedRetentionMinutes;
+  return minutes === undefined ? null : minutes * MINUTE_MS;
 }
 
 export function isDefaultLocalDataSettings(settings: ProfileLocalDataSettings): boolean {

@@ -765,7 +765,7 @@ const PAGE_SCRIPT = `
     });
   }
 
-  // SVG is text: its bodies belong in a Full capture. \`data:\` URLs carry their body in the URL.
+  // SVG is text: its bodies belong in a Maximum recording. \`data:\` URLs carry their body in the URL.
   async function loadSvgAndDataUrls() {
     const icons = ['/img/icon-a.svg', '/img/icon-b.svg', '/img/icon-c.svg'];
     summary.svgLoads += icons.length + 1;

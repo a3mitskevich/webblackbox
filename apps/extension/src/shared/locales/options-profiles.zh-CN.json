@@ -26,7 +26,7 @@
   "optionsProfileSourceMapsMetadata": "记录脚本 → source map 引用",
   "optionsProfileSourceMapsEmbed": "将 source map 嵌入归档",
   "optionsProfileSourceMapMaxBytes": "嵌入的 source map 最大字节数（默认 8 MiB）",
-  "optionsProfileVisualPopup": "在弹窗中选择",
+  "optionsProfileVisualPopup": "按捕获类别（完整模式下截图）",
   "optionsRedactionDisclaimer": "遮盖按尽力而为的方式应用你的规则；WebBlackbox 不保证移除所有敏感数据。归档始终加密。",
   "optionsProfileContentRedaction": "遮盖采集的内容",
   "optionsProfileBuiltInHeuristics": "内置启发式规则（密钥检测、URL 清理、原始 DOM 清理）",
@@ -112,7 +112,7 @@
   "optionsLevelFull": "完整",
   "optionsLevelLabOnly": "仅实验室",
   "optionsProfileCategoriesHint": "左侧数据最少，右侧最多。点击级别即可修改。",
-  "optionsProfileBaseHelp": "Lite 从页面侧录制；Full 额外使用浏览器 DevTools 协议（网络正文、截图）。弹窗会预选该引擎。",
+  "optionsProfileBaseHelp": "轻量模式从页面侧录制；完整模式额外使用浏览器的 DevTools 协议（网络正文、截图）。“录制”会以此引擎启动；需要完整模式的配置始终以完整模式启动。",
   "optionsProfileEditing": "正在编辑 {name}",
   "optionsProfileEditorEmpty": "在配置上点击“编辑”，或复制预设后再自定义。",
   "optionsProfileAbout": "详情",
@@ -120,7 +120,7 @@
   "optionsProfileGroupBodies": "网络正文与指针",
   "optionsProfileGroupLocalData": "本地数据",
   "optionsProfileDeleteAfterExport": "导出成功后删除本地录制",
-  "optionsProfileUnexportedRetention": "未导出录制的保留时间（分钟，1–1440）",
+  "optionsProfileUnexportedRetention": "未导出的录制在多少分钟后删除（1–1440）",
   "optionsProfileUnmaskHint": "即使被屏蔽也保持可读；密码字段除外。",
   "optionsProfileBodyMimeHint": "留空则使用默认列表。",
   "optionsInheritHint": "留空 = 使用默认值。",
@@ -130,5 +130,6 @@
   "optionsProfilesExportHint": "将配置和规则下载为 JSON。",
   "optionsProfilesImportHint": "应用前会先显示差异。",
   "optionsProfilesImportChoose": "选择文件…",
-  "optionsProfilesImportPreview": "导入预览"
+  "optionsProfilesImportPreview": "导入预览",
+  "optionsProfileUnexportedRetentionKeep": "留空：保留到导出或删除为止"
 }

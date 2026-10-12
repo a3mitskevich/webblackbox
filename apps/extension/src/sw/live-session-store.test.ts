@@ -9,6 +9,7 @@ import {
   toInterruptedSnapshot,
   type LiveSessionSnapshot
 } from "./live-session-store.js";
+import { KEPT_UNTIL_EXPORTED_EXPIRES_AT } from "./stopped-sessions.js";
 import type { SnapshotStorageAreaLike } from "./stopped-session-store.js";
 
 function live(sid: string, lastSeenAt = 5_000): LiveSessionSnapshot {
@@ -112,8 +113,15 @@ describe("live session store", () => {
       expiresAt: 65_000,
       purgeAttempts: 0,
       counters: { eventCount: 40, errorCount: 2, sizeBytes: 9_000, budgetAlertCount: 0 },
-      interruption: { reason: "service-worker-restart", detectedAt: 9_000, lastSeenAt: 5_000 }
+      interruption: { reason: "service-worker-restart", detectedAt: 9_000, lastSeenAt: 5_000 },
+      exportPrompt: true
     });
     expect(stopped).not.toHaveProperty("lastSeenAt");
+  });
+
+  it("keeps an interrupted recording without a retention until it is exported", () => {
+    const stopped = toInterruptedSnapshot(live("S-1", 5_000), { detectedAt: 9_000, ttlMs: null });
+
+    expect(stopped.expiresAt).toBe(KEPT_UNTIL_EXPORTED_EXPIRES_AT);
   });
 });

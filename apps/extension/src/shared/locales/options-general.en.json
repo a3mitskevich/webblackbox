@@ -46,8 +46,8 @@
   "optionsScreenshotIdleHint": "0 turns idle screenshots off.",
   "optionsBodyCaptureHint": "Largest response body kept in Full mode.",
   "optionsFreezeOnErrorHint": "Shows ERR on the toolbar icon and an incident line in the popup.",
-  "optionsStartReloadOffer": "Offer to reload the page when recording starts",
-  "optionsStartReloadOfferHint": "Start asks whether to reload the page first, to record its load. When off, recording starts without a reload.",
+  "optionsStartReloadOffer": "Page reload on Start",
+  "optionsStartReloadOfferHint": "A reload records the page from its first request, with its scripts (for source maps).",
   "optionsLcpWarnHint": "Largest Contentful Paint slower than this.",
   "optionsRequestWarnHint": "Requests slower than this count as slow.",
   "optionsErrorRateWarnHint": "Share of failed requests.",
@@ -61,5 +61,14 @@
   "optionsPlayerUrlHint": "Your organization's Player. “Export and open in Player” on the Sessions page opens it after the export; leave empty to hide that action. Only the page is opened: the archive stays on this computer.",
   "optionsPlayerUrlPlaceholder": "https://player.example.com/",
   "optionsPlayerUrlManaged": "Set by your organization's policy.",
-  "optionsErrorPlayerUrl": "Enter an https:// address (http:// only for localhost or 127.0.0.1)."
+  "optionsErrorPlayerUrl": "Enter an https:// address (http:// only for localhost or 127.0.0.1).",
+  "optionsProfileFieldsNotice": "Masking, pointer, sampling and incident settings belong to a recording profile. The built-in profiles (Maximum and Light) cannot be edited: duplicate one under Profiles and change the copy.",
+  "optionsKeptDefaultFieldsNotice": "These settings edit “Default (custom)”, your profile kept from an earlier version. New recordings use it only if you pick it: otherwise they use the default profile set under Profiles (Maximum unless you changed it) or the one a rule picks.",
+  "optionsOpenProfiles": "Open profiles",
+  "optionsStartReloadAsk": "Ask, reload by default",
+  "optionsStartReloadAskDescription": "Start asks; \"Reload and record\" is the main choice. \"Don't ask again\" there sets one of the options below.",
+  "optionsStartReloadAlways": "Always reload",
+  "optionsStartReloadAlwaysDescription": "Start reloads the page without asking.",
+  "optionsStartReloadNever": "Never reload",
+  "optionsStartReloadNeverDescription": "Start records the page as it is; its load is not recorded."
 }

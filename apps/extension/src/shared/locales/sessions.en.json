@@ -14,7 +14,7 @@
   "sessionsFallbackTab": "Tab {tabId}",
   "sessionsDeletePrompt": "Delete session {sid}? This removes local archive data.",
   "sessionsExportDialogTitle": "Export Session",
-  "sessionsExportDialogBody": "Archives are always encrypted (AES-GCM). Enter a passphrase of at least 8 characters: you need it to open the archive.",
+  "sessionsExportDialogBody": "Archives are always encrypted (AES-GCM). Enter a passphrase of at least 8 characters: you need it to open the archive. It is remembered until the browser closes.",
   "sessionsConfirmDeleteTitle": "Confirm Delete",
   "sessionsTitle": "Sessions",
   "sessionsSearchLabel": "Search sessions",
@@ -46,5 +46,9 @@
   "sessionsActionOpenPlayer": "Export and open in Player",
   "sessionsOpenPlayerHint": "Exports the archive to your downloads, then opens the Player. Drop the downloaded .webblackbox file into it; nothing is uploaded.",
   "sessionsActionNotes": "Tags and notes",
-  "sessionsNoMatches": "No sessions match the filters."
+  "sessionsNoMatches": "No sessions match the filters.",
+  "sessionsStatusFallback": "LIGHT FALLBACK",
+  "sessionsFallbackHint": "Full capture stopped (debugger refused, cancelled or detached); the recording went on in Light. The archive says when and why.",
+  "sessionsStatusNotExported": "NOT EXPORTED",
+  "sessionsNotExportedHint": "Kept on this device until you export or delete it (until the browser closes)."
 }

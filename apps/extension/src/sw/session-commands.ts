@@ -14,6 +14,11 @@ import {
   type RawRecorderEvent
 } from "@webblackbox/recorder";
 
+import {
+  createCaptureFallback,
+  isDebuggerRestrictedUrl,
+  type CaptureFallback
+} from "../shared/capture-fallback.js";
 import type { ChromeApi } from "../shared/chrome-api.js";
 import type { ExtensionOutboundMessage, FullModeVisualCapture } from "../shared/messages.js";
 import {
@@ -32,6 +37,7 @@ import { createActionBadge, type BadgeSpec } from "./action-badge.js";
 import type { AtRestKeyRecord } from "./at-rest-key.js";
 import type { ScreenRecordingController } from "./artifacts-screen-recording.js";
 import type { StorageArtifactsController } from "./artifacts-storage.js";
+import { createCaptureFallbackController } from "./capture-fallback.js";
 import {
   applyBodyUrlFilters,
   DEFAULT_BODY_CAPTURE_MAX_BYTES,
@@ -63,6 +69,7 @@ import {
   type ScriptingApiLike
 } from "./recording-status.js";
 import type { SessionAnnotationsController } from "./session-annotations.js";
+import type { SessionNotifications } from "./session-notifications.js";
 import {
   createSessionRuntime,
   resolveUrlOrigin,
@@ -137,19 +144,27 @@ export type SessionCommandsDeps = {
   a11ySnapshotRequests?: A11ySnapshotRequester;
   /** The lowest-priority badge (the update notice), shown when nothing else claims it. */
   idleBadgeNotice?: () => Promise<BadgeSpec | null>;
+  /** System notifications for a recording that waits for its export or fell back to Light. */
+  notifications?: SessionNotifications;
 };
 
 export type SessionCommandsController = {
   /** Starts recording the tab; resolves with the engine it runs in. */
   startSession: (
     tabId: number,
-    requestedMode: CaptureMode,
+    requestedMode: CaptureMode | undefined,
     options?: { visualCapture?: FullModeVisualCapture; profileId?: string }
   ) => Promise<CaptureMode>;
   stopSession: (tabId: number) => Promise<void>;
+  /** `chrome.debugger.onDetach` for a recorded tab: the recording goes on in Light. */
+  handleDebuggerDetach: (runtime: SessionRuntime, reason: string) => Promise<void>;
   reloadRecordingTab: (tabId: number) => Promise<void>;
   deleteSessionBySid: (sid: string) => Promise<void>;
   acknowledgeProfileCancel: (sid: string) => Promise<void>;
+  /** "Later" on the export step: the recording stays, its prompt and badge go. */
+  dismissExportPrompt: (sid: string) => Promise<void>;
+  /** A kept recording was exported: same as "Later", the export is done. */
+  markExported: (runtime: SessionRuntime) => Promise<void>;
   setIdleBadge: () => Promise<void>;
   setRecordingBadge: () => Promise<void>;
   setFreezeBadge: () => Promise<void>;
@@ -185,16 +200,41 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
   const badge = createActionBadge({
     action: deps.action,
     isRecording: () => sessionRegistry.tabCount() > 0,
+    isRecordingDegraded: () =>
+      [...sessionRegistry.tabRuntimes()].some((runtime) => runtime.captureFallback !== undefined),
     hasUnreadProfileNotice: () =>
       [...sessionRegistry.sidRuntimes()].some(
         (runtime) => runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
       ),
+    hasPendingExport: () =>
+      [...sessionRegistry.sidRuntimes()].some(
+        (runtime) => runtime.stoppedAt !== undefined && runtime.exportPrompt === true
+      ),
     idleNotice: deps.idleBadgeNotice
+  });
+  const captureFallback = createCaptureFallbackController({
+    tabExists: async (tabId) => {
+      try {
+        return Boolean(await deps.tabs?.get(tabId));
+      } catch {
+        return false;
+      }
+    },
+    loadEnterprisePolicy: () => deps.profile.loadEnterprisePolicy(),
+    cleanupCdp: (runtime) => deps.fullCdp.cleanupCdpInstrumentation(runtime, runtime.cdpRouter),
+    installLiteNetwork: () => deps.liteNetworkBaseline.install(),
+    ingestRawEvent: deps.ingestRawEvent,
+    monotonicTime: deps.monotonicTime,
+    announce: async (runtime) => {
+      deps.notifications?.notifyCaptureFallback(runtime);
+      await announceRecording(runtime);
+    },
+    stopSession
   });
 
   async function startSession(
     tabId: number,
-    requestedMode: CaptureMode,
+    requestedMode: CaptureMode | undefined,
     options: { visualCapture?: FullModeVisualCapture; profileId?: string } = {}
   ): Promise<CaptureMode> {
     const existing = sessionRegistry.getByTab(tabId);
@@ -230,7 +270,17 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     // Lite would drop its bodies, socket messages and visuals without a trace. Upgrading (rather
     // than refusing) keeps the start the user asked for; the popup already shows the engine as
     // Full.
-    const mode = resolveStartEngine(requestedMode, profileSelection.profile);
+    const engine = resolveStartEngine(
+      requestedMode ?? profileSelection.profile.base,
+      profileSelection.profile
+    );
+    // Browser pages, the Web Store and other extensions' pages refuse the debugger: such a page
+    // records in Light from the start, and says so.
+    const startFallback: CaptureFallback | undefined =
+      engine === "full" && isDebuggerRestrictedUrl(tabMetadata.url)
+        ? createCaptureFallback({ at: startedAt, reason: "restricted-page" })
+        : undefined;
+    const mode = startFallback ? "lite" : engine;
     const loadedRecorderConfig = buildProfileRecorderConfig({
       mode,
       profile: profileSelection.profile,
@@ -277,6 +327,7 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
         annotation,
         config: recorderConfig,
         startedAt,
+        ...(startFallback ? { captureFallback: startFallback } : {}),
         pipeline,
         recorderPlugins,
         performanceBudget,
@@ -334,7 +385,8 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
         profile: toArchivedProfileInfo(
           profileSelection,
           listEnterpriseCappedCategories(loadedRecorderConfig, recorderConfig)
-        )
+        ),
+        ...(startFallback ? { captureFallback: startFallback } : {})
       }
     });
 
@@ -348,47 +400,76 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     await ensureInjectedHooks(deps.scripting, tabId, runtime.injectedBridgeNonce);
 
     if (mode === "full" && recorderConfig.capturePolicy?.categories.cdp !== "off") {
-      await deps.fullCdp.attachCdp(runtime);
-    }
+      const attached = await deps.fullCdp.attachCdp(runtime);
 
-    if (deps.screenRecording.shouldStartScreenRecording(runtime)) {
-      try {
-        await deps.screenRecording.startScreenRecording(runtime);
-      } catch (error) {
-        await stopSession(tabId);
-        throw error;
+      if (!attached.ok) {
+        await captureFallback.fallBackToLite(runtime, "attach-failed", attached.error);
       }
     }
 
-    const sampling = toStatusSampling(runtime);
+    await startScreenRecordingIfAllowed(runtime);
+    // Reads the runtime: a Full start may have fallen back to Light on the way.
+    await announceRecording(runtime);
+    deps.notifyOffscreenPipelineStatus();
+    return runtime.mode;
+  }
 
-    await setRecordingBadge();
+  /**
+   * Tab video, when the profile asks for it. A video that cannot start leaves the recording
+   * running without it (recorded as a notice): the tab video is on by default, so its failure must
+   * not block recording.
+   */
+  async function startScreenRecordingIfAllowed(runtime: SessionRuntime): Promise<void> {
+    if (!deps.screenRecording.shouldStartScreenRecording(runtime)) {
+      return;
+    }
+
+    try {
+      await deps.screenRecording.startScreenRecording(runtime);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("[WebBlackbox] tab video could not start; recording goes on without it", error);
+      deps.ingestRawEvent({
+        source: "system",
+        rawType: "notice",
+        sid: runtime.sid,
+        tabId: runtime.tabId,
+        t: Date.now(),
+        mono: deps.monotonicTime(),
+        payload: { code: "screen-recording-failed", message }
+      });
+    }
+  }
+
+  /** Tells the page, the popup and the badge what the recording runs with now. */
+  async function announceRecording(runtime: SessionRuntime): Promise<void> {
+    const sampling = toStatusSampling(runtime);
     const pointer = toStatusPointer(runtime);
 
+    await refreshActionBadge();
     await notifyTabStatus(
-      tabId,
+      runtime.tabId,
       true,
-      sid,
-      mode,
+      runtime.sid,
+      runtime.mode,
       sampling,
-      recorderConfig.capturePolicy,
+      runtime.config.capturePolicy,
       runtime.injectedBridgeNonce,
       pointer
     );
     deps.broadcast({
       kind: "sw.recording-status",
       active: true,
-      sid,
-      mode,
+      sid: runtime.sid,
+      mode: runtime.mode,
       sampling,
-      capturePolicy: recorderConfig.capturePolicy,
+      capturePolicy: runtime.config.capturePolicy,
       pointer,
       ...toScriptScanStatus(runtime)
     });
     deps.pushSessionList();
     await persistRuntimeState();
-    deps.notifyOffscreenPipelineStatus();
-    return mode;
+    await deps.stoppedSessionLifecycle.rememberLiveSession(runtime);
   }
 
   async function stopSession(tabId: number): Promise<void> {
@@ -428,6 +509,8 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     deps.recordedTabWatch.sync(sessionRegistry.tabCount() > 0);
     deps.liteNetworkBaseline.uninstallIfUnused();
     runtime.stoppedAt = Date.now();
+    // Kept until exported or deleted; the popup's export step and the badge ask for the export.
+    runtime.exportPrompt = true;
     deps.stoppedSessionLifecycle.scheduleStoppedRuntimeCleanup(runtime);
     await deps.stoppedSessionLifecycle.rememberStoppedSessionRecord(runtime).catch((error) => {
       console.warn("[WebBlackbox] failed to persist stopped session record", error);
@@ -437,6 +520,7 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     await deps.stoppedSessionLifecycle.forgetLiveSession(runtime.sid);
 
     await refreshActionBadge();
+    deps.notifications?.notifyExportPending(runtime);
 
     await notifyTabStatus(
       tabId,
@@ -489,6 +573,7 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
       await stopSession(runtime.tabId);
     }
 
+    deps.notifications?.clear(sid);
     await deps.stoppedSessionLifecycle.disposeStoppedSession(runtime);
 
     if (await deps.annotations.remove(sid)) {
@@ -507,6 +592,22 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     deps.pushSessionList();
     await refreshActionBadge();
     // A later worker restores the acknowledged notice, not the unread one.
+    await deps.stoppedSessionLifecycle.rememberStoppedSession(runtime);
+  }
+
+  async function dismissExportPrompt(sid: string): Promise<void> {
+    const runtime = sessionRegistry.getBySid(sid);
+
+    if (runtime?.stoppedAt && runtime.exportPrompt) {
+      await markExported(runtime);
+    }
+  }
+
+  async function markExported(runtime: SessionRuntime): Promise<void> {
+    runtime.exportPrompt = false;
+    deps.notifications?.clear(runtime.sid);
+    deps.pushSessionList();
+    await refreshActionBadge();
     await deps.stoppedSessionLifecycle.rememberStoppedSession(runtime);
   }
 
@@ -787,7 +888,8 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     }
 
     await deps.stoppedSessionLifecycle.restoreStoppedSessions();
-    await setIdleBadge();
+    // A restored recording may still wait for its export: keep its SAVE badge.
+    await refreshActionBadge();
     deps.pushSessionList();
     deps.notifyOffscreenPipelineStatus();
     await deps.stoppedSessionLifecycle.sweepStalePipelineSessions().catch((error) => {
@@ -798,9 +900,12 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
   return {
     startSession,
     stopSession,
+    handleDebuggerDetach: captureFallback.handleDebuggerDetach,
     reloadRecordingTab,
     deleteSessionBySid,
     acknowledgeProfileCancel,
+    dismissExportPrompt,
+    markExported,
     setIdleBadge,
     setRecordingBadge,
     setFreezeBadge,
