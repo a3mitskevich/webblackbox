@@ -1,18 +1,18 @@
 import { constants } from "node:fs";
-import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
+import { parseAst } from "vite";
 
-import { CLASSIC_SCRIPT_CHUNKS, isWrappedInScriptScope } from "./content-script-scope.mjs";
-import { createManagedStorageSchema, MANAGED_SCHEMA_FILE } from "./managed-schema.mjs";
+import { MANAGED_SCHEMA_FILE } from "./managed-schema.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 
 export const appRoot = resolve(scriptDir, "..", "..");
 export const buildDir = resolve(appRoot, "build");
 export const distDir = resolve(appRoot, "dist");
-export const publicDir = resolve(appRoot, "public");
 export const packageJsonPath = resolve(appRoot, "package.json");
 
 const EXTENSION_DEFAULT_LOCALE = "en";
@@ -25,17 +25,6 @@ const EXTENSION_DEVELOPMENT_KEY =
   "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2HDVz1RBsIjEKY/KUOuP3glU4SmMUtvdXXER0JV9mksg6cufsMXUwPpzj7M4aCqCPMV8NkMhRHuGEumnDx/lhc/UI1OUyGpMSP2DSozID5w1s6NY2NbBERcNe0QPwlG9DBkZHHrSXycAHBK8IOaGcsju3Dzmbxr9RI7boLVE0dchdo5bt9tyOxT6LQL1ZlQOgErRf2pSQpU/dqngQ0Wd3/rj5aZ9c04TkycJrXq1FBY4uBiUdFOjuQ6djW4UtJsudYuDaqZ5PsRErilDAbWttkQsN7w5lS7aJANEU/83nIyz8YZ56vn1P1wBqWOxJ2CsyW/lFJdKjgZor6AS5AWCRQIDAQAB";
 const EXTENSION_PAGE_CSP =
   "script-src 'self'; object-src 'self'; style-src 'self'; img-src 'self' data:;";
-const STATIC_PUBLIC_FILES = [
-  "_locales",
-  "offscreen.html",
-  "options.html",
-  "popup.html",
-  "sessions.html",
-  "styles.css",
-  "options.css",
-  "sessions.css",
-  "icon"
-];
 const REQUIRED_BUILD_FILES = [
   "manifest.json",
   MANAGED_SCHEMA_FILE,
@@ -65,6 +54,12 @@ const REQUIRED_BUILD_FILES = [
 ];
 
 export const EXTENSION_MANIFEST_PROFILES = ["dev", "store-safe"];
+
+/**
+ * Bundles Chrome runs as classic scripts: `content.js`, the content script (isolated world), and
+ * `injected.js`, the page hooks injected with `scripting.executeScript({ world: "MAIN", files })`.
+ */
+export const CLASSIC_SCRIPT_CHUNKS = Object.freeze(["content.js", "injected.js"]);
 
 // Cookie snapshots are collected through the CDP Storage domain via `debugger`,
 // and persistent host access comes from `<all_urls>`, so neither `cookies`
@@ -104,31 +99,41 @@ async function readJson(path) {
   return JSON.parse(text);
 }
 
-async function writeJson(path, value) {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
 async function readAppPackage() {
   return readJson(packageJsonPath);
 }
 
-export function createExtensionManifest({ version, release = false, profile = "dev" }) {
+/**
+ * Profile and release flag of a build. `scripts/build-extension.mjs` sets them for `wxt build`;
+ * without them a build is the development profile with the development key.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {{ profile: string, release: boolean }}
+ */
+export function readBuildTarget(env) {
+  return {
+    profile: normalizeManifestProfile(env.WB_EXTENSION_PROFILE || "dev"),
+    release: env.WB_EXTENSION_RELEASE === "1"
+  };
+}
+
+/**
+ * The manifest fields WXT takes from `wxt.config.ts`. WXT adds `manifest_version`, `version` (from
+ * `package.json`) and the fields of the entrypoints: `background`, `action.default_popup` and the
+ * options page ({@link normalizeWxtManifest} keeps them as before WXT).
+ */
+export function createManifestFields({ release = false, profile = "dev" } = {}) {
   const normalizedProfile = normalizeManifestProfile(profile);
   const storeSafe = normalizedProfile === "store-safe";
-  const manifest = {
-    manifest_version: 3,
+
+  return {
     default_locale: EXTENSION_DEFAULT_LOCALE,
     name: EXTENSION_NAME,
     description: EXTENSION_DESCRIPTION,
-    version,
     ...(release ? {} : { key: EXTENSION_DEVELOPMENT_KEY }),
     minimum_chrome_version: EXTENSION_MINIMUM_CHROME_VERSION,
     permissions: storeSafe ? [...STORE_SAFE_PERMISSIONS] : [...DEV_PERMISSIONS],
     ...(storeSafe ? {} : { host_permissions: [...URL_MATCHES] }),
-    background: {
-      service_worker: "sw.js",
-      type: "module"
-    },
     icons: {
       16: "icon/16.png",
       32: "icon/32.png",
@@ -138,14 +143,12 @@ export function createExtensionManifest({ version, release = false, profile = "d
     },
     action: {
       default_title: "__MSG_extensionActionTitle__",
-      default_popup: "popup.html",
       default_icon: {
         16: "icon/16.png",
         32: "icon/32.png",
         48: "icon/48.png"
       }
     },
-    options_page: "options.html",
     storage: {
       managed_schema: MANAGED_SCHEMA_FILE
     },
@@ -168,8 +171,50 @@ export function createExtensionManifest({ version, release = false, profile = "d
       }
     }
   };
+}
 
-  return manifest;
+/**
+ * The manifest a build must emit. `assertExtensionBuild` compares the built `manifest.json` with
+ * it, so a WXT upgrade that changes a field WXT derives fails the build instead of shipping.
+ */
+export function createExtensionManifest({ version, release = false, profile = "dev" }) {
+  const { action, ...fields } = createManifestFields({ release, profile });
+
+  return {
+    manifest_version: 3,
+    ...fields,
+    version,
+    background: {
+      service_worker: "sw.js",
+      type: "module"
+    },
+    action: { ...action, default_popup: "popup.html" },
+    options_page: "options.html"
+  };
+}
+
+/**
+ * `build:manifestGenerated` hook: turns WXT's conventions back into the manifest of the build
+ * before WXT. WXT passes the manifest by reference, so this updates it in place.
+ * - the service worker keeps its file name `sw.js` (WXT names it after the entrypoint);
+ * - the options page stays `options_page`, opened in a tab, not an embedded `options_ui`;
+ * - the action title stays the localized one: WXT replaces it with the popup's `<title>`.
+ *
+ * @param {Record<string, any>} manifest
+ * @param {{ release?: boolean, profile?: string }} target
+ */
+export function normalizeWxtManifest(manifest, target) {
+  const fields = createManifestFields(target);
+  const optionsPage = manifest.options_ui?.page;
+
+  if (typeof optionsPage !== "string") {
+    throw new Error("WXT did not emit the options page in options_ui.page.");
+  }
+
+  delete manifest.options_ui;
+  manifest.options_page = optionsPage;
+  manifest.background = { ...manifest.background, service_worker: "sw.js" };
+  manifest.action = { ...manifest.action, default_title: fields.action.default_title };
 }
 
 export function validateExtensionManifest(
@@ -238,39 +283,6 @@ export function validateExtensionManifest(
   return issues;
 }
 
-export async function copyPublicAssets(outputDir) {
-  await mkdir(outputDir, { recursive: true });
-
-  await Promise.all(
-    STATIC_PUBLIC_FILES.map((entry) =>
-      cp(resolve(publicDir, entry), resolve(outputDir, entry), { recursive: true })
-    )
-  );
-}
-
-export async function writeGeneratedManifest(outputDir, { release = false, profile = "dev" } = {}) {
-  const appPackage = await readAppPackage();
-  const version =
-    typeof appPackage?.version === "string" && appPackage.version.length > 0
-      ? appPackage.version
-      : null;
-
-  if (!version) {
-    throw new Error(`Missing version in ${packageJsonPath}`);
-  }
-
-  const manifest = createExtensionManifest({ version, release, profile });
-  const issues = validateExtensionManifest(manifest, { version, release, profile });
-
-  if (issues.length > 0) {
-    throw new Error(`Generated manifest is invalid:\n- ${issues.join("\n- ")}`);
-  }
-
-  await writeJson(resolve(outputDir, "manifest.json"), manifest);
-  await writeJson(resolve(outputDir, MANAGED_SCHEMA_FILE), createManagedStorageSchema());
-  return manifest;
-}
-
 export async function assertExtensionBuild(outputDir, { version, release = false, profile } = {}) {
   await Promise.all(
     REQUIRED_BUILD_FILES.map((file) => access(resolve(outputDir, file), constants.R_OK))
@@ -278,8 +290,9 @@ export async function assertExtensionBuild(outputDir, { version, release = false
 
   const manifest = await readJson(resolve(outputDir, "manifest.json"));
   const resolvedProfile = profile ?? inferManifestProfile(manifest);
+  const resolvedVersion = version ?? (await readAppPackage()).version;
   const issues = validateExtensionManifest(manifest, {
-    version,
+    version: resolvedVersion,
     release,
     profile: resolvedProfile
   });
@@ -288,36 +301,54 @@ export async function assertExtensionBuild(outputDir, { version, release = false
     throw new Error(`Build output manifest is invalid:\n- ${issues.join("\n- ")}`);
   }
 
+  assertManifestMatches(
+    manifest,
+    createExtensionManifest({ version: resolvedVersion, release, profile: resolvedProfile })
+  );
   await assertClassicScriptsScoped(outputDir);
   return manifest;
 }
 
-/** A classic script without its own scope leaks every top-level binding into the page. */
+function assertManifestMatches(manifest, expected) {
+  const keys = [...new Set([...Object.keys(manifest), ...Object.keys(expected)])];
+  const differing = keys.filter((key) => !isDeepStrictEqual(manifest[key], expected[key]));
+
+  if (differing.length > 0) {
+    throw new Error(
+      `Build output manifest differs from createExtensionManifest() in: ${differing.join(", ")}`
+    );
+  }
+}
+
+/**
+ * Whether a classic script declares anything at its top level. Without its own scope every
+ * top-level `var`, `function` and `class` of a bundle becomes a global of the world it runs in:
+ * - in the isolated world a second run of the same file (the registered copy plus one injected on
+ *   Start or after a navigation) re-initializes the running copy's state before the script's own
+ *   guard can stop it;
+ * - in the page's MAIN world the minified names (`$`, `N`, `_t`…) overwrite the page's own globals,
+ *   e.g. jQuery's `$` (#48).
+ * WXT bundles unlisted scripts as an anonymous IIFE, a single expression statement.
+ *
+ * @param {string} code
+ * @returns {boolean}
+ */
+export function declaresTopLevelBindings(code) {
+  return parseAst(code).body.some((node) => node.type !== "ExpressionStatement");
+}
+
 async function assertClassicScriptsScoped(outputDir) {
   const unscoped = [];
 
   for (const file of CLASSIC_SCRIPT_CHUNKS) {
-    if (!isWrappedInScriptScope(await readFile(resolve(outputDir, file), "utf8"))) {
+    if (declaresTopLevelBindings(await readFile(resolve(outputDir, file), "utf8"))) {
       unscoped.push(file);
     }
   }
 
   if (unscoped.length > 0) {
-    throw new Error(
-      `Classic scripts must be wrapped in their own scope (contentScriptScopePlugin): ${unscoped.join(", ")}`
-    );
+    throw new Error(`Classic scripts must not declare top-level bindings: ${unscoped.join(", ")}`);
   }
-}
-
-export async function prepareBuildOutput({
-  outputDir = buildDir,
-  release = false,
-  profile = "dev"
-} = {}) {
-  await copyPublicAssets(outputDir);
-  const manifest = await writeGeneratedManifest(outputDir, { release, profile });
-  await assertExtensionBuild(outputDir, { version: manifest.version, release, profile });
-  return manifest;
 }
 
 export async function createChromeArchive({ sourceDir = buildDir, outputPath } = {}) {
@@ -341,11 +372,10 @@ export async function createChromeArchive({ sourceDir = buildDir, outputPath } =
     profile: sourceProfile
   });
 
-  const releaseManifest = createExtensionManifest({
-    version,
-    release: true,
-    profile: sourceProfile
-  });
+  // The release manifest is the built one without the development key.
+  const releaseManifest = Object.fromEntries(
+    Object.entries(sourceManifest).filter(([field]) => field !== "key")
+  );
   const releaseIssues = validateExtensionManifest(releaseManifest, {
     version,
     release: true,

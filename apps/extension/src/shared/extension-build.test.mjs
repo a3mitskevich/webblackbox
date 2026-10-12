@@ -8,15 +8,13 @@ import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
 import {
-  contentScriptScopePlugin,
-  isWrappedInScriptScope,
-  wrapInScriptScope
-} from "../../scripts/lib/content-script-scope.mjs";
-
-import {
   assertExtensionBuild,
   createChromeArchive,
   createExtensionManifest,
+  createManifestFields,
+  declaresTopLevelBindings,
+  normalizeWxtManifest,
+  readBuildTarget,
   validateExtensionManifest
 } from "../../scripts/lib/extension-build.mjs";
 import {
@@ -57,6 +55,9 @@ describe("managed storage schema", () => {
   });
 });
 
+/** How WXT bundles an unlisted script: an anonymous IIFE. */
+const asWxtIife = (code) => `(function(){${code}})();\n`;
+
 describe("content script scope", () => {
   // A content script with a guard, as bundled: top-level `var` state, then the guard check.
   const guardedScript = `
@@ -76,8 +77,8 @@ describe("content script scope", () => {
     expect(bare.readStarted()).toBe(false);
 
     const scoped = {};
-    runInNewContext(wrapInScriptScope(guardedScript), scoped);
-    runInNewContext(wrapInScriptScope(guardedScript), scoped);
+    runInNewContext(asWxtIife(guardedScript), scoped);
+    runInNewContext(asWxtIife(guardedScript), scoped);
     expect(scoped.readStarted()).toBe(true);
   });
 
@@ -92,40 +93,23 @@ describe("content script scope", () => {
     expect(bare).toHaveProperty("N");
 
     const scoped = { $: jQuery };
-    runInNewContext(wrapInScriptScope(minifiedHooks), scoped);
+    runInNewContext(asWxtIife(minifiedHooks), scoped);
     expect(scoped.$).toBe(jQuery);
     expect(Object.keys(scoped)).toEqual(["$"]);
   });
 
-  it("wraps content.js and injected.js only and moves their source maps with them", () => {
-    const plugin = contentScriptScopePlugin();
-    const map = { version: 3, sources: ["a.ts"], names: [], mappings: "AAAA;AACA" };
+  it("tells a scoped bundle from one that declares top-level bindings", () => {
+    const map = "//# sourceMappingURL=content.js.map";
 
-    for (const file of ["content.js", "injected.js"]) {
-      const code = `// module\nvar a = 1;\n//# sourceMappingURL=${file}.map`;
-      const result = plugin.renderChunk(code, {
-        path: `/x/build/${file}`,
-        map: JSON.stringify(map)
-      });
-      const wrapped = result?.code ?? "";
-
-      // The bundle keeps its lines and columns one line lower, and so does its map.
-      expect(wrapped.split("\n").slice(1, 3)).toEqual(["// module", "var a = 1;"]);
-      expect(result?.map).toEqual({ ...map, mappings: ";AAAA;AACA" });
-      expect(wrapped.trimEnd().endsWith("})();")).toBe(true);
-      expect(isWrappedInScriptScope(wrapped)).toBe(true);
-      // As emitted: tsup appends the source map comment after the plugin ran.
-      expect(isWrappedInScriptScope(`${wrapped}//# sourceMappingURL=${file}.map`)).toBe(true);
-    }
-
-    const code = "// module\nvar a = 1;";
-    expect(plugin.renderChunk(code, { path: "/x/build/content.js" })).toEqual({
-      code: wrapInScriptScope(code)
-    });
-    expect(plugin.renderChunk(code, { path: "/x/build/content-agent.js" })).toBeUndefined();
-    expect(plugin.renderChunk(code, { path: "/x/build/sw.js" })).toBeUndefined();
-    expect(isWrappedInScriptScope(code)).toBe(false);
-    expect(isWrappedInScriptScope(`${code}\n//# sourceMappingURL=x.js.map`)).toBe(false);
+    expect(declaresTopLevelBindings(`${asWxtIife("var a=1;")}${map}`)).toBe(false);
+    expect(declaresTopLevelBindings(`"use strict";${asWxtIife("var a=1;")}`)).toBe(false);
+    expect(declaresTopLevelBindings(`(() => { var a = 1; })();`)).toBe(false);
+    expect(declaresTopLevelBindings(`var a=1;${map}`)).toBe(true);
+    expect(declaresTopLevelBindings("function N() {}")).toBe(true);
+    expect(declaresTopLevelBindings("class G {}")).toBe(true);
+    // A named IIFE (WXT's `globalName`) declares its name in the page.
+    expect(declaresTopLevelBindings(`var injected=${asWxtIife("")}`)).toBe(true);
+    expect(declaresTopLevelBindings("export {};")).toBe(true);
   });
 
   it("fails the build check when a classic script leaks top-level bindings", async () => {
@@ -138,6 +122,71 @@ describe("content script scope", () => {
       await writeFile(resolve(root, "injected.js"), "var $=!1;\n");
       await expect(assertExtensionBuild(root, { version: "1.2.3" })).rejects.toThrow(
         /injected\.js/
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("WXT manifest", () => {
+  it("reads the profile and release flag of a build from the environment", () => {
+    expect(readBuildTarget({})).toEqual({ profile: "dev", release: false });
+    expect(
+      readBuildTarget({ WB_EXTENSION_PROFILE: "store-safe", WB_EXTENSION_RELEASE: "1" })
+    ).toEqual({ profile: "store-safe", release: true });
+    expect(() => readBuildTarget({ WB_EXTENSION_PROFILE: "firefox" })).toThrow(/firefox/);
+  });
+
+  it("leaves the entrypoint fields and the version to WXT", () => {
+    for (const profile of ["dev", "store-safe"]) {
+      const fields = createManifestFields({ profile });
+
+      for (const field of ["manifest_version", "version", "background", "options_page"]) {
+        expect(fields).not.toHaveProperty(field);
+      }
+
+      expect(fields.action).not.toHaveProperty("default_popup");
+    }
+  });
+
+  it("turns WXT's entrypoint conventions back into the manifest before WXT", () => {
+    for (const target of [
+      { profile: "dev", release: false },
+      { profile: "store-safe", release: true }
+    ]) {
+      const fields = createManifestFields(target);
+      // What WXT emits for those fields, its entrypoints and package.json.
+      const manifest = {
+        manifest_version: 3,
+        ...fields,
+        version: "1.2.3",
+        background: { type: "module", service_worker: "background.js" },
+        action: { ...fields.action, default_title: "WebBlackbox", default_popup: "popup.html" },
+        options_ui: { open_in_tab: false, page: "options.html" }
+      };
+
+      normalizeWxtManifest(manifest, target);
+
+      expect(manifest).toEqual(createExtensionManifest({ version: "1.2.3", ...target }));
+    }
+
+    expect(() => normalizeWxtManifest({}, { profile: "dev" })).toThrow(/options_ui/);
+  });
+
+  it("fails the build check when WXT emits a different manifest", async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "webblackbox-extension-wxt-test-"));
+    const { options_page: optionsPage, ...manifest } = createExtensionManifest({
+      version: "1.2.3"
+    });
+
+    try {
+      await writeBuildFixture(root, {
+        ...manifest,
+        options_ui: { open_in_tab: false, page: optionsPage }
+      });
+      await expect(assertExtensionBuild(root, { version: "1.2.3" })).rejects.toThrow(
+        /in: options_ui, options_page$/
       );
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -307,8 +356,8 @@ async function writeBuildFixture(outputDir, manifest) {
     "_locales/ru/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
     "_locales/zh_CN/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
     "content-agent.js": "export {};\n",
-    "content.js": wrapInScriptScope("void 0;"),
-    "injected.js": wrapInScriptScope("void 0;"),
+    "content.js": asWxtIife("void 0;"),
+    "injected.js": asWxtIife("void 0;"),
     "offscreen.html": "<!doctype html><title>offscreen</title>\n",
     "offscreen.js": "export {};\n",
     "options.html": "<!doctype html><title>options</title>\n",

@@ -1,15 +1,20 @@
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import { buildDir, createChromeArchive, prepareBuildOutput } from "./lib/extension-build.mjs";
+import { build } from "wxt";
+
+import { appRoot, buildDir, createChromeArchive } from "./lib/extension-build.mjs";
 
 const options = parseArgs(process.argv.slice(2));
 const outputDir = options.outputDir ? resolve(process.cwd(), options.outputDir) : buildDir;
 
-const manifest = await prepareBuildOutput({
-  outputDir,
-  release: options.release,
-  profile: options.profile
-});
+// Read by `wxt.config.ts` (`readBuildTarget`); the build checks its output in `build:done`.
+process.env.WB_EXTENSION_PROFILE = options.profile;
+process.env.WB_EXTENSION_RELEASE = options.release ? "1" : "0";
+
+await build({ root: appRoot, outDir: outputDir });
+
+const manifest = JSON.parse(await readFile(resolve(outputDir, "manifest.json"), "utf8"));
 
 const result = {
   ok: true,
