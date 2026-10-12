@@ -29,13 +29,13 @@
   "connectPolicy": "Administrators can set the same address for everyone with the managed policy key playerUrl.",
   "connectThisUrl": "This Player's URL",
   "recordTitle": "Record and share",
-  "recordStepProfile": "Open the extension popup and pick a recording profile: “Default”, “Lite”, “Full”, “QA” or “Full capture” — or leave “Auto (site rules)” and let the site rules pick.",
-  "recordStepStart": "Click “Start recording”. If it asks “Reload the Page When Recording Starts?”, pick “Reload and Start” so the page load is captured from scratch (“Start Without Reload” keeps the page as is). You can turn the question off in Settings: “Offer to reload the page when recording starts”.",
-  "recordStepStop": "Click “Stop” when you are done, then “Export”.",
-  "recordStepPassphrase": "Enter a passphrase of at least 8 characters. Archives are always encrypted (AES-GCM), and you need the passphrase to open the archive.",
+  "recordStepProfile": "Open the extension popup. It records with the “Maximum” profile — everything, recorded raw, with screenshots and tab video; the archive is always encrypted. “Light” records page-side only. Change the profile in the extension's Options (“Profiles”); site rules can still pick a profile for a site.",
+  "recordStepStart": "Click “Record”. It asks “Reload the Page When Recording Starts?”: “Reload and Record” captures the page load from scratch (the first requests and scripts); “Record Without Reload” keeps the page as is. Tick “Don't ask again” to keep your answer (Options: “Page reload on Start”). While Maximum records, Chrome shows a “started debugging this browser” bar: leave it open — “Cancel” there switches the recording to Light (the toolbar badge shows LITE).",
+  "recordStepStop": "Click “Stop” when you are done. The popup switches to the export step: click “Export archive” right away. “Later” keeps the recording on the Sessions page until you export or delete it (until the browser closes); the toolbar badge shows SAVE meanwhile.",
+  "recordStepPassphrase": "The first export asks for a passphrase of at least 8 characters. Archives are always encrypted (AES-GCM), and you need the passphrase to open the archive. It is remembered until the browser closes, so later exports do not ask; “Forget passphrase” drops it.",
   "recordStepOpen": "Open the exported .webblackbox file here: choose it with the file picker or drop it anywhere on this page — or use “Export and open in Player” on the extension's Sessions page. Enter the same passphrase when the Player asks.",
   "troubleTitle": "Troubleshooting",
   "troubleCrypto": "The Player verifies and decrypts archives with the Web Crypto API, which browsers expose only on HTTPS pages and on http://localhost / 127.0.0.1. On plain HTTP no archive opens (“Web Crypto API or Node crypto is required for SHA-256 hashing.”). Serve the Player over HTTPS.",
   "troubleIncomplete": "If a recording looks incomplete, open “About this recording” (the session block in the header, or the ⋯ menu) and check “What this archive contains”: every data kind is marked “complete”, “partial” or “not recorded”.",
-  "troubleErrors": "Errors show in the popup (for example “Start failed: …”) and as an “ERR” badge on the toolbar icon; technical details are in the service worker console (chrome://extensions → WebBlackbox → “service worker”)."
+  "troubleErrors": "Errors show in the popup (for example “Start failed: …”) and as an “ERR” badge on the toolbar icon. “LITE” means Full capture stopped and the recording goes on in Light; the popup says why, and the archive records it. Technical details are in the service worker console (chrome://extensions → WebBlackbox → “service worker”)."
 }
