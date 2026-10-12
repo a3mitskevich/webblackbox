@@ -175,6 +175,8 @@ function createPageWorldDomRecorder(
 
     state = "done";
     runtime.clearTimeout(startTimer);
+    // A page recorder that answers late must not record into batches nobody takes.
+    runtime.dispatch({ command: "stop", session });
     settleDrains();
     context.onDisabled();
   };

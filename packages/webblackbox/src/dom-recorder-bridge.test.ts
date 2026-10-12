@@ -168,9 +168,11 @@ describe("page-world DOM recorder handle", () => {
   });
 
   it("falls back to the agent's own capture when the page recorder never answers", () => {
-    const { emitted, disabledCount } = createHandle();
+    const { emitted, disabledCount, commands, start } = createHandle();
 
     vi.advanceTimersByTime(DOM_RECORDER_START_TIMEOUT_MS);
+
+    expect(commands.at(-1)).toEqual({ command: "stop", session: start.session });
 
     expect(emitted.map((entry) => entry.payload)).toEqual([
       {
