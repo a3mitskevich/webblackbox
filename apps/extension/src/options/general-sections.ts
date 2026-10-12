@@ -161,8 +161,9 @@ function renderField(
 
 /**
  * Field groups of a general section, filled from the draft. The fields of the editable Default
- * profile show only while it exists (installs from before Maximum); otherwise one notice points
- * to the profiles, where they are set per profile.
+ * profile show only while it exists (installs from before Maximum), under a notice that they edit
+ * that kept profile, not the one recording by default; otherwise one notice points to the
+ * profiles, where they are set per profile.
  */
 export function renderGeneralSection(
   section: GeneralSectionId,
@@ -174,8 +175,12 @@ export function renderGeneralSection(
     (group) => draft.hasDefaultProfile || !group.profileFields
   );
   const hidesProfileFields = groups.length < SECTION_LAYOUT[section].length;
+  const showsProfileFields = groups.some((group) => group.profileFields);
 
   return el("div", { className: "wb-section__groups", dataset: { generalSection: section } }, [
+    ...(showsProfileFields
+      ? [createProfilesLinkNotice(t, "optionsKeptDefaultFieldsNotice", "keptDefaultNotice")]
+      : []),
     ...groups.map((group) =>
       fieldGroup(
         group.title ? t(group.title) : null,
@@ -185,13 +190,19 @@ export function renderGeneralSection(
         })
       )
     ),
-    ...(hidesProfileFields ? [createProfileFieldsNotice(t)] : [])
+    ...(hidesProfileFields
+      ? [createProfilesLinkNotice(t, "optionsProfileFieldsNotice", "profileFieldsNotice")]
+      : [])
   ]);
 }
 
-function createProfileFieldsNotice(t: Translate): HTMLElement {
-  return el("div", { className: "wb-notice", dataset: { profileFieldsNotice: "" } }, [
-    el("p", { text: t("optionsProfileFieldsNotice") }),
+function createProfilesLinkNotice(
+  t: Translate,
+  message: ExtensionMessageKey,
+  marker: string
+): HTMLElement {
+  return el("div", { className: "wb-notice", dataset: { [marker]: "" } }, [
+    el("p", { text: t(message) }),
     el("a", {
       className: "wb-btn wb-btn--surface",
       text: t("optionsOpenProfiles"),

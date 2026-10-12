@@ -1,7 +1,13 @@
-import { DEFAULT_CAPTURE_POLICY } from "@webblackbox/protocol";
+import {
+  DEFAULT_CAPTURE_POLICY,
+  DEFAULT_RECORDER_CONFIG,
+  type CapturePolicy
+} from "@webblackbox/protocol";
 
+import { isDefaultLocalDataSettings } from "./local-data.js";
 import {
   DEFAULT_PROFILE_ID,
+  type ProfileLocalDataSettings,
   type ProfileRule,
   type RecordingProfile,
   type RecordingProfilesStore
@@ -15,6 +21,9 @@ import {
 
 /** Name a customised "Default" profile gets once Maximum takes over as the default. */
 export const CUSTOMISED_DEFAULT_PROFILE_NAME = "Default (custom)";
+/** Replaces the old Default description, which no longer holds for the kept profile. */
+export const CUSTOMISED_DEFAULT_PROFILE_DESCRIPTION =
+  "Your customised Default profile from an earlier version.";
 
 const LEGACY_DEFAULT_PROFILE_NAME = "Default";
 
@@ -72,38 +81,120 @@ export function isRemovedBuiltInProfileId(id: string): boolean {
 }
 
 /**
- * Whether a stored Default profile is still the one earlier versions created: the same capture
- * settings, whatever its name and description. A v1 capture policy equal to the defaults counts
- * as unset.
+ * Whether a stored Default profile still records as the one earlier versions created, whatever its
+ * name and description. Settings are compared by effect, so a Default that only went through a
+ * form or a v1 options save is still pristine: a setting equal to its default counts as unset (see
+ * `effectiveDefaultSettings`).
  */
 export function isPristineLegacyDefaultProfile(profile: RecordingProfile): boolean {
   return (
-    stableStringify(comparableDefault(profile)) ===
-    stableStringify(comparableDefault(createDefaultProfile()))
+    stableStringify(effectiveDefaultSettings(profile)) ===
+    stableStringify(effectiveDefaultSettings(createDefaultProfile()))
   );
 }
 
-/** Name, description and a default v1 capture policy say nothing about customisation. */
-const IGNORED_DEFAULT_PROFILE_KEYS = new Set(["name", "description", "basePolicy"]);
+/** Name and description say nothing about customisation. */
+const IGNORED_DEFAULT_PROFILE_KEYS = new Set(["name", "description"]);
 
-function comparableDefault(profile: RecordingProfile): Record<string, unknown> {
-  const { basePolicy } = profile;
-  const keepsBasePolicy =
-    basePolicy !== undefined &&
-    stableStringify(basePolicy) !== stableStringify(DEFAULT_CAPTURE_POLICY);
+/** Optional redaction settings and the value that means "unset". */
+const DEFAULT_REDACTION_OPTIONS: Readonly<Record<string, unknown>> = {
+  contentRedaction: true,
+  builtInHeuristics: true,
+  redactQueryParams: [],
+  redactStorageKeys: [],
+  valuePatterns: []
+};
+
+/** Local data defaults of earlier versions: unexported recordings were deleted after 10 minutes. */
+const LEGACY_DEFAULT_LOCAL_DATA_SETTINGS: Readonly<ProfileLocalDataSettings> = {
+  deleteAfterExport: true,
+  unexportedRetentionMinutes: 10
+};
+
+/**
+ * Capture policy fields a profile's recorder config takes from elsewhere: categories and redaction
+ * come from the profile itself (`toLegacyOptionsRecord`).
+ */
+const OVERRIDDEN_BASE_POLICY_KEYS = new Set(["categories", "redaction"]);
+
+/**
+ * What a stored Default does, with every setting equal to its default left out:
+ * - optional redaction settings at their default (as the profile form writes them back);
+ * - sampling and freeze-on-error equal to the v1 defaults (as a v1 options save pinned them);
+ * - a v1 capture policy that differs from the defaults only in fields the profile overrides
+ *   (categories added later, such as `tabsContext`);
+ * - local data settings equal to today's or the earlier defaults.
+ */
+function effectiveDefaultSettings(profile: RecordingProfile): Record<string, unknown> {
+  const basePolicy = effectiveBasePolicy(profile.basePolicy);
+  const localData = profile.localData;
 
   return {
     ...Object.fromEntries(
       Object.entries(profile).filter(([key]) => !IGNORED_DEFAULT_PROFILE_KEYS.has(key))
     ),
-    ...(keepsBasePolicy ? { basePolicy } : {})
+    redaction: withoutEntriesEqualTo(profile.redaction, DEFAULT_REDACTION_OPTIONS),
+    sampling: withoutEntriesEqualTo(profile.sampling, DEFAULT_RECORDER_CONFIG.sampling),
+    recorder: withoutEntriesEqualTo(profile.recorder, {
+      freezeOnError: DEFAULT_RECORDER_CONFIG.freezeOnError
+    }),
+    basePolicy,
+    localData: localData && isDefaultLocalData(localData) ? undefined : localData
   };
 }
 
+/** The capture policy fields that reach the recorder config; undefined when they are the defaults. */
+function effectiveBasePolicy(
+  policy: CapturePolicy | undefined
+): Record<string, unknown> | undefined {
+  if (!policy) {
+    return undefined;
+  }
+
+  const effective = withoutKeys(policy, OVERRIDDEN_BASE_POLICY_KEYS);
+
+  return stableStringify(effective) ===
+    stableStringify(withoutKeys(DEFAULT_CAPTURE_POLICY, OVERRIDDEN_BASE_POLICY_KEYS))
+    ? undefined
+    : effective;
+}
+
+/** Today's local data defaults or the earlier ones. */
+function isDefaultLocalData(settings: ProfileLocalDataSettings): boolean {
+  return (
+    isDefaultLocalDataSettings(settings) ||
+    stableStringify(settings) === stableStringify(LEGACY_DEFAULT_LOCAL_DATA_SETTINGS)
+  );
+}
+
+function withoutKeys(value: object, keys: ReadonlySet<string>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !keys.has(key)));
+}
+
+function withoutEntriesEqualTo(
+  value: object,
+  defaults: Readonly<Record<string, unknown>>
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, entry]) =>
+        !Object.hasOwn(defaults, key) || stableStringify(entry) !== stableStringify(defaults[key])
+    )
+  );
+}
+
 function renameCustomisedDefault(profile: RecordingProfile): RecordingProfile {
-  return profile.name === LEGACY_DEFAULT_PROFILE_NAME
-    ? { ...profile, name: CUSTOMISED_DEFAULT_PROFILE_NAME }
-    : profile;
+  const legacyDescription = createDefaultProfile().description;
+
+  return {
+    ...profile,
+    ...(profile.name === LEGACY_DEFAULT_PROFILE_NAME
+      ? { name: CUSTOMISED_DEFAULT_PROFILE_NAME }
+      : {}),
+    ...(profile.description === legacyDescription
+      ? { description: CUSTOMISED_DEFAULT_PROFILE_DESCRIPTION }
+      : {})
+  };
 }
 
 /** JSON with object keys sorted, so stored and freshly built profiles compare by content. */

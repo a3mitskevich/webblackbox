@@ -63,6 +63,7 @@
   "optionsPlayerUrlManaged": "Set by your organization's policy.",
   "optionsErrorPlayerUrl": "Enter an https:// address (http:// only for localhost or 127.0.0.1).",
   "optionsProfileFieldsNotice": "Masking, pointer, sampling and incident settings belong to a recording profile. The built-in profiles (Maximum and Light) cannot be edited: duplicate one under Profiles and change the copy.",
+  "optionsKeptDefaultFieldsNotice": "These settings edit “Default (custom)”, your profile kept from an earlier version. New recordings use it only if you pick it: otherwise they use the default profile set under Profiles (Maximum unless you changed it) or the one a rule picks.",
   "optionsOpenProfiles": "Open profiles",
   "optionsStartReloadAsk": "Ask, reload by default",
   "optionsStartReloadAskDescription": "Start asks; \"Reload and record\" is the main choice. \"Don't ask again\" there sets one of the options below.",

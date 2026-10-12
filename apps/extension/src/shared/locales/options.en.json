@@ -37,7 +37,7 @@
   "optionsNavExport": "Export & encryption",
   "optionsNavLanguage": "Language",
   "optionsNavTransfer": "Import / Export",
-  "optionsSensitivityHint": "What is masked before data leaves the page. Applies to the Default profile.",
+  "optionsSensitivityHint": "What is masked before data leaves the page. Each recording profile has its own masking settings, set under Profiles.",
   "optionsPointerHint": "How often pointer and scroll movement is sampled.",
   "optionsSamplingHint": "Where the extension runs, when it flags incidents and how often it captures; lower values cost less CPU.",
   "optionsBudgetsHint": "Warn when a page breaks these performance limits.",

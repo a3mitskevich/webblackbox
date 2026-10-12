@@ -11,12 +11,19 @@ import { migrateStoreToBuiltInPresets } from "./preset-migration.js";
 import { describeIssues, parseProfilesStore } from "./storage.js";
 
 export const PROFILES_EXPORT_FORMAT = "webblackbox-recording-profiles";
+/**
+ * Exports written since Maximum and Light became the built-in profiles carry it. A file without it
+ * comes from an earlier version and is migrated to the built-in presets on import; a file with it
+ * is imported as it is, so its "Default (custom)" profile and rules survive a round trip.
+ */
+export const PROFILES_EXPORT_PRESETS_VERSION = 2;
 /** Imports larger than this are rejected before parsing. */
 export const MAX_PROFILES_IMPORT_BYTES = 1024 * 1024;
 
 /** JSON file handed to testers so everyone records with the same profiles and rules. */
 export type ProfilesExportFile = RecordingProfilesStore & {
   format: typeof PROFILES_EXPORT_FORMAT;
+  presetsVersion: typeof PROFILES_EXPORT_PRESETS_VERSION;
   exportedAt: string;
 };
 
@@ -44,6 +51,8 @@ export type ProfilesImportPreview =
 
 const exportEnvelopeSchema = recordingProfilesStoreSchema.extend({
   format: z.literal(PROFILES_EXPORT_FORMAT),
+  // Absent in exports of earlier versions.
+  presetsVersion: z.number().int().positive().optional(),
   exportedAt: z.string().max(64).optional()
 });
 
@@ -53,6 +62,7 @@ export function createProfilesExportFile(
 ): ProfilesExportFile {
   return {
     format: PROFILES_EXPORT_FORMAT,
+    presetsVersion: PROFILES_EXPORT_PRESETS_VERSION,
     exportedAt: now.toISOString(),
     schemaVersion: PROFILES_SCHEMA_VERSION,
     defaultProfileId: store.defaultProfileId,
@@ -112,7 +122,9 @@ export function previewProfilesImport(
   }
 
   // An export of an earlier version still names the removed presets (and the old Default).
-  const next = migrateStoreToBuiltInPresets(parsed.store);
+  const next = isEarlierPresetsExport(envelope.data.presetsVersion)
+    ? migrateStoreToBuiltInPresets(parsed.store)
+    : parsed.store;
 
   return { ok: true, next, diff: diffProfilesStores(current, next) };
 }
@@ -203,4 +215,8 @@ function changedFields(left: object, right: object): string[] {
 
 function hasEntityChanges(diff: EntityDiff): boolean {
   return diff.added.length > 0 || diff.removed.length > 0 || diff.changed.length > 0;
+}
+
+function isEarlierPresetsExport(presetsVersion: number | undefined): boolean {
+  return presetsVersion === undefined || presetsVersion < PROFILES_EXPORT_PRESETS_VERSION;
 }

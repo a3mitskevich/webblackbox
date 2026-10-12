@@ -37,7 +37,7 @@
   "optionsNavExport": "导出与加密",
   "optionsNavLanguage": "语言",
   "optionsNavTransfer": "导入 / 导出",
-  "optionsSensitivityHint": "数据离开页面前要遮盖的内容，作用于默认配置。",
+  "optionsSensitivityHint": "数据离开页面前要遮盖的内容。每个录制配置都有自己的遮盖设置，可在“录制配置”中修改。",
   "optionsPointerHint": "指针和滚动的采样频率。",
   "optionsSamplingHint": "扩展在何处运行、何时发出异常提醒以及采集节奏；数值越低越省 CPU。",
   "optionsBudgetsHint": "页面超出这些性能阈值时发出提醒。",

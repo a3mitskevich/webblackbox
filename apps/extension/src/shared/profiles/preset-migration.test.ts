@@ -1,13 +1,16 @@
-import { DEFAULT_CAPTURE_POLICY } from "@webblackbox/protocol";
+import { DEFAULT_CAPTURE_POLICY, DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_PROFILE_ID,
   PROFILES_SCHEMA_VERSION,
+  recordingProfileSchema,
   type ProfileRule,
+  type RecordingProfile,
   type RecordingProfilesStore
 } from "./model.js";
 import {
+  CUSTOMISED_DEFAULT_PROFILE_DESCRIPTION,
   CUSTOMISED_DEFAULT_PROFILE_NAME,
   isPristineLegacyDefaultProfile,
   isRemovedBuiltInProfileId,
@@ -21,6 +24,96 @@ const MINE = duplicateProfile(createDefaultProfile(), { id: "mine", name: "Mine"
 function rule(id: string, profileId: string): ProfileRule {
   return { id, profileId, priority: 1, enabled: true, match: { hosts: [`${id}.example.com`] } };
 }
+
+/** A profile as `chrome.storage.local` gives it back: through the stored profile schema. */
+function stored(profile: unknown): RecordingProfile {
+  return recordingProfileSchema.parse(profile) as RecordingProfile;
+}
+
+/** The Default profile built from v1 options, as the settings migration builds it. */
+function fromV1Options(options: Record<string, unknown>): RecordingProfile {
+  const [profile] = migrateLegacyOptionsToProfiles(options).profiles;
+
+  if (!profile) {
+    throw new Error("v1 options built no Default profile");
+  }
+
+  return stored(profile);
+}
+
+const PRISTINE = createDefaultProfile();
+
+/** Stored Defaults of earlier versions nobody customised, in the shapes those versions wrote. */
+const UNTOUCHED_DEFAULTS: Record<string, RecordingProfile> = {
+  // The profile editor writes every redaction setting back, optional ones included.
+  "saved unchanged by the profile editor": stored({
+    ...PRISTINE,
+    redaction: {
+      ...PRISTINE.redaction,
+      contentRedaction: true,
+      builtInHeuristics: true,
+      redactQueryParams: [],
+      redactStorageKeys: [],
+      valuePatterns: []
+    }
+  }),
+  // The options page of v1 saved the whole config: every sampling value and freeze-on-error.
+  "migrated from a v1 options page save with the defaults": fromV1Options({
+    ...DEFAULT_RECORDER_CONFIG,
+    optionsVersion: 1,
+    performanceBudget: { lcpWarnMs: 2_500, requestWarnMs: 1_000, errorRateWarnPct: 10 }
+  }),
+  // Capture policies written before the tabs context category existed lack it.
+  "migrated from a v1 capture policy older than the tabs context": fromV1Options({
+    optionsVersion: 1,
+    capturePolicy: {
+      ...DEFAULT_CAPTURE_POLICY,
+      categories: Object.fromEntries(
+        Object.entries(DEFAULT_CAPTURE_POLICY.categories).filter(([key]) => key !== "tabsContext")
+      )
+    }
+  }),
+  "with the earlier local data defaults written out": stored({
+    ...PRISTINE,
+    localData: { deleteAfterExport: true, unexportedRetentionMinutes: 10 }
+  }),
+  "with today's local data defaults written out": stored({
+    ...PRISTINE,
+    localData: { deleteAfterExport: true }
+  })
+};
+
+/** Stored Defaults whose recordings differ from the untouched one. */
+const CUSTOMISED_DEFAULTS: Record<string, RecordingProfile> = {
+  "more masking": stored({
+    ...PRISTINE,
+    redaction: { ...PRISTINE.redaction, blockedSelectors: [".pii"] }
+  }),
+  "content masking off in the profile editor": stored({
+    ...PRISTINE,
+    redaction: { ...PRISTINE.redaction, contentRedaction: false }
+  }),
+  "query parameters masked": stored({
+    ...PRISTINE,
+    redaction: { ...PRISTINE.redaction, redactQueryParams: ["email"] }
+  }),
+  "other sampling": stored({ ...PRISTINE, sampling: { scrollHz: 7 } }),
+  "v1 sampling changed": fromV1Options({
+    ...DEFAULT_RECORDER_CONFIG,
+    optionsVersion: 1,
+    sampling: { ...DEFAULT_RECORDER_CONFIG.sampling, mousemoveHz: 33 }
+  }),
+  "no freeze on error": stored({ ...PRISTINE, recorder: { freezeOnError: false } }),
+  "synthetic capture context": fromV1Options({
+    optionsVersion: 1,
+    capturePolicy: { ...DEFAULT_CAPTURE_POLICY, captureContext: "synthetic" }
+  }),
+  "local copy kept after export": stored({ ...PRISTINE, localData: { deleteAfterExport: false } }),
+  "unexported recordings kept for an hour": stored({
+    ...PRISTINE,
+    localData: { deleteAfterExport: true, unexportedRetentionMinutes: 60 }
+  })
+};
 
 function legacyStore(partial: Partial<RecordingProfilesStore> = {}): RecordingProfilesStore {
   return {
@@ -69,7 +162,13 @@ describe("migrateStoreToBuiltInPresets", () => {
       legacyStore({ profiles: [customised], rules: [rule("default", DEFAULT_PROFILE_ID)] })
     );
 
-    expect(migrated.profiles).toEqual([{ ...customised, name: CUSTOMISED_DEFAULT_PROFILE_NAME }]);
+    expect(migrated.profiles).toEqual([
+      {
+        ...customised,
+        name: CUSTOMISED_DEFAULT_PROFILE_NAME,
+        description: CUSTOMISED_DEFAULT_PROFILE_DESCRIPTION
+      }
+    ]);
     expect(migrated.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
     expect(migrated.rules[0]?.profileId).toBe(DEFAULT_PROFILE_ID);
   });
@@ -78,9 +177,53 @@ describe("migrateStoreToBuiltInPresets", () => {
     const renamed = { ...createDefaultProfile(), name: "Shop", sampling: { scrollHz: 3 } };
 
     expect(migrateStoreToBuiltInPresets(legacyStore({ profiles: [renamed] })).profiles).toEqual([
-      renamed
+      { ...renamed, description: CUSTOMISED_DEFAULT_PROFILE_DESCRIPTION }
     ]);
   });
+
+  it("replaces the old Default description only", () => {
+    const customised = { ...createDefaultProfile(), sampling: { scrollHz: 3 } };
+    const described = { ...customised, description: "Checkout team settings" };
+    const [kept] = migrateStoreToBuiltInPresets(legacyStore({ profiles: [customised] })).profiles;
+    const [keptDescribed] = migrateStoreToBuiltInPresets(
+      legacyStore({ profiles: [described] })
+    ).profiles;
+
+    expect(kept?.description).toBe(CUSTOMISED_DEFAULT_PROFILE_DESCRIPTION);
+    expect(keptDescribed?.description).toBe("Checkout team settings");
+  });
+
+  it.each(Object.entries(UNTOUCHED_DEFAULTS))(
+    "drops a Default %s and moves its references to Maximum",
+    (_label, profile) => {
+      const migrated = migrateStoreToBuiltInPresets(
+        legacyStore({ profiles: [profile, MINE], rules: [rule("default", DEFAULT_PROFILE_ID)] })
+      );
+
+      expect(migrated.profiles).toEqual([MINE]);
+      expect(migrated.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
+      expect(migrated.rules[0]?.profileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
+    }
+  );
+
+  it.each(Object.entries(CUSTOMISED_DEFAULTS))(
+    "keeps a Default with %s as Default (custom)",
+    (_label, profile) => {
+      const migrated = migrateStoreToBuiltInPresets(
+        legacyStore({ profiles: [profile], rules: [rule("default", DEFAULT_PROFILE_ID)] })
+      );
+
+      expect(migrated.profiles).toEqual([
+        {
+          ...profile,
+          name: CUSTOMISED_DEFAULT_PROFILE_NAME,
+          description: CUSTOMISED_DEFAULT_PROFILE_DESCRIPTION
+        }
+      ]);
+      expect(migrated.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
+      expect(migrated.rules[0]?.profileId).toBe(DEFAULT_PROFILE_ID);
+    }
+  );
 
   it("keeps a user profile chosen as the default and user rules as they are", () => {
     const store = legacyStore({ defaultProfileId: "mine", rules: [rule("mine", "mine")] });

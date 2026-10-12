@@ -5,11 +5,13 @@ import {
   PROFILES_SCHEMA_VERSION,
   type RecordingProfilesStore
 } from "./model.js";
+import { CUSTOMISED_DEFAULT_PROFILE_NAME } from "./preset-migration.js";
 import { BUILT_IN_PROFILE_IDS, createDefaultProfile, duplicateProfile } from "./presets.js";
 import {
   createProfilesExportFile,
   MAX_PROFILES_IMPORT_BYTES,
   PROFILES_EXPORT_FORMAT,
+  PROFILES_EXPORT_PRESETS_VERSION,
   previewProfilesImport
 } from "./transfer.js";
 
@@ -41,6 +43,15 @@ function exported(partial: Partial<RecordingProfilesStore>): string {
   );
 }
 
+/** An export of an earlier version: the same file without the presets version marker. */
+function exportedByEarlierVersion(partial: Partial<RecordingProfilesStore>): string {
+  const file = JSON.parse(exported(partial)) as Record<string, unknown>;
+
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(file).filter(([key]) => key !== "presetsVersion"))
+  );
+}
+
 describe("createProfilesExportFile", () => {
   it("wraps the store with a format marker", () => {
     const file = createProfilesExportFile(store(), new Date("2026-10-03T00:00:00.000Z"));
@@ -48,6 +59,7 @@ describe("createProfilesExportFile", () => {
     expect(file).toMatchObject({
       format: PROFILES_EXPORT_FORMAT,
       exportedAt: "2026-10-03T00:00:00.000Z",
+      presetsVersion: PROFILES_EXPORT_PRESETS_VERSION,
       schemaVersion: 2,
       defaultProfileId: BUILT_IN_PROFILE_IDS.maximum
     });
@@ -162,7 +174,7 @@ describe("previewProfilesImport", () => {
   });
 
   it("moves an export of an earlier version to the built-in Maximum and Light", () => {
-    const legacy = exported({
+    const legacy = exportedByEarlierVersion({
       defaultProfileId: DEFAULT_PROFILE_ID,
       profiles: [createDefaultProfile(), STAGE_PROFILE],
       rules: [{ ...STAGE_RULE, profileId: "builtin:qa" }],
@@ -176,6 +188,47 @@ describe("previewProfilesImport", () => {
         removedRecommendedProfileIds: [BUILT_IN_PROFILE_IDS.lite]
       })
     );
+  });
+
+  it("drops an untouched Default of an earlier version's export, a customised one is kept", () => {
+    const customised = { ...createDefaultProfile(), sampling: { scrollHz: 3 } };
+    const pristine = previewProfilesImport(
+      exportedByEarlierVersion({
+        defaultProfileId: DEFAULT_PROFILE_ID,
+        profiles: [createDefaultProfile()],
+        rules: [{ ...STAGE_RULE, profileId: DEFAULT_PROFILE_ID }]
+      }),
+      store()
+    );
+    const kept = previewProfilesImport(
+      exportedByEarlierVersion({ profiles: [customised] }),
+      store()
+    );
+
+    expect(pristine.ok && pristine.next.profiles).toEqual([]);
+    expect(pristine.ok && pristine.next.rules[0]?.profileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
+    expect(kept.ok && kept.next.profiles[0]?.name).toBe(CUSTOMISED_DEFAULT_PROFILE_NAME);
+  });
+
+  it("imports its own export as it is: a kept Default stays the default and keeps its rules", () => {
+    // A kept "Default (custom)", reset to the old defaults and then chosen as the default again:
+    // migrating the file would drop it and repoint its rule.
+    const keptDefault = {
+      ...createDefaultProfile(),
+      name: CUSTOMISED_DEFAULT_PROFILE_NAME
+    };
+    const current = store({
+      defaultProfileId: DEFAULT_PROFILE_ID,
+      profiles: [keptDefault, STAGE_PROFILE],
+      rules: [{ ...STAGE_RULE, profileId: DEFAULT_PROFILE_ID }]
+    });
+    const preview = previewProfilesImport(
+      JSON.stringify(createProfilesExportFile(current)),
+      current
+    );
+
+    expect(preview.ok && preview.next).toEqual(current);
+    expect(preview.ok && preview.diff.hasChanges).toBe(false);
   });
 
   it("carries deleted recommended profiles and reports restoring or deleting them", () => {

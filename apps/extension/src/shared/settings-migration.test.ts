@@ -15,7 +15,10 @@ import {
   PROFILES_STORAGE_KEY,
   type RecordingProfilesStore
 } from "./profiles/model.js";
-import { CUSTOMISED_DEFAULT_PROFILE_NAME } from "./profiles/preset-migration.js";
+import {
+  CUSTOMISED_DEFAULT_PROFILE_DESCRIPTION,
+  CUSTOMISED_DEFAULT_PROFILE_NAME
+} from "./profiles/preset-migration.js";
 import {
   BUILT_IN_PROFILE_IDS,
   createDefaultProfile,
@@ -343,7 +346,13 @@ describe("planSettingsMigration to the built-in presets (version 2)", () => {
     );
     const store = migrated[PROFILES_STORAGE_KEY] as RecordingProfilesStore;
 
-    expect(store.profiles).toEqual([{ ...customised, name: CUSTOMISED_DEFAULT_PROFILE_NAME }]);
+    expect(store.profiles).toEqual([
+      {
+        ...customised,
+        name: CUSTOMISED_DEFAULT_PROFILE_NAME,
+        description: CUSTOMISED_DEFAULT_PROFILE_DESCRIPTION
+      }
+    ]);
     expect(store.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
     expect(store.rules[0]?.profileId).toBe(DEFAULT_PROFILE_ID);
   });

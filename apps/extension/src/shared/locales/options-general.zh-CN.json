@@ -63,6 +63,7 @@
   "optionsPlayerUrlManaged": "由组织策略设置。",
   "optionsErrorPlayerUrl": "请输入 https:// 地址（http:// 仅限 localhost 或 127.0.0.1）。",
   "optionsProfileFieldsNotice": "遮罩、指针、采样和事件设置属于录制配置。内置配置（“最大”和“轻量”）不可编辑：请在“录制配置”中复制一个并修改副本。",
+  "optionsKeptDefaultFieldsNotice": "这些设置修改的是从旧版本保留下来的配置“Default (custom)”。只有在你选择它时，新录制才会使用它；否则将使用“录制配置”中设定的默认配置（未更改时为“最大”），或由规则选中的配置。",
   "optionsOpenProfiles": "打开录制配置",
   "optionsStartReloadAsk": "询问，默认重新加载",
   "optionsStartReloadAskDescription": "开始时询问，主选项为“重新加载并录制”。勾选“不再询问”会选定下面的某一项。",
