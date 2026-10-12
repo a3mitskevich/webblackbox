@@ -155,11 +155,12 @@ WebBlackbox captures events from these sources:
 #### Content Script
 
 - **User interactions** — click, dblclick, keydown, input, change, submit, focus, blur, scroll, wheel, sampled pointer moves, pointer targets with dead-click detection, resize, visibilitychange
-- **DOM mutations** — Batched MutationObserver records
-- **DOM snapshots** — Page snapshots at intervals (top frame)
+- **DOM log (rrweb)** — the page recorded with rrweb 2.x (top frame): a full snapshot, then every change, field input and click with node ids (`dom.rrweb.event`, schema `rrweb/v2`). rrweb runs in the page's MAIN world (`injected-dom.js`, injected on Start next to the page hooks when the profile records the DOM) so it sees CSS written through the CSSOM; the content script starts and stops it over the page bridge. Pressure mode: pages over 20,000 nodes are left to the snapshots below, and rrweb pauses (a gap marked on the batch) while its main-thread time or one change set is over budget, resuming with a fresh full snapshot.
+- **DOM mutations** — Batched MutationObserver summaries, where rrweb does not record
+- **DOM snapshots** — Page snapshots at intervals (top frame), where rrweb does not record
 - **Screenshots** — Lite only: SnapDOM captures on idle, off by default (`screenshotIdleMs: 0`); Full takes screenshots through CDP
 
-In Full mode the content script records DOM mutations and DOM snapshots at the default DOM level (`masked`, recorded through the profile's masking rules like `allow`); it skips them when the profile sets the DOM to `wireframe` or `off`, and skips storage snapshots unless the profile records page storage.
+In both modes rrweb records the DOM at every level but `off`. Where it does not run, in Full mode the content script records DOM mutations and DOM snapshots at the default DOM level (`masked`, recorded through the profile's masking rules like `allow`); it skips them when the profile sets the DOM to `wireframe` or `off`, and skips storage snapshots unless the profile records page storage.
 
 #### Injected Script
 
@@ -282,15 +283,16 @@ The query API filters events by:
 
 ### Analysis Capabilities
 
-| Analysis           | Method                         | Description                            |
-| ------------------ | ------------------------------ | -------------------------------------- |
-| Network waterfall  | `getNetworkWaterfall()`        | Complete request/response timeline     |
-| Realtime streams   | `getRealtimeNetworkTimeline()` | WebSocket and SSE analysis             |
-| Storage operations | `getStorageTimeline()`         | All storage operations chronologically |
-| DOM diffing        | `getDomDiffTimeline()`         | Changes between DOM snapshots          |
-| Performance        | `getPerformanceArtifacts()`    | CPU profiles, heap snapshots, vitals   |
-| Action spans       | `buildDerived()`               | User action analysis with stats        |
-| Session comparison | `compareWith()`                | Diff two sessions                      |
+| Analysis           | Method                         | Description                                                                   |
+| ------------------ | ------------------------------ | ----------------------------------------------------------------------------- |
+| Network waterfall  | `getNetworkWaterfall()`        | Complete request/response timeline                                            |
+| Realtime streams   | `getRealtimeNetworkTimeline()` | WebSocket and SSE analysis                                                    |
+| Storage operations | `getStorageTimeline()`         | All storage operations chronologically                                        |
+| DOM diffing        | `getDomDiffTimeline()`         | Changes between DOM snapshots                                                 |
+| DOM at a moment    | `RrwebDomReplay`               | Headless DOM rebuilt from the rrweb log: `domAt`, `diff`, click/input targets |
+| Performance        | `getPerformanceArtifacts()`    | CPU profiles, heap snapshots, vitals                                          |
+| Action spans       | `buildDerived()`               | User action analysis with stats                                               |
+| Session comparison | `compareWith()`                | Diff two sessions                                                             |
 
 ### Code Generation
 

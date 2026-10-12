@@ -91,7 +91,7 @@ describe("React player", () => {
       "aria-valuetext",
       "0.00s of 17.80s"
     );
-    expect(screen.getAllByRole("tab")).toHaveLength(8);
+    expect(screen.getAllByRole("tab")).toHaveLength(9);
     expect(screen.getAllByTestId("event-row").length).toBeGreaterThan(5);
     expect(screen.getByTestId("now-line")).toHaveTextContent("now");
   });

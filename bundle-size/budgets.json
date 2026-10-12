@@ -8,6 +8,13 @@
       "note": "MAIN-world page hook, executed on every recorded navigation. 20,549 B / 7,346 B gzip at introduction."
     },
     {
+      "path": "apps/extension/.output/chrome-mv3/injected-dom.js",
+      "maxBytes": 110000,
+      "maxGzipBytes": 36000,
+      "forbidSources": ["node_modules/zod/"],
+      "note": "rrweb DOM recorder (MAIN world, top frame of a recorded tab, injected on Start when the profile records the DOM): rrweb 2.1.7 record + our masking pass and pressure mode. 99,188 B / 31,532 B gzip at introduction (task 60, WXT build)."
+    },
+    {
       "path": "apps/extension/.output/chrome-mv3/content-script.js",
       "maxBytes": 30000,
       "maxGzipBytes": 10000,

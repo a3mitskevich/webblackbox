@@ -1,4 +1,5 @@
 import { actionDetailTool } from "./action-detail.js";
+import { domAtTool, domDiffTool, elementContextTool } from "./dom.js";
 import { frameAtTool } from "./frame-at.js";
 import { findOnPageTool, pageStateAtTool } from "./page-state.js";
 import type { ArchiveTool } from "./registry.js";
@@ -22,6 +23,9 @@ export const ARCHIVE_TOOLS: readonly ArchiveTool[] = [
   actionDetailTool,
   requestDetailTool,
   frameAtTool,
+  domAtTool,
+  elementContextTool,
+  domDiffTool,
   pageStateAtTool,
   findOnPageTool
 ];

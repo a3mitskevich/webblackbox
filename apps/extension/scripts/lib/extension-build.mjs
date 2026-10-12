@@ -48,12 +48,13 @@ const URL_MATCHES = ["<all_urls>"];
 
 /**
  * Bundles Chrome runs as classic scripts in a page: the content script and the capture agent in
- * the isolated world, the page hooks in the MAIN world.
+ * the isolated world, the page hooks and the rrweb DOM recorder in the MAIN world.
  */
 export const CLASSIC_SCRIPT_FILES = Object.freeze([
   EXTENSION_FILES.contentScript,
   EXTENSION_FILES.contentAgent,
-  EXTENSION_FILES.injectedHooks
+  EXTENSION_FILES.injectedHooks,
+  EXTENSION_FILES.domRecorder
 ]);
 
 const REQUIRED_BUILD_FILES = [

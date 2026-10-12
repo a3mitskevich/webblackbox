@@ -9,7 +9,8 @@ export const RAIL_TABS = [
   "storage",
   "tabs",
   "perf",
-  "compare"
+  "compare",
+  "replay"
 ] as const;
 
 export type RailTab = (typeof RAIL_TABS)[number];

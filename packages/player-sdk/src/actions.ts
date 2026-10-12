@@ -37,6 +37,8 @@ const DEFAULT_TIMELINE_ERROR_LIMIT = 5;
 export function deriveActionView(scoped: WebBlackboxEvent[]): PlayerDerivedView {
   const explicitSpans = new Map<string, ActionSpan>();
   const derivedSpans: ActionSpan[] = [];
+  /** Trigger ids of explicit spans that are user (trigger-type) events. */
+  const userTriggerIds = new Set<string>();
   let openDerivedSpan: ActionSpan | null = null;
 
   for (const event of scoped) {
@@ -44,6 +46,21 @@ export function deriveActionView(scoped: WebBlackboxEvent[]): PlayerDerivedView 
       const current =
         explicitSpans.get(event.ref.act) ?? createActionSpan(event.ref.act, event.id, event.mono);
       current.endMono = Math.max(current.endMono, event.mono);
+
+      // The user event triggers the action even when a linked event sorts before it (an rrweb
+      // batch is stamped with its first event, a few ms ahead of our own click record).
+      if (
+        current.triggerEventId !== event.id &&
+        ACTION_TRIGGER_TYPES.has(event.type) &&
+        !userTriggerIds.has(current.triggerEventId)
+      ) {
+        current.triggerEventId = event.id;
+      }
+
+      if (ACTION_TRIGGER_TYPES.has(event.type)) {
+        userTriggerIds.add(current.triggerEventId);
+      }
+
       current.eventIds.push(event.id);
       updateActionStats(current, event);
       explicitSpans.set(event.ref.act, current);

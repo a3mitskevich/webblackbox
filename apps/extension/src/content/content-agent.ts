@@ -1,11 +1,19 @@
+import { createPageWorldDomRecorderFactory } from "webblackbox/dom-recorder-bridge";
 import { LiteCaptureAgent } from "webblackbox/lite-capture-agent";
 import type { LiteCaptureAgentOptions } from "webblackbox/types";
 
 import { loadExtensionLocale, type ExtensionLocale } from "../shared/i18n.js";
 import { publishContentAgent } from "./content-agent-api.js";
 
+/**
+ * The agent records the DOM through the rrweb recorder that the service worker injects into the
+ * page's MAIN world (`injected-dom.js`); its own DOM capture takes over where rrweb cannot run.
+ */
 export function createContentCaptureAgent(options: LiteCaptureAgentOptions): LiteCaptureAgent {
-  return new LiteCaptureAgent(options);
+  return new LiteCaptureAgent({
+    domRecorder: createPageWorldDomRecorderFactory(),
+    ...options
+  });
 }
 
 /**

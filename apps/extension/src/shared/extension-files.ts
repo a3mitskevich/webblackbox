@@ -11,6 +11,11 @@ export const EXTENSION_FILES = {
   contentScript: "content-script.js",
   /** Page hooks, run in the page's MAIN world (`entrypoints/injected.ts`). */
   injectedHooks: "injected.js",
+  /**
+   * The rrweb DOM recorder, run in the top frame's MAIN world next to the page hooks
+   * (`entrypoints/injected-dom.ts`).
+   */
+  domRecorder: "injected-dom.js",
   /** Capture agent, injected into a recording frame's isolated world on request. */
   contentAgent: "content-agent.js",
   /** Service worker (`entrypoints/background.ts`). */

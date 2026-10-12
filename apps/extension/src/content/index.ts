@@ -9,6 +9,7 @@ import { clampBodyCaptureMaxBytes } from "../shared/body-capture-limits.js";
 import { getChromeApi, type ChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { PORT_NAMES, type ExtensionOutboundMessage } from "../shared/messages.js";
 import { readContentAgent, type ContentAgentApi } from "./content-agent-api.js";
+import { createDomCheckpointLatch } from "./dom-checkpoint-latch.js";
 import { CONTENT_EVENT_FLUSH_CHUNK, resolveContentEventFlushDelay } from "./flush-policy.js";
 import { claimContentScriptSlot } from "./script-guard.js";
 
@@ -31,7 +32,17 @@ let pendingEventFlushDelayMs = Number.POSITIVE_INFINITY;
 const PORT_RECONNECT_INITIAL_MS = 250;
 const PORT_RECONNECT_MAX_MS = 5_000;
 const PENDING_EVENT_MAX = 1_200;
+/** Queue length under which a full snapshot owed for dropped rrweb batches is taken. */
+const DOM_CHECKPOINT_QUEUE_LOW_WATER = PENDING_EVENT_MAX / 2;
 const DEFAULT_TAB_ID = -1;
+const domCheckpointLatch = createDomCheckpointLatch(() => {
+  if (!captureAgent) {
+    return false;
+  }
+
+  captureAgent.requestDomCheckpoint();
+  return true;
+}, DOM_CHECKPOINT_QUEUE_LOW_WATER);
 const PORT_DEBUG_LOG_FLAG = "__WEBBLACKBOX_DEBUG_PORT__";
 const INJECTED_CAPTURE_CONFIG_EVENT = "webblackbox:injected-config";
 
@@ -83,6 +94,7 @@ function cleanup(): void {
   stopPortReconnect();
   stopPendingEventFlush();
   pendingEvents = [];
+  domCheckpointLatch.reset();
   captureAgent?.dispose();
   captureAgent = null;
   captureAgentPromise = null;
@@ -184,7 +196,7 @@ function trimPendingEvents(): void {
     return;
   }
 
-  pendingEvents.splice(0, pendingEvents.length - PENDING_EVENT_MAX);
+  domCheckpointLatch.noteDropped(pendingEvents.splice(0, pendingEvents.length - PENDING_EVENT_MAX));
 }
 
 function flushPendingEventsChunk(): boolean {
@@ -208,6 +220,7 @@ function flushPendingEventsChunk(): boolean {
     return false;
   }
 
+  domCheckpointLatch.queueFlushed(pendingEvents.length);
   return true;
 }
 
@@ -341,6 +354,7 @@ async function handleSwMessage(message: ExtensionOutboundMessage): Promise<void>
       recordingActive = false;
       stopPendingEventFlush();
       pendingEvents = [];
+      domCheckpointLatch.reset();
       disconnectContentPort();
     }
 

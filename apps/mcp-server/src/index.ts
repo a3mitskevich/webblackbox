@@ -52,7 +52,9 @@ export const SERVER_INSTRUCTIONS =
   "Work from summary to detail: session_summary (what went wrong, totals), then timeline " +
   "around a moment or error (compact rows with eventId / requestId / actionId), then " +
   "action_detail (what was clicked and what it caused), request_detail (headers and bodies) and " +
-  "frame_at (what the page looked like, as an image). Times are `mono` ms throughout. Every " +
+  "frame_at (what the page looked like, as an image); dom_at, element_context and dom_diff for " +
+  "the page's DOM (markup at a moment, the element an action targeted, what changed). Times are " +
+  "`mono` ms throughout. Every " +
   "result is size-capped: `truncated` / `nextCursor` / 'N of M bytes' say when something was " +
   "left out; ask again with a cursor, a narrower window or a larger budget instead of guessing.";
 

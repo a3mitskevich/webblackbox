@@ -15,6 +15,7 @@ import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { recordedDomTexts } from "./lib/archive-dom.mjs";
 import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e2e-harness.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -103,7 +104,7 @@ main().catch(async (error) => {
 });
 
 async function main() {
-  const { WebBlackboxPlayer } = await import(
+  const playerSdk = await import(
     pathToFileURL(resolve(repoRoot, "packages/player-sdk/dist/index.js")).href
   );
   const qaProfile = createQaProfile(
@@ -268,7 +269,7 @@ async function main() {
 
   const archivePath = await harness.waitForDownload();
   const bytes = new Uint8Array(await readFile(archivePath));
-  const player = await WebBlackboxPlayer.open(bytes, { passphrase });
+  const player = await playerSdk.WebBlackboxPlayer.open(bytes, { passphrase });
   const events = player.query();
   const manifestText = JSON.stringify(player.archive.manifest);
   const profileConfig = events.find(
@@ -295,17 +296,10 @@ async function main() {
     })
   );
   const jsonBody = bodyTexts.find((text) => text.includes(BODY_MARKER));
-  // Full mode records the page DOM by default (QA keeps the default DOM level), masked by the
-  // profile's rules: the snapshots hold the page markup but no field values.
-  const domSnapshots = events.filter(
-    (event) => event.type === "dom.snapshot" && event.data?.source === "html"
-  );
-  const domTexts = await Promise.all(
-    domSnapshots.map(async (event) => {
-      const blob = await player.getBlob(event.data?.contentHash ?? "");
-      return blob ? new TextDecoder().decode(blob.bytes) : "";
-    })
-  );
+  // Full mode records the page DOM by default (QA keeps the default DOM level) with rrweb, masked
+  // by the profile's rules: the rebuilt page holds its markup but no field values.
+  const recordedDom = await recordedDomTexts(player, playerSdk);
+  const domTexts = recordedDom.texts;
 
   assert(profileConfig, "meta.config does not record the QA profile");
   assert(profileConfig.data.profile.ruleId === QA_RULE.id, "meta.config misses the rule", {
@@ -331,13 +325,13 @@ async function main() {
     bodies: bodyEvents.length
   });
   assert(!jsonBody.includes("hunter2"), "Sensitive body value was not masked", { jsonBody });
-  assert(domSnapshots.length > 0, "QA did not record the page DOM", {
+  assert(domTexts.length > 0, "QA did not record the page DOM", {
     types: [...new Set(events.map((event) => event.type))]
   });
   assert(
     domTexts.some((text) => text.includes("QA demo")),
     "The DOM snapshots miss the page markup",
-    { snapshots: domSnapshots.length }
+    { html: recordedDom.htmlSnapshots, rrweb: recordedDom.rrwebSnapshots }
   );
   // The field itself is in the snapshot, so its value is missing because it was masked.
   assert(

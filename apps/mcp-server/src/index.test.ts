@@ -111,7 +111,15 @@ describe("mcp-server", () => {
     const client = await connectClient({ frameDecoder: NO_DECODER });
     const { tools } = await client.listTools();
 
-    for (const name of ["timeline", "action_detail", "request_detail", "frame_at"]) {
+    for (const name of [
+      "timeline",
+      "action_detail",
+      "request_detail",
+      "frame_at",
+      "dom_at",
+      "element_context",
+      "dom_diff"
+    ]) {
       const tool = tools.find((entry) => entry.name === name);
 
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
@@ -184,6 +192,26 @@ describe("mcp-server", () => {
     expect(readTextBlocks(outside).join("\n")).toContain("outside the allowed directories");
     expect(unknown.isError).toBe(true);
     expect(readTextBlocks(unknown).join("\n")).toContain("Unknown actionId");
+
+    await client.close();
+  });
+
+  it("lists the DOM tools and guards their archive path with --allow-dir", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "wb-mcp-server-")));
+    const allowed = join(root, "allowed");
+    await mkdir(allowed);
+    const client = await connectClient({ allowedDirs: [allowed] });
+    const { tools } = await client.listTools();
+
+    for (const name of ["dom_at", "element_context", "dom_diff"]) {
+      expect(tools.map((tool) => tool.name)).toContain(name);
+      const outside = await client.callTool({
+        name,
+        arguments: { path: join(root, "other.webblackbox"), nodeId: 1, fromMono: 1, toMono: 2 }
+      });
+      expect(outside.isError, name).toBe(true);
+      expect(readTextBlocks(outside).join("\n")).toContain("outside the allowed directories");
+    }
 
     await client.close();
   });

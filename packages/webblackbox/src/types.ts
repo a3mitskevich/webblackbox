@@ -4,6 +4,7 @@ import type {
   PointerCaptureOptions,
   HashesManifest,
   RecorderConfig,
+  RrwebEventBatchPayload,
   SessionMetadata
 } from "@webblackbox/protocol";
 import type { PipelineStorage } from "@webblackbox/pipeline";
@@ -51,7 +52,53 @@ export type LiteCaptureAgentOptions = {
   showIndicator?: boolean;
   /** Overrides frame-role detection for tests or custom embedding. */
   frameScope?: "auto" | "top" | "child";
+  /**
+   * Records the DOM as an rrweb event log (`webblackbox/rrweb-recorder`, or a page-world recorder
+   * in the extension). While it runs the agent's own DOM capture (`rrweb-lite/v1` mutation
+   * summaries and HTML snapshots) is off; it comes back when the recorder is disabled.
+   */
+  domRecorder?: DomRecorderFactory;
 };
+
+/** What a DOM recorder gets from the capture agent when a recording starts. */
+export type DomRecorderContext = {
+  policy: CapturePolicy;
+  mode: SessionMetadata["mode"];
+  /** Queues one batch; `mono` is the page monotonic time of its first event. */
+  emit: (payload: RrwebEventBatchPayload, mono: number) => void;
+  /**
+   * The recorder stopped for good on this page (too many elements, start failed): the agent's own
+   * DOM capture takes over. The recorder has already emitted its `disabled` batch.
+   */
+  onDisabled: () => void;
+};
+
+/** A message from a page-world DOM recorder, relayed by the injected bridge. */
+export type DomRecorderPageMessage =
+  | { kind: "batch"; session: number; payload: RrwebEventBatchPayload; mono: number }
+  | { kind: "ready" }
+  | { kind: "started"; session: number }
+  | { kind: "flushed"; token: number };
+
+/** A running DOM recorder. */
+export type DomRecorder = {
+  /** Emits the events buffered so far. */
+  flush: () => void;
+  /** Stops recording and emits what is buffered. */
+  stop: () => void;
+  /**
+   * Resolves once the events buffered so far reached the agent. Page-world recorders answer over
+   * the bridge, so the agent awaits this before Stop.
+   */
+  drain?: () => Promise<void>;
+  /** Takes a fresh full snapshot: the host lost part of the change log. */
+  checkpoint?: () => void;
+  /** Page-world recorders: a message of theirs that the bridge accepted. */
+  receive?: (message: DomRecorderPageMessage) => void;
+};
+
+/** Starts a DOM recorder for a recording; null when it cannot record under the policy. */
+export type DomRecorderFactory = (context: DomRecorderContext) => DomRecorder | null;
 
 /**
  * Byte limits for payload materialization in lite mode.
@@ -113,6 +160,11 @@ export type WebBlackboxLiteSdkOptions = {
   plugins?: RecorderPlugin[];
   useDefaultPlugins?: boolean;
   recorderHooks?: RecorderHooks;
+  /**
+   * Records the DOM as an rrweb event log; rrweb (`createRrwebDomRecorder`) by default, `false`
+   * keeps the agent's own DOM summaries and snapshots.
+   */
+  domRecorder?: DomRecorderFactory | false;
 };
 
 /**

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="referrer" content="no-referrer" />
+    <!--
+      DOM replay frame. Loaded by the Player in
+      <iframe sandbox="allow-scripts allow-same-origin">. Its own policy, which rrweb's nested
+      rebuild iframe inherits: scripts only from this page's bundle (no inline scripts or event
+      handlers); inline styles and blob: stylesheets for the rebuilt page; images, fonts and media
+      only from blob:/data: (the archive), never from the recorded site; no fetch/XHR/WebSocket.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; img-src blob: data:; font-src blob: data:; media-src blob: data:; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>WebBlackbox DOM replay</title>
+    <link rel="stylesheet" href="./replay.css" />
+    <script defer src="./replay.js"></script>
+  </head>
+  <body>
+    <div id="replay-root"></div>
+  </body>
+</html>

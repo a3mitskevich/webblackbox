@@ -364,9 +364,11 @@ function sanitizeAttributes(element: Element, context: SanitizeContext): void {
     if (isDroppedAttribute(element, name)) {
       element.removeAttributeNode(attribute);
     } else {
-      attribute.value = maskDomText(
-        sanitizeAttributeValue(name, attribute.value, context),
-        context.rules
+      attribute.value = sanitizeRawDomAttribute(
+        name,
+        attribute.value,
+        context.rules,
+        context.extraNameParts
       );
     }
   }
@@ -378,30 +380,54 @@ function sanitizeAttributes(element: Element, context: SanitizeContext): void {
 
 /** Inline documents, event handlers and `<meta content>` other than a few display hints. */
 function isDroppedAttribute(element: Element, name: string): boolean {
+  return isDroppedRawDomAttribute(element.localName, name, (attribute) =>
+    element.getAttribute(attribute)
+  );
+}
+
+/**
+ * Whether the built-in heuristics drop an attribute whole: inline documents, event handlers and
+ * `<meta content>` other than a few display hints. `readAttribute` reads the element's others.
+ */
+export function isDroppedRawDomAttribute(
+  tagName: string,
+  name: string,
+  readAttribute: (name: string) => string | null
+): boolean {
   // Every handler name, known to the element or not (`onfocusin`), but not `one`.
   if (DROPPED_ATTRIBUTES.has(name) || /^on[a-z]{3,}$/.test(name)) {
     return true;
   }
 
-  if (element.localName !== "meta" || name !== "content") {
+  if (tagName.toLowerCase() !== "meta" || name !== "content") {
     return false;
   }
 
-  const metaName = (
-    element.getAttribute("name") ??
-    element.getAttribute("property") ??
-    ""
-  ).toLowerCase();
+  const metaName = (readAttribute("name") ?? readAttribute("property") ?? "").toLowerCase();
 
   // `http-equiv="refresh"` carries a URL whatever `name` says.
-  return !KEPT_META_NAMES.has(metaName) || element.hasAttribute("http-equiv");
+  return !KEPT_META_NAMES.has(metaName) || readAttribute("http-equiv") !== null;
 }
 
-function sanitizeAttributeValue(name: string, value: string, context: SanitizeContext): string {
-  if (
-    mentionsSecretName(name, context.extraNameParts) ||
-    isSecretJson(value, context.extraNameParts)
-  ) {
+/**
+ * An attribute value under the built-in heuristics and the DOM value patterns (`name` is the
+ * lower-case local name; `extraNameParts` are the profile's body patterns).
+ */
+export function sanitizeRawDomAttribute(
+  name: string,
+  value: string,
+  rules: RedactionRules,
+  extraNameParts: readonly string[]
+): string {
+  return maskDomText(sanitizeAttributeValue(name, value, extraNameParts), rules);
+}
+
+function sanitizeAttributeValue(
+  name: string,
+  value: string,
+  extraNameParts: readonly string[]
+): string {
+  if (mentionsSecretName(name, extraNameParts) || isSecretJson(value, extraNameParts)) {
     return MASKED_TEXT;
   }
 

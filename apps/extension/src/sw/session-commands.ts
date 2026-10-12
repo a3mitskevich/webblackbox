@@ -63,6 +63,7 @@ import type { RecordedTabWatch } from "./recorded-tab-watch.js";
 import {
   ensureContentScriptInjected,
   ensureInjectedHooks,
+  recordsDom,
   toStatusPointer,
   toStatusSampling,
   type RecordingSampling,
@@ -397,7 +398,9 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     });
 
     await ensureContentScriptInjected(deps.scripting, tabId);
-    await ensureInjectedHooks(deps.scripting, tabId, runtime.injectedBridgeNonce);
+    await ensureInjectedHooks(deps.scripting, tabId, runtime.injectedBridgeNonce, undefined, {
+      domRecorder: recordsDom(recorderConfig.capturePolicy)
+    });
 
     if (mode === "full" && recorderConfig.capturePolicy?.categories.cdp !== "off") {
       const attached = await deps.fullCdp.attachCdp(runtime);

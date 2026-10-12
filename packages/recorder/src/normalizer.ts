@@ -1,6 +1,7 @@
 import {
   extractRequestIdFromPayload,
   isBodySkipReason,
+  RRWEB_RAW_TYPE,
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
@@ -69,6 +70,7 @@ const CONTENT_EVENT_MAP: Record<string, WebBlackboxEventType> = {
   resize: "user.resize",
   mutation: "dom.mutation.batch",
   rrweb: "dom.rrweb.event",
+  [RRWEB_RAW_TYPE]: "dom.rrweb.event",
   snapshot: "dom.snapshot",
   screenshot: "screen.screenshot",
   console: "console.entry",

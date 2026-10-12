@@ -6,6 +6,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createPlainArchive } from "../../../scripts/lib/synthetic-session.mjs";
 import { createMediaUrlCache } from "../../core/media-cache.js";
+import { RAIL_TABS } from "../../core/url-hash.js";
 import { App } from "../app.js";
 import { createPlayerController } from "../controller.js";
 import { createInitialState, type PlayerState } from "../state.js";
@@ -76,7 +77,7 @@ describe("Rail tab row", () => {
     expect(screen.getByTestId("rail-tabs-scroll-start")).toBeInTheDocument();
 
     act(() => {
-      list.scrollLeft = 8 * TAB_WIDTH - ROW_WIDTH;
+      list.scrollLeft = RAIL_TABS.length * TAB_WIDTH - ROW_WIDTH;
       fireEvent.scroll(list);
     });
     expect(screen.queryByTestId("rail-tabs-scroll-end")).not.toBeInTheDocument();

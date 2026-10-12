@@ -133,6 +133,7 @@ export * from "./realtime-streams.js";
 export * from "./recording-profile.js";
 export * from "./request-details.js";
 export * from "./route-chapters.js";
+export * from "./rrweb-dom/index.js";
 export * from "./screen-recordings.js";
 export * from "./source-map.js";
 export * from "./stack-trace.js";
