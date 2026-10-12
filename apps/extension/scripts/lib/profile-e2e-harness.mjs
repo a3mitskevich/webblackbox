@@ -108,10 +108,23 @@ export function createProfileE2eHarness({ name, defaultPort }) {
     state.chrome = null;
 
     if (chrome && chrome.exitCode === null) {
-      const exited = new Promise((resolveExit) => chrome.once("exit", resolveExit));
+      const exited = new Promise((resolveExit) => chrome.once("exit", () => resolveExit(true)));
       chrome.kill("SIGTERM");
-      await Promise.race([exited, sleep(15_000)]);
+
+      // A loaded machine can take longer: force it, or the next launch finds the port taken.
+      if (!(await Promise.race([exited, sleep(15_000).then(() => false)]))) {
+        chrome.kill("SIGKILL");
+        await Promise.race([exited, sleep(5_000)]);
+      }
     }
+
+    detachOutput(chrome);
+  }
+
+  /** Chrome's helpers can still write after it exits; the log stream may be ended by then. */
+  function detachOutput(chrome) {
+    chrome?.stdout?.unpipe();
+    chrome?.stderr?.unpipe();
   }
 
   /** CDP client for a target already listed by Chrome. */
@@ -219,6 +232,7 @@ export function createProfileE2eHarness({ name, defaultPort }) {
     }
 
     state.chrome?.kill("SIGTERM");
+    detachOutput(state.chrome);
     state.chrome = null;
 
     for (const server of state.servers.splice(0)) {

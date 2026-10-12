@@ -194,6 +194,12 @@ importers:
         specifier: ^3.10.2
         version: 3.10.2
 
+  evals:
+    dependencies:
+      '@webblackbox/player-sdk':
+        specifier: workspace:*
+        version: link:../packages/player-sdk
+
   packages/cdp-router:
     dependencies:
       '@webblackbox/protocol':
