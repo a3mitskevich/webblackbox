@@ -71,6 +71,16 @@ export function isNewerVersion(candidate: unknown, installed: unknown): boolean 
   );
 }
 
+/** True when both are valid versions naming the same release ("1.2" and "1.2.0" do). */
+export function isSameVersion(left: unknown, right: unknown): boolean {
+  const leftParts = parseChromeVersion(left);
+  const rightParts = parseChromeVersion(right);
+
+  return (
+    leftParts !== null && rightParts !== null && compareChromeVersions(leftParts, rightParts) === 0
+  );
+}
+
 /**
  * The metadata URL of a Player. The Player resolves `extension/extension.json` against its own
  * page, so the last path segment counts as a directory unless it names a file (has a dot):
@@ -152,7 +162,7 @@ export function resolveExtensionUpdateNotice(
 ): ExtensionUpdateNotice | null {
   if (
     !state ||
-    state.latestVersion === dismissedVersion ||
+    isSameVersion(state.latestVersion, dismissedVersion) ||
     !isNewerVersion(state.latestVersion, installedVersion)
   ) {
     return null;
