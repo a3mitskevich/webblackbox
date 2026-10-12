@@ -225,6 +225,8 @@ export function formatCaptureCompletenessReport(report: CaptureCompletenessRepor
     `DOM: ${report.dom.snapshots} snapshots, ${report.dom.mutationBatches} mutation batches, ` +
       `${report.dom.rrwebEvents} rrweb events, coverage ${Math.round(report.dom.coverage * 100)}%, ` +
       `longest gap ${seconds(report.dom.longestGapMs)} s`,
+    `Accessibility snapshots: ${report.dom.a11ySnapshots} (${report.dom.a11yTruncated} cut, ` +
+      `${report.dom.a11yDroppedTriggers} triggers over the per-minute cap)`,
     `WebSocket: ${report.realtime.wsFrames} frames (${report.realtime.truncatedFrames} cut, ` +
       `${report.realtime.incompleteFrames} incomplete); SSE: ${report.realtime.sseMessages}`,
     `Console: ${report.console.entries} entries, ${report.console.errors} errors, ` +

@@ -321,6 +321,9 @@ describe("capture completeness", () => {
       a11yTruncated: 1,
       a11yDroppedTriggers: 2
     });
+    expect(formatCaptureCompletenessReport(player.getCaptureCompleteness())).toContain(
+      "Accessibility snapshots: 2 (1 cut, 2 triggers over the per-minute cap)"
+    );
     expect(perf.vitals).toBe(1);
   });
 
