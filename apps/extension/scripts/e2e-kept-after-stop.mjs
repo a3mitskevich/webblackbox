@@ -77,7 +77,9 @@ async function main() {
   // Chrome stops idle workers: the recording and its prompt survive that.
   const origin = `chrome-extension://${extensionId}`;
   const swTarget = (await harness.listTargets()).find(
-    (target) => target.type === "service_worker" && target.url === `${origin}/${EXTENSION_FILES.serviceWorker}`
+    (target) =>
+      target.type === "service_worker" &&
+      target.url === `${origin}/${EXTENSION_FILES.serviceWorker}`
   );
   assert(swTarget, "Extension service worker target not found");
   await browser.send("Target.closeTarget", { targetId: swTarget.id });
