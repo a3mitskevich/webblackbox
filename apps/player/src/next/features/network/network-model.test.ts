@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   notCapturedSummary,
   requestBodyAvailability,
-  responseBodyAvailability
+  responseBodyAvailability,
+  responseBodyCutSizes
 } from "./availability.js";
 import {
   bodyCopyText,
@@ -212,6 +213,17 @@ describe("network rows", () => {
 });
 
 describe("body availability and reasons", () => {
+  it("reports the kept and the whole size of a cut response body", () => {
+    expect(
+      responseBodyCutSizes(
+        entry({ responseBodySize: 2_600_000, responseBodySampledSize: 1_048_576 })
+      )
+    ).toEqual({ keptBytes: 1_048_576, totalBytes: 2_600_000 });
+    // Older recordings stored no kept size: only the size of what is in the archive is known.
+    expect(responseBodyCutSizes(entry({ responseBodySize: 4096 }))).toEqual({ keptBytes: 4096 });
+    expect(responseBodyCutSizes(entry({}))).toEqual({ keptBytes: 0 });
+  });
+
   it("tells captured, cut, skipped, missing and no-body responses apart", () => {
     expect(responseBodyAvailability(entry({ responseBodyHash: "h" }))).toEqual({
       state: "captured",

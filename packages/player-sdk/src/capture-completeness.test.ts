@@ -199,6 +199,32 @@ describe("capture completeness", () => {
     );
   });
 
+  it("keeps the stored and the whole size of a body cut at the limit", async () => {
+    const at = createClock();
+    const player = await openArchive([
+      META_CONFIG,
+      ...exchange(at, "cut", { mimeType: "text/javascript" }),
+      {
+        type: "network.body",
+        mono: at(),
+        data: {
+          reqId: "cut",
+          contentHash: "c".repeat(64),
+          size: 2_600_000,
+          sampledSize: 1_048_576,
+          truncated: true
+        }
+      }
+    ]);
+
+    expect(player.getNetworkWaterfall()[0]).toMatchObject({
+      responseBodySize: 2_600_000,
+      responseBodySampledSize: 1_048_576,
+      responseBodyTruncated: true
+    });
+    expect(player.getCaptureCompleteness().network.responseBodies.truncated).toBe(1);
+  });
+
   it("expects SVG bodies, not data: URL bodies, and explains earlier requests", async () => {
     const at = createClock();
     const player = await openArchive([

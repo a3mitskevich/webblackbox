@@ -97,6 +97,8 @@
   "bodyNone": "No body.",
   "cutBadge": "Cut at {size}",
   "cutNote": "The recorder kept only the first {size} of this body.",
+  "cutBadgeOf": "Cut at {kept} of {total}",
+  "cutNoteOf": "The recorder kept only the first {kept} of this {total} body.",
   "requestBodyCut": "The request body was cut at the profile limit.",
   "bodyLoading": "Loading the body…",
   "bodyLoadFailed": "Could not read the body: {error}",
