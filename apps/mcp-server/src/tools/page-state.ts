@@ -8,7 +8,7 @@ import {
 } from "@webblackbox/player-sdk";
 import * as z from "zod";
 
-import { openArchivePlayer, resolveArchivePath } from "./session-tools.js";
+import { defineArchiveTool, type ArchiveHandle } from "./registry.js";
 
 const DEFAULT_MAX_CHARS = 12_000;
 const MAX_MAX_CHARS = 48_000;
@@ -25,13 +25,7 @@ const PRESENCE_NOTE =
   `${SCOPE_NOTE} A snapshot marked truncated was cut at the capture budget, so a match missing ` +
   "from it may lie past the cut; in masked snapshots blocked content and masked values cannot match.";
 
-const archiveInput = {
-  path: z.string().min(1).describe("Path to a .webblackbox or .zip archive."),
-  passphrase: z.string().min(1).max(4096).optional().describe("Passphrase for encrypted archives.")
-};
-
 export const pageStateAtInput = {
-  ...archiveInput,
   eventId: z
     .string()
     .min(1)
@@ -62,8 +56,6 @@ export const pageStateAtInput = {
 };
 
 export type PageStateAtArgs = {
-  path: string;
-  passphrase?: string;
   eventId?: string;
   actionId?: string;
   mono?: number;
@@ -72,7 +64,6 @@ export type PageStateAtArgs = {
 };
 
 export const findOnPageInput = {
-  ...archiveInput,
   text: z
     .string()
     .min(1)
@@ -97,8 +88,6 @@ export const findOnPageInput = {
 };
 
 export type FindOnPageArgs = {
-  path: string;
-  passphrase?: string;
   text?: string;
   role?: string;
   monoStart?: number;
@@ -141,7 +130,10 @@ export type PageStateAtResult = {
  * What the user saw and could do around a moment: the accessibility snapshot linked to an event or
  * action, and the nearest snapshots before and after it, with their trees within `maxChars`.
  */
-export async function getPageStateAt(args: PageStateAtArgs): Promise<PageStateAtResult> {
+export async function getPageStateAt(
+  args: PageStateAtArgs,
+  archive: ArchiveHandle
+): Promise<PageStateAtResult> {
   const anchors = [args.eventId, args.actionId, args.mono, args.t].filter(
     (value) => value !== undefined
   );
@@ -150,8 +142,7 @@ export async function getPageStateAt(args: PageStateAtArgs): Promise<PageStateAt
     throw new Error("Pass exactly one of eventId, actionId, mono or t.");
   }
 
-  const archivePath = resolveArchivePath(args.path);
-  const player = await openArchivePlayer(archivePath, args.passphrase);
+  const player = await archive.open();
   const snapshots = listA11ySnapshots(player.events);
   const state = findPageStateAt(player.events, args, snapshots);
 
@@ -179,7 +170,7 @@ export async function getPageStateAt(args: PageStateAtArgs): Promise<PageStateAt
   );
 
   return {
-    path: archivePath,
+    path: archive.path,
     anchor: state.anchor,
     snapshotsInArchive: snapshots.length,
     ...(linked ? { linked } : {}),
@@ -203,18 +194,20 @@ export type FindOnPageResult = {
 };
 
 /** When a text or a role was on screen: spans of consecutive snapshots in which it matched. */
-export async function findOnPageInArchive(args: FindOnPageArgs): Promise<FindOnPageResult> {
+export async function findOnPageInArchive(
+  args: FindOnPageArgs,
+  archive: ArchiveHandle
+): Promise<FindOnPageResult> {
   if (!args.text && !args.role) {
     throw new Error("Pass a text, a role, or both.");
   }
 
-  const archivePath = resolveArchivePath(args.path);
-  const player = await openArchivePlayer(archivePath, args.passphrase);
+  const player = await archive.open();
   const result = findOnPage(listA11ySnapshots(player.events), args);
   const limit = args.limit ?? DEFAULT_SPAN_LIMIT;
 
   return {
-    path: archivePath,
+    path: archive.path,
     snapshotsScanned: result.snapshotsScanned,
     presentAtEnd: result.presentAtEnd,
     spans: result.spans.slice(0, limit),
@@ -222,6 +215,25 @@ export async function findOnPageInArchive(args: FindOnPageArgs): Promise<FindOnP
     note: PRESENCE_NOTE
   };
 }
+
+export const pageStateAtTool = defineArchiveTool({
+  name: "page_state_at",
+  description:
+    "What the user saw and could do at a moment: the accessibility snapshot (roles, names, " +
+    "states, visible text of the viewport) taken for an event or action, and the nearest " +
+    "snapshots before and after it. Pass exactly one of eventId, actionId, mono or t.",
+  inputSchema: pageStateAtInput,
+  run: async (args, archive) => ({ data: { ...(await getPageStateAt(args, archive)) } })
+});
+
+export const findOnPageTool = defineArchiveTool({
+  name: "find_on_page",
+  description:
+    "When something was on screen: the spans of accessibility snapshots in which a text (in " +
+    "names and values) and/or a role (alert, dialog, button…) appeared, and when it disappeared.",
+  inputSchema: findOnPageInput,
+  run: async (args, archive) => ({ data: { ...(await findOnPageInArchive(args, archive)) } })
+});
 
 /** Shares `total` between trees: each gets an equal part, and what a short one leaves goes on. */
 export function splitBudget(lengths: readonly number[], total: number): number[] {

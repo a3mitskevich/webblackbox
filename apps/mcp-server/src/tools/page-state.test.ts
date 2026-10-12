@@ -6,7 +6,9 @@ import JSZip from "jszip";
 import type { DomA11ySnapshotData, ExportManifest, WebBlackboxEvent } from "@webblackbox/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { findOnPageInArchive, getPageStateAt, splitBudget } from "./page-state-tools.js";
+import { openArchivePlayer } from "../session-tools.js";
+import { findOnPageInArchive, getPageStateAt, splitBudget } from "./page-state.js";
+import type { ArchiveHandle } from "./registry.js";
 
 const FORM = '- textbox "Card" [required]\n- button "Pay"';
 const DECLINED = `${FORM}\n- alert: "Card declined"`;
@@ -19,7 +21,7 @@ afterEach(async () => {
 describe("page_state_at", () => {
   it("returns the snapshot an error triggered with the state before it", async () => {
     const path = await createFixture();
-    const result = await getPageStateAt({ path, eventId: "E-3" });
+    const result = await getPageStateAt({ eventId: "E-3" }, archiveAt(path));
 
     expect(result.anchor).toMatchObject({ eventId: "E-3", eventType: "error.exception" });
     expect(result.linked).toMatchObject({
@@ -37,15 +39,17 @@ describe("page_state_at", () => {
   it("resolves actions and times", async () => {
     const path = await createFixture();
 
-    expect((await getPageStateAt({ path, actionId: "A-1" })).linked?.eventId).toBe("E-2");
-    expect((await getPageStateAt({ path, mono: 4_500 })).before?.eventId).toBe("E-4");
+    expect((await getPageStateAt({ actionId: "A-1" }, archiveAt(path))).linked?.eventId).toBe(
+      "E-2"
+    );
+    expect((await getPageStateAt({ mono: 4_500 }, archiveAt(path))).before?.eventId).toBe("E-4");
   });
 
   it("keeps whole lines within the size budget and says how many were cut", async () => {
     const path = await createFixture(
       Array.from({ length: 400 }, (_, index) => `- link "Result ${index}"`).join("\n")
     );
-    const result = await getPageStateAt({ path, eventId: "E-3", maxChars: 1_000 });
+    const result = await getPageStateAt({ eventId: "E-3", maxChars: 1_000 }, archiveAt(path));
     const trees = [result.linked, result.before, result.after].map((entry) => entry?.tree ?? "");
 
     expect(trees.join("").length).toBeLessThanOrEqual(1_000);
@@ -57,16 +61,20 @@ describe("page_state_at", () => {
   it("rejects ambiguous and unknown anchors", async () => {
     const path = await createFixture();
 
-    await expect(getPageStateAt({ path })).rejects.toThrow(/exactly one/u);
-    await expect(getPageStateAt({ path, eventId: "E-3", mono: 1 })).rejects.toThrow(/exactly one/u);
-    await expect(getPageStateAt({ path, eventId: "nope" })).rejects.toThrow(/not found/u);
+    await expect(getPageStateAt({}, archiveAt(path))).rejects.toThrow(/exactly one/u);
+    await expect(getPageStateAt({ eventId: "E-3", mono: 1 }, archiveAt(path))).rejects.toThrow(
+      /exactly one/u
+    );
+    await expect(getPageStateAt({ eventId: "nope" }, archiveAt(path))).rejects.toThrow(
+      /not found/u
+    );
   });
 });
 
 describe("find_on_page", () => {
   it("reports when the alert appeared and disappeared", async () => {
     const path = await createFixture();
-    const result = await findOnPageInArchive({ path, role: "alert" });
+    const result = await findOnPageInArchive({ role: "alert" }, archiveAt(path));
 
     expect(result).toMatchObject({
       snapshotsScanned: 3,
@@ -85,8 +93,8 @@ describe("find_on_page", () => {
   it("needs a text or a role and limits the spans", async () => {
     const path = await createFixture();
 
-    await expect(findOnPageInArchive({ path })).rejects.toThrow(/text, a role/u);
-    expect(await findOnPageInArchive({ path, text: "pay", limit: 1 })).toMatchObject({
+    await expect(findOnPageInArchive({}, archiveAt(path))).rejects.toThrow(/text, a role/u);
+    expect(await findOnPageInArchive({ text: "pay", limit: 1 }, archiveAt(path))).toMatchObject({
       presentAtEnd: true,
       spans: [{ appeared: { eventId: "E-2" } }],
       spansOmitted: 0
@@ -101,6 +109,10 @@ describe("splitBudget", () => {
     expect(splitBudget([10, 20, 30], 1_000)).toEqual([10, 20, 30]);
   });
 });
+
+function archiveAt(path: string): ArchiveHandle {
+  return { path, open: (range) => openArchivePlayer(path, undefined, range) };
+}
 
 async function createFixture(firstTree: string = FORM): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "wb-mcp-page-state-"));
