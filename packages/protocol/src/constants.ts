@@ -72,7 +72,7 @@ export const WEBBLACKBOX_EVENT_TYPES = [
   "dom.mutation.batch",
   "dom.snapshot",
   "dom.diff",
-  "dom.rrweb.event", // rrweb-compatible incremental events (currently emitted as lite mutation summaries)
+  "dom.rrweb.event", // lite mutation summaries (`rrweb-lite/v1`) or real rrweb batches (`rrweb/v2`, see rrweb.ts)
   "screen.screenshot",
   "screen.recording.start",
   "screen.recording.chunk",
