@@ -106,6 +106,33 @@ describe("DOM replay panel", () => {
     expect(await screen.findByTestId("replay-empty")).toHaveTextContent("WB_SPIKE_RRWEB=1");
   });
 
+  it("starts a fresh frame when another archive is opened", async () => {
+    const { bytes } = await archiveWithRrweb();
+    const { controller } = await renderReplay(bytes);
+    const first = (await screen.findByTestId("replay-frame")) as HTMLIFrameElement;
+    act(() => {
+      fromFrame(first, {
+        type: "wb-replay/loaded",
+        eventCount: 3,
+        resolvedResources: 0,
+        unresolvedUrls: []
+      });
+    });
+    expect(screen.getByTestId("replay-status")).toHaveAttribute("data-events", "3");
+
+    await act(async () => {
+      await controller.openFile({
+        name: "second.webblackbox",
+        arrayBuffer: async () => bytes.slice().buffer
+      });
+    });
+    const second = (await screen.findByTestId("replay-frame")) as HTMLIFrameElement;
+
+    // The old frame still shows the first archive: the panel must not keep driving it.
+    expect(second).not.toBe(first);
+    expect(screen.queryByTestId("replay-status")).not.toBeInTheDocument();
+  });
+
   it("drives the sandboxed frame and shows the click target it reports", async () => {
     const { bytes, clickMono } = await archiveWithRrweb();
     const { store } = await renderReplay(bytes);

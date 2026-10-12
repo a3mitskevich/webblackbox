@@ -34,6 +34,22 @@ type FrameStatus =
 
 type Highlight = Extract<FrameToPlayerMessage, { type: "wb-replay/highlight" }>;
 
+/** One key per opened archive: a new archive gets a fresh frame instead of the last replay. */
+const archiveKeys = new WeakMap<LoadedArchive, number>();
+let openedArchives = 0;
+
+function keyOf(archive: LoadedArchive): number {
+  const known = archiveKeys.get(archive);
+
+  if (known !== undefined) {
+    return known;
+  }
+
+  openedArchives += 1;
+  archiveKeys.set(archive, openedArchives);
+  return openedArchives;
+}
+
 async function loadResources(archive: LoadedArchive): Promise<DomReplayResource[]> {
   const refs = selectReplayResources(archive.player.getNetworkWaterfall());
   const loaded = await Promise.all(
@@ -76,7 +92,7 @@ export default function ReplayPanel() {
     );
   }
 
-  return <ReplayView archive={archive} timeline={timeline} t={t} />;
+  return <ReplayView key={keyOf(archive)} archive={archive} timeline={timeline} t={t} />;
 }
 
 function ReplayView({

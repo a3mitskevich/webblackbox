@@ -3,13 +3,14 @@
 // validate every message: the frame renders untrusted archive content and must not be able to
 // drive the Player beyond these replies.
 
+import type { RrwebRecordedEvent } from "@webblackbox/protocol";
+
+export const DOM_REPLAY_FRAME_PATH = "./replay/index.html";
+
 /** Where messages to the other side may go: this origin, or anywhere when it is opaque (file:). */
 export function replayTargetOrigin(origin: string): string {
   return origin === "null" ? "*" : origin;
 }
-import type { RrwebRecordedEvent } from "@webblackbox/protocol";
-
-export const DOM_REPLAY_FRAME_PATH = "./replay/index.html";
 
 /** A response body from the archive that the replay may use instead of the live URL. */
 export type DomReplayResource = {
