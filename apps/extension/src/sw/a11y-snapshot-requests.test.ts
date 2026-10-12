@@ -16,7 +16,9 @@ function event(type: string, data: unknown = {}, id = "E-1"): WebBlackboxEvent {
   return { v: 1, sid: "S-1", tab: 9, t: 1, mono: 1, type, id, data } as WebBlackboxEvent;
 }
 
-function setup(send = vi.fn(async () => undefined)) {
+type SendToTab = (tabId: number, message: A11ySnapshotRequestMessage) => Promise<unknown>;
+
+function setup(send = vi.fn<SendToTab>(async () => undefined)) {
   let now = 0;
   const requester = createA11ySnapshotRequester({ sendToTab: send, now: () => now });
   return { requester, send, advance: (ms: number) => (now += ms) };
@@ -49,9 +51,10 @@ describe("createA11ySnapshotRequester", () => {
       advance(A11Y_SNAPSHOT_REQUEST_MIN_INTERVAL_MS);
     }
 
-    expect(
-      send.mock.calls.map((call) => (call[1] as A11ySnapshotRequestMessage).trigger.rawType)
-    ).toEqual(["console.entry", "error.unhandledrejection"]);
+    expect(send.mock.calls.map((call) => call[1].trigger.rawType)).toEqual([
+      "console.entry",
+      "error.unhandledrejection"
+    ]);
   });
 
   it("leaves lite mode (the page sees its errors) and stopping sessions alone", () => {
@@ -79,7 +82,9 @@ describe("createA11ySnapshotRequester", () => {
 
   it("logs a request the tab could not receive", async () => {
     const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
-    const { requester } = setup(vi.fn(async () => Promise.reject(new Error("no receiver"))));
+    const { requester } = setup(
+      vi.fn<SendToTab>(async () => Promise.reject(new Error("no receiver")))
+    );
     requester.onEvent(runtime("full"), event("error.exception"));
     await vi.waitFor(() => expect(debug).toHaveBeenCalled());
 
