@@ -42,6 +42,7 @@ type Guard<T> = (value: unknown) => value is T;
  * Validates a message that reached the service worker from a content script or an extension page.
  * The sender chooses every byte of it, so each kind's fields are checked before use:
  * - a required field that is missing, or any field of the wrong type, rejects the message;
+ * - an optional field set to `null` counts as absent (senders use it for "not set");
  * - unknown fields are left out: the result is a new object with the known fields only;
  * - `content.events` keeps its valid events and counts the dropped ones.
  */
@@ -130,7 +131,8 @@ function parseUiStop(row: Record<string, unknown>): InboundParseResult {
 function parseUiExport(row: Record<string, unknown>): InboundParseResult {
   const passphrase = readOptional(row.passphrase, isPassphrase);
   const saveAs = readOptional(row.saveAs, isBoolean);
-  const policy = row.policy === undefined ? undefined : parseExportPolicy(row.policy);
+  const policy =
+    row.policy === undefined || row.policy === null ? undefined : parseExportPolicy(row.policy);
 
   if (!isId(row.sid)) {
     return reject("ui.export", "sid");
@@ -293,7 +295,7 @@ function reject(kind: string, reason: string): InboundParseResult {
 }
 
 function readOptional<T>(value: unknown, guard: Guard<T>): Optional<T> {
-  if (value === undefined) {
+  if (value === undefined || value === null) {
     return undefined;
   }
 

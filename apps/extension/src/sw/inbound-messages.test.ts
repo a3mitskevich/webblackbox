@@ -44,7 +44,7 @@ const KIND_CASES: KindCase[] = [
     required: ["mode"],
     wrongTypes: {
       mode: ["max", 1, null],
-      tabId: ["17", -1, 1.5, Number.NaN, null],
+      tabId: ["17", -1, 1.5, Number.NaN],
       reloadPage: ["yes", 1],
       visualCapture: ["video", true],
       profileId: ["", 7, "x".repeat(257)]
@@ -80,7 +80,6 @@ const KIND_CASES: KindCase[] = [
       policy: [
         "all",
         [],
-        null,
         { includeScreenshots: "yes" },
         { maxArchiveBytes: "1mb" },
         { recentWindowMs: Number.NaN }
@@ -206,6 +205,27 @@ describe("parseExtensionInboundMessage", () => {
         });
       });
     }
+  });
+
+  it("treats an optional field set to null as absent", () => {
+    // The fullchain e2e starts Lite with `visualCapture: null`.
+    expect(
+      parseExtensionInboundMessage({
+        kind: "ui.start",
+        mode: "lite",
+        visualCapture: null,
+        tabId: null
+      })
+    ).toEqual({ ok: true, message: { kind: "ui.start", mode: "lite" }, droppedEvents: 0 });
+    expect(
+      parseExtensionInboundMessage({ kind: "ui.export", sid: "S-1", policy: null, saveAs: null })
+    ).toEqual({ ok: true, message: { kind: "ui.export", sid: "S-1" }, droppedEvents: 0 });
+    expect(
+      parseExtensionInboundMessage({
+        kind: "content.events",
+        events: [{ ...EVENT, frame: null }]
+      })
+    ).toMatchObject({ ok: true, droppedEvents: 0 });
   });
 
   it.each([null, undefined, "ui.start", 7, ["ui.start"]])("rejects the non-object %j", (raw) => {
