@@ -30,6 +30,8 @@
     "e2e:pointer": "node scripts/e2e-pointer-capture.mjs",
     "e2e:profile:maximum": "node scripts/e2e-profile-maximum.mjs",
     "e2e:settings-migration": "node scripts/e2e-settings-migration.mjs",
+    "e2e:capture-fallback": "node scripts/e2e-capture-fallback.mjs",
+    "e2e:kept-after-stop": "node scripts/e2e-kept-after-stop.mjs",
     "e2e:tabs-context": "node scripts/e2e-tabs-context.mjs",
     "e2e:ui": "node scripts/e2e-ui-screenshots.mjs",
     "e2e:ui:update": "WB_UI_SHOTS_UPDATE=1 node scripts/e2e-ui-screenshots.mjs",
