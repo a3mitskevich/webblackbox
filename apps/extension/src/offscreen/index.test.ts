@@ -511,6 +511,39 @@ describe("offscreen pipelines outlive their worker", () => {
     expect(pipelineMock.instances[0]?.flush).toHaveBeenCalledTimes(2);
   });
 
+  it("writes the tail only after the pipeline writes in progress", async () => {
+    await startSession();
+    let resolveBlob: (hash: string) => void = () => undefined;
+    pipelineMock.instances[0]?.putBlob.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveBlob = resolve;
+        })
+    );
+    // Its answer is lost with the port; only the write matters here.
+    port.emit({
+      kind: "sw.pipeline-request",
+      requestId: "R-blob",
+      op: "putBlob",
+      sid: SID,
+      mime: "text/plain",
+      base64: "aGk="
+    });
+    await vi.waitFor(() => {
+      expect(pipelineMock.instances[0]?.putBlob).toHaveBeenCalledTimes(1);
+    });
+
+    port.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pipelineMock.instances[0]?.flush).not.toHaveBeenCalled();
+
+    resolveBlob("hash-2");
+
+    await vi.waitFor(() => {
+      expect(pipelineMock.instances[0]?.flush).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("answers a restarted worker's flush request once the pipelines are written", async () => {
     await startSession();
     let resolveFlush: () => void = () => undefined;

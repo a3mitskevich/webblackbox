@@ -51,8 +51,15 @@ createExtensionI18n({
   pageTitleKey: "pageTitleOffscreen"
 });
 const pipelines = new Map<string, FlightRecorderPipeline>();
-/** Pipeline requests in progress: a final flush waits for what they write. */
-const pendingPipelineRequests = new Set<Promise<void>>();
+/** Requests that write a pipeline's events or blobs; captures and exports are not waited for. */
+const PIPELINE_WRITE_OPS: ReadonlySet<OffscreenPipelineRequestMessage["op"]> = new Set([
+  "ingest",
+  "ingestBatch",
+  "flush",
+  "putBlob"
+]);
+/** Pipeline writes in progress: a final flush waits for them. */
+const pendingPipelineWrites = new Set<Promise<void>>();
 /** Final flushes run in turn, so each settles only once everything before it is written. */
 let pipelinesFlushed: Promise<void> = Promise.resolve();
 // Every pipeline writes through this AES-GCM storage once the service worker sends the key.
@@ -191,7 +198,7 @@ function isRequestOfKind(message: unknown, kind: string): boolean {
  */
 function flushAllPipelines(): Promise<void> {
   pipelinesFlushed = pipelinesFlushed.then(async () => {
-    await Promise.allSettled([...pendingPipelineRequests]);
+    await Promise.allSettled([...pendingPipelineWrites]);
     await Promise.all(
       [...pipelines.values()].map((pipeline) =>
         pipeline.flush().catch((error: unknown) => {
@@ -237,8 +244,10 @@ function handleServiceWorkerMessage(raw: unknown): void {
     case "sw.pipeline-request": {
       const request = handlePipelineRequest(message);
 
-      pendingPipelineRequests.add(request);
-      void request.finally(() => pendingPipelineRequests.delete(request));
+      if (PIPELINE_WRITE_OPS.has(message.op)) {
+        pendingPipelineWrites.add(request);
+        void request.finally(() => pendingPipelineWrites.delete(request));
+      }
       return;
     }
   }
