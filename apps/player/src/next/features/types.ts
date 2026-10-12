@@ -18,7 +18,8 @@ export const FEATURE_IDS = [
   "share",
   "inspector",
   "generate",
-  "extension-guide"
+  "extension-guide",
+  "replay"
 ] as const;
 
 export type FeatureId = (typeof FEATURE_IDS)[number];

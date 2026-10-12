@@ -16,6 +16,8 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "vite.config.ts",
+    "vite.replay.config.ts",
+    "replay-frame/**/*.ts",
     "vitest.config.ts",
     "scripts/**/*.mjs",
     "scripts/**/*.ts",

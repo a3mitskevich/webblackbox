@@ -7,12 +7,12 @@
   "scripts": {
     "dev": "vite",
     "bench": "tsx scripts/benchmark.ts",
-    "build": "vite build && node scripts/bundle-extension.mjs",
+    "build": "vite build && vite build -c vite.replay.config.ts && node scripts/bundle-extension.mjs",
     "e2e:player": "pnpm run build && node scripts/e2e-player.mjs",
     "pages:build": "pnpm build && node scripts/prepare-pages-build.mjs",
     "pages:deploy": "node scripts/deploy-gh-pages.mjs",
     "serve": "vite preview --strictPort",
-    "lint": "eslint src scripts --ext .ts,.tsx",
+    "lint": "eslint src scripts replay-frame --ext .ts,.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },

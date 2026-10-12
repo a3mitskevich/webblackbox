@@ -1,0 +1,16 @@
+{
+  "tabLabel": "DOM replay",
+  "note": "The page is rebuilt from the recorded DOM log (rrweb) in a sandbox without scripts or network.",
+  "empty": "This recording has no rrweb DOM log: it was made before rrweb, with DOM recording off, or the page was over the recorder's node limit.",
+  "frameTitle": "DOM replay of the recorded page",
+  "loading": "Loading the DOM log…",
+  "loaded": "{events} rrweb events, {snapshots} full snapshots, {resources} resources from the archive",
+  "unresolved": "{count} resources were not in the archive and are not loaded",
+  "otherTabs": "Showing tab {tab}; other tabs with a DOM log: {tabs}",
+  "clicks": "Clicks",
+  "noClicks": "No clicks in the DOM log.",
+  "clickRow": "Click on node {node} at {time}",
+  "highlightFound": "Click target: <{tag}> at {x}, {y} ({width}×{height})",
+  "highlightMissing": "Click target node {node} is not in the DOM at this moment",
+  "error": "Replay error: {message}"
+}

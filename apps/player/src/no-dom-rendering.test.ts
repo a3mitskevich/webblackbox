@@ -53,6 +53,13 @@ const TEXT_PROPERTIES = new Set(["textContent", "innerText", "outerText", "nodeV
  * None of them renders UI.
  */
 const ALLOWED: Record<string, Record<string, string>> = {
+  "lib/dom-replay-resources.ts": {
+    // rrweb's serialized text node field in the recorded JSON, not a DOM write.
+    "{textContent}": "rrweb serialized node field"
+  },
+  "lib/dom-replay-resources.test.ts": {
+    "{textContent}": "rrweb serialized node field"
+  },
   "lib/export.ts": {
     // A detached `<a download>` that is clicked and dropped: the standard way to save a Blob.
     "document.createElement": "download anchor"
