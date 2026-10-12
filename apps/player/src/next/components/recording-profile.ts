@@ -1,10 +1,12 @@
 import {
+  readExportCompleteness,
   readProfileCancellation,
   readRecordingProfiles,
   type ProfileCancellationInfo,
   type RecordingProfileEntry
 } from "@webblackbox/player-sdk";
 
+import { formatExportNotices } from "../../lib/export-completeness-view.js";
 import type { PlayerI18n } from "../../lib/i18n.js";
 import { formatRecordingProfileBanner } from "../../lib/recording-profile-view.js";
 import type { LoadedArchive } from "../state.js";
@@ -29,6 +31,17 @@ export function recordingProfileOf(archive: LoadedArchive): RecordingProfileStat
   }
 
   return state;
+}
+
+/**
+ * Banner lines for a recording the archive does not hold whole: interrupted, or cut by its
+ * export (read from the manifest alone; empty when whole or for older archives).
+ */
+export function exportNoticeLines(archive: LoadedArchive, i18n: PlayerI18n): string[] {
+  return formatExportNotices(
+    readExportCompleteness(archive.player.archive.manifest, archive.player.events.length),
+    i18n
+  );
 }
 
 /** Banner lines for a downgraded, capped or cancelled recording profile (empty when fine). */

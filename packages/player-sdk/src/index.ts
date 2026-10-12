@@ -101,6 +101,7 @@ export { compareEventsForTimeline } from "./event-order.js";
 export {
   buildCaptureCompletenessReport,
   formatCaptureCompletenessReport,
+  readExportCompleteness,
   MAX_MISSING_SAMPLES,
   type BodyCompleteness,
   type CaptureCompletenessReport,

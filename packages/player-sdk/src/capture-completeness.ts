@@ -173,7 +173,7 @@ export function buildCaptureCompletenessReport(
 
   return {
     durationMs: Math.max(0, endMono - startMono),
-    export: summarizeExport(input.manifest, events.length),
+    export: readExportCompleteness(input.manifest, events.length),
     bodiesRequested: readNetworkPolicy(events) === "body-allowlist",
     network: {
       requests: input.waterfall.length,
@@ -266,9 +266,13 @@ function isoTime(ms: number): string {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : String(ms);
 }
 
-function summarizeExport(
+/**
+ * What the export kept, read from the manifest alone (cheap: no events are scanned).
+ * `eventCount` stands in for the exported count when there is no manifest.
+ */
+export function readExportCompleteness(
   manifest: CompletenessInput["manifest"],
-  eventCount: number
+  eventCount = 0
 ): ExportCompleteness {
   const completeness = manifest?.completeness;
   const exportedEvents = manifest?.stats.eventCount ?? eventCount;

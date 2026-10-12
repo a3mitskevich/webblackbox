@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ExportManifest, WebBlackboxEvent } from "@webblackbox/protocol";
 
-import { formatCaptureCompletenessReport } from "./capture-completeness.js";
+import { formatCaptureCompletenessReport, readExportCompleteness } from "./capture-completeness.js";
 import { WebBlackboxPlayer } from "./index.js";
 
 type EventInput = Pick<WebBlackboxEvent, "type" | "data"> & { mono: number };
@@ -386,5 +386,18 @@ describe("capture completeness", () => {
       "Interrupted: recording ended without Stop (service-worker-restart), noticed " +
         "2026-01-01T11:00:00.000Z, last seen 2026-01-01T10:59:30.000Z"
     );
+  });
+
+  it("reads the export record from a manifest alone", () => {
+    expect(readExportCompleteness(undefined, 7)).toMatchObject({
+      recorded: false,
+      exportedEvents: 7
+    });
+    expect(
+      readExportCompleteness({
+        stats: { eventCount: 3, chunkCount: 1, blobCount: 0, durationMs: 1 },
+        completeness: { storedEvents: 3, storedChunks: 1, truncations: [] }
+      })
+    ).toMatchObject({ recorded: true, whole: true, storedEvents: 3, exportedEvents: 3 });
   });
 });

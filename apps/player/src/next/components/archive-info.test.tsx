@@ -94,6 +94,38 @@ describe("About this recording", () => {
     expect(within(dialog).getByTestId("session-facts")).toHaveTextContent("Balanced");
   });
 
+  it("warns above the stage and in the dialog about an interrupted, cut recording", async () => {
+    const session = buildSyntheticSession();
+    const bytes = await createPlainArchive({
+      ...session,
+      manifest: {
+        ...session.manifest,
+        completeness: {
+          storedEvents: session.events.length + 50,
+          storedChunks: 3,
+          truncations: [{ reason: "recent-window", events: 50, chunks: 2, limit: 10 * 60_000 }],
+          interruption: { reason: "service-worker-restart", detectedAt: Date.UTC(2026, 0, 1) }
+        }
+      }
+    });
+
+    await renderWith(bytes);
+
+    const banners = screen.getAllByTestId("profile-banner").map((node) => node.textContent);
+    expect(banners).toEqual([
+      expect.stringContaining("The recording was interrupted"),
+      "The export left out 50 events older than its 10-minute window."
+    ]);
+
+    fireEvent.click(screen.getByTestId("profile-banner-details"));
+    const dialog = await screen.findByTestId("archive-info");
+    expect(within(dialog).getAllByTestId("export-notice-line")).toHaveLength(2);
+    expect(within(dialog).getByTestId("contents-export")).toHaveAttribute("data-status", "partial");
+    expect(within(dialog).getByTestId("contents-export")).toHaveTextContent(
+      `The archive holds ${session.events.length} of ${session.events.length + 50} recorded events.`
+    );
+  });
+
   it("has a player menu with the version and the source link", async () => {
     const { store } = await renderWith(await createPlainArchive());
 
