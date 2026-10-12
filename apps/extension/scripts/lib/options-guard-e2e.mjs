@@ -1,3 +1,4 @@
+import { EXTENSION_FILES } from "./extension-paths.mjs";
 // Unsaved-changes guard of the options page in real Chrome (backlog item 1): leaving a section
 // with unsaved changes asks first, closing the tab triggers `beforeunload`, closing a rule or a
 // profile editor with edits asks too, and none of it happens once everything is saved.
@@ -28,7 +29,7 @@ export async function runOptionsGuardChecks(deps) {
     }
   };
   const page = await deps.openPage(deps.browser, 1440, 900, null);
-  const optionsUrl = `chrome-extension://${deps.extensionId}/options.html`;
+  const optionsUrl = `chrome-extension://${deps.extensionId}/${EXTENSION_FILES.optionsPage}`;
 
   try {
     await checkSectionGuardAndUnload(deps, page, optionsUrl, check);
@@ -66,7 +67,10 @@ async function checkSectionGuardAndUnload(deps, page, optionsUrl, check) {
 
   check(await unloadPrompts(deps, page), "dirty → navigate away: no beforeunload prompt");
   check(
-    await isTrue(page, `location.pathname.endsWith("/options.html")`),
+    await isTrue(
+      page,
+      `location.pathname.endsWith(${JSON.stringify(`/${EXTENSION_FILES.optionsPage}`)})`
+    ),
     "a cancelled beforeunload prompt still left the page"
   );
 

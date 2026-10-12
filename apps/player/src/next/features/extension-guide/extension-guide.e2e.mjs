@@ -14,10 +14,11 @@ export default {
           ctx.testId("extension-guide"),
           "The extension guide did not open"
         );
-        // The guide reads extension/extension.json first ("checking…"): wait for its outcome.
+        // The guide reads extension/extension.json after it opens; on a slow runner it is still
+        // checking when the dialog appears.
         await ctx.waitForSelector(
           `${ctx.testId("extension-download-link")}, ${ctx.testId("extension-download-missing")}`,
-          "The extension guide never finished checking for the bundled extension"
+          "The extension guide did not finish checking for the bundled extension"
         );
 
         const state = await ctx.evaluate(`(async () => {
@@ -44,7 +45,7 @@ export default {
         ctx.assert(
           !state.missing,
           "The built player has no bundled extension (the build warned about it): run " +
-            "`pnpm --filter @webblackbox/extension package:chrome` first, then rebuild the player",
+            "`pnpm --filter @webblackbox/extension zip` first, then rebuild the player",
           state
         );
         ctx.assert(state.status === 200, "The extension download link did not resolve", state);

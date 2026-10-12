@@ -5,8 +5,6 @@ import { fileURLToPath } from "node:url";
 
 export const EVALS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const REPO_ROOT = resolve(EVALS_ROOT, "..");
-/** The extension package; its harness loads the unpacked build (`WB_E2E_EXTENSION_DIR` overrides). */
-export const EXTENSION_APP_ROOT = resolve(REPO_ROOT, "apps/extension");
 export const MCP_SERVER_CLI = resolve(REPO_ROOT, "apps/mcp-server/dist/cli.js");
 export const ARCHIVES_DIR = resolve(EVALS_ROOT, "archives");
 export const RUNS_DIR = resolve(EVALS_ROOT, "runs");

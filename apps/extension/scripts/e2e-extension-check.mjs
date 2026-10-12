@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 
 import { mkdir, rm } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
@@ -12,18 +10,21 @@ import {
   startChrome,
   waitForChromeReady
 } from "./lib/chrome-launcher.mjs";
-import { closeTarget, extractExtensionId, openTarget } from "./lib/devtools-targets.mjs";
+import {
+  closeTarget,
+  isExtensionServiceWorkerTarget,
+  openTarget,
+  requireExtensionId
+} from "./lib/devtools-targets.mjs";
 import { assert, fetchJson, sleep, waitFor } from "./lib/e2e-utils.mjs";
 import {
   readRuntimeSessions,
   waitForIndicatorGone,
   waitForIndicatorText
 } from "./lib/extension-ui.mjs";
+import { DEFAULT_EXTENSION_DIR, EXTENSION_FILES } from "./lib/extension-paths.mjs";
 
-const root = dirname(fileURLToPath(import.meta.url));
-const appRoot = resolve(root, "..");
-
-const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? resolve(appRoot, "build");
+const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? DEFAULT_EXTENSION_DIR;
 const targetUrl = process.env.WB_E2E_TARGET_URL ?? "https://example.com/";
 const remotePort = Number(process.env.WB_E2E_REMOTE_PORT ?? "9222");
 const headless = (process.env.WB_E2E_HEADLESS ?? "1") !== "0";
@@ -70,8 +71,8 @@ async function main() {
   const version = await waitForChromeReady(baseUrl, 20_000);
   console.log(`Chrome: ${version.Browser}`);
 
-  const swTarget = await waitForExtensionServiceWorker(baseUrl, 20_000);
-  const extensionId = extractExtensionId(swTarget.url);
+  const extensionId = await requireExtensionId(extensionDir);
+  const swTarget = await waitForExtensionServiceWorker(baseUrl, extensionId, 20_000);
   console.log(`Extension ID: ${extensionId}`);
 
   const swClient = new CdpClient(swTarget.webSocketDebuggerUrl);
@@ -88,7 +89,10 @@ async function main() {
   });
 
   const pageTarget = await openTarget(baseUrl, targetUrl);
-  const popupTarget = await openTarget(baseUrl, `chrome-extension://${extensionId}/popup.html`);
+  const popupTarget = await openTarget(
+    baseUrl,
+    `chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`
+  );
   state.openedTargetIds.push(pageTarget.id, popupTarget.id);
 
   const pageClient = new CdpClient(pageTarget.webSocketDebuggerUrl);
@@ -211,7 +215,7 @@ async function runModeCheck({
   };
 }
 
-async function waitForExtensionServiceWorker(urlBase, timeoutMs) {
+async function waitForExtensionServiceWorker(urlBase, extensionId, timeoutMs) {
   return waitFor(
     async () => {
       const targets = await fetchJson(`${urlBase}/json/list`, 4_000);
@@ -219,15 +223,7 @@ async function waitForExtensionServiceWorker(urlBase, timeoutMs) {
         return null;
       }
 
-      return (
-        targets.find(
-          (target) =>
-            target?.type === "service_worker" &&
-            typeof target?.url === "string" &&
-            target.url.startsWith("chrome-extension://") &&
-            target.url.endsWith("/sw.js")
-        ) ?? null
-      );
+      return targets.find((target) => isExtensionServiceWorkerTarget(target, extensionId)) ?? null;
     },
     timeoutMs,
     250,

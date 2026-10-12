@@ -176,6 +176,21 @@ export function evaluateDelta(policy, size, base, notes) {
 }
 
 /**
+ * Whether `fileName` matches the last segment of a delta entry. A `*` stands for any run of
+ * characters, so `chunks/*.js` covers bundles with content hashes in their names.
+ *
+ * @param {string} pattern
+ * @param {string} fileName
+ */
+export function matchesBundleFilePattern(pattern, fileName) {
+  const source = pattern
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^/]*");
+  return new RegExp(`^${source}$`).test(fileName);
+}
+
+/**
  * @param {number} delta
  * @param {number} base
  * @returns {string}

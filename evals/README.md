@@ -33,7 +33,7 @@ scenario integrity, fixture server, report) run in CI as part of `pnpm test`.
 
 ```bash
 pnpm install
-pnpm build                                     # extension build/ and mcp-server dist/
+pnpm build                                     # extension .output/chrome-mv3/ (WXT) and mcp-server dist/
 
 # 1. Record (≈ 18 s per scenario and profile, ≈ 10 min for all 26)
 export WB_E2E_CHROME_BIN=$HOME/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome

@@ -27,7 +27,7 @@ The extension consists of multiple main components:
 
 ### Components
 
-#### Service Worker (`sw.js`)
+#### Service Worker (`background.js`)
 
 - **Central coordinator** for all recording activity
 - Manages CDP debugger connections via `@webblackbox/cdp-router`
@@ -37,10 +37,10 @@ The extension consists of multiple main components:
 - In `full`, captures storage snapshots, including cookies (`Network.getCookies`), through CDP
 - Manages the offscreen document lifecycle
 
-#### Content Script (`content.js`)
+#### Content Script (`content-script.js`)
 
 - Runs in every frame from `document_start` (default), or only in the recorded tab once a recording starts; see [Page injection](#page-injection)
-- Stays idle until the tab is recorded: the capture agent (`content-agent.js`) loads on Start
+- Stays idle until the tab is recorded: on Start it asks the service worker to inject the capture agent (`content-agent.js`) into its frame
 - Captures user interaction events (click, input, scroll, keydown, etc.)
 - Captures DOM mutations via MutationObserver
 - Takes DOM snapshots at configured intervals
@@ -96,30 +96,30 @@ The extension consists of multiple main components:
 
 ## Page injection
 
-Settings → Performance & sampling → **Inject into pages** decides when `content.js` runs. Recording itself always happens only in tabs where you press Start.
+Settings → Performance & sampling → **Inject into pages** decides when `content-script.js` runs. Recording itself always happens only in tabs where you press Start.
 
-| Mode                                          | What runs in pages you are not recording                                                                                                                                                   | Trade-off during a recording                                                                                                                                                                     |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Always (record from page start)** (default) | `content.js` in every page and frame from `document_start`: one `content.ready` message to the service worker per frame load and a watcher that remembers password fields the page reveals | None: pages the recorded tab loads later (reload, navigation, new iframes) have the script before their own code                                                                                 |
-| **Only when recording starts**                | Nothing                                                                                                                                                                                    | Pages the recorded tab loads later get the script right after they commit, which can be after their first scripts ran; password fields the page revealed before Start are not known as passwords |
+| Mode                                          | What runs in pages you are not recording                                                                                                                                                          | Trade-off during a recording                                                                                                                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Always (record from page start)** (default) | `content-script.js` in every page and frame from `document_start`: one `content.ready` message to the service worker per frame load and a watcher that remembers password fields the page reveals | None: pages the recorded tab loads later (reload, navigation, new iframes) have the script before their own code                                                                                 |
+| **Only when recording starts**                | Nothing                                                                                                                                                                                           | Pages the recorded tab loads later get the script right after they commit, which can be after their first scripts ran; password fields the page revealed before Start are not known as passwords |
 
 In both modes nothing is recorded before Start: the capture agent loads only when a recording starts.
 
 How it works:
 
-- The manifest declares no static `content_scripts`. In the default mode the service worker registers `content.js` for `<all_urls>`, all frames, `document_start` with `chrome.scripting.registerContentScripts`; in "Only when recording starts" it unregisters it. The setting lives in `chrome.storage.local` under `webblackbox.injection` and is re-applied on every service worker start.
-- On Start, `content.js` is injected into every frame of the tab. While a tab is recorded, each frame it commits (reload, navigation, an iframe added later) gets the script as soon as `webNavigation.onCommitted` reports it (`injectImmediately`). That is early, but unlike `document_start` it is not guaranteed to run before the page's own scripts.
-- `content.js` runs once per frame: a second copy (registered plus injected) exits without touching the first, and the bundle is wrapped in its own scope so the second run cannot reset the running copy's state.
+- The manifest declares no static `content_scripts`. In the default mode the service worker registers `content-script.js` for `<all_urls>`, all frames, `document_start` with `chrome.scripting.registerContentScripts`; in "Only when recording starts" it unregisters it. The setting lives in `chrome.storage.local` under `webblackbox.injection` and is re-applied on every service worker start.
+- On Start, `content-script.js` is injected into every frame of the tab. While a tab is recorded, each frame it commits (reload, navigation, an iframe added later) gets the script as soon as `webNavigation.onCommitted` reports it (`injectImmediately`). That is early, but unlike `document_start` it is not guaranteed to run before the page's own scripts.
+- `content-script.js` runs once per frame: a second copy (registered plus injected) exits without touching the first, and the bundle is wrapped in its own scope so the second run cannot reset the running copy's state.
 - Tab and navigation listeners are attached only while something records, so idle navigations do not wake the service worker in either mode.
 - The store-safe build has no persistent host access, so it always injects on Start. It also has no `webNavigation`, so a recorded tab's frames are not re-injected as they commit: after a reload or navigation the script comes back only once the page finishes loading (while `activeTab` still covers it), and iframes added after load do not get it.
 - `<all_urls>` stays in both modes: `webRequest` (lite network baseline), `scripting.executeScript` and `registerContentScripts` need host access.
 
 Idle cost, measured with `pnpm e2e:injection:idle` (50 tabs, each a page with one iframe, headless Chrome 153):
 
-| Mode                       | Frames running `content.js` | Messages to the service worker | JS heap per tab |
-| -------------------------- | --------------------------- | ------------------------------ | --------------- |
-| Always                     | 100 of 100                  | 100 (`content.ready`)          | ~1.5 MB         |
-| Only when recording starts | 0 of 100                    | 0                              | ~1.05 MB        |
+| Mode                       | Frames running `content-script.js` | Messages to the service worker | JS heap per tab |
+| -------------------------- | ---------------------------------- | ------------------------------ | --------------- |
+| Always                     | 100 of 100                         | 100 (`content.ready`)          | ~1.5 MB         |
+| Only when recording starts | 0 of 100                           | 0                              | ~1.05 MB        |
 
 ## rrweb Status
 
@@ -141,7 +141,7 @@ Idle cost, measured with `pnpm e2e:injection:idle` (50 tabs, each a page with on
 | `downloads`     | Archive file download                                                                 |
 | `<all_urls>`    | Host access for content script registration and injection, `webRequest`               |
 
-This is the default (`dev`) build. The `store-safe` build (`node scripts/build-extension.mjs --profile store-safe`, after a `pnpm build` that writes the bundles) requests `activeTab`, `alarms`, `downloads`, `offscreen`, `scripting`, `storage` and `tabCapture` only: no `debugger` (so no Full engine), `tabs`, `webRequest`, `webNavigation` or host permissions.
+This is the default (`dev`) build. The `store-safe` build (`pnpm build:store-safe`, the WXT mode `store-safe`) requests `activeTab`, `alarms`, `downloads`, `offscreen`, `scripting`, `storage` and `tabCapture` only: no `debugger` (so no Full engine), `tabs`, `webRequest`, `webNavigation` or host permissions.
 
 ## Keyboard Shortcuts
 
@@ -156,26 +156,29 @@ User markers are `user.marker` events that serve as bookmarks in the recording t
 
 ```bash
 cd apps/extension
-pnpm build
-pnpm build:release
-pnpm package:chrome
+pnpm build              # wxt build → .output/chrome-mv3/
+pnpm build:store-safe   # wxt build --mode store-safe → .output/chrome-mv3-store-safe/
+pnpm zip                # wxt zip → .output/<name>-<version>-chrome.zip
+pnpm dev                # wxt (dev server, page HMR, extension auto-reload)
 pnpm verify
 ```
 
-The build output is in the `build/` directory. The manifest is generated from `apps/extension/package.json` during the build, so there is no source `public/manifest.json` to keep in sync. The build also writes `managed-schema.json`, the `storage.managed_schema` for the [enterprise policy](../../docs/ENTERPRISE_ADMIN.md). Local `pnpm build` runs keep the stable development `key`, while `pnpm build:release` generates an unpacked release build without that `key`. `pnpm package:chrome` rebuilds the extension once, validates the generated manifest, and creates a distributable ZIP (Chrome Web Store upload layout, release manifest) in `dist/`. This fork is not published to the Chrome Web Store; install it from a build. Pass `--profile store-safe` to `scripts/build-extension.mjs` for the reduced-permission build described under [Permissions](#permissions). Packaging is pure Node.js, so it does not depend on a system `zip` binary being installed. `pnpm verify` runs the extension's lint, typecheck, test, and packaging pipeline in one command. You can override the ZIP path with `node scripts/build-extension.mjs --package --output ./dist/custom-name.zip`.
+The extension is built with [WXT](https://wxt.dev) and follows its defaults: entrypoints in `entrypoints/`, static files in `public/`, output in `.output/chrome-mv3/`, packaging with `wxt zip`. WXT writes `manifest.json` from the `manifest` in `wxt.config.ts` (fields in `scripts/lib/extension-build.mjs`), the entrypoints and the version in `apps/extension/package.json`; there is no source `manifest.json`. The build also writes `managed-schema.json`, the `storage.managed_schema` for the [enterprise policy](../../docs/ENTERPRISE_ADMIN.md), and fails when the manifest breaks what recording needs (permissions and host access per profile, the extension-page CSP, no web-accessible resources, no static content scripts) or when a script injected into pages is not one strict-mode anonymous IIFE. Builds carry no `key`: an unpacked build's extension id follows its path. The zip leaves out source maps. This fork is not published to the Chrome Web Store; install it from a build. `pnpm verify` runs the extension's lint, typecheck, test, and `zip` in one command. `pnpm dev` serves the pages from WXT's dev server; on WSL WXT cannot open Chrome, so load `.output/chrome-mv3-dev` by hand.
 
-Build entries:
+Entrypoints (each a thin wrapper that calls its `src/` module's start function from `main()`, or an HTML page):
 
-| Entry                          | Output                   | Description                    |
-| ------------------------------ | ------------------------ | ------------------------------ |
-| `src/sw/index.ts`              | `build/sw.js`            | Service worker                 |
-| `src/content/index.ts`         | `build/content.js`       | Content script                 |
-| `src/content/content-agent.ts` | `build/content-agent.js` | Capture agent, loaded on Start |
-| `src/offscreen/index.ts`       | `build/offscreen.js`     | Offscreen document             |
-| `src/popup/index.ts`           | `build/popup.js`         | Popup UI                       |
-| `src/options/index.ts`         | `build/options.js`       | Options page                   |
-| `src/sessions/index.ts`        | `build/sessions.js`      | Sessions page                  |
-| `src/injected/index.ts`        | `build/injected.js`      | Injected page script           |
+| Entrypoint                      | Output (`.output/chrome-mv3/`)          | Description                                       |
+| ------------------------------- | --------------------------------------- | ------------------------------------------------- |
+| `entrypoints/background.ts`     | `background.js`, `chunks/*`             | Service worker (`src/sw/index.ts`)                |
+| `entrypoints/content-script.ts` | `content-script.js`                     | Content script (`src/content/index.ts`)           |
+| `entrypoints/content-agent.ts`  | `content-agent.js`                      | Capture agent, injected into a frame that records |
+| `entrypoints/injected.ts`       | `injected.js`                           | Page hooks, MAIN world (`src/injected/index.ts`)  |
+| `entrypoints/offscreen.html`    | `offscreen.html`, `chunks/*`            | Offscreen document                                |
+| `entrypoints/popup.html`        | `popup.html`, `chunks/*`, `assets/*`    | Popup UI                                          |
+| `entrypoints/options.html`      | `options.html`, `chunks/*`, `assets/*`  | Options page (opens in a tab)                     |
+| `entrypoints/sessions.html`     | `sessions.html`, `chunks/*`, `assets/*` | Sessions page                                     |
+
+The service worker and the pages share code in `chunks/`. The three scripts that run in pages are self-contained IIFEs. `src/shared/extension-files.ts` lists the paths the service worker injects or opens, and the e2e scripts read them from there.
 
 ## E2E
 
@@ -186,7 +189,7 @@ Build entries:
 - `pnpm e2e:tabs-context` checks that other tabs of the recorded site reach the archive and tabs of other sites never do.
 - `pnpm e2e:sw-restart` terminates the service worker mid-run — while a session records — and checks that the recording it left running is listed as interrupted and exports an archive player-sdk opens with its events and its interruption, that the next session starts and exports, and that orphaned IndexedDB sessions are swept.
 - `pnpm e2e:ui` compares screenshots of the popup, options and sessions pages against `e2e-baselines/ui/` (`pnpm e2e:ui:update` refreshes them).
-- `pnpm e2e:injection` checks over CDP which frames run `content.js` in both injection modes: before Start, after Start, in an iframe added later, after a reload and a navigation, in a tab that is not recorded and after Stop. `pnpm e2e:injection:idle` measures the idle cost of both modes with many tabs (`WB_E2E_INJECTION_BENCH_TABS`, default 50).
+- `pnpm e2e:injection` checks over CDP which frames run `content-script.js` in both injection modes: before Start, after Start, in an iframe added later, after a reload and a navigation, in a tab that is not recorded and after Stop. `pnpm e2e:injection:idle` measures the idle cost of both modes with many tabs (`WB_E2E_INJECTION_BENCH_TABS`, default 50).
 - `pnpm e2e:page-globals` checks in Lite and Full that recording adds no page (MAIN world) globals and replaces none: it compares every own property of `window` and its descriptor before Start with after Start, after captured actions and after Stop. Only the hooks' install flag and nonce setter are allowed (`ALLOWED_PAGE_GLOBALS`).
 - `pnpm e2e:profile:qa` checks that a site rule selects the QA profile, that console text and value-masked JSON bodies reach the encrypted archive, that navigating to a host where the rules pick another profile stops the recording (reason in the archive, `!` badge, popup notice, nothing recorded afterwards), and that a plaintext export is refused.
 - `pnpm e2e:at-rest` reads the extension's IndexedDB over CDP after a Full capture recording with planted secrets and checks that nothing in it is readable (every chunk and blob AES-GCM framed, session rows without URL or title), that the export still decrypts to the secrets and deletes the recording, that stopped recordings stay listed, stored and exportable after the service worker is stopped and more than 30 s pass, and that an unexported recording is gone after Chrome restarts on the same profile.
@@ -206,7 +209,7 @@ Build entries:
 2. Open `chrome://extensions/`
 3. Enable **Developer mode**
 4. Click **Load unpacked**
-5. Select the `apps/extension/build` directory
+5. Select the `apps/extension/.output/chrome-mv3` directory
 
 ## Data Flow
 
@@ -214,7 +217,7 @@ Build entries:
 
 1. User clicks **Start** in popup (and, while the reload offer is on, chooses whether to reload the page)
 2. Service worker resolves the profile (explicit choice or site rules), creates the session, initializes the recorder and, in `full` mode, attaches the CDP debugger; with "Reload and Start" it reloads the tab only once capture is live
-3. `content.js` is already running in every frame (registered at `document_start`) or, with injection on Start only, is injected into every frame of the tab now; frames the tab commits later get it as they commit
+3. `content-script.js` is already running in every frame (registered at `document_start`) or, with injection on Start only, is injected into every frame of the tab now; frames the tab commits later get it as they commit
 4. Injected content capture begins streaming user events and DOM summaries
 5. In `lite` mode, the injected script captures console and storage events (its fetch/XHR hooks are off; network comes from the `webRequest` baseline)
 6. In `full` mode, CDP provides network, runtime exception, and page navigation events; `lite` uses a `webRequest` network baseline instead
@@ -253,7 +256,7 @@ The extension uses `@webblackbox/protocol`'s `RecorderConfig` for all settings. 
   - page-side response-body sampling is disabled (`bodyCaptureMaxBytes=0`)
   - idle screenshots are disabled by default; enable `screenshotIdleMs` explicitly when needed
   - initial DOM/storage/screenshot capture is deferred briefly after start so the tab does not stall at record activation
-  - hot listeners, observers, and page-side capture loops stay inactive until recording is enabled, even when `content.js` is loaded at `document_start` (the default page injection mode)
+  - hot listeners, observers, and page-side capture loops stay inactive until recording is enabled, even when `content-script.js` is loaded at `document_start` (the default page injection mode)
 - `full`: same perf-freeze disable + stricter sampling/body-capture limits
   - page-side SnapDOM screenshots and storage snapshots are skipped (CDP takes screenshots); DOM snapshots and mutation summaries run at the default DOM level (`masked`, recorded like `allow` through the profile's masking rules) and stop only under `wireframe` or `off`
   - `injected` console patching is not enabled (CDP is the primary source in full mode); fetch/XHR hooks are off in both modes

@@ -5,8 +5,8 @@
 //
 //   node scripts/check-bundle-size.mjs [--baseline <report.json>] [--notes-file <file>]
 
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { gzipSync } from "node:zlib";
@@ -15,6 +15,7 @@ import {
   evaluateAbsoluteBudget,
   evaluateDelta,
   formatPercent,
+  matchesBundleFilePattern,
   parseBaselineReport,
   parseBudgetConfig,
   parseSizeIncreaseNotes
@@ -109,13 +110,42 @@ async function main() {
   }
 }
 
-/** @param {string} path */
+/**
+ * One bundle, or with a `*` in its file name (`chunks/*.js`) the sum of the bundles it matches.
+ *
+ * @param {string} path
+ */
 async function measure(path) {
-  const source = await readFile(resolve(root, path)).catch(() => {
-    throw new Error(`${path}: bundle not found — run \`pnpm build\` first`);
-  });
+  const files = path.includes("*") ? await expandPattern(path) : [path];
+  let bytes = 0;
+  let gzipBytes = 0;
 
-  return { path, bytes: source.byteLength, gzipBytes: gzipSync(source).byteLength };
+  for (const file of files) {
+    const source = await readFile(resolve(root, file)).catch(() => {
+      throw new Error(`${file}: bundle not found — run \`pnpm build\` first`);
+    });
+
+    bytes += source.byteLength;
+    gzipBytes += gzipSync(source).byteLength;
+  }
+
+  return { path, bytes, gzipBytes };
+}
+
+/** @param {string} pattern */
+async function expandPattern(pattern) {
+  const directory = dirname(pattern);
+  const entries = await readdir(resolve(root, directory)).catch(() => []);
+  const files = entries
+    .filter((entry) => matchesBundleFilePattern(basename(pattern), entry))
+    .sort()
+    .map((entry) => join(directory, entry));
+
+  if (files.length === 0) {
+    throw new Error(`${pattern}: no bundle matches — run \`pnpm build\` first`);
+  }
+
+  return files;
 }
 
 /**

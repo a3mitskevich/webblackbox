@@ -3,6 +3,7 @@ import type { PointerCaptureOptions } from "@webblackbox/protocol";
 import { INJECTED_BRIDGE_NONCE_SETTER_KEY } from "webblackbox/injected-hooks";
 
 import type { ChromeApi } from "../shared/chrome-api.js";
+import { EXTENSION_FILES } from "../shared/extension-files.js";
 import { normalizeBodyCaptureMaxBytes } from "./body-capture-utils.js";
 import type { SessionRuntime } from "./session-registry.js";
 
@@ -57,7 +58,7 @@ export async function ensureInjectedHooks(
     ?.executeScript({
       target,
       world: "MAIN",
-      files: ["injected.js"]
+      files: [EXTENSION_FILES.injectedHooks]
     })
     .catch((error) => {
       console.warn("[WebBlackbox] failed to inject the page hooks", { tabId, frameId, error });
@@ -93,11 +94,37 @@ export async function ensureContentScriptInjected(
     ?.executeScript({
       target: { tabId, allFrames: true },
       world: "ISOLATED",
-      files: ["content.js"]
+      files: [EXTENSION_FILES.contentScript]
     })
     .catch((error) => {
       console.warn("[WebBlackbox] failed to inject the content script", { tabId, error });
     });
+}
+
+/**
+ * Injects the capture agent into one frame's isolated world, where the frame's content script
+ * picks it up (see `content-agent-api.ts`). Only frames that record ever parse it.
+ */
+export async function injectContentAgent(
+  scripting: ScriptingApiLike | undefined,
+  tabId: number,
+  frameId: number
+): Promise<boolean> {
+  if (!scripting) {
+    return false;
+  }
+
+  try {
+    await scripting.executeScript({
+      target: { tabId, frameIds: [frameId] },
+      world: "ISOLATED",
+      files: [EXTENSION_FILES.contentAgent]
+    });
+    return true;
+  } catch (error) {
+    console.warn("[WebBlackbox] failed to inject the capture agent", { tabId, frameId, error });
+    return false;
+  }
 }
 
 /** Runs in the page MAIN world; must stay self-contained (serialized by Chrome). */

@@ -25,24 +25,24 @@ afterEach(async () => {
 
 async function layout(version = "0.7.0") {
   const extensionDir = join(workDir, "extension");
-  const distDir = join(extensionDir, "dist");
+  const outputDir = join(extensionDir, ".output");
   const buildDir = join(workDir, "player", "build");
-  await mkdir(distDir, { recursive: true });
+  await mkdir(outputDir, { recursive: true });
   await mkdir(buildDir, { recursive: true });
   const packageJson = join(extensionDir, "package.json");
   await writeFile(packageJson, JSON.stringify({ name: "@webblackbox/extension", version }));
-  return { packageJson, distDir, buildDir };
+  return { packageJson, outputDir, buildDir };
 }
 
 describe("bundleExtensionIntoPlayer", () => {
   it("copies the packaged zip and writes version/size/sha256 metadata", async () => {
-    const { packageJson, distDir, buildDir } = await layout("1.2.3");
+    const { packageJson, outputDir, buildDir } = await layout("1.2.3");
     const zipBytes = Buffer.from("fake zip bytes");
-    await writeFile(join(distDir, "webblackbox-1.2.3-chrome.zip"), zipBytes);
+    await writeFile(join(outputDir, "webblackboxextension-1.2.3-chrome.zip"), zipBytes);
 
     const result = await bundleExtensionIntoPlayer({
       extensionPackageJson: packageJson,
-      extensionDistDir: distDir,
+      extensionOutputDir: outputDir,
       playerBuildDir: buildDir,
       now: () => new Date("2026-10-07T12:00:00Z")
     });
@@ -65,11 +65,11 @@ describe("bundleExtensionIntoPlayer", () => {
   });
 
   it("succeeds without the metadata when the extension was never packaged", async () => {
-    const { packageJson, distDir, buildDir } = await layout();
+    const { packageJson, outputDir, buildDir } = await layout();
 
     const result = await bundleExtensionIntoPlayer({
       extensionPackageJson: packageJson,
-      extensionDistDir: distDir,
+      extensionOutputDir: outputDir,
       playerBuildDir: buildDir
     });
 
@@ -81,18 +81,18 @@ describe("bundleExtensionIntoPlayer", () => {
   });
 
   it("removes a stale bundled copy when the zip is gone", async () => {
-    const { packageJson, distDir, buildDir } = await layout();
-    await writeFile(join(distDir, "webblackbox-0.7.0-chrome.zip"), "zip");
+    const { packageJson, outputDir, buildDir } = await layout();
+    await writeFile(join(outputDir, "webblackboxextension-0.7.0-chrome.zip"), "zip");
     await bundleExtensionIntoPlayer({
       extensionPackageJson: packageJson,
-      extensionDistDir: distDir,
+      extensionOutputDir: outputDir,
       playerBuildDir: buildDir
     });
-    await rm(join(distDir, "webblackbox-0.7.0-chrome.zip"));
+    await rm(join(outputDir, "webblackboxextension-0.7.0-chrome.zip"));
 
     const result = await bundleExtensionIntoPlayer({
       extensionPackageJson: packageJson,
-      extensionDistDir: distDir,
+      extensionOutputDir: outputDir,
       playerBuildDir: buildDir
     });
 
@@ -103,12 +103,12 @@ describe("bundleExtensionIntoPlayer", () => {
   });
 
   it("does not ship a zip left over from another extension version", async () => {
-    const { packageJson, distDir, buildDir } = await layout("9.9.9");
-    await writeFile(join(distDir, "webblackbox-0.6.0-chrome.zip"), "old zip");
+    const { packageJson, outputDir, buildDir } = await layout("9.9.9");
+    await writeFile(join(outputDir, "webblackboxextension-0.6.0-chrome.zip"), "old zip");
 
     const result = await bundleExtensionIntoPlayer({
       extensionPackageJson: packageJson,
-      extensionDistDir: distDir,
+      extensionOutputDir: outputDir,
       playerBuildDir: buildDir
     });
 
@@ -117,14 +117,14 @@ describe("bundleExtensionIntoPlayer", () => {
   });
 
   it("fails loudly when the extension package.json has no version", async () => {
-    const { distDir, buildDir } = await layout();
+    const { outputDir, buildDir } = await layout();
     const packageJson = join(workDir, "extension", "package.json");
     await writeFile(packageJson, JSON.stringify({ name: "@webblackbox/extension" }));
 
     await expect(
       bundleExtensionIntoPlayer({
         extensionPackageJson: packageJson,
-        extensionDistDir: distDir,
+        extensionOutputDir: outputDir,
         playerBuildDir: buildDir
       })
     ).rejects.toThrow(/Missing version/);
@@ -132,7 +132,21 @@ describe("bundleExtensionIntoPlayer", () => {
 });
 
 describe("findPackagedExtensionZip", () => {
-  it("returns null when the dist directory does not exist", async () => {
+  it("returns null when the output directory does not exist", async () => {
     await expect(findPackagedExtensionZip(join(workDir, "nope"), "0.7.0")).resolves.toBeNull();
+  });
+
+  it("finds WXT's zip of the default build only", async () => {
+    const { outputDir } = await layout();
+    await writeFile(join(outputDir, "webblackboxextension-0.7.0-chrome-store-safe.zip"), "zip");
+    await expect(findPackagedExtensionZip(outputDir, "0.7.0")).resolves.toBeNull();
+
+    await writeFile(join(outputDir, "webblackboxextension-0.7.0-chrome.zip"), "zip");
+    await expect(findPackagedExtensionZip(outputDir, "0.7.0")).resolves.toBe(
+      join(outputDir, "webblackboxextension-0.7.0-chrome.zip")
+    );
+
+    await writeFile(join(outputDir, "other-0.7.0-chrome.zip"), "zip");
+    await expect(findPackagedExtensionZip(outputDir, "0.7.0")).rejects.toThrow(/More than one/);
   });
 });

@@ -1,9 +1,9 @@
-// Ships the packaged Chrome extension inside the player build: copies
-// apps/extension/dist/webblackbox-<version>-chrome.zip to <build>/extension/webblackbox-chrome.zip
+// Ships the packaged Chrome extension inside the player build: copies the zip `wxt zip` wrote to
+// apps/extension/.output/<name>-<version>-chrome.zip to <build>/extension/webblackbox-chrome.zip
 // and writes extension/extension.json ({ version, file, size, sha256, builtAt }). The guide view
 // reads that metadata; without it the guide explains that this build does not bundle the extension.
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const PLAYER_EXTENSION_DIR = "extension";
@@ -12,18 +12,23 @@ export const PLAYER_EXTENSION_ZIP = "webblackbox-chrome.zip";
 export const PLAYER_EXTENSION_METADATA = "extension.json";
 
 /**
- * The zip `pnpm --filter @webblackbox/extension package:chrome` wrote for `version`
- * (`webblackbox-<version>-chrome.zip`), or null when this version was never packaged. A zip left
- * over from an older version is not used: the Player would offer testers an outdated extension.
+ * The zip `pnpm --filter @webblackbox/extension zip` wrote for `version` (WXT's
+ * `<name>-<version>-chrome.zip`), or null when this version was never packaged. A zip left over
+ * from an older version is not used: the Player would offer testers an outdated extension. Other
+ * builds (`-chrome-store-safe.zip`) do not match.
  */
-export async function findPackagedExtensionZip(distDir, version) {
-  const path = join(distDir, `webblackbox-${version}-chrome.zip`);
+export async function findPackagedExtensionZip(outputDir, version) {
+  const suffix = `-${version}-chrome.zip`;
+  const entries = await readdir(outputDir, { withFileTypes: true }).catch(() => []);
+  const zips = entries.filter((entry) => entry.isFile() && entry.name.endsWith(suffix));
 
-  try {
-    return (await stat(path)).isFile() ? path : null;
-  } catch {
-    return null;
+  if (zips.length > 1) {
+    throw new Error(
+      `More than one packaged extension for v${version} in ${outputDir}: ${zips.map((entry) => entry.name).join(", ")}`
+    );
   }
+
+  return zips[0] ? join(outputDir, zips[0].name) : null;
 }
 
 /**
@@ -33,7 +38,7 @@ export async function findPackagedExtensionZip(distDir, version) {
  */
 export async function bundleExtensionIntoPlayer({
   extensionPackageJson,
-  extensionDistDir,
+  extensionOutputDir,
   playerBuildDir,
   now = () => new Date()
 }) {
@@ -47,7 +52,7 @@ export async function bundleExtensionIntoPlayer({
     throw new Error(`Missing version in ${extensionPackageJson}`);
   }
 
-  const zipPath = await findPackagedExtensionZip(extensionDistDir, version);
+  const zipPath = await findPackagedExtensionZip(extensionOutputDir, version);
   const targetDir = join(playerBuildDir, PLAYER_EXTENSION_DIR);
 
   if (!zipPath) {

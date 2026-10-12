@@ -40,7 +40,6 @@ export interface ProfileE2eHarness {
 
 export declare function createProfileE2eHarness(options: {
   name: string;
-  appRoot: string;
   defaultPort: string;
 }): ProfileE2eHarness;
 

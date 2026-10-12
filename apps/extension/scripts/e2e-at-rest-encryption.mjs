@@ -18,13 +18,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e2e-harness.mjs";
+import { EXTENSION_FILES } from "./lib/extension-paths.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
 const harness = createProfileE2eHarness({
   name: "at-rest-encryption",
-  appRoot,
   defaultPort: "9238"
 });
 const passphrase = "webblackbox-at-rest-e2e";
@@ -189,7 +189,9 @@ async function main() {
   const secondSid = await recordSession(first, tabId, SECOND_SECRETS);
   const thirdSid = await recordSession(first, tabId, THIRD_SECRETS);
   const swTarget = (await harness.listTargets()).find(
-    (target) => target.type === "service_worker" && target.url === `${origin}/sw.js`
+    (target) =>
+      target.type === "service_worker" &&
+      target.url === `${origin}/${EXTENSION_FILES.serviceWorker}`
   );
   assert(swTarget, "Extension service worker target not found");
   assert(first.swExceptions.length === 0, "Service worker threw", first.swExceptions);
@@ -280,7 +282,7 @@ async function main() {
   assert((await listSessionSids(second.popup)).length === 0, "Sessions are listed after restart");
 
   const sessionsPage = await harness.attach(
-    await openExtensionPage(second.popup, `${origin}/sessions.html`)
+    await openExtensionPage(second.popup, `${origin}/${EXTENSION_FILES.sessionsPage}`)
   );
   await sessionsPage.send("Runtime.enable");
   const sessionsView = await waitFor(
@@ -457,7 +459,7 @@ async function openExtensionPage(popup, url) {
 async function dumpPipelineDb(origin) {
   const targets = await harness.listTargets();
   const target =
-    targets.find((entry) => entry.url === `${origin}/offscreen.html`) ??
+    targets.find((entry) => entry.url === `${origin}/${EXTENSION_FILES.offscreenPage}`) ??
     targets.find((entry) => entry.url?.startsWith(`${origin}/`) && entry.type === "page");
   assert(target, "No extension page to read IndexedDB from");
 

@@ -7,6 +7,8 @@ import { access, mkdir, readdir, rm } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 import { buildChromeArgs, CHROME_LAUNCH_PROFILES } from "./chrome-launcher.mjs";
+import { isExtensionServiceWorkerTarget, requireExtensionId } from "./devtools-targets.mjs";
+import { DEFAULT_EXTENSION_DIR, EXTENSION_FILES } from "./extension-paths.mjs";
 
 /** Upper bound for any single CDP command, so a blocked page fails the run instead of hanging. */
 const CDP_COMMAND_TIMEOUT_MS = 60_000;
@@ -22,10 +24,10 @@ const CHROME_CANDIDATES = [
 ].filter(Boolean);
 
 /**
- * @param {{ name: string, appRoot: string, defaultPort: string }} options
+ * @param {{ name: string, defaultPort: string }} options
  */
-export function createProfileE2eHarness({ name, appRoot, defaultPort }) {
-  const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? resolve(appRoot, "build");
+export function createProfileE2eHarness({ name, defaultPort }) {
+  const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? DEFAULT_EXTENSION_DIR;
   const remotePort = Number(process.env.WB_E2E_REMOTE_PORT ?? defaultPort);
   const headless = (process.env.WB_E2E_HEADLESS ?? "1") !== "0";
   const runId = Date.now();
@@ -64,15 +66,15 @@ export function createProfileE2eHarness({ name, appRoot, defaultPort }) {
       eventsEnabled: true
     });
 
+    const extensionId = await requireExtensionId(extensionDir);
     const swTarget = await waitFor(
       async () =>
-        (await fetchJson(`${baseUrl}/json/list`)).find(
-          (target) => target?.type === "service_worker" && target.url?.endsWith("/sw.js")
+        (await fetchJson(`${baseUrl}/json/list`)).find((target) =>
+          isExtensionServiceWorkerTarget(target, extensionId)
         ) ?? null,
       20_000,
       "Extension service worker not found"
     );
-    const extensionId = /^chrome-extension:\/\/([^/]+)\//.exec(swTarget.url)?.[1];
     const sw = await connect(swTarget.webSocketDebuggerUrl);
     const swExceptions = [];
     await sw.send("Runtime.enable");
@@ -82,7 +84,8 @@ export function createProfileE2eHarness({ name, appRoot, defaultPort }) {
 
     const page = await connect((await openTarget(pageUrl)).webSocketDebuggerUrl);
     const popup = await connect(
-      (await openTarget(`chrome-extension://${extensionId}/popup.html`)).webSocketDebuggerUrl
+      (await openTarget(`chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`))
+        .webSocketDebuggerUrl
     );
     await page.send("Runtime.enable");
     await popup.send("Runtime.enable");

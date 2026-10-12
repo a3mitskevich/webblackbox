@@ -19,7 +19,7 @@ import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e
 const root = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
-const harness = createProfileE2eHarness({ name: "profile-qa", appRoot, defaultPort: "9231" });
+const harness = createProfileE2eHarness({ name: "profile-qa", defaultPort: "9231" });
 const passphrase = "webblackbox-qa-e2e-passphrase";
 
 const CONSOLE_MARKER = "qa-console-marker-7f3a";

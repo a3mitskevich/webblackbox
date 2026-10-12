@@ -9,7 +9,7 @@
   "downloadFacts": "版本 {version} · {size}",
   "downloadSha256": "SHA-256",
   "downloadMissing": "此播放器构建未附带扩展。",
-  "downloadMissingHow": "请联系提供此播放器的人获取包含扩展的构建，或自行构建：在 pnpm build 之前先运行 pnpm --filter @webblackbox/extension package:chrome。",
+  "downloadMissingHow": "请联系提供此播放器的人获取包含扩展的构建，或自行构建：在 pnpm build 之前先运行 pnpm --filter @webblackbox/extension zip。",
   "copy": "复制",
   "copySha256": "复制 SHA-256",
   "copyPlayerUrl": "复制此播放器的 URL",

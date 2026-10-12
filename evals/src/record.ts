@@ -4,7 +4,8 @@
 //
 //   pnpm --filter @webblackbox/evals record [--scenario <id|case>]... [--profile <id>]...
 //
-// Needs `pnpm build` (the unpacked extension) and a Chrome binary (WB_E2E_CHROME_BIN).
+// Needs `pnpm build` (the unpacked WXT extension in apps/extension/.output/chrome-mv3, or
+// WB_E2E_EXTENSION_DIR) and a Chrome binary (WB_E2E_CHROME_BIN).
 
 import { copyFile, mkdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,7 +25,7 @@ import {
   writeManifest
 } from "./archive-manifest.js";
 import { runSteps } from "./browser/steps.js";
-import { ARCHIVE_MANIFEST, ARCHIVES_DIR, EXTENSION_APP_ROOT } from "./paths.js";
+import { ARCHIVE_MANIFEST, ARCHIVES_DIR } from "./paths.js";
 import { type RecordingProfile, selectProfiles } from "./profiles.js";
 import { SCENARIOS, selectScenarios } from "./scenarios/index.js";
 import { startBugZooSite } from "./site/server.js";
@@ -130,7 +131,6 @@ async function recordScenario(
   const site = await startBugZooSite(SCENARIOS);
   const harness = createProfileE2eHarness({
     name: `evals-${profile.id}-${scenario.caseId}`,
-    appRoot: EXTENSION_APP_ROOT,
     defaultPort: DEFAULT_REMOTE_PORT
   });
 
