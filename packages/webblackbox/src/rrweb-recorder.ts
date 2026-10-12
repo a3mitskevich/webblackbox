@@ -13,8 +13,11 @@ import { readCapturableInputValue } from "./input-value-policy.js";
 import { monotonicTime } from "./lite-capture-config.js";
 import { buildRrwebTextMask, createRrwebEventMask, needsRrwebEventMask } from "./rrweb-masking.js";
 import {
+  countDocumentNodes,
   countMutationChanges,
-  DOM_RECORDER_MAX_ELEMENTS,
+  countRecordChanges,
+  DOM_RECORDER_MAX_NODES,
+  RRWEB_MUTATION_MAX_CHANGES,
   RrwebPressureGauge,
   type RrwebPressureReason
 } from "./rrweb-pressure.js";
@@ -176,26 +179,29 @@ function shouldFlushAt(event: RrwebRecordedEvent): boolean {
   );
 }
 
-/** Elements of the page (cheap: one live collection length). */
-export function countPageElements(doc: Document = document): number {
-  return doc.getElementsByTagName("*").length;
-}
-
 /**
  * Measures rrweb's main-thread time per mutation delivery. Mutation observers are notified in the
  * order they were created, so this observer, created right before rrweb's, marks the start of a
  * delivery and rrweb's emit callback (the end of its processing) reads the elapsed time. The mark
  * is cleared after the delivery, so an emit outside one (a checkout) reads no cost.
+ *
+ * It also sees a storm first: a delivery with more changes than a batch may carry calls `onStorm`,
+ * which stops rrweb before its own observer serializes the delivery (a disconnected observer gets
+ * no callback for the records it had queued).
  */
 type CostProbe = { read: () => number; disconnect: () => void };
 
-function createCostProbe(): CostProbe {
+function createCostProbe(onStorm: () => void): CostProbe {
   let startedAt = -1;
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver((records) => {
     startedAt = performance.now();
     queueMicrotask(() => {
       startedAt = -1;
     });
+
+    if (countRecordChanges(records, RRWEB_MUTATION_MAX_CHANGES) > RRWEB_MUTATION_MAX_CHANGES) {
+      onStorm();
+    }
   });
   observer.observe(document, {
     attributes: true,
@@ -218,14 +224,15 @@ export type RrwebRecorderRuntime = {
   now: () => number;
   setTimeout: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimeout: (timer: ReturnType<typeof setTimeout>) => void;
-  countElements: () => number;
+  /** Nodes of the page, counted up to `limit` + 1. */
+  countNodes: (limit: number) => number;
 };
 
 const DEFAULT_RUNTIME: RrwebRecorderRuntime = {
   now: () => performance.now(),
   setTimeout: (callback, ms) => setTimeout(callback, ms),
   clearTimeout: (timer) => clearTimeout(timer),
-  countElements: () => countPageElements()
+  countNodes: (limit) => countDocumentNodes(document, limit)
 };
 
 /**
@@ -234,7 +241,7 @@ const DEFAULT_RUNTIME: RrwebRecorderRuntime = {
  * Player can line rrweb timestamps up with the rest of the archive.
  *
  * Pressure mode (`rrweb-pressure.ts`): rrweb pauses while its main-thread time or one change set
- * is over budget and resumes with a fresh full snapshot; a page over the element limit is not
+ * is over budget and resumes with a fresh full snapshot; a page over the node limit is not
  * recorded by rrweb (`null`, after a `disabled` batch), nor is one that grows over it by the next
  * resume (`context.onDisabled`).
  */
@@ -248,10 +255,10 @@ export function createRrwebDomRecorderWith(
     return null;
   }
 
-  const elements = runtime.countElements();
+  const nodes = runtime.countNodes(DOM_RECORDER_MAX_NODES);
 
-  if (elements > DOM_RECORDER_MAX_ELEMENTS) {
-    emitState(context, { status: "disabled", reason: "element-limit", elements });
+  if (nodes > DOM_RECORDER_MAX_NODES) {
+    emitState(context, { status: "disabled", reason: "node-limit", nodes });
     return null;
   }
 
@@ -311,7 +318,7 @@ export function createRrwebDomRecorderWith(
     resumeTimer = runtime.setTimeout(resume, gauge.startPause(runtime.now()));
   };
 
-  const disable = (reason: RrwebRecorderReason, extra: { elements?: number } = {}): void => {
+  const disable = (reason: RrwebRecorderReason, extra: { nodes?: number } = {}): void => {
     halt();
     status = "disabled";
     batchState = { status: "disabled", reason, ...extra };
@@ -358,7 +365,13 @@ export function createRrwebDomRecorderWith(
 
   /** Starts rrweb (its first events are a meta and a full snapshot); false when it cannot. */
   const start = (): boolean => {
-    probe = createCostProbe();
+    probe = createCostProbe(() => {
+      if (status === "recording") {
+        pause("mutation-size", 0);
+      }
+    });
+
+    const startedAt = runtime.now();
 
     try {
       stopRecording =
@@ -378,6 +391,9 @@ export function createRrwebDomRecorderWith(
       return false;
     }
 
+    // rrweb snapshots synchronously once the page has loaded (its emit, our masking and the batch
+    // post included); before that this reads ~0 and the next checkout is not measured either.
+    gauge.noteSnapshotCost(runtime.now() - startedAt);
     return true;
   };
 
@@ -388,10 +404,10 @@ export function createRrwebDomRecorderWith(
       return;
     }
 
-    const count = runtime.countElements();
+    const count = runtime.countNodes(DOM_RECORDER_MAX_NODES);
 
-    if (count > DOM_RECORDER_MAX_ELEMENTS) {
-      disable("element-limit", { elements: count });
+    if (count > DOM_RECORDER_MAX_NODES) {
+      disable("node-limit", { nodes: count });
       return;
     }
 

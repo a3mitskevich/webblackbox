@@ -199,13 +199,13 @@ describe("page-world DOM recorder handle", () => {
       kind: "batch",
       session: start.session,
       mono: 1,
-      payload: { ...batch(0), recorder: { status: "disabled", reason: "element-limit" } }
+      payload: { ...batch(0), recorder: { status: "disabled", reason: "node-limit" } }
     });
     recorder.receive?.({
       kind: "batch",
       session: start.session,
       mono: 2,
-      payload: { ...batch(0), recorder: { status: "disabled", reason: "element-limit" } }
+      payload: { ...batch(0), recorder: { status: "disabled", reason: "node-limit" } }
     });
 
     expect(disabledCount()).toBe(1);

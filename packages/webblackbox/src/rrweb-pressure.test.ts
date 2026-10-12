@@ -8,6 +8,7 @@ import {
   RRWEB_PAUSE_INITIAL_MS,
   RRWEB_PAUSE_MAX_MS,
   RRWEB_PAUSE_RESET_MS,
+  RRWEB_SNAPSHOT_COST_FACTOR,
   RrwebPressureGauge
 } from "./rrweb-pressure.js";
 
@@ -96,5 +97,19 @@ describe("RrwebPressureGauge", () => {
     gauge.startPause(1);
     gauge.markResumed(2);
     expect(gauge.measureMutation(RRWEB_COST_BUDGET_MS * 0.9, 1, 3).pause).toBe(false);
+  });
+
+  it("pauses at least as long as the snapshot that ends the pause allows", () => {
+    const gauge = new RrwebPressureGauge();
+
+    gauge.noteSnapshotCost(200);
+    expect(gauge.startPause(0)).toBe(200 * RRWEB_SNAPSHOT_COST_FACTOR);
+
+    gauge.noteSnapshotCost(10_000);
+    expect(gauge.startPause(1)).toBe(RRWEB_PAUSE_MAX_MS);
+
+    gauge.noteSnapshotCost(Number.NaN);
+    gauge.markResumed(2);
+    expect(gauge.startPause(2 + RRWEB_PAUSE_RESET_MS)).toBe(RRWEB_PAUSE_INITIAL_MS);
   });
 });

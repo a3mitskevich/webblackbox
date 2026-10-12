@@ -35,15 +35,15 @@ describe("isRrwebRecorderState", () => {
   it("accepts pressure-mode states", () => {
     expect(isRrwebRecorderState({ status: "paused", reason: "mutation-cost" })).toBe(true);
     expect(isRrwebRecorderState({ status: "resumed" })).toBe(true);
-    expect(
-      isRrwebRecorderState({ status: "disabled", reason: "element-limit", elements: 40_000 })
-    ).toBe(true);
+    expect(isRrwebRecorderState({ status: "disabled", reason: "node-limit", nodes: 40_000 })).toBe(
+      true
+    );
   });
 
   it("rejects unknown statuses, reasons and counts", () => {
     expect(isRrwebRecorderState({ status: "running" })).toBe(false);
     expect(isRrwebRecorderState({ status: "paused", reason: "boredom" })).toBe(false);
-    expect(isRrwebRecorderState({ status: "disabled", elements: "many" })).toBe(false);
+    expect(isRrwebRecorderState({ status: "disabled", nodes: "many" })).toBe(false);
     expect(isRrwebRecorderState([])).toBe(false);
   });
 

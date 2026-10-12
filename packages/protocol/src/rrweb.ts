@@ -42,14 +42,14 @@ export type RrwebRecordedEvent = {
  * Why the DOM recorder stopped recording changes for a while (pressure mode) or for good:
  * - `mutation-cost`: rrweb's main-thread time over its budget;
  * - `mutation-size`: one change set larger than a batch may carry (the change was dropped);
- * - `element-limit`: the page has more elements than rrweb may record (the agent's own DOM
- *   capture takes over);
+ * - `node-limit`: the page has more nodes than rrweb may record (the agent's own DOM capture
+ *   takes over);
  * - `start-failed`: rrweb could not start on this page.
  */
 export const RRWEB_RECORDER_REASONS = [
   "mutation-cost",
   "mutation-size",
-  "element-limit",
+  "node-limit",
   "start-failed"
 ] as const;
 
@@ -64,8 +64,8 @@ export type RrwebRecorderReason = (typeof RRWEB_RECORDER_REASONS)[number];
 export type RrwebRecorderState = {
   status: "paused" | "resumed" | "disabled";
   reason?: RrwebRecorderReason;
-  /** Elements of the page when the state changed (`disabled` by `element-limit`). */
-  elements?: number;
+  /** Nodes of the page when the state changed (`disabled` by `node-limit`). */
+  nodes?: number;
   /** rrweb's main-thread milliseconds in the window that paused it (`mutation-cost`). */
   costMs?: number;
 };
@@ -109,7 +109,7 @@ export function isRrwebRecorderState(value: unknown): value is RrwebRecorderStat
     RRWEB_RECORDER_STATUSES.has(candidate.status) &&
     (candidate.reason === undefined ||
       (typeof candidate.reason === "string" && RRWEB_RECORDER_REASON_SET.has(candidate.reason))) &&
-    isOptionalFiniteNumber(candidate.elements) &&
+    isOptionalFiniteNumber(candidate.nodes) &&
     isOptionalFiniteNumber(candidate.costMs)
   );
 }
