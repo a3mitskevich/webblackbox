@@ -22,6 +22,12 @@ const URL_ATTRIBUTES = new Set([
   "cite",
   "background",
   "data",
+  "ping",
+  "longdesc",
+  "lowsrc",
+  "manifest",
+  "codebase",
+  "itemid",
   "xlink:href"
 ]);
 const SRCSET_ATTRIBUTES = new Set(["srcset", "imagesrcset"]);

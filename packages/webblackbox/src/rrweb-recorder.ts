@@ -1,6 +1,5 @@
 import { record } from "@rrweb/record";
 import {
-  maskValuePatterns,
   RRWEB_EVENT_SCHEMA,
   RRWEB_EVENT_TYPES,
   RRWEB_INCREMENTAL_SOURCES,
@@ -10,6 +9,7 @@ import {
 
 import { readCapturableInputValue } from "./input-value-policy.js";
 import { monotonicTime } from "./lite-capture-config.js";
+import { buildRrwebTextMask, createRrwebEventMask } from "./rrweb-masking.js";
 import type { DomRecorder, DomRecorderContext, DomRecorderFactory } from "./types.js";
 
 type RrwebRecordOptions = NonNullable<Parameters<typeof record>[0]>;
@@ -45,8 +45,6 @@ const WIREFRAME_BLOCKED_SELECTORS = [
 
 /** Our own recording indicator never belongs to the recorded page (the raw DOM drops it too). */
 const OWN_UI_SELECTOR = "[data-webblackbox-indicator]";
-
-const maskAll = (text: string): string => text.replace(/\S/g, "*");
 
 /**
  * A comma-joined selector list, or null when one selector is invalid: masking must fail closed,
@@ -91,8 +89,12 @@ function maskInputValue(text: string, element: HTMLElement, policy: CapturePolic
  *
  * - `blockedSelectors` → `blockSelector` (the element is kept as an empty box of the same size).
  * - `dom: masked` → every text node masked (`*` per character); `wireframe` also blocks media.
- * - `dom: allow` → text kept, with the user's DOM value patterns applied.
- * - inputs → `maskAllInputs` + `maskInputFn` with the same decision as `user.input` events.
+ * - `dom: allow` → text kept, under the raw DOM's heuristics and the user's DOM value patterns.
+ * - inputs → `maskAllInputs` + `maskInputFn` with the same decision as `user.input` events; rich
+ *   editors are masked like fields.
+ *
+ * Attribute values, style text and hidden fields are masked on the emitted events
+ * (`rrweb-masking.ts`): rrweb has no option for them.
  */
 export function buildRrwebRecordOptions(policy: CapturePolicy): RrwebPolicyOptions | null {
   const { dom } = policy.categories;
@@ -112,15 +114,11 @@ export function buildRrwebRecordOptions(policy: CapturePolicy): RrwebPolicyOptio
     return null;
   }
 
-  const masksAllText = dom === "masked" || dom === "wireframe";
-  const hasDomPatterns = (policy.redaction.valuePatterns ?? []).some((rule) =>
-    rule.targets.includes("dom")
-  );
+  const maskTextFn = buildRrwebTextMask(policy);
 
   return {
     blockSelector,
-    ...(masksAllText || hasDomPatterns ? { maskTextSelector: "*" } : {}),
-    maskTextFn: masksAllText ? maskAll : (text) => maskValuePatterns(text, policy.redaction, "dom"),
+    ...(maskTextFn ? { maskTextSelector: "*", maskTextFn } : {}),
     maskAllInputs: true,
     maskInputFn: (text, element) => maskInputValue(text, element, policy),
     slimDOMOptions: "all",
@@ -166,6 +164,7 @@ export const createRrwebDomRecorder: DomRecorderFactory = (
     return null;
   }
 
+  const maskEvent = createRrwebEventMask(context.policy, (id) => record.mirror.getNode(id));
   let batch: RrwebRecordedEvent[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -189,7 +188,7 @@ export const createRrwebDomRecorder: DomRecorderFactory = (
   const stopRecording = record({
     ...options,
     emit: (event) => {
-      const recorded = event as RrwebRecordedEvent;
+      const recorded = maskEvent(event as RrwebRecordedEvent);
       batch = [...batch, recorded];
 
       if (shouldFlushAt(recorded) || batch.length >= RRWEB_BATCH_MAX_EVENTS) {

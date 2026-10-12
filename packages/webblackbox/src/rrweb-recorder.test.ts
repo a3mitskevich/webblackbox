@@ -12,6 +12,7 @@ import {
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
 import { LiteCaptureAgent } from "./lite-capture-agent.js";
+import { serializeRawDom } from "./raw-dom-snapshot.js";
 import {
   buildRrwebRecordOptions,
   createRrwebDomRecorder,
@@ -117,7 +118,8 @@ describe("buildRrwebRecordOptions", () => {
         ...DEFAULT_CAPTURE_POLICY.redaction.blockedSelectors
       ])
     );
-    expect(options?.maskTextSelector).toBeUndefined();
+    // Text goes through the raw DOM's heuristics (and editors are masked like fields).
+    expect(options?.maskTextSelector).toBe("*");
     expect(options).toMatchObject({
       maskAllInputs: true,
       recordCanvas: false,
@@ -137,6 +139,15 @@ describe("buildRrwebRecordOptions", () => {
     expect(masked?.blockSelector).not.toContain("img");
     expect(wireframe?.blockSelector).toContain("img");
     expect(wireframe?.blockSelector).toContain("canvas");
+  });
+
+  it("records text as it is only when nothing masks it", () => {
+    const options = buildRrwebRecordOptions(
+      policyWith({ dom: "allow", inputs: "allow" }, { contentRedaction: false })
+    );
+
+    expect(options?.maskTextSelector).toBeUndefined();
+    expect(options?.maskTextFn).toBeUndefined();
   });
 
   it("applies DOM value patterns to text when the DOM is recorded as is", () => {
@@ -178,6 +189,63 @@ describe("createRrwebDomRecorder", () => {
 
     expect(findNode(root, byId("greeting"))?.childNodes?.[0]?.textContent).toBe("***** *****");
     expect(findNode(root, byId("name"))?.attributes?.value).toBe("*****");
+  });
+
+  it("masks what the raw DOM masks: attributes, credentials, editors, hidden fields", async () => {
+    document.head.innerHTML = '<meta name="csrf-token" content="csrf-secret-1">';
+    document.body.innerHTML = `
+      <p id="tip" title="alice@example.com" aria-label="Alice Smith" data-token="dt-secret-2">x</p>
+      <div data-props='{"auth":{"password":"json-secret-3"}}'>y</div>
+      <p>token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c</p>
+      <a href="/next?session=query-secret-4">next</a>
+      <div contenteditable="true">editor-secret-5</div>
+      <input id="nonce" type="hidden" value="hidden-secret-6" />
+      <select><option value="option-secret-7">o</option></select>
+      <span onclick="send('handler-secret-8')" style="background:url(/bg.png?sig=css-secret-9)">z</span>
+      <iframe srcdoc="<p>srcdoc-secret-10</p>"></iframe>`;
+    const secrets = /[a-z]+-secret-\d+|eyJhbGciOi/g;
+    const leaked = (policy: CapturePolicy): string[] => {
+      const { recorder, batches } = startRecorder(policy);
+      recorder?.stop();
+      return [...new Set(JSON.stringify(batches).match(secrets) ?? [])].sort();
+    };
+    const rawDom = (policy: CapturePolicy): string[] => {
+      const snapshot = serializeRawDom(document, {
+        blockedSelectors: policy.redaction.blockedSelectors,
+        keepInputValues: policy.categories.inputs === "allow",
+        sensitiveNamePatterns: policy.redaction.redactBodyPatterns,
+        redaction: policy.redaction
+      });
+      return [...new Set(snapshot?.html.match(secrets) ?? [])].sort();
+    };
+
+    // Default: the current path records no raw DOM at all, so nothing may leak.
+    expect(leaked(DEFAULT_CAPTURE_POLICY)).toEqual([]);
+    expect(JSON.stringify(startRecorder(DEFAULT_CAPTURE_POLICY).batches)).not.toMatch(
+      /alice@example\.com|Alice Smith/
+    );
+    running = null;
+
+    // `dom: allow`: exactly what the raw DOM snapshot keeps for the same policy (nothing here).
+    const allow = policyWith({ dom: "allow" });
+    expect(rawDom(allow)).toEqual([]);
+    expect(leaked(allow)).toEqual(rawDom(allow));
+
+    // Later changes too: a hidden field set by script, an attribute and an editor's new text.
+    const { recorder, batches } = startRecorder(allow);
+    running = recorder;
+    const before = batches.length;
+    (document.querySelector("#nonce") as HTMLInputElement).setAttribute(
+      "value",
+      "hidden-secret-11"
+    );
+    document.querySelector("#tip")!.setAttribute("data-session-token", "attr-secret-12");
+    document.querySelector("[contenteditable]")!.textContent = "editor-secret-13";
+    await Promise.resolve();
+    recorder?.flush();
+
+    expect(batches.length).toBeGreaterThan(before);
+    expect(JSON.stringify(batches.slice(before))).not.toMatch(secrets);
   });
 
   it("batches incremental events and stamps each batch with its first event's time", async () => {
