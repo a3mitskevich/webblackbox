@@ -75,6 +75,11 @@ cost a few dollars. `--max-budget-usd` caps each run. Results differ between mod
 runs of the same model: compare reports made with the same model, and re-run a scenario that
 flips before reading much into it. The report header records the model.
 
+The `2026-10-12-baseline` report predates the Maximum and Light profiles: it compares the old
+`default` (Lite) and `full-capture` setups, so its totals do not line up with later runs. Clear
+`evals/archives/` (or pick profiles with `--profile`) before re-recording, or the manifest keeps
+the old archives next to the new ones.
+
 ## Adding a scenario
 
 1. Add a `Scenario` to one of `src/scenarios/*.ts` (or a new file) and list it in

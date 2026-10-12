@@ -87,8 +87,10 @@ export function createCaptureFallbackController(
     );
 
     // Stop may have come in while the debugger was cleaned up or the policy read: a finished
-    // recording must not switch engines or reinstall the Light network baseline.
+    // recording must not switch engines or reinstall the Light network baseline, and its archive
+    // has no fallback record, so the session must not claim one either.
     if (isFinishing(runtime)) {
+      runtime.captureFallback = undefined;
       return;
     }
 

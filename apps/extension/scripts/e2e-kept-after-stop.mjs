@@ -150,7 +150,11 @@ async function main() {
   const third = await popup.evaluate(`
     chrome.runtime.sendMessage({ kind: "ui.export", sid: ${JSON.stringify(thirdSid)}, saveAs: false })
   `);
-  assert(third?.ok === false, "An export without a passphrase worked after Forget", third);
+  assert(
+    third?.ok === false && /passphrase|encrypted/i.test(String(third.error)),
+    "An export without a passphrase was not refused for its passphrase after Forget",
+    third
+  );
   assert(swExceptions.length === 0, "Service worker threw", swExceptions);
 
   console.log(`Kept record: ${JSON.stringify(record)}`);

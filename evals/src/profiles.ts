@@ -11,8 +11,9 @@ export type RecordingProfile = {
 };
 
 export const RECORDING_PROFILES: readonly RecordingProfile[] = [
-  // Tab video needs a click on the toolbar button (activeTab), which the harness cannot make.
-  { id: "maximum", label: "Maximum (default)", mode: "full", visualCapture: "screenshots" },
+  // Maximum asks for tab video too; it needs a click on the toolbar button (activeTab), which the
+  // harness cannot make, so its archives carry a `screen-recording-failed` notice.
+  { id: "maximum", label: "Maximum (default)", mode: "full" },
   { id: "light", label: "Light", mode: "lite", profileId: "builtin:lite" }
 ];
 

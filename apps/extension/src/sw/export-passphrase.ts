@@ -62,7 +62,13 @@ export function createExportPassphraseStore(
       }
     } catch (error) {
       console.warn("[WebBlackbox] failed to drop the remembered export passphrase", error);
-      await area?.set({ [EXPORT_PASSPHRASE_STORAGE_KEY]: "" }).catch(() => undefined);
+      await area?.set({ [EXPORT_PASSPHRASE_STORAGE_KEY]: "" }).catch((fallbackError: unknown) => {
+        // A later worker of this browser session may still read it back.
+        console.error(
+          "[WebBlackbox] the forgotten export passphrase stays in session storage",
+          fallbackError
+        );
+      });
     }
 
     cached = undefined;

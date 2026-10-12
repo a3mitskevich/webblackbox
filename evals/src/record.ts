@@ -224,7 +224,7 @@ async function startRecording(
     tabId,
     mode: profile.mode,
     ...(profile.profileId ? { profileId: profile.profileId } : {}),
-    ...(profile.mode === "full" ? { visualCapture: profile.visualCapture ?? "none" } : {})
+    ...(profile.visualCapture ? { visualCapture: profile.visualCapture } : {})
   };
   const indicator = JSON.stringify(`REC ${profile.mode}`);
   await popup.evaluate(`chrome.runtime.sendMessage(${JSON.stringify(message)})`);

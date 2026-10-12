@@ -494,6 +494,7 @@ describe("Full → Light fallback", () => {
     await harness.commands.handleDebuggerDetach(runtime, "canceled_by_user");
 
     expect(runtime.mode).toBe("full");
+    expect(runtime.captureFallback).toBeUndefined();
     expect(harness.deps.liteNetworkBaseline.install).not.toHaveBeenCalled();
     expect(ingestedOfType(harness, "config")).toHaveLength(1);
     expect(harness.deps.notifications?.notifyCaptureFallback).not.toHaveBeenCalled();
