@@ -5,7 +5,8 @@ import type {
   FreezeReason,
   PointerCaptureOptions,
   PrivacyScannerFindingKind,
-  SamplingProfile
+  SamplingProfile,
+  SessionInterruption
 } from "@webblackbox/protocol";
 
 import type { RawRecorderEvent } from "@webblackbox/recorder";
@@ -164,6 +165,8 @@ export type SessionListItem = {
   profileName?: string;
   /** Set when the session was stopped because its recording profile changed. */
   profileCancel?: ProfileCancelNotice;
+  /** Set when the recording ended without Stop (its service worker went away). */
+  interruption?: SessionInterruption;
 };
 
 /** Anchor of the profiles section of `options.html`; the popup links to it. */

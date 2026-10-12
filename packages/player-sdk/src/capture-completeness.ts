@@ -1,7 +1,10 @@
 import {
   isTextualMimeType,
   normalizeMimeType,
+  type ArchiveTruncation,
   type BodySkipReason,
+  type ExportManifest,
+  type SessionInterruption,
   type WebBlackboxEvent,
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
@@ -38,6 +41,22 @@ export type CompletenessInput = {
   events: readonly WebBlackboxEvent[];
   waterfall: readonly CompletenessNetworkEntry[];
   realtime: readonly CompletenessRealtimeEntry[];
+  /** The archive manifest: what the export kept and whether the recording was interrupted. */
+  manifest?: Pick<ExportManifest, "completeness" | "stats">;
+};
+
+/** What the export kept of the stored recording, and how the recording ended. */
+export type ExportCompleteness = {
+  /** False for archives written before exports recorded what they left out. */
+  recorded: boolean;
+  /** Nothing stored was left out (unknown, so false, when not recorded). */
+  whole: boolean;
+  /** Events stored for the session at export time; null when not recorded. */
+  storedEvents: number | null;
+  exportedEvents: number;
+  truncations: ArchiveTruncation[];
+  /** Set when the recording ended without Stop. */
+  interruption: SessionInterruption | null;
 };
 
 /** How many bodies the policy asked for and what happened to each of them. */
@@ -77,6 +96,7 @@ export type MimeCompleteness = {
 
 export type CaptureCompletenessReport = {
   durationMs: number;
+  export: ExportCompleteness;
   /** The archive's capture policy asked for request and response bodies (`body-allowlist`). */
   bodiesRequested: boolean;
   network: {
@@ -153,6 +173,7 @@ export function buildCaptureCompletenessReport(
 
   return {
     durationMs: Math.max(0, endMono - startMono),
+    export: readExportCompleteness(input.manifest, events.length),
     bodiesRequested: readNetworkPolicy(events) === "body-allowlist",
     network: {
       requests: input.waterfall.length,
@@ -209,8 +230,72 @@ export function formatCaptureCompletenessReport(report: CaptureCompletenessRepor
       `${report.storage.idbRecords} records`,
     `Perf: ${report.perf.vitals} vitals, ${report.perf.longTasks} long tasks, ` +
       `${report.perf.traces} traces`,
+    ...formatExport(report.export),
     ...missingLines
   ];
+}
+
+/** Export lines: what the archive kept, what it left out and why, and an interruption. */
+function formatExport(report: ExportCompleteness): string[] {
+  const kept = report.recorded
+    ? `Export: ${report.exportedEvents}/${report.storedEvents ?? 0} stored events` +
+      (report.whole ? " (whole session)" : "")
+    : `Export: ${report.exportedEvents} events (archive does not record what the export left out)`;
+  const truncations = report.truncations.map(
+    (row) =>
+      `  left out (${row.reason}): ${row.events} events, ${row.chunks} chunks` +
+      (row.fromT !== undefined && row.toT !== undefined
+        ? `, ${isoTime(row.fromT)} – ${isoTime(row.toT)}`
+        : "") +
+      (row.limit !== undefined ? `, limit ${row.limit}` : "")
+  );
+  const interruption = report.interruption
+    ? [
+        `Interrupted: recording ended without Stop (${report.interruption.reason}), noticed ` +
+          isoTime(report.interruption.detectedAt) +
+          (report.interruption.lastSeenAt !== undefined
+            ? `, last seen ${isoTime(report.interruption.lastSeenAt)}`
+            : "")
+      ]
+    : [];
+
+  return [kept, ...truncations, ...interruption];
+}
+
+function isoTime(ms: number): string {
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : String(ms);
+}
+
+/**
+ * What the export kept, read from the manifest alone (cheap: no events are scanned).
+ * `eventCount` stands in for the exported count when there is no manifest.
+ */
+export function readExportCompleteness(
+  manifest: CompletenessInput["manifest"],
+  eventCount = 0
+): ExportCompleteness {
+  const completeness = manifest?.completeness;
+  const exportedEvents = manifest?.stats.eventCount ?? eventCount;
+
+  if (!completeness) {
+    return {
+      recorded: false,
+      whole: false,
+      storedEvents: null,
+      exportedEvents,
+      truncations: [],
+      interruption: null
+    };
+  }
+
+  return {
+    recorded: true,
+    whole: completeness.truncations.length === 0,
+    storedEvents: completeness.storedEvents,
+    exportedEvents,
+    truncations: completeness.truncations.map((row) => ({ ...row })),
+    interruption: completeness.interruption ? { ...completeness.interruption } : null
+  };
 }
 
 function seconds(ms: number): string {

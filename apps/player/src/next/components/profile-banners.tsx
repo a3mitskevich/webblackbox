@@ -2,18 +2,22 @@ import { useMemo } from "react";
 
 import { useController, useI18n, usePlayerState } from "../context.js";
 import { Icon } from "./icon.js";
-import { profileBannerLines } from "./recording-profile.js";
+import { exportNoticeLines, profileBannerLines } from "./recording-profile.js";
 
 /**
- * The recording profile warnings (downgraded, capped by policy, recording cut short) above the
- * stage, with a way to the full "About this recording". Nothing for a recording that kept
- * everything its profile asks for.
+ * The recording warnings above the stage — interrupted, cut by its export, recording profile
+ * downgraded, capped by policy or cut short — with a way to the full "About this recording".
+ * Nothing for a whole recording that kept everything its profile asks for.
  */
 export function ProfileBanners() {
   const controller = useController();
   const i18n = useI18n();
   const archive = usePlayerState((state) => state.archive);
-  const lines = useMemo(() => (archive ? profileBannerLines(archive, i18n) : []), [archive, i18n]);
+  const lines = useMemo(
+    () =>
+      archive ? [...exportNoticeLines(archive, i18n), ...profileBannerLines(archive, i18n)] : [],
+    [archive, i18n]
+  );
 
   if (lines.length === 0) {
     return null;

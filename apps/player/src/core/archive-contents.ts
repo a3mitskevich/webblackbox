@@ -3,6 +3,7 @@ import {
   readRecordingProfiles,
   type BodyCompleteness,
   type CaptureCompletenessReport,
+  type ExportCompleteness,
   type ProfileCancellationInfo,
   type RecordingProfileEntry
 } from "@webblackbox/player-sdk";
@@ -58,6 +59,8 @@ export type ArchiveContents = {
   storage: CaptureCompletenessReport["storage"] & { status: ContentStatus };
   dom: CaptureCompletenessReport["dom"] & { status: ContentStatus };
   perf: CaptureCompletenessReport["perf"] & { status: ContentStatus };
+  /** What the export kept of the recording and whether the recording was interrupted. */
+  export: ExportCompleteness & { status: ContentStatus };
   profiles: RecordingProfileEntry[];
   cancellation: ProfileCancellationInfo | null;
 };
@@ -82,6 +85,15 @@ function mediaOf(model: ArchiveModel): MediaContents & { status: ContentStatus }
   return model.screenshots.length > 0
     ? { kind: "screenshots", status: "full", count: model.screenshots.length }
     : { kind: "none", status: "none" };
+}
+
+/** Whole and ended with Stop: full; cut or interrupted: partial; older archives: not recorded. */
+function exportStatus(report: ExportCompleteness): ContentStatus {
+  if (!report.recorded) {
+    return "none";
+  }
+
+  return report.whole && !report.interruption ? "full" : "partial";
 }
 
 export function buildArchiveContents(
@@ -143,6 +155,7 @@ export function buildArchiveContents(
       ...perf,
       status: perf.vitals + perf.longTasks + perf.traces === 0 ? "none" : "full"
     },
+    export: { ...report.export, status: exportStatus(report.export) },
     profiles: readRecordingProfiles(events),
     cancellation: readProfileCancellation(events)
   };

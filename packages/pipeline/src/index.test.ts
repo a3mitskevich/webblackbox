@@ -298,15 +298,15 @@ describe("pipeline", () => {
       archiveKeyEnvelope: "passphrase",
       encrypted: true,
       includeScreenshots: false,
-      maxArchiveBytes: 100 * 1024 * 1024,
-      recentWindowMs: 20 * 60 * 1000,
+      maxArchiveBytes: null,
+      recentWindowMs: null,
       shareEligible: true
     });
     expect(parsed.privacyManifest?.totals.events).toBe(1);
     expect(parsed.integrity?.files["privacy/manifest.json"]).toMatch(/[a-f0-9]{64}/);
   });
 
-  it("applies the default export policy when no options are passed", async () => {
+  it("exports the whole session by default and records the excluded screenshots", async () => {
     const storage = new MemoryPipelineStorage();
     const pipeline = new FlightRecorderPipeline({
       session: {
@@ -334,11 +334,25 @@ describe("pipeline", () => {
     const exported = await pipeline.exportBundle({ passphrase: TEST_PASSPHRASE });
     const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: TEST_PASSPHRASE });
 
-    expect(parsed.events.map((event) => event.id)).toEqual(["E-default-marker"]);
+    // Older than the 20-minute window that used to be the default: still exported.
+    expect(parsed.events.map((event) => event.id)).toEqual(["E-default-old", "E-default-marker"]);
     expect(parsed.privacyManifest?.transfer).toMatchObject({
       includeScreenshots: false,
-      maxArchiveBytes: 100 * 1024 * 1024,
-      recentWindowMs: 20 * 60 * 1000
+      maxArchiveBytes: null,
+      recentWindowMs: null
+    });
+    expect(parsed.manifest.completeness).toEqual({
+      storedEvents: 3,
+      storedChunks: 3,
+      truncations: [
+        {
+          reason: "screenshots-excluded",
+          events: 1,
+          chunks: 1,
+          fromT: now - 5 * 60 * 1000,
+          toT: now - 5 * 60 * 1000
+        }
+      ]
     });
   });
 

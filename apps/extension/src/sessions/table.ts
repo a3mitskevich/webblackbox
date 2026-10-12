@@ -219,6 +219,16 @@ function createSiteCell(session: SessionListItem, t: Translate): HTMLElement {
       el("strong", { text: page.primary, attrs: { title: session.url ?? page.secondary } }),
       ...(session.active
         ? [el("span", { className: "wb-badge wb-badge--live", text: t("sessionsStatusLive") })]
+        : []),
+      ...(session.interruption
+        ? [
+            el("span", {
+              className: "wb-badge wb-badge--alert",
+              text: t("sessionsStatusInterrupted"),
+              attrs: { title: t("sessionsInterruptedHint") },
+              dataset: { interrupted: "" }
+            })
+          ]
         : [])
     ]),
     el("span", { className: "wb-site__url mono", text: page.secondary }),

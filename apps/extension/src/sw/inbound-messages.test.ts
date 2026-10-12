@@ -8,6 +8,7 @@ import {
   REJECTED_MESSAGE_LOG_MAX_PER_WINDOW,
   REJECTED_MESSAGE_LOG_WINDOW_MS
 } from "./inbound-messages.js";
+import { resolveExportPolicy } from "./export-session.js";
 
 const EVENT = {
   source: "content",
@@ -365,6 +366,37 @@ describe("createRejectedMessageLog", () => {
     expect(warn).toHaveBeenLastCalledWith("[WebBlackbox] dropped an inbound message", {
       kind: "x",
       reason: "unknown kind"
+    });
+  });
+});
+
+describe("ui.export policy limits", () => {
+  it("accepts null limits (the whole session) and leaves them to the default", () => {
+    const parsed = parseExtensionInboundMessage({
+      kind: "ui.export",
+      sid: "S-1",
+      policy: {
+        includeScreenshots: false,
+        includeScreenRecordings: false,
+        maxArchiveBytes: null,
+        recentWindowMs: null
+      }
+    });
+
+    expect(parsed).toMatchObject({
+      ok: true,
+      message: {
+        kind: "ui.export",
+        sid: "S-1",
+        policy: { includeScreenshots: false, includeScreenRecordings: false }
+      }
+    });
+    const policy =
+      parsed.ok && parsed.message.kind === "ui.export" ? parsed.message.policy : undefined;
+
+    expect(resolveExportPolicy(policy)).toMatchObject({
+      maxArchiveBytes: null,
+      recentWindowMs: null
     });
   });
 });

@@ -1,4 +1,4 @@
-import type { CaptureMode, RecorderConfig } from "@webblackbox/protocol";
+import type { CaptureMode, RecorderConfig, SessionInterruption } from "@webblackbox/protocol";
 
 import type { FullModeVisualCapture } from "../shared/messages.js";
 import type { ProfileSelection } from "../shared/profiles/resolve.js";
@@ -48,6 +48,8 @@ export type StoppedSessionSnapshot = {
   };
   /** Failed purges so far; such a recording is retried by its alarm, not at worker start. */
   purgeAttempts?: number;
+  /** Set for a recording an earlier worker left running: it ended without Stop. */
+  interruption?: SessionInterruption;
 };
 
 export type SnapshotStorageAreaLike = {
@@ -154,10 +156,20 @@ export async function clearRetentionAlarm(
   await alarms?.clear(retentionAlarmName(sid));
 }
 
-/** Snapshot store over `area`; writes are serialized. Without an area nothing is kept. */
-export function createStoppedSessionStore(
-  area: SnapshotStorageAreaLike | undefined
-): StoppedSessionStore {
+/** A list of snapshots under one key of `area`, read and written through one serial queue. */
+export type SnapshotList<TSnapshot> = {
+  enqueue: <TResult>(task: () => Promise<TResult>) => Promise<TResult>;
+  read: () => Promise<TSnapshot[]>;
+  write: (rows: TSnapshot[]) => Promise<void>;
+  update: (change: (rows: TSnapshot[]) => TSnapshot[]) => Promise<void>;
+};
+
+/** Serialized access to the snapshot list under `key`; without an area nothing is kept. */
+export function createSnapshotList<TSnapshot>(
+  area: SnapshotStorageAreaLike | undefined,
+  key: string,
+  parse: (value: unknown) => TSnapshot[]
+): SnapshotList<TSnapshot> {
   let queue: Promise<unknown> = Promise.resolve();
 
   const enqueue = <TResult>(task: () => Promise<TResult>): Promise<TResult> => {
@@ -165,30 +177,42 @@ export function createStoppedSessionStore(
     queue = run.catch(() => undefined);
     return run;
   };
-  const read = async (): Promise<StoppedSessionSnapshot[]> => {
-    if (!area) {
-      return [];
-    }
-
-    const values = await area.get(STOPPED_SESSION_SNAPSHOTS_KEY);
-    return parseStoppedSessionSnapshots(values?.[STOPPED_SESSION_SNAPSHOTS_KEY]);
+  const read = async (): Promise<TSnapshot[]> => (area ? parse((await area.get(key))?.[key]) : []);
+  const write = async (rows: TSnapshot[]): Promise<void> => {
+    await area?.set({ [key]: rows });
   };
-  const update = (
-    change: (snapshots: StoppedSessionSnapshot[]) => StoppedSessionSnapshot[]
-  ): Promise<void> =>
-    enqueue(async () => {
-      if (area) {
-        await area.set({ [STOPPED_SESSION_SNAPSHOTS_KEY]: change(await read()) });
-      }
-    });
 
   return {
-    list: () => enqueue(read),
-    remember: (snapshot) => update((rows) => upsertStoppedSessionSnapshot(rows, snapshot)),
-    forget: (sid) => update((rows) => removeStoppedSessionSnapshot(rows, sid)),
-    recordPurgeFailure: (sid) =>
+    enqueue,
+    read,
+    write,
+    update: (change) =>
       enqueue(async () => {
-        const rows = await read();
+        if (area) {
+          await write(change(await read()));
+        }
+      })
+  };
+}
+
+/** Snapshot store over `area`; writes are serialized. Without an area nothing is kept. */
+export function createStoppedSessionStore(
+  area: SnapshotStorageAreaLike | undefined
+): StoppedSessionStore {
+  const snapshots = createSnapshotList(
+    area,
+    STOPPED_SESSION_SNAPSHOTS_KEY,
+    parseStoppedSessionSnapshots
+  );
+
+  return {
+    list: () => snapshots.enqueue(snapshots.read),
+    remember: (snapshot) =>
+      snapshots.update((rows) => upsertStoppedSessionSnapshot(rows, snapshot)),
+    forget: (sid) => snapshots.update((rows) => removeStoppedSessionSnapshot(rows, sid)),
+    recordPurgeFailure: (sid) =>
+      snapshots.enqueue(async () => {
+        const rows = await snapshots.read();
         const row = rows.find((candidate) => candidate.sid === sid);
 
         if (!row || !area) {
@@ -196,18 +220,67 @@ export function createStoppedSessionStore(
         }
 
         const purgeAttempts = (row.purgeAttempts ?? 0) + 1;
-        await area.set({
-          [STOPPED_SESSION_SNAPSHOTS_KEY]: rows.map((candidate) =>
+        await snapshots.write(
+          rows.map((candidate) =>
             candidate.sid === sid ? { ...candidate, purgeAttempts } : candidate
           )
-        });
+        );
         return purgeAttempts;
       }),
-    clear: () => update(() => [])
+    clear: () => snapshots.update(() => [])
   };
 }
 
 function parseStoppedSessionSnapshot(value: unknown): StoppedSessionSnapshot | null {
+  const core = parseSessionSnapshotCore(value);
+
+  if (
+    !core ||
+    !isRecord(value) ||
+    !isFiniteNumber(value.stoppedAt) ||
+    !isFiniteNumber(value.expiresAt) ||
+    value.expiresAt < value.stoppedAt
+  ) {
+    return null;
+  }
+
+  const interruption = parseSessionInterruption(value.interruption);
+
+  return {
+    ...core,
+    stoppedAt: value.stoppedAt,
+    expiresAt: value.expiresAt,
+    purgeAttempts: isFiniteNumber(value.purgeAttempts) ? Math.max(0, value.purgeAttempts) : 0,
+    ...(interruption ? { interruption } : {})
+  };
+}
+
+/** The interruption of a snapshot; an invalid one is dropped (the recording is still kept). */
+export function parseSessionInterruption(value: unknown): SessionInterruption | undefined {
+  if (
+    !isRecord(value) ||
+    value.reason !== "service-worker-restart" ||
+    !isFiniteNumber(value.detectedAt) ||
+    (value.lastSeenAt !== undefined && !isFiniteNumber(value.lastSeenAt))
+  ) {
+    return undefined;
+  }
+
+  return {
+    reason: value.reason,
+    detectedAt: value.detectedAt,
+    ...(isFiniteNumber(value.lastSeenAt) ? { lastSeenAt: value.lastSeenAt } : {})
+  };
+}
+
+/** What every session snapshot (stopped or live) holds: identity, URL, profile, config, counters. */
+export type SessionSnapshotCore = Omit<
+  StoppedSessionSnapshot,
+  "stoppedAt" | "expiresAt" | "purgeAttempts" | "interruption"
+>;
+
+/** Parses the shared snapshot fields; the caller checks its own timing fields. */
+export function parseSessionSnapshotCore(value: unknown): SessionSnapshotCore | null {
   if (!isRecord(value)) {
     return null;
   }
@@ -220,9 +293,6 @@ function parseStoppedSessionSnapshot(value: unknown): StoppedSessionSnapshot | n
     typeof value.tabId !== "number" ||
     (value.mode !== "lite" && value.mode !== "full") ||
     !isFiniteNumber(value.startedAt) ||
-    !isFiniteNumber(value.stoppedAt) ||
-    !isFiniteNumber(value.expiresAt) ||
-    value.expiresAt < value.stoppedAt ||
     typeof value.url !== "string" ||
     (value.title !== undefined && typeof value.title !== "string") ||
     !isRecord(profile) ||
@@ -242,10 +312,17 @@ function parseStoppedSessionSnapshot(value: unknown): StoppedSessionSnapshot | n
     return isFiniteNumber(raw) ? raw : 0;
   };
 
-  // The snapshot was written by this extension into a trusted-contexts-only area.
+  // The snapshot was written by this extension into a trusted-contexts-only area: the nested
+  // profile and config are taken as written.
   return {
-    ...(value as unknown as StoppedSessionSnapshot),
-    purgeAttempts: isFiniteNumber(value.purgeAttempts) ? Math.max(0, value.purgeAttempts) : 0,
+    sid: value.sid,
+    tabId: value.tabId,
+    mode: value.mode,
+    startedAt: value.startedAt,
+    url: value.url,
+    ...(value.title !== undefined ? { title: value.title } : {}),
+    profile: profile as unknown as SessionSnapshotCore["profile"],
+    config: config as unknown as SessionSnapshotCore["config"],
     counters: {
       eventCount: count("eventCount"),
       errorCount: count("errorCount"),
@@ -255,10 +332,10 @@ function parseStoppedSessionSnapshot(value: unknown): StoppedSessionSnapshot | n
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function isFiniteNumber(value: unknown): value is number {
+export function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }

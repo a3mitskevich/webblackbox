@@ -55,4 +55,37 @@ describe("buildArchiveContents", () => {
     expect(contents.dom.status).toBe("partial");
     expect(contents.perf.status).toBe("none");
   });
+
+  it("says whether the archive holds the whole recording", () => {
+    const report = archive.player.getCaptureCompleteness();
+    const contentsOf = (exported: typeof report.export) =>
+      buildArchiveContents(archive.player.events, archive.model, { ...report, export: exported })
+        .export.status;
+    const whole = {
+      recorded: true,
+      whole: true,
+      storedEvents: 10,
+      exportedEvents: 10,
+      truncations: [],
+      interruption: null
+    };
+
+    expect(report.export.recorded).toBe(false);
+    expect(contentsOf(report.export)).toBe("none");
+    expect(contentsOf(whole)).toBe("full");
+    expect(
+      contentsOf({
+        ...whole,
+        interruption: { reason: "service-worker-restart", detectedAt: 1 }
+      })
+    ).toBe("partial");
+    expect(
+      contentsOf({
+        ...whole,
+        whole: false,
+        exportedEvents: 4,
+        truncations: [{ reason: "size-limit", events: 6, chunks: 1, limit: 1_048_576 }]
+      })
+    ).toBe("partial");
+  });
 });

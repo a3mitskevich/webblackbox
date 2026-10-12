@@ -1,7 +1,12 @@
 import type { CaptureMode, ExportPolicy, FreezeReason } from "@webblackbox/protocol";
 
 import { getChromeApi } from "../shared/chrome-api.js";
-import { loadExportPolicyPrefs, toExportPolicy } from "../shared/export-policy-prefs.js";
+import {
+  exportsWholeSession,
+  loadExportPolicyPrefs,
+  toExportPolicy,
+  type ExportPolicyPrefs
+} from "../shared/export-policy-prefs.js";
 import {
   loadExtensionUpdateNotice,
   type ExtensionUpdateNotice
@@ -301,10 +306,7 @@ function render(container: HTMLElement): void {
         now,
         format,
         exporting: Boolean(state.pendingExportSid),
-        limitsText: t("popupArchiveLimits", {
-          size: prefs.maxArchiveMb,
-          minutes: prefs.recentMinutes
-        })
+        limitsText: formatArchiveLimits(prefs)
       })
     );
   }
@@ -727,6 +729,20 @@ async function exportSessionFromPopup(
     setStatus(t("popupExportFailed", { error: errorMessage(error) }), true);
     render(container);
   }
+}
+
+/** "Whole session", or the limits the options page set ("≤ 256 MB · last 45 min"). */
+function formatArchiveLimits(prefs: ExportPolicyPrefs): string {
+  if (exportsWholeSession(prefs)) {
+    return t("popupArchiveWhole");
+  }
+
+  return [
+    prefs.maxArchiveMb > 0 ? t("popupArchiveMaxSize", { size: prefs.maxArchiveMb }) : "",
+    prefs.recentMinutes > 0 ? t("popupArchiveRecent", { minutes: prefs.recentMinutes }) : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function buildExportPolicy(session: SessionListItem): ExportPolicy {

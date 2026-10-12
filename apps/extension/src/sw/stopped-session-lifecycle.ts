@@ -5,6 +5,12 @@ import { createDefaultRecorderPlugins } from "@webblackbox/recorder";
 import type { PerformanceBudgetConfig } from "../shared/performance-budget.js";
 import { resolveUnexportedRetentionMs } from "../shared/profiles/local-data.js";
 import type { FullBodyCapture } from "./full-body-capture.js";
+import {
+  createLiveSessionStore,
+  LIVE_SESSION_CHECKPOINT_INTERVAL_MS,
+  toInterruptedSnapshot,
+  type LiveSessionSnapshot
+} from "./live-session-store.js";
 import type { SessionPipelineClient } from "./offscreen-client.js";
 import {
   createSessionRuntime,
@@ -19,6 +25,7 @@ import {
   planStoppedSessionRestore,
   scheduleRetentionAlarm,
   type RetentionAlarmsLike,
+  type SessionSnapshotCore,
   type SnapshotStorageAreaLike,
   type StoppedSessionSnapshot
 } from "./stopped-session-store.js";
@@ -72,11 +79,20 @@ export type StoppedSessionLifecycleDeps = {
 };
 
 export type StoppedSessionLifecycleController = {
+  /** Snapshot of a running recording, so a later worker keeps it if this one dies (at Start). */
+  rememberLiveSession: (runtime: SessionRuntime) => Promise<void>;
+  /** Refreshes the running recording's snapshot, at most every few seconds (from its events). */
+  checkpointLiveSession: (runtime: SessionRuntime) => void;
+  /** The recording stopped (or went away): no later worker must treat it as interrupted. */
+  forgetLiveSession: (sid: string) => Promise<void>;
   /** Snapshot of a stopped recording, so a later worker can list, export or expire it. */
   rememberStoppedSession: (runtime: SessionRuntime) => Promise<void>;
   forgetStoppedSession: (sid: string) => Promise<void>;
   toStoppedSessionSnapshot: (runtime: SessionRuntime) => StoppedSessionSnapshot;
-  /** Rebuilds the stopped recordings an earlier worker of this browser session left. */
+  /**
+   * Rebuilds the stopped recordings an earlier worker of this browser session left, and keeps
+   * the recordings it left running as interrupted ones.
+   */
   restoreStoppedSessions: () => Promise<void>;
   /** Gives the offscreen document the pipeline of a stopped recording it does not hold. */
   attachStoppedPipeline: (runtime: SessionRuntime) => Promise<void>;
@@ -100,6 +116,9 @@ export function createStoppedSessionLifecycle(
   deps: StoppedSessionLifecycleDeps
 ): StoppedSessionLifecycleController {
   const store = createStoppedSessionStore(deps.sessionStorageArea);
+  const liveStore = createLiveSessionStore(deps.sessionStorageArea);
+  /** When each running recording of this worker was last checkpointed. */
+  const liveCheckpoints = new Map<string, number>();
   /** Stopped sessions whose pipeline the current offscreen document does not hold (yet). */
   const detachedPipelineSids = new Set<string>();
   const pipelineAttachments = new Map<string, Promise<void>>();
@@ -107,6 +126,103 @@ export function createStoppedSessionLifecycle(
   let offscreenGeneration = 0;
   const disposingSids = new Set<string>();
   let stoppedSessionRecordsQueue: Promise<unknown> = Promise.resolve();
+
+  async function rememberLiveSession(runtime: SessionRuntime): Promise<void> {
+    if (runtime.stoppedAt || !deps.sessionRegistry.hasSid(runtime.sid)) {
+      return;
+    }
+
+    const now = Date.now();
+
+    liveCheckpoints.set(runtime.sid, now);
+    await liveStore
+      .remember({ ...toSessionSnapshotCore(runtime), lastSeenAt: now })
+      .catch((error) => {
+        console.warn("[WebBlackbox] failed to checkpoint the running recording", error);
+      });
+  }
+
+  function checkpointLiveSession(runtime: SessionRuntime): void {
+    const last = liveCheckpoints.get(runtime.sid);
+
+    if (last !== undefined && Date.now() - last < LIVE_SESSION_CHECKPOINT_INTERVAL_MS) {
+      return;
+    }
+
+    void rememberLiveSession(runtime);
+  }
+
+  async function forgetLiveSession(sid: string): Promise<void> {
+    liveCheckpoints.delete(sid);
+    await liveStore.forget(sid).catch((error) => {
+      console.warn("[WebBlackbox] failed to drop a running recording's checkpoint", error);
+    });
+  }
+
+  /**
+   * Keeps the recordings an earlier worker left running (MV3 stopped it mid-recording): each
+   * becomes a stopped recording marked interrupted, with a record that keeps its stored data
+   * from the orphan sweep. Its retention follows the stopped-recording rules.
+   */
+  async function keepInterruptedSessions(): Promise<void> {
+    const live = await liveStore.list();
+
+    if (live.length === 0) {
+      return;
+    }
+
+    const stoppedSids = new Set((await store.list()).map((snapshot) => snapshot.sid));
+    const detectedAt = Date.now();
+    let kept = 0;
+
+    for (const snapshot of live) {
+      if (deps.sessionRegistry.hasSid(snapshot.sid)) {
+        // Running in this worker: its own checkpoint.
+        continue;
+      }
+
+      if (!stoppedSids.has(snapshot.sid)) {
+        try {
+          await keepInterruptedSession(snapshot, detectedAt);
+          kept += 1;
+        } catch (error) {
+          // Its checkpoint stays: the sweep keeps the data, and the next worker retries.
+          console.warn("[WebBlackbox] failed to keep an interrupted recording", error);
+          continue;
+        }
+      }
+
+      // Kept now, or it stopped before its checkpoint was dropped.
+      await liveStore.forget(snapshot.sid).catch((error) => {
+        console.warn("[WebBlackbox] failed to drop a kept recording's checkpoint", error);
+      });
+    }
+
+    if (kept > 0) {
+      console.info("[WebBlackbox] kept recordings interrupted by a service worker restart", {
+        kept
+      });
+    }
+  }
+
+  async function keepInterruptedSession(
+    snapshot: LiveSessionSnapshot,
+    detectedAt: number
+  ): Promise<void> {
+    const stopped = toInterruptedSnapshot(snapshot, {
+      detectedAt,
+      ttlMs: resolveSnapshotTtlMs(snapshot)
+    });
+
+    await store.remember(stopped);
+    await updateStoppedSessionRecords((records) =>
+      upsertStoppedSessionRecord(records, {
+        sid: stopped.sid,
+        stoppedAt: stopped.stoppedAt,
+        expiresAt: stopped.expiresAt
+      })
+    );
+  }
 
   async function rememberStoppedSession(runtime: SessionRuntime): Promise<void> {
     if (!runtime.stoppedAt || !deps.sessionRegistry.hasSid(runtime.sid)) {
@@ -129,37 +245,11 @@ export function createStoppedSessionLifecycle(
   }
 
   function toStoppedSessionSnapshot(runtime: SessionRuntime): StoppedSessionSnapshot {
-    const stoppedAt = runtime.stoppedAt ?? Date.now();
-
     return {
-      sid: runtime.sid,
-      tabId: runtime.tabId,
-      mode: runtime.mode,
-      startedAt: runtime.startedAt,
-      stoppedAt,
+      ...toSessionSnapshotCore(runtime),
+      stoppedAt: runtime.stoppedAt ?? Date.now(),
       expiresAt: resolveStoppedSessionExpiresAt(runtime),
-      url: runtime.url,
-      title: runtime.title,
-      profile: {
-        request: runtime.profile.request,
-        visualCapture: runtime.profile.visualCapture,
-        selection: runtime.profile.selection,
-        profileConfig: runtime.profile.profileConfig,
-        visualsCaptured: runtime.profile.visualsCaptured,
-        ...(runtime.profile.cancellation
-          ? {
-              cancellation: runtime.profile.cancellation,
-              cancellationAcknowledged: runtime.profile.cancellationAcknowledged ?? false
-            }
-          : {})
-      },
-      config: runtime.config,
-      counters: {
-        eventCount: runtime.capturedEventCount,
-        errorCount: runtime.capturedErrorCount,
-        sizeBytes: runtime.capturedSizeBytes,
-        budgetAlertCount: runtime.budgetAlertCount
-      }
+      ...(runtime.interruption ? { interruption: { ...runtime.interruption } } : {})
     };
   }
 
@@ -179,8 +269,15 @@ export function createStoppedSessionLifecycle(
       await store.clear().catch((error) => {
         console.warn("[WebBlackbox] failed to clear restored recording snapshots", error);
       });
+      await liveStore.clear().catch((error) => {
+        console.warn("[WebBlackbox] failed to clear running recording checkpoints", error);
+      });
       return;
     }
+
+    await keepInterruptedSessions().catch((error) => {
+      console.warn("[WebBlackbox] failed to keep interrupted recordings", error);
+    });
 
     const plan = planStoppedSessionRestore(await store.list(), Date.now());
 
@@ -246,6 +343,7 @@ export function createStoppedSessionLifecycle(
         config: snapshot.config,
         startedAt: snapshot.startedAt,
         stoppedAt: snapshot.stoppedAt,
+        interruption: snapshot.interruption,
         pipeline: deps.createPipeline(snapshot.sid),
         recorderPlugins: createDefaultRecorderPlugins(),
         performanceBudget,
@@ -377,10 +475,7 @@ export function createStoppedSessionLifecycle(
   }
 
   function resolveRuntimeStoppedSessionTtlMs(runtime: SessionRuntime): number {
-    return resolveStoppedSessionTtlMs(
-      resolveUnexportedRetentionMs(runtime.profile.selection.profile),
-      runtime.config.capturePolicy?.retention.localTtlMs
-    );
+    return resolveSnapshotTtlMs(runtime);
   }
 
   async function rememberStoppedSessionRecord(runtime: SessionRuntime): Promise<void> {
@@ -431,10 +526,18 @@ export function createStoppedSessionLifecycle(
     const records = await updateStoppedSessionRecords((current) => current);
     const now = Date.now();
     const recordsBySid = new Map(records.map((record) => [record.sid, record]));
+    // Running here, or left running by an earlier worker and not kept yet (within the retention
+    // a kept one would have, so a checkpoint that always fails to be kept does not pin its data).
+    const liveSids = new Set([
+      ...deps.sessionRegistry.bySid.keys(),
+      ...(await liveStore.list())
+        .filter((snapshot) => snapshot.lastSeenAt + resolveSnapshotTtlMs(snapshot) > now)
+        .map((snapshot) => snapshot.sid)
+    ]);
     const result = await deps.sweepStoredSessions((session) =>
       shouldSweepStoredSession({
         session,
-        liveSids: new Set(deps.sessionRegistry.bySid.keys()),
+        liveSids,
         records: recordsBySid,
         now,
         bootedAt: deps.bootedAt
@@ -455,6 +558,8 @@ export function createStoppedSessionLifecycle(
   }
 
   async function disposeStoppedSession(runtime: SessionRuntime): Promise<void> {
+    await forgetLiveSession(runtime.sid);
+
     if (!deps.sessionRegistry.hasSid(runtime.sid) || disposingSids.has(runtime.sid)) {
       return;
     }
@@ -520,6 +625,9 @@ export function createStoppedSessionLifecycle(
   }
 
   return {
+    rememberLiveSession,
+    checkpointLiveSession,
+    forgetLiveSession,
     rememberStoppedSession,
     forgetStoppedSession,
     toStoppedSessionSnapshot,
@@ -531,5 +639,45 @@ export function createStoppedSessionLifecycle(
     rememberStoppedSessionRecord,
     sweepStalePipelineSessions,
     disposeStoppedSession
+  };
+}
+
+/** Unexported-recording lifetime of a session: its profile's retention, capped by policy. */
+function resolveSnapshotTtlMs(session: Pick<SessionSnapshotCore, "profile" | "config">): number {
+  return resolveStoppedSessionTtlMs(
+    resolveUnexportedRetentionMs(session.profile.selection.profile),
+    session.config.capturePolicy?.retention.localTtlMs
+  );
+}
+
+/** What a later worker needs to rebuild the session: identity, URL, profile, config, counters. */
+function toSessionSnapshotCore(runtime: SessionRuntime): SessionSnapshotCore {
+  return {
+    sid: runtime.sid,
+    tabId: runtime.tabId,
+    mode: runtime.mode,
+    startedAt: runtime.startedAt,
+    url: runtime.url,
+    title: runtime.title,
+    profile: {
+      request: runtime.profile.request,
+      visualCapture: runtime.profile.visualCapture,
+      selection: runtime.profile.selection,
+      profileConfig: runtime.profile.profileConfig,
+      visualsCaptured: runtime.profile.visualsCaptured,
+      ...(runtime.profile.cancellation
+        ? {
+            cancellation: runtime.profile.cancellation,
+            cancellationAcknowledged: runtime.profile.cancellationAcknowledged ?? false
+          }
+        : {})
+    },
+    config: runtime.config,
+    counters: {
+      eventCount: runtime.capturedEventCount,
+      errorCount: runtime.capturedErrorCount,
+      sizeBytes: runtime.capturedSizeBytes,
+      budgetAlertCount: runtime.budgetAlertCount
+    }
   };
 }

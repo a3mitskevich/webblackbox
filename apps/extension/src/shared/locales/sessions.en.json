@@ -3,6 +3,8 @@
   "sessionsSubtitle": "Recordings kept on this computer. Export one to share it or open it in the Player.",
   "sessionsEmpty": "No sessions captured yet.",
   "sessionsStatusLive": "LIVE",
+  "sessionsStatusInterrupted": "INTERRUPTED",
+  "sessionsInterruptedHint": "Ended without Stop when the extension restarted. What was saved before that is kept and can be exported.",
   "sessionsActionExport": "Export",
   "sessionsActionStop": "Stop",
   "sessionsActionDelete": "Delete",

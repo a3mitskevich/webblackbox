@@ -76,6 +76,10 @@
   "popupStart": "Start recording",
   "popupStarting": "Starting…",
   "popupLastSessionTitle": "Last session",
-  "popupArchiveLimits": "≤ {size} MB · last {minutes} min",
+  "popupInterruptedBadge": "Interrupted",
+  "popupInterruptedHint": "Ended without Stop when the extension restarted. What was saved before that is kept and can be exported.",
+  "popupArchiveWhole": "Whole session",
+  "popupArchiveMaxSize": "≤ {size} MB",
+  "popupArchiveRecent": "last {minutes} min",
   "popupVisualShots": "Shots"
 }

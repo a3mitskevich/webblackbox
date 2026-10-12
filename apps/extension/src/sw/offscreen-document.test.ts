@@ -12,7 +12,14 @@ type Harness = {
   setDocumentExists: (exists: boolean) => void;
 };
 
-function createHarness(options: { sidCount?: number; documentExists?: boolean } = {}): Harness {
+function createHarness(
+  options: {
+    sidCount?: number;
+    documentExists?: boolean;
+    sendMessage?: (message: unknown) => Promise<unknown>;
+    orphanedFlushTimeoutMs?: number;
+  } = {}
+): Harness {
   let sidCount = options.sidCount ?? 0;
   let documentExists = options.documentExists ?? false;
   const createDocument = vi.fn(async () => {
@@ -27,10 +34,14 @@ function createHarness(options: { sidCount?: number; documentExists?: boolean } 
     offscreen: { createDocument, closeDocument } as unknown as ChromeApi["offscreen"],
     runtime: {
       getContexts,
-      getURL: (path: string) => `chrome-extension://test/${path}`
+      getURL: (path: string) => `chrome-extension://test/${path}`,
+      ...(options.sendMessage ? { sendMessage: options.sendMessage } : {})
     } as unknown as ChromeApi["runtime"],
     offscreenPath: "offscreen.html",
-    sidCount: () => sidCount
+    sidCount: () => sidCount,
+    ...(options.orphanedFlushTimeoutMs !== undefined
+      ? { orphanedFlushTimeoutMs: options.orphanedFlushTimeoutMs }
+      : {})
   });
 
   return {
@@ -56,6 +67,46 @@ describe("createOffscreenDocumentController", () => {
 
     expect(closeDocument).toHaveBeenCalledTimes(1);
     info.mockRestore();
+  });
+
+  it("asks an orphaned document to flush its pipelines before closing it", async () => {
+    const calls: string[] = [];
+    const sendMessage = vi.fn(async (message: unknown) => {
+      calls.push(`send:${(message as { kind: string }).kind}`);
+      return { ok: true };
+    });
+    const { controller, closeDocument } = createHarness({
+      documentExists: true,
+      sendMessage
+    });
+    closeDocument.mockImplementation(async () => {
+      calls.push("close");
+    });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await controller.orphanedCleanup;
+
+    expect(calls).toEqual(["send:sw.offscreen-flush", "close"]);
+    info.mockRestore();
+  });
+
+  it("closes an orphaned document that never confirms its flush", async () => {
+    const { controller, closeDocument } = createHarness({
+      documentExists: true,
+      sendMessage: () => new Promise(() => undefined),
+      orphanedFlushTimeoutMs: 5
+    });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await controller.orphanedCleanup;
+
+    expect(closeDocument).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      "[WebBlackbox] orphaned offscreen document did not confirm its final flush"
+    );
+    info.mockRestore();
+    warn.mockRestore();
   });
 
   it("keeps the offscreen document when the worker still tracks sessions", async () => {

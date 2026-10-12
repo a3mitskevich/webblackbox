@@ -3,6 +3,8 @@
   "sessionsSubtitle": "保存在本机的录制。导出后可分享，或在播放器中打开。",
   "sessionsEmpty": "还没有采集到会话。",
   "sessionsStatusLive": "进行中",
+  "sessionsStatusInterrupted": "已中断",
+  "sessionsInterruptedHint": "扩展重启时录制未经停止就结束了。此前保存的内容已保留，可以导出。",
   "sessionsActionExport": "导出",
   "sessionsActionStop": "停止",
   "sessionsActionDelete": "删除",

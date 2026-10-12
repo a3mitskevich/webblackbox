@@ -19,6 +19,11 @@ import { parseStorageKeyMessage, type StorageKeyMessage } from "./at-rest.js";
  * the offscreen document, which only reports chunk metadata.
  */
 export const OFFSCREEN_CONNECT_REQUEST_KIND = "sw.offscreen-connect";
+/**
+ * Asks an offscreen document a restarted worker found to persist every pipeline's unwritten tail
+ * before it is closed: the recordings it held are kept as interrupted ones.
+ */
+export const OFFSCREEN_FLUSH_REQUEST_KIND = "sw.offscreen-flush";
 export const PIPELINE_REQUEST_KIND = "sw.pipeline-request";
 export const PIPELINE_RESPONSE_KIND = "offscreen.pipeline-response";
 /** Prefix of the error for a session whose pipeline this offscreen document does not hold. */
@@ -30,8 +35,9 @@ export type PipelineExportOptions = {
   passphrase?: string;
   includeScreenshots?: boolean;
   includeScreenRecordings?: boolean;
-  maxArchiveBytes?: number;
-  recentWindowMs?: number;
+  /** `null` or absent: no limit, the whole session is exported. */
+  maxArchiveBytes?: number | null;
+  recentWindowMs?: number | null;
 };
 
 type RequestOf<TOp extends string, TFields = object> = { op: TOp; sid: string } & TFields;
@@ -335,8 +341,8 @@ function parsePipelineRequestFields(
         passphrase: asOptionalString(row.passphrase),
         includeScreenshots: asOptionalBoolean(row.includeScreenshots),
         includeScreenRecordings: asOptionalBoolean(row.includeScreenRecordings),
-        maxArchiveBytes: asFiniteNumber(row.maxArchiveBytes) ?? undefined,
-        recentWindowMs: asFiniteNumber(row.recentWindowMs) ?? undefined
+        maxArchiveBytes: asOptionalLimit(row.maxArchiveBytes),
+        recentWindowMs: asOptionalLimit(row.recentWindowMs)
       };
     case "close":
       return { op, sid, purge: row.purge === true };
@@ -636,6 +642,11 @@ function parseScreenRecordingStopResult(raw: unknown): ScreenRecordingStopResult
     height: asPositiveNumber(row.height),
     reason: asOptionalString(row.reason)
   };
+}
+
+/** An export limit: `null` (none) passes through, a finite number is kept, the rest is absent. */
+function asOptionalLimit(value: unknown): number | null | undefined {
+  return value === null ? null : (asFiniteNumber(value) ?? undefined);
 }
 
 function isSessionMetadata(value: unknown): value is SessionMetadata {

@@ -6,8 +6,9 @@ type PortMessageHandler = (message: unknown) => void;
 const DEFAULT_EXPORT_POLICY = {
   includeScreenshots: false,
   includeScreenRecordings: false,
-  maxArchiveBytes: 100 * 1024 * 1024,
-  recentWindowMs: 20 * 60 * 1000
+  // The whole session: no size limit, no recent window.
+  maxArchiveBytes: null,
+  recentWindowMs: null
 };
 const EXPORT_PRIVACY_WARNING = {
   findingCount: 1,
@@ -118,6 +119,35 @@ describe("sessions page rendering", () => {
     expect(noteText?.textContent).toBe(hostileText);
     expect(tagChip?.textContent).toBe(`#${hostileText}`);
     expect(document.getElementById("pwned")).toBeNull();
+  });
+
+  it("marks a recording interrupted by an extension restart", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importSessionsModule();
+
+    port.emit({
+      kind: "sw.session-list",
+      sessions: [
+        {
+          sid: "sid-interrupted",
+          tabId: 7,
+          mode: "full",
+          startedAt: Date.now() - 60_000,
+          stoppedAt: Date.now() - 1_000,
+          active: false,
+          interruption: { reason: "service-worker-restart", detectedAt: Date.now() }
+        },
+        { sid: "sid-stopped", tabId: 8, mode: "lite", startedAt: Date.now(), active: false }
+      ]
+    });
+    await flushSessions();
+
+    const badges = document.querySelectorAll<HTMLElement>("[data-interrupted]");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]?.textContent).toBe("INTERRUPTED");
+    expect(badges[0]?.title).toMatch(/Ended without Stop when the extension restarted/);
   });
 
   it("exports only with a passphrase of at least 8 characters", async () => {

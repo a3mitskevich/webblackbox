@@ -156,15 +156,16 @@ Override any of these through `options.config`.
 
 ### Export Policy Defaults
 
-| Setting                   | Default    |
-| ------------------------- | ---------- |
-| `includeScreenshots`      | `false`    |
-| `includeScreenRecordings` | `false`    |
-| `maxArchiveBytes`         | 100 MiB    |
-| `recentWindowMs`          | 20 minutes |
+| Setting                   | Default |
+| ------------------------- | ------- |
+| `includeScreenshots`      | `false` |
+| `includeScreenRecordings` | `false` |
+| `maxArchiveBytes`         | none    |
+| `recentWindowMs`          | none    |
 
-`export()` clamps `maxArchiveBytes` to 64 KiB–5 GiB and `recentWindowMs` to 1 minute–30 days;
-a missing or non-positive value uses the default.
+By default `export()` keeps the whole session. It clamps a set `maxArchiveBytes` to 64 KiB–5 GiB
+and `recentWindowMs` to 1 minute–30 days; a missing, `null` or non-positive value means no limit.
+What a limit (or the screenshot setting) leaves out is recorded in the archive manifest.
 
 ## Extension Reuse
 

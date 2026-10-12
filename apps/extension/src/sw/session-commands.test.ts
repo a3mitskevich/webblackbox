@@ -163,6 +163,9 @@ function createHarness(
     recordedTabWatch: { sync: vi.fn(), isWatching: () => false },
     tabsContextTracker: null,
     stoppedSessionLifecycle: {
+      rememberLiveSession: vi.fn(async () => undefined),
+      checkpointLiveSession: vi.fn(),
+      forgetLiveSession: vi.fn(async () => undefined),
       scheduleStoppedRuntimeCleanup: vi.fn(),
       rememberStoppedSessionRecord: vi.fn(async () => undefined),
       rememberStoppedSession: vi.fn(async () => undefined),
@@ -255,6 +258,8 @@ describe("startSession", () => {
     expect(harness.storageLocal.stored[ACTIVE_SESSION_STORAGE_KEY]).toEqual([
       expect.objectContaining({ tabId: TAB_ID, sid: runtime?.sid, mode: "lite" })
     ]);
+    // Checkpointed at once: a worker that dies mid-recording leaves it as interrupted.
+    expect(harness.deps.stoppedSessionLifecycle.rememberLiveSession).toHaveBeenCalledWith(runtime);
   });
 });
 
@@ -270,6 +275,9 @@ describe("stopSession", () => {
     expect(runtime.stoppedAt).toEqual(expect.any(Number));
     expect(runtime.stopDrained).toBe(true);
     expect(harness.deps.stoppedSessionLifecycle.rememberStoppedSession).toHaveBeenCalledTimes(2);
+    expect(harness.deps.stoppedSessionLifecycle.forgetLiveSession).toHaveBeenCalledWith(
+      runtime.sid
+    );
     expect(harness.broadcast).toHaveBeenLastCalledWith(
       expect.objectContaining({ kind: "sw.recording-status", active: false, sid: runtime.sid })
     );

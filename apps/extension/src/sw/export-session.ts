@@ -23,8 +23,9 @@ export type ExportAuditEvent = {
   encrypted: boolean;
   includeScreenshots: boolean;
   includeScreenRecordings: boolean;
-  maxArchiveBytes: number;
-  recentWindowMs: number;
+  /** `null`: no limit, the whole session was exported. */
+  maxArchiveBytes: number | null;
+  recentWindowMs: number | null;
   sizeBytes?: number;
   downloadId?: number;
   error?: string;
@@ -120,12 +121,13 @@ export function resolveExportPolicy(value: unknown): ExportPolicy {
   };
 }
 
+/** A positive limit clamped to `[min, max]`; anything else (`null`, `0`, junk) is `fallback`. */
 export function normalizeExportBoundedInt(
   candidate: unknown,
-  fallback: number,
+  fallback: number | null,
   min: number,
   max: number
-): number {
+): number | null {
   const value = asFiniteNumber(candidate);
 
   if (value === null || value <= 0) {

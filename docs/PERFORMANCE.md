@@ -91,7 +91,8 @@ It measures:
 
 - long-session ingest throughput and chunk count
 - full export latency/size
-- filtered export latency/size using the same defaults as extension/webblackbox policy:
+- filtered export latency/size with explicit limits, as a user can set them on the options page
+  (the default export keeps the whole session):
   - screenshots disabled
   - archive cap `100 MB`
   - recent window `20 minutes`
