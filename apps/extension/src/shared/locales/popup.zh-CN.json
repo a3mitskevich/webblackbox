@@ -18,7 +18,7 @@
   "popupOpenProfiles": "打开配置",
   "popupProfileCancelTitle": "录制已停止：配置发生了变化",
   "popupProfileCancelRuleChanged": "录制使用的是 {started}，但站点规则为此页面选择了 {next}。",
-  "popupProfileCancelRuleChangedFix": "若要在此继续使用 {started} 录制，请在配置列表中选择它而不是“自动”，或在 设置 → 配置 中为此站点添加站点规则。",
+  "popupProfileCancelRuleChangedFix": "若要在此继续使用 {started} 录制，请在 设置 → 录制配置 中为此站点添加站点规则，或将其设为默认配置。",
   "popupProfileCancelMissing": "配置 {started} 在录制期间被删除。",
   "popupProfileCancelMissingFix": "请选择其他配置，或在 设置 → 配置 中创建或恢复配置，然后重新开始。",
   "popupProfileCancelEdited": "配置 {started} 在录制期间被修改。",

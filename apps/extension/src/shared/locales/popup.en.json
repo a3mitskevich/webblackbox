@@ -18,7 +18,7 @@
   "popupOpenProfiles": "Open profiles",
   "popupProfileCancelTitle": "Recording stopped: the profile changed",
   "popupProfileCancelRuleChanged": "It recorded with {started}, but the site rules pick {next} for this page.",
-  "popupProfileCancelRuleChangedFix": "To keep recording here with {started}, choose it in the profile list instead of Auto, or add a site rule for this site in Options → Profiles.",
+  "popupProfileCancelRuleChangedFix": "To keep recording here with {started}, add a site rule for this site or make it the default profile in Options → Profiles.",
   "popupProfileCancelMissing": "The profile {started} was deleted while recording.",
   "popupProfileCancelMissingFix": "Choose another profile, or create or restore one in Options → Profiles, then start again.",
   "popupProfileCancelEdited": "The profile {started} was changed while recording.",

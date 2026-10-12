@@ -417,7 +417,7 @@ describe("popup recording profile line", () => {
     expect([...notice.querySelectorAll("strong, p")].map((node) => node.textContent)).toEqual([
       "Recording stopped: the profile changed",
       "It recorded with QA, but the site rules pick Default for this page.",
-      "To keep recording here with QA, choose it in the profile list instead of Auto, or add a site rule for this site in Options → Profiles.",
+      "To keep recording here with QA, add a site rule for this site or make it the default profile in Options → Profiles.",
       "What was recorded before the change is kept: export or delete it."
     ]);
     expect(getButton("export").disabled).toBe(false);

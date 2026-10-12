@@ -13,7 +13,7 @@ describe("describeProfileCancel", () => {
       "rule-changed",
       {
         summary: "It recorded with QA, but the site rules pick Default for this page.",
-        fix: "To keep recording here with QA, choose it in the profile list instead of Auto, or add a site rule for this site in Options → Profiles."
+        fix: "To keep recording here with QA, add a site rule for this site or make it the default profile in Options → Profiles."
       }
     ],
     [

@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
-// E2E: a site rule picks the QA profile on a matching host and the exported archive contains
-// console text, JSON response bodies and the page DOM (masked by its rules, Full's default). The
-// rule also reads the DOM: a navigation on the same host to a page that is slow to load keeps
-// recording (the check waits for the loaded page).
-// Navigating to a host where the rules pick another profile (Default) stops the recording: the
-// archive records why, the badge shows "!", the popup explains it, and nothing after the change is
-// recorded. Exporting without a passphrase is refused (every archive is encrypted). A second
-// recording is stopped as soon as its profile is deleted, without any navigation.
+// E2E: a site rule picks a user profile ("QA": console text, JSON bodies, masked DOM) on a
+// matching host and the exported archive contains console text, JSON response bodies and the page
+// DOM (masked by its rules, Full's default). The rule also reads the DOM: a navigation on the same
+// host to a page that is slow to load keeps recording (the check waits for the loaded page).
+// Navigating to a host where no rule matches (the default profile, Maximum) stops the recording:
+// the archive records why, the badge shows "!", the popup explains it, and nothing after the
+// change is recorded. Exporting without a passphrase is refused while none is remembered (every
+// archive is encrypted); a successful export remembers it. A second recording is stopped as soon
+// as its profile is deleted, without any navigation.
 
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -19,7 +20,7 @@ import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e
 const root = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
-const harness = createProfileE2eHarness({ name: "profile-qa", appRoot, defaultPort: "9231" });
+const harness = createProfileE2eHarness({ name: "profile-rules", appRoot, defaultPort: "9231" });
 const passphrase = "webblackbox-qa-e2e-passphrase";
 
 const CONSOLE_MARKER = "qa-console-marker-7f3a";
@@ -31,10 +32,12 @@ const FIELD_TYPED_VALUE = "qa-field-typed-7a3b";
 // A JWT-shaped value: the privacy scanner reports it (never blocking).
 const SCANNER_FINDING =
   "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJxYS1lMmUifQ.c2lnbmF0dXJlLWZvci1xYS1lMmUtdGVzdA";
+const QA_PROFILE_ID = "e2e-qa";
+const QA_BODY_MAX_BYTES = 256 * 1024;
 const QA_RULE = {
   id: "e2e-local-qa",
   name: "Local QA",
-  profileId: "builtin:qa",
+  profileId: QA_PROFILE_ID,
   priority: 10,
   enabled: true,
   match: { hosts: ["127.0.0.1:*"], selectorPresent: "#qa-app" }
@@ -42,8 +45,59 @@ const QA_RULE = {
 /** The `?slow=1` page sends `#qa-app` only after this delay (longer than the page probe). */
 const SLOW_PAGE_DELAY_MS = 2_500;
 
+/**
+ * The QA preset of earlier versions as a user profile: console text, JSON/text bodies up to
+ * 256 KiB, screenshots, the masked DOM, content masking on, no tab video.
+ */
+function createQaProfile({ DEFAULT_CAPTURE_POLICY, DEFAULT_REDACTION_PROFILE }) {
+  return {
+    id: QA_PROFILE_ID,
+    name: "QA",
+    base: "full",
+    categories: {
+      ...DEFAULT_CAPTURE_POLICY.categories,
+      actions: "allow",
+      console: "allow",
+      network: "body-allowlist",
+      screenshots: "allow",
+      cdp: "safe-subset",
+      tabsContext: "allow"
+    },
+    redaction: Object.fromEntries(
+      Object.entries(DEFAULT_REDACTION_PROFILE).filter(([key]) => key !== "unmaskSelectors")
+    ),
+    unmaskSelectors: [],
+    network: {
+      bodyMimeAllowlist: ["application/json", "application/*+json", "text/plain"],
+      bodyMaxBytes: QA_BODY_MAX_BYTES,
+      includeUrls: [],
+      excludeUrls: []
+    },
+    pointer: { hover: false, drag: false, wheel: false },
+    visual: "screenshots",
+    sourceMaps: { mode: "embed" },
+    sampling: {},
+    recorder: {},
+    sitePolicies: []
+  };
+}
+
+/** The profiles store of the run: the QA user profile, its rule, Maximum as the default. */
+function profilesStore(qaProfile, options = { withQa: true }) {
+  return {
+    schemaVersion: 2,
+    defaultProfileId: "builtin:maximum",
+    profiles: options.withQa ? [qaProfile] : [],
+    rules: [QA_RULE],
+    extendedCaptureHosts: []
+  };
+}
+
 main().catch(async (error) => {
-  console.error("Profile QA E2E failed:", error instanceof Error ? error.message : String(error));
+  console.error(
+    "Profile rules E2E failed:",
+    error instanceof Error ? error.message : String(error)
+  );
   await harness.cleanup();
   process.exit(1);
 });
@@ -52,19 +106,16 @@ async function main() {
   const { WebBlackboxPlayer } = await import(
     pathToFileURL(resolve(repoRoot, "packages/player-sdk/dist/index.js")).href
   );
+  const qaProfile = createQaProfile(
+    await import(pathToFileURL(resolve(repoRoot, "packages/protocol/dist/index.js")).href)
+  );
   const appPort = await startDemoServer();
   const pageUrl = `http://127.0.0.1:${appPort}/qa/`;
   const { page, popup, swExceptions, dialogs } = await harness.launch(pageUrl);
 
   await popup.evaluate(`
     chrome.storage.local.set({
-      "webblackbox.profiles": {
-        schemaVersion: 2,
-        defaultProfileId: "default",
-        profiles: [],
-        rules: [${JSON.stringify(QA_RULE)}],
-        extendedCaptureHosts: []
-      }
+      "webblackbox.profiles": ${JSON.stringify(profilesStore(qaProfile))}
     }).then(() => true)
   `);
 
@@ -79,13 +130,14 @@ async function main() {
     `chrome.runtime.sendMessage({ kind: "ui.resolve-profile", tabId: ${tabId} })`
   );
   assert(
-    preview?.selection?.id === "builtin:qa" && preview.selection.source === "rule",
+    preview?.selection?.id === QA_PROFILE_ID && preview.selection.source === "rule",
     "Rule did not select the QA profile",
     preview
   );
 
   await popup.evaluate(
-    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "full", visualCapture: "none" })`
+    // As the popup's Record button sends it: the rule's profile decides the engine (Full).
+    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId} })`
   );
   await waitFor(
     () =>
@@ -129,7 +181,8 @@ async function main() {
     afterSlowPage
   );
 
-  // Same tab, host without a rule: the rules now pick Default, so the recording is cancelled.
+  // Same tab, host without a rule: the default profile (Maximum) applies, so the recording is
+  // cancelled.
   const defaultUrl = `http://localhost:${appPort}/qa/`;
   await page.send("Page.navigate", { url: defaultUrl });
   await waitFor(
@@ -151,7 +204,7 @@ async function main() {
   assert(
     cancelled.profileCancel.reason === "rule-changed" &&
       cancelled.profileCancel.startedName === "QA" &&
-      cancelled.profileCancel.nextName === "Default",
+      cancelled.profileCancel.nextName === "Maximum",
     "Unexpected cancellation notice",
     cancelled.profileCancel
   );
@@ -167,20 +220,20 @@ async function main() {
   );
   assert(
     noticeText.includes("Recording stopped: the profile changed") &&
-      noticeText.includes("site rules pick Default") &&
+      noticeText.includes("site rules pick Maximum") &&
       noticeText.includes("add a site rule"),
     "The popup notice does not explain the change",
     { noticeText }
   );
 
-  // Dismissing the notice clears the badge.
+  // Dismissing the notice leaves the badge asking for the export of the stopped recording.
   await popup.evaluate(
     `document.querySelector("[data-action='ack-profile-cancel']")?.click() ?? true`
   );
   await waitFor(
-    async () => ((await popup.evaluate(`chrome.action.getBadgeText({})`)) === "" ? true : null),
+    async () => ((await popup.evaluate(`chrome.action.getBadgeText({})`)) === "SAVE" ? true : null),
     10_000,
-    "Dismissing the notice did not clear the badge"
+    "Dismissing the notice did not leave the export badge"
   );
 
   await page.evaluate(`window.__runQaScenario(${JSON.stringify(DEFAULT_CONSOLE_MARKER)})`);
@@ -204,6 +257,14 @@ async function main() {
     })
   `);
   assert(exported?.ok === true, "Encrypted export failed", exported);
+  const passphraseStatus = await popup.evaluate(
+    `chrome.runtime.sendMessage({ kind: "ui.passphrase-status" })`
+  );
+  assert(
+    passphraseStatus?.remembered === true,
+    "The export passphrase is not remembered for the browser session",
+    passphraseStatus
+  );
 
   const archivePath = await harness.waitForDownload();
   const bytes = new Uint8Array(await readFile(archivePath));
@@ -211,13 +272,13 @@ async function main() {
   const events = player.query();
   const manifestText = JSON.stringify(player.archive.manifest);
   const profileConfig = events.find(
-    (event) => event.type === "meta.config" && event.data?.profile?.id === "builtin:qa"
+    (event) => event.type === "meta.config" && event.data?.profile?.id === QA_PROFILE_ID
   );
   const cancelConfig = events.find(
     (event) => event.type === "meta.config" && event.data?.profileCancel
   );
   const switchedConfig = events.find(
-    (event) => event.type === "meta.config" && event.data?.profile?.id !== "builtin:qa"
+    (event) => event.type === "meta.config" && event.data?.profile?.id !== QA_PROFILE_ID
   );
   const leakedDefaultConsole = events.some(
     (event) =>
@@ -252,8 +313,8 @@ async function main() {
   });
   assert(
     cancelConfig?.data.profileCancel.reason === "rule-changed" &&
-      cancelConfig.data.profileCancel.started?.id === "builtin:qa" &&
-      cancelConfig.data.profileCancel.next?.id === "default" &&
+      cancelConfig.data.profileCancel.started?.id === QA_PROFILE_ID &&
+      cancelConfig.data.profileCancel.next?.id === "builtin:maximum" &&
       // Re-evaluations collapse: the navigation or the later page-load request may land it.
       ["navigation", "page-loaded"].includes(cancelConfig.data.profileCancel.trigger),
     "The archive does not record why the recording was cancelled",
@@ -306,18 +367,18 @@ async function main() {
   console.log(`Plaintext export refused: ${plaintext.error}`);
   console.log(`Dialogs accepted: ${JSON.stringify(dialogs)}`);
 
-  await assertCancelOnProfileDeletion({ popup, tabId, listSessions });
+  await assertCancelOnProfileDeletion({ popup, tabId, listSessions, qaProfile });
 
   console.log(`Chrome log: ${harness.chromeLogPath}`);
-  console.log("Profile QA E2E passed.");
+  console.log("Profile rules E2E passed.");
 
   await harness.cleanup();
 }
 
 /** A recording whose profile is deleted in storage stops at once, with no navigation. */
-async function assertCancelOnProfileDeletion({ popup, tabId, listSessions }) {
+async function assertCancelOnProfileDeletion({ popup, tabId, listSessions, qaProfile }) {
   await popup.evaluate(
-    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "full", visualCapture: "none", profileId: "builtin:qa" })`
+    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, profileId: ${JSON.stringify(QA_PROFILE_ID)} })`
   );
   const session = await waitFor(
     async () => (await listSessions()).find((entry) => entry.active) ?? null,
@@ -329,14 +390,7 @@ async function assertCancelOnProfileDeletion({ popup, tabId, listSessions }) {
 
   await popup.evaluate(`
     chrome.storage.local.set({
-      "webblackbox.profiles": {
-        schemaVersion: 2,
-        defaultProfileId: "default",
-        profiles: [],
-        rules: [${JSON.stringify(QA_RULE)}],
-        extendedCaptureHosts: [],
-        removedRecommendedProfileIds: ["builtin:qa"]
-      }
+      "webblackbox.profiles": ${JSON.stringify(profilesStore(qaProfile, { withQa: false }))}
     }).then(() => true)
   `);
   const cancelled = await waitFor(
