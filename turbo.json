@@ -14,6 +14,9 @@
     // The player build ships the packaged extension (build/extension/): package it first.
     "@webblackbox/player#build": {
       "dependsOn": ["^build", "@webblackbox/extension#package:chrome"],
+      // The usage videos (git-ignored recorder output) are bundled too: a new take must rebuild.
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/apps/extension/demo-video-output/*.mp4"],
+      "env": ["WB_PLAYER_VIDEOS_DIR"],
       "outputs": ["build/**"]
     },
     "dev": {

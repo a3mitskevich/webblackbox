@@ -13,8 +13,15 @@ import {
   fetchExtensionBundleMetadata,
   type ExtensionBundleState
 } from "./metadata.js";
-import { extensionGuideMessages } from "./messages.js";
+import { extensionGuideMessages, type ExtensionGuideMessageKey } from "./messages.js";
 import { closeExtensionGuide } from "./slice.js";
+import {
+  fetchGuideVideos,
+  guideVideoUrl,
+  pickGuideVideos,
+  type GuideVideo,
+  type GuideVideoId
+} from "./videos.js";
 
 /** This Player's own address, for the extension's "Player URL" option (origin + path). */
 function thisPlayerUrl(): string {
@@ -135,6 +142,68 @@ function DownloadSection() {
   );
 }
 
+const VIDEO_TITLES: Record<GuideVideoId, ExtensionGuideMessageKey> = {
+  install: "videoInstall",
+  "record-and-export": "videoRecordAndExport",
+  "open-in-player": "videoOpenInPlayer"
+};
+
+/**
+ * The usage videos the build bundled (`extension/videos.json`, from the demo-video recorder), one
+ * per topic in the Player's language when available. A build without videos shows no section.
+ */
+function VideosSection() {
+  const t = useFeatureI18n(extensionGuideMessages);
+  const i18n = useI18n();
+  const [videos, setVideos] = useState<GuideVideo[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetchGuideVideos().then((list) => {
+      if (!cancelled) {
+        setVideos(list);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const shown = pickGuideVideos(videos, i18n.locale);
+
+  if (shown.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="xguide-section" data-testid="extension-videos">
+      <h3>{t("videosTitle")}</h3>
+      {shown.map((video) => (
+        <figure key={video.id} className="xguide-video" data-testid={`extension-video-${video.id}`}>
+          <figcaption>
+            {t(VIDEO_TITLES[video.id])}
+            {video.lang.split("-")[0] !== i18n.locale.split("-")[0] ? (
+              <span className="xguide-note">
+                {" · "}
+                {t("videosCaptions", {
+                  language: captionLanguage(i18n.messages.localeNames, video.lang)
+                })}
+              </span>
+            ) : null}
+          </figcaption>
+          <video controls preload="metadata" src={guideVideoUrl(video)} />
+        </figure>
+      ))}
+    </section>
+  );
+}
+
+function captionLanguage(names: Readonly<Record<string, string>>, lang: string): string {
+  return names[lang] ?? names[lang.split("-")[0] ?? lang] ?? lang;
+}
+
 function ConnectSection() {
   const t = useFeatureI18n(extensionGuideMessages);
   const playerUrl = thisPlayerUrl();
@@ -177,6 +246,8 @@ export default function ExtensionGuideDialog() {
         <p>{t("dialogIntro")}</p>
 
         <DownloadSection />
+
+        <VideosSection />
 
         <section className="xguide-section">
           <h3>{t("installTitle")}</h3>

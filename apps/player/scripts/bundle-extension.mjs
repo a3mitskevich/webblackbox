@@ -8,6 +8,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { bundleExtensionIntoPlayer } from "./lib/bundle-extension.mjs";
+import { bundleVideosIntoPlayer } from "./lib/bundle-videos.mjs";
 
 const playerRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -29,4 +30,21 @@ if (result.bundled) {
       "without extension/extension.json and the guide's download section stays empty.\n" +
       "Package it first: pnpm --filter @webblackbox/extension package:chrome"
   );
+}
+
+// The usage videos (apps/extension/scripts/demo-video, git-ignored output) ride along when present;
+// WB_PLAYER_VIDEOS_DIR points at another folder of <id>.<lang>.mp4 files.
+const videos = await bundleVideosIntoPlayer({
+  videosDir:
+    process.env.WB_PLAYER_VIDEOS_DIR ?? resolve(playerRoot, "..", "extension", "demo-video-output"),
+  playerBuildDir: resolve(playerRoot, "build")
+});
+
+if (videos.bundled) {
+  console.log(
+    `Bundled ${videos.videos.length} usage video(s) into the player build: ` +
+      videos.videos.map((video) => `extension/videos/${video.file}`).join(", ")
+  );
+} else {
+  console.log("No usage videos found: the guide ships without its video section.");
 }
