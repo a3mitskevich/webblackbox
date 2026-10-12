@@ -1,3 +1,5 @@
+import { EXTENSION_FILES } from "./extension-files.js";
+
 /**
  * When the content script runs in pages: registered for every page from `document_start`
  * ("always", the default), or injected only into the tab where a recording starts ("on-start").
@@ -12,7 +14,7 @@ export type ContentInjectionMode = (typeof CONTENT_INJECTION_MODES)[number];
 export const CONTENT_INJECTION_STORAGE_KEY = "webblackbox.injection";
 export const DEFAULT_CONTENT_INJECTION_MODE: ContentInjectionMode = "always";
 export const CONTENT_SCRIPT_ID = "webblackbox-content";
-export const CONTENT_SCRIPT_FILE = "content.js";
+export const CONTENT_SCRIPT_FILE = EXTENSION_FILES.contentScript;
 
 /** Set on `globalThis` of the isolated world by a running content script. */
 export const CONTENT_SCRIPT_GUARD_KEY = "__webblackboxContentScript__";

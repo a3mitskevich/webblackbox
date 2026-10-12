@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs after `vite build`: ships the packaged Chrome extension inside the player build
 // (build/extension/webblackbox-chrome.zip + extension.json). The extension is packaged by the
-// workspace build (turbo makes the player build depend on the extension's `package:chrome`); when
+// workspace build (turbo makes the player build depend on the extension's `zip`); when
 // the zip is missing — a standalone `vite build`, a skipped packaging run — the build still
 // succeeds, with this warning and without the metadata file, and the guide says so.
 import { dirname, resolve } from "node:path";
@@ -13,7 +13,7 @@ const playerRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const result = await bundleExtensionIntoPlayer({
   extensionPackageJson: resolve(playerRoot, "..", "extension", "package.json"),
-  extensionDistDir: resolve(playerRoot, "..", "extension", "dist"),
+  extensionOutputDir: resolve(playerRoot, "..", "extension", ".output"),
   playerBuildDir: resolve(playerRoot, "build")
 });
 
@@ -27,6 +27,6 @@ if (result.bundled) {
   console.warn(
     `Warning: no packaged extension found for v${result.version} — this player build ships ` +
       "without extension/extension.json and the guide's download section stays empty.\n" +
-      "Package it first: pnpm --filter @webblackbox/extension package:chrome"
+      "Package it first: pnpm --filter @webblackbox/extension zip"
   );
 }

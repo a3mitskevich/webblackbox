@@ -15,6 +15,7 @@ import {
   unloadPrompts,
   waitUntil
 } from "./options-guard-e2e.mjs";
+import { EXTENSION_FILES } from "./extension-paths.mjs";
 
 const PROFILES_KEY = "webblackbox.profiles";
 const DIALOG = "[role='dialog']";
@@ -74,7 +75,7 @@ export async function runOptionsProfilesChecks(deps) {
     }
   };
   const page = await deps.openPage(deps.browser, 1440, 900, null);
-  const optionsUrl = `chrome-extension://${deps.extensionId}/options.html`;
+  const optionsUrl = `chrome-extension://${deps.extensionId}/${EXTENSION_FILES.optionsPage}`;
 
   try {
     await seedProfiles(deps, page, optionsUrl, SEEDED_STORE);
@@ -243,7 +244,10 @@ async function popupDeepLink(deps, check) {
   });
 
   try {
-    await deps.navigate(popup, `chrome-extension://${deps.extensionId}/popup.html`);
+    await deps.navigate(
+      popup,
+      `chrome-extension://${deps.extensionId}/${EXTENSION_FILES.popupPage}`
+    );
     check(
       await waitUntil(popup, exists("[data-profile-required]"), WAIT_MS),
       "the popup shows no 'no profile' panel"
@@ -253,7 +257,7 @@ async function popupDeepLink(deps, check) {
     await waitUntil(popup, "(globalThis.__wbCreatedTabs ?? []).length > 0", WAIT_MS);
     const url = await popup.evaluate(`globalThis.__wbCreatedTabs?.[0]?.url ?? ""`);
     check(
-      url === `chrome-extension://${deps.extensionId}/options.html#profiles`,
+      url === `chrome-extension://${deps.extensionId}/${EXTENSION_FILES.optionsPage}#profiles`,
       `Open profiles opened ${JSON.stringify(url)}`
     );
     return url;

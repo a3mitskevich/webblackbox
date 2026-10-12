@@ -3,7 +3,7 @@ export declare const PLAYER_EXTENSION_ZIP: string;
 export declare const PLAYER_EXTENSION_METADATA: string;
 
 export declare function findPackagedExtensionZip(
-  distDir: string,
+  outputDir: string,
   version: string
 ): Promise<string | null>;
 
@@ -21,7 +21,7 @@ export type BundleExtensionResult =
 
 export declare function bundleExtensionIntoPlayer(options: {
   extensionPackageJson: string;
-  extensionDistDir: string;
+  extensionOutputDir: string;
   playerBuildDir: string;
   now?: () => Date;
 }): Promise<BundleExtensionResult>;

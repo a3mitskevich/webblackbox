@@ -54,12 +54,13 @@ import {
   serveFidelityImage,
   verifyCaptureFidelityArchive
 } from "./lib/e2e-capture-fidelity.mjs";
+import { DEFAULT_EXTENSION_DIR, EXTENSION_FILES } from "./lib/extension-paths.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(root, "..");
 const workspaceRoot = resolve(extensionRoot, "..", "..");
 
-const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? resolve(extensionRoot, "build");
+const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? DEFAULT_EXTENSION_DIR;
 const demoDir = resolve(extensionRoot, "e2e-demo");
 const playerDir = process.env.WB_E2E_PLAYER_DIR ?? resolve(workspaceRoot, "apps/player/build");
 
@@ -263,7 +264,10 @@ async function main() {
   const swExceptions = [];
 
   if (!swTarget && usePopupUiActions) {
-    popupTarget = await openTarget(baseUrl, `chrome-extension://${extensionId}/popup.html`);
+    popupTarget = await openTarget(
+      baseUrl,
+      `chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`
+    );
     state.openedTargetIds.push(popupTarget.id);
     warmupPopupTargetId = popupTarget.id;
     swTarget = await waitForExtensionServiceWorker(baseUrl, 25_000, extensionId).catch(() => null);
@@ -301,14 +305,20 @@ async function main() {
     if (!popupTarget) {
       popupTarget = recordScreenInFullMode
         ? await openActionPopupFromShortcut(baseUrl, demoClient, extensionId)
-        : await openTarget(baseUrl, `chrome-extension://${extensionId}/popup.html`);
+        : await openTarget(
+            baseUrl,
+            `chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`
+          );
       state.openedTargetIds.push(popupTarget.id);
     } else if (warmupPopupTargetId) {
       await closeTarget(baseUrl, warmupPopupTargetId);
       state.openedTargetIds = state.openedTargetIds.filter((id) => id !== warmupPopupTargetId);
       popupTarget = recordScreenInFullMode
         ? await openActionPopupFromShortcut(baseUrl, demoClient, extensionId)
-        : await openTarget(baseUrl, `chrome-extension://${extensionId}/popup.html`);
+        : await openTarget(
+            baseUrl,
+            `chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`
+          );
       state.openedTargetIds.push(popupTarget.id);
     }
 
@@ -897,7 +907,7 @@ async function verifyScriptSourceMapEvidence(archivePath) {
 async function ensureBuildInputs() {
   await access(extensionDir, constants.R_OK);
   await access(resolve(extensionDir, "manifest.json"), constants.R_OK);
-  await access(resolve(extensionDir, "sw.js"), constants.R_OK);
+  await access(resolve(extensionDir, EXTENSION_FILES.serviceWorker), constants.R_OK);
 
   await access(demoDir, constants.R_OK);
   await access(resolve(demoDir, "index.html"), constants.R_OK);
@@ -1305,7 +1315,7 @@ async function waitForExtensionServiceWorker(urlBase, timeoutMs, extensionId) {
               target?.type === "service_worker" &&
               typeof target?.url === "string" &&
               target.url.startsWith(extensionPrefix) &&
-              target.url.endsWith("/sw.js")
+              target.url.endsWith(`/${EXTENSION_FILES.serviceWorker}`)
           ) ?? null
         );
       },
@@ -1504,7 +1514,10 @@ async function probeExtensionPopup(urlBase, extensionId, timeoutMs) {
   let popupClient = null;
 
   try {
-    target = await openTarget(urlBase, `chrome-extension://${extensionId}/popup.html`);
+    target = await openTarget(
+      urlBase,
+      `chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`
+    );
 
     popupClient = new CdpClient(target.webSocketDebuggerUrl, cdpClientOptions);
     await popupClient.connect();
@@ -1616,7 +1629,7 @@ async function dispatchExtensionActionShortcut(pageClient) {
 }
 
 async function waitForExtensionPopupTarget(urlBase, extensionId, knownTargetIds, timeoutMs) {
-  const popupUrl = `chrome-extension://${extensionId}/popup.html`;
+  const popupUrl = `chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`;
   let lastTargetSummary = "none";
 
   return waitFor(
@@ -1843,7 +1856,7 @@ async function switchToOnDemandInjection(control, demoClient, demoContexts, exte
     : { ok: false, reason: "content-script-before-start", frames };
 }
 
-/** Isolated-world contexts of this extension in which content.js has started. */
+/** Isolated-world contexts of this extension in which content-script.js has started. */
 async function listContentScriptContexts(pageClient, tracker, extensionId) {
   const found = [];
 

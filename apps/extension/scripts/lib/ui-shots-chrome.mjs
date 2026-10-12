@@ -1,11 +1,13 @@
 // Chrome plumbing of the UI screenshot check: launch, CDP connection, extension id.
 
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
+
+import { mkdtemp } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { requireExtensionId } from "./devtools-targets.mjs";
 
 const CDP_TIMEOUT_MS = 30_000;
 
@@ -128,15 +130,5 @@ function reservePort() {
 
 /** Unpacked extensions with a manifest `key` get an id derived from it. */
 export async function resolveExtensionId(dir) {
-  const manifest = JSON.parse(await readFile(join(dir, "manifest.json"), "utf8"));
-
-  if (typeof manifest.key !== "string") {
-    throw new Error("The extension manifest has no key; build the development profile.");
-  }
-
-  return [
-    ...createHash("sha256").update(Buffer.from(manifest.key, "base64")).digest("hex").slice(0, 32)
-  ]
-    .map((char) => String.fromCharCode(97 + parseInt(char, 16)))
-    .join("");
+  return requireExtensionId(dir);
 }
