@@ -8,9 +8,11 @@ import {
   type PrivacyScannerResult
 } from "@webblackbox/protocol";
 
+import { ranInFullEngine } from "../shared/capture-fallback.js";
 import type { ExportPrivacyWarning, ExtensionOutboundMessage } from "../shared/messages.js";
 import type { PipelineExportDownloadResult } from "../shared/offscreen-messages.js";
 import { resolveLocalDataSettings } from "../shared/profiles/local-data.js";
+import type { ExportPassphraseStore } from "./export-passphrase.js";
 import type { SessionRuntime } from "./session-registry.js";
 import type { SnapshotStorageAreaLike } from "./stopped-session-store.js";
 
@@ -61,6 +63,10 @@ export type SessionExportDeps = {
   downloads: ExportDownloadsApiLike | undefined;
   auditStorageArea: SnapshotStorageAreaLike | undefined;
   broadcast: (message: ExtensionOutboundMessage) => void;
+  /** The passphrase remembered until the browser closes: used when none is given. */
+  passphrases?: ExportPassphraseStore;
+  /** A kept recording was exported: the "export it now" prompt and badge go away. */
+  onExported?: (runtime: SessionRuntime) => Promise<void>;
 };
 
 export type SessionExportController = {
@@ -78,7 +84,7 @@ export function resolveSessionExportPolicy(
   runtime: SessionRuntime,
   policy: ExportPolicy
 ): ExportPolicy {
-  if (runtime.mode !== "full" || !runtime.config.capturePolicy) {
+  if (!ranInFullEngine(runtime) || !runtime.config.capturePolicy) {
     return policy;
   }
 
@@ -235,7 +241,11 @@ export function createSessionExportController(deps: SessionExportDeps): SessionE
 
     const effectivePolicy = resolveSessionExportPolicy(runtime, policy);
     // Every archive is encrypted, whatever the profile; whitespace around it is not part of it.
-    const encryptionPassphrase = normalizeExportPassphrase(passphrase);
+    // Without one the passphrase of an earlier export of this browser session is used.
+    const givenPassphrase = normalizeExportPassphrase(passphrase);
+    const encryptionPassphrase = givenPassphrase
+      ? givenPassphrase
+      : normalizeExportPassphrase(await deps.passphrases?.get());
 
     try {
       // Before stopping the session: a refused export leaves the recording running.
@@ -282,12 +292,18 @@ export function createSessionExportController(deps: SessionExportDeps): SessionE
         privacyWarning
       });
 
-      // The profile decides whether the local copy goes now or waits out its retention.
+      if (givenPassphrase) {
+        await deps.passphrases?.remember(givenPassphrase);
+      }
+
+      // The profile decides whether the local copy goes now or stays until it is deleted.
       if (
         runtime.stoppedAt &&
         resolveLocalDataSettings(runtime.profile.selection.profile).deleteAfterExport
       ) {
         await deps.disposeStoppedSession(runtime);
+      } else {
+        await deps.onExported?.(runtime);
       }
 
       return {

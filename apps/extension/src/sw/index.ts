@@ -5,6 +5,7 @@ import { BODY_REDACTION_TOKEN } from "@webblackbox/protocol";
 import { PIPELINE_DB_NAME } from "../shared/at-rest.js";
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { CONTENT_INJECTION_STORAGE_KEY } from "../shared/content-injection.js";
+import { PORT_NAMES } from "../shared/messages.js";
 import { OFFSCREEN_CONNECT_REQUEST_KIND } from "../shared/offscreen-messages.js";
 import {
   normalizePerformanceBudget,
@@ -24,6 +25,7 @@ import { createStorageArtifactsController } from "./artifacts-storage.js";
 import { createProfileArtifactsController } from "./artifacts-profiles.js";
 import { createAtRestKeyService } from "./at-rest-key-service.js";
 import { createContentInjectionController } from "./content-injection.js";
+import { createExportPassphraseStore } from "./export-passphrase.js";
 import { createSessionExportController } from "./export-session.js";
 import { createFullCdpController } from "./full-cdp.js";
 import { createInboundRouter } from "./inbound-router.js";
@@ -43,6 +45,7 @@ import { createProfileReevaluation } from "./profile-reevaluation.js";
 import { createRecordedTabWatch } from "./recorded-tab-watch.js";
 import { createSessionAnnotations } from "./session-annotations.js";
 import { createSessionCommands } from "./session-commands.js";
+import { createSessionNotifications } from "./session-notifications.js";
 import { createSessionListView, toSessionMetadata } from "./session-list.js";
 import { createSessionQueue } from "./session-queue.js";
 import { createSessionRegistry } from "./session-registry.js";
@@ -180,7 +183,7 @@ const fullCdp = createFullCdpController({
   createRouter: () => createCdpRouter(createChromeDebuggerTransport()),
   ingestRawEvent,
   enqueue,
-  stopSession: (tabId) => sessionCommands.stopSession(tabId),
+  onDebuggerDetach: (runtime, reason) => sessionCommands.handleDebuggerDetach(runtime, reason),
   captureFullModeArtifacts: artifacts.captureFullModeArtifacts,
   captureScreenshot: screenshotArtifacts.captureScreenshot,
   shouldCaptureIncidentArtifacts: artifacts.shouldCaptureIncidentArtifacts,
@@ -301,6 +304,16 @@ const stoppedSessionLifecycle: StoppedSessionLifecycleController = createStopped
     sweepPipelineSessions(new IndexedDbPipelineStorage(PIPELINE_DB_NAME), shouldDelete),
   bootedAt: SERVICE_WORKER_BOOTED_AT
 });
+const exportPassphrases = createExportPassphraseStore(chromeApi?.storage?.session);
+const sessionNotifications = createSessionNotifications({
+  notifications: chromeApi?.notifications,
+  getMessage: (key) => chromeApi?.i18n?.getMessage?.(key) ?? "",
+  getURL: (path) => chromeApi?.runtime?.getURL(path) ?? path,
+  isPopupOpen: () => portRegistry.hasPortNamed(PORT_NAMES.popup),
+  openTab: async (url) => {
+    await chromeApi?.tabs?.create?.({ url, active: true });
+  }
+});
 const sessionExport = createSessionExportController({
   getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid),
   stopSession: (tabId) => sessionCommands.stopSession(tabId),
@@ -312,7 +325,9 @@ const sessionExport = createSessionExportController({
   auditStorageArea: chromeApi?.storage?.local,
   broadcast: (message) => {
     portRegistry.broadcast(message);
-  }
+  },
+  passphrases: exportPassphrases,
+  onExported: (runtime) => sessionCommands.markExported(runtime)
 });
 const sessionCommands = createSessionCommands({
   sessionRegistry,
@@ -354,7 +369,8 @@ const sessionCommands = createSessionCommands({
   createPipeline: (sid) => createSessionPipelineClient(offscreenClient, sid),
   loadPerformanceBudgetConfig,
   monotonicTime,
-  idleBadgeNotice: () => extensionUpdates.badge()
+  idleBadgeNotice: () => extensionUpdates.badge(),
+  notifications: sessionNotifications
 });
 const extensionUpdates = createExtensionUpdateChecker({
   storageLocal: chromeApi?.storage?.local,
@@ -385,6 +401,7 @@ const inboundRouter = createInboundRouter({
   sessionCommands,
   sessionList: sessionListView,
   sessionExport,
+  passphrases: exportPassphrases,
   annotations,
   profile: profileReevaluation,
   runtime: chromeApi?.runtime,

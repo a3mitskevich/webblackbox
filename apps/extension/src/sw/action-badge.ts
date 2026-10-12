@@ -1,11 +1,12 @@
 /**
  * The toolbar badge. One badge serves every notice, so the most urgent one wins:
  *
- * 1. `REC` while any tab records;
+ * 1. `REC` while any tab records, `LITE` while a recording left Full and goes on in Light;
  * 2. `ERR` for `FREEZE_BADGE_HIGHLIGHT_MS` after a freeze (then it falls back down this list);
  * 3. `!` while a profile-change notice is unread;
- * 4. the idle notice (the "newer extension version" arrow) when one is set;
- * 5. no badge.
+ * 4. `SAVE` while a stopped recording waits for its export;
+ * 5. the idle notice (the "newer extension version" arrow) when one is set;
+ * 6. no badge.
  */
 
 const FREEZE_BADGE_HIGHLIGHT_MS = 15_000;
@@ -14,7 +15,9 @@ export type BadgeSpec = { text: string; color: string };
 
 const RECORDING_BADGE: BadgeSpec = { text: "REC", color: "#c92a2a" };
 const FREEZE_BADGE: BadgeSpec = { text: "ERR", color: "#9b2226" };
+const DEGRADED_RECORDING_BADGE: BadgeSpec = { text: "LITE", color: "#b35c00" };
 const PROFILE_CHANGE_BADGE: BadgeSpec = { text: "!", color: "#b35c00" };
+const EXPORT_PENDING_BADGE: BadgeSpec = { text: "SAVE", color: "#2b8a3e" };
 
 type ActionLike = {
   setBadgeText(details: { text: string }): Promise<void>;
@@ -24,7 +27,11 @@ type ActionLike = {
 export type ActionBadgeDeps = {
   action: ActionLike | undefined;
   isRecording: () => boolean;
+  /** A recording fell back from Full to Light. */
+  isRecordingDegraded?: () => boolean;
   hasUnreadProfileNotice: () => boolean;
+  /** A stopped recording waits for its export (the popup's export step). */
+  hasPendingExport?: () => boolean;
   /** The lowest-priority badge, shown when nothing else claims the badge. */
   idleNotice?: () => Promise<BadgeSpec | null>;
 };
@@ -77,7 +84,10 @@ export function createActionBadge(deps: ActionBadgeDeps): ActionBadgeController 
 
   async function setRecording(): Promise<void> {
     claim();
-    await apply(RECORDING_BADGE, "recording");
+    await apply(
+      deps.isRecordingDegraded?.() ? DEGRADED_RECORDING_BADGE : RECORDING_BADGE,
+      "recording"
+    );
   }
 
   async function setFreeze(): Promise<void> {
@@ -103,6 +113,12 @@ export function createActionBadge(deps: ActionBadgeDeps): ActionBadgeController 
     if (deps.hasUnreadProfileNotice()) {
       claim();
       await apply(PROFILE_CHANGE_BADGE, "profile-change");
+      return;
+    }
+
+    if (deps.hasPendingExport?.()) {
+      claim();
+      await apply(EXPORT_PENDING_BADGE, "export-pending");
       return;
     }
 

@@ -1,263 +1,21 @@
-import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
-import { createDefaultRecorderPlugins } from "@webblackbox/recorder";
-import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { PortLike, RuntimeMessageSender } from "../shared/chrome-api.js";
 import { PORT_NAMES } from "../shared/messages.js";
-import { normalizeEnterprisePolicy } from "../shared/options-storage.js";
-import type { OffscreenEventMessage } from "./offscreen-client.js";
-import { DEFAULT_PERFORMANCE_BUDGET } from "../shared/performance-budget.js";
-import { createDefaultProfile } from "../shared/profiles/presets.js";
-import { FullBodyCapture } from "./full-body-capture.js";
-import {
-  createInboundRouter,
-  type InboundRouter,
-  type InboundRouterDeps
-} from "./inbound-router.js";
-import type { SessionPipelineClient } from "./offscreen-client.js";
+import { createExportPassphraseStore } from "./export-passphrase.js";
 import { REJECTED_MESSAGE_LOG_MAX_PER_WINDOW } from "./inbound-messages.js";
-import { createPortRegistry, type PortRegistry } from "./port-registry.js";
-import { createPortTrafficMeter } from "./port-traffic.js";
 import {
-  createSessionRegistry,
-  createSessionRuntime,
-  type SessionRuntime,
-  type SessionRuntimeInit
-} from "./session-registry.js";
-import { createStopDrainTracker, type StopDrainTracker } from "./stop-drain.js";
-
-const EXTENSION_ID = "ext-id";
-const EXTENSION_ORIGIN = `chrome-extension://${EXTENSION_ID}`;
-const OFFSCREEN_URL = `${EXTENSION_ORIGIN}/offscreen.html`;
-
-type FakePort = PortLike & {
-  sent: unknown[];
-  postMessage: ReturnType<typeof vi.fn>;
-  disconnect: ReturnType<typeof vi.fn>;
-  emitMessage: (message: unknown) => void;
-  emitDisconnect: () => void;
-};
-
-function createPort(name: string, sender?: RuntimeMessageSender): FakePort {
-  const messageHandlers = new Set<(message: unknown) => void>();
-  const disconnectHandlers = new Set<() => void>();
-  const port = {
-    name,
-    sender,
-    sent: [] as unknown[],
-    onMessage: {
-      addListener: vi.fn((handler: (message: unknown) => void) => {
-        messageHandlers.add(handler);
-      }),
-      removeListener: vi.fn((handler: (message: unknown) => void) => {
-        messageHandlers.delete(handler);
-      })
-    },
-    onDisconnect: {
-      addListener: vi.fn((handler: () => void) => {
-        disconnectHandlers.add(handler);
-      }),
-      removeListener: vi.fn((handler: () => void) => {
-        disconnectHandlers.delete(handler);
-      })
-    },
-    postMessage: vi.fn(),
-    disconnect: vi.fn(),
-    emitMessage: (message: unknown) => {
-      for (const handler of messageHandlers) {
-        handler(message);
-      }
-    },
-    emitDisconnect: () => {
-      for (const handler of disconnectHandlers) {
-        handler();
-      }
-    }
-  };
-
-  port.postMessage.mockImplementation((message: unknown) => {
-    port.sent.push(message);
-  });
-
-  return port;
-}
-
-function contentSender(tabId = 7, frameId = 0): RuntimeMessageSender {
-  return { id: EXTENSION_ID, url: "https://page.test/app", tab: { id: tabId }, frameId };
-}
-
-function extensionPageSender(): RuntimeMessageSender {
-  return { id: EXTENSION_ID, url: `${EXTENSION_ORIGIN}/popup.html` };
-}
-
-function offscreenSender(): RuntimeMessageSender {
-  return { id: EXTENSION_ID, url: OFFSCREEN_URL };
-}
-
-function createPipelineStub(): SessionPipelineClient {
-  return {
-    start: vi.fn(async () => undefined),
-    ingest: vi.fn(async () => undefined),
-    ingestBatch: vi.fn(async () => 0),
-    flush: vi.fn(async () => undefined),
-    putBlob: vi.fn(async () => "blob-id"),
-    exportAndDownload: vi.fn(async () => {
-      throw new Error("not implemented");
-    }),
-    close: vi.fn(async () => undefined)
-  };
-}
-
-function createRuntime(overrides: Partial<SessionRuntimeInit> = {}): SessionRuntime {
-  return createSessionRuntime(
-    {
-      sid: "S-1",
-      tabId: 7,
-      mode: "lite",
-      profile: {
-        request: "auto",
-        selection: { profile: createDefaultProfile(), source: "default", extended: false },
-        profileConfig: DEFAULT_RECORDER_CONFIG,
-        visualsCaptured: { screenshots: true, screenRecordings: false }
-      },
-      url: "https://page.test/app",
-      title: "Page",
-      annotation: { tags: [] },
-      config: DEFAULT_RECORDER_CONFIG,
-      startedAt: 1_000,
-      pipeline: createPipelineStub(),
-      recorderPlugins: createDefaultRecorderPlugins(),
-      performanceBudget: { ...DEFAULT_PERFORMANCE_BUDGET },
-      ...overrides
-    },
-    {
-      createFullBodyCapture: () =>
-        new FullBodyCapture({
-          isEnabled: () => false,
-          resolveRule: () => ({ enabled: false, maxBytes: 0, mimeAllowlist: [] }),
-          readResponseBody: () => Promise.resolve({ ok: false, error: "unavailable" }),
-          storeBody: () => Promise.resolve(0),
-          emitSkip: () => undefined
-        })
-    }
-  );
-}
-
-type Harness = {
-  router: InboundRouter;
-  portRegistry: PortRegistry;
-  stopDrain: StopDrainTracker;
-  sessionRegistry: ReturnType<typeof createSessionRegistry>;
-  deps: InboundRouterDeps;
-  sendResponse: Mock<(response: unknown) => void>;
-};
-
-function createHarness(overrides: Partial<InboundRouterDeps> = {}): Harness {
-  const sessionRegistry = createSessionRegistry();
-  const portRegistry = createPortRegistry({
-    offscreenPortTraffic: createPortTrafficMeter({}),
-    shouldLogPortDebug: () => false
-  });
-  const stopDrain = createStopDrainTracker({
-    getRuntimeBySid: (sid) => sessionRegistry.getBySid(sid)
-  });
-
-  const deps: InboundRouterDeps = {
-    sessionRegistry,
-    portRegistry,
-    stopDrain,
-    offscreenClient: {
-      request: vi.fn(),
-      requestOnce: vi.fn(),
-      post: vi.fn(),
-      receive: vi.fn(() => null),
-      rejectPending: vi.fn(),
-      pendingCount: () => 0
-    } as unknown as InboundRouterDeps["offscreenClient"],
-    screenRecording: {
-      handleOffscreenScreenRecordingChunk: vi.fn(),
-      handleOffscreenScreenRecordingEnded: vi.fn(async () => undefined),
-      handleOffscreenScreenRecordingError: vi.fn()
-    },
-    sessionCommands: {
-      startSession: vi.fn(async () => "lite" as const),
-      stopSession: vi.fn(async () => undefined),
-      reloadRecordingTab: vi.fn(async () => undefined),
-      deleteSessionBySid: vi.fn(async () => undefined),
-      acknowledgeProfileCancel: vi.fn(async () => undefined),
-      setIdleBadge: vi.fn(async () => undefined),
-      setRecordingBadge: vi.fn(async () => undefined),
-      setFreezeBadge: vi.fn(async () => undefined),
-      refreshActionBadge: vi.fn(async () => undefined),
-      refreshNoticeBadge: vi.fn(async () => undefined),
-      notifyTabStatus: vi.fn(async () => undefined),
-      resolveFullBodyCaptureRule: vi.fn(),
-      persistRuntimeState: vi.fn(async () => undefined),
-      restoreRuntimeState: vi.fn(async () => undefined)
-    },
-    sessionList: {
-      buildSessionListMessage: vi.fn(() => ({ kind: "sw.session-list" as const, sessions: [] })),
-      broadcastSessionList: vi.fn()
-    },
-    sessionExport: {
-      exportSession: vi.fn(async () => ({ ok: true as const, fileName: "session.wbbx" })),
-      resolveExportPolicy: vi.fn((value: unknown) => value as never),
-      appendExportAuditEvent: vi.fn(async () => undefined)
-    },
-    annotations: {
-      get: vi.fn(() => ({ tags: [] })),
-      update: vi.fn(async () => undefined),
-      remove: vi.fn(async () => false),
-      load: vi.fn(async () => undefined)
-    },
-    profile: {
-      loadSessionProfilesState: vi.fn(),
-      loadEnterprisePolicy: vi.fn(async () => normalizeEnterprisePolicy({})),
-      resolveTabProfileSelection: vi.fn(async () => null),
-      resolveProfilePreview: vi.fn(async () => ({ kind: "sw.profile-preview" }) as never),
-      scheduleProfileReevaluation: vi.fn()
-    },
-    runtime: {
-      id: EXTENSION_ID,
-      getURL: (path: string) => `${EXTENSION_ORIGIN}/${path}`
-    },
-    tabs: {
-      query: vi.fn(async () => [{ id: 7 }]),
-      sendMessage: vi.fn(async () => undefined)
-    },
-    scripting: {
-      executeScript: vi.fn(async () => undefined)
-    },
-    offscreenPath: "offscreen.html",
-    resolveUiActionTarget: vi.fn(async (requestedTabId?: number) => requestedTabId),
-    ingestRawEvent: vi.fn(),
-    sendAtRestKeyToOffscreen: vi.fn(async () => undefined),
-    recoverActiveOffscreenPipelines: vi.fn(async () => undefined),
-    markStoppedPipelinesDetached: vi.fn(),
-    waitForRuntimeState: () => Promise.resolve(),
-    pushSessionList: vi.fn(),
-    wait: vi.fn(async () => undefined),
-    monotonicTime: () => 1_000,
-    perfNow: () => 0,
-    shouldLogPortDebug: () => false,
-    ...overrides
-  };
-
-  return {
-    router: createInboundRouter(deps),
-    portRegistry,
-    stopDrain,
-    sessionRegistry,
-    deps,
-    sendResponse: vi.fn<(response: unknown) => void>()
-  };
-}
-
-async function flushMicrotasks(): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, 0);
-  });
-}
+  contentSender,
+  createHarness,
+  createPort,
+  createRuntime,
+  extensionPageSender,
+  EXTENSION_ID,
+  EXTENSION_ORIGIN,
+  flushMicrotasks,
+  OFFSCREEN_URL,
+  offscreenSender
+} from "./inbound-router-test-harness.js";
+import type { OffscreenEventMessage } from "./offscreen-client.js";
 
 describe("sender trust resolution", () => {
   it("rejects a port from a foreign sender and disconnects it", () => {
@@ -633,6 +391,51 @@ describe("dispatch of inbound message kinds", () => {
     await vi.waitFor(() => {
       expect(deps.sessionCommands.acknowledgeProfileCancel).toHaveBeenCalledWith("S-1");
     });
+  });
+
+  it("ui.dismiss-export reaches the session commands", async () => {
+    const { router, deps, sendResponse } = createHarness();
+
+    router.handleRuntimeMessage(
+      { kind: "ui.dismiss-export", sid: "S-1" },
+      extensionPageSender(),
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(deps.sessionCommands.dismissExportPrompt).toHaveBeenCalledWith("S-1");
+    });
+  });
+
+  it("says whether an export passphrase is remembered and forgets it on request", async () => {
+    const passphrases = createExportPassphraseStore(undefined);
+    await passphrases.remember("correct horse battery");
+    const { router, sendResponse } = createHarness({ passphrases });
+
+    router.handleRuntimeMessage(
+      { kind: "ui.passphrase-status" },
+      extensionPageSender(),
+      sendResponse
+    );
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenLastCalledWith({
+        kind: "sw.passphrase-status",
+        remembered: true
+      });
+    });
+
+    router.handleRuntimeMessage(
+      { kind: "ui.forget-passphrase" },
+      extensionPageSender(),
+      sendResponse
+    );
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenLastCalledWith({
+        kind: "sw.passphrase-status",
+        remembered: false
+      });
+    });
+    await expect(passphrases.get()).resolves.toBeUndefined();
   });
 
   it("ui.request-session-list answers the one-shot message with the list", async () => {

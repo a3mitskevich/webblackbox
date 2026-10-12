@@ -10,6 +10,7 @@ import {
   type SnapshotStorageAreaLike,
   type StoppedSessionSnapshot
 } from "./stopped-session-store.js";
+import { resolveExpiresAt } from "./stopped-sessions.js";
 
 /**
  * Running recordings, checkpointed while they record. A worker that dies mid-recording (MV3 stops
@@ -78,7 +79,7 @@ export function createLiveSessionStore(
  */
 export function toInterruptedSnapshot(
   live: LiveSessionSnapshot,
-  options: { detectedAt: number; ttlMs: number }
+  options: { detectedAt: number; ttlMs: number | null }
 ): StoppedSessionSnapshot {
   const { lastSeenAt, ...core } = live;
   const interruption: SessionInterruption = {
@@ -90,8 +91,10 @@ export function toInterruptedSnapshot(
   return {
     ...core,
     stoppedAt: lastSeenAt,
-    expiresAt: lastSeenAt + options.ttlMs,
+    expiresAt: resolveExpiresAt(lastSeenAt, options.ttlMs),
     purgeAttempts: 0,
-    interruption
+    interruption,
+    // Kept like a stopped recording, so it asks to be exported like one.
+    exportPrompt: true
   };
 }

@@ -6,6 +6,7 @@ import type { SwPipelineStatusMessage } from "../shared/offscreen-messages.js";
 import type { ScreenRecordingController } from "./artifacts-screen-recording.js";
 import { isOffscreenDocumentPort } from "./at-rest-key.js";
 import type { ChromeApi } from "../shared/chrome-api.js";
+import type { ExportPassphraseStore } from "./export-passphrase.js";
 import type { SessionExportController } from "./export-session.js";
 import { toScriptScanStatus } from "./full-cdp.js";
 import {
@@ -60,6 +61,7 @@ export type InboundRouterDeps = {
   sessionCommands: SessionCommandsController;
   sessionList: SessionListView;
   sessionExport: SessionExportController;
+  passphrases: Pick<ExportPassphraseStore, "get" | "forget">;
   annotations: SessionAnnotationsController;
   profile: ProfileReevaluationController;
   runtime: InboundRouterRuntimeApi | undefined;
@@ -367,6 +369,29 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
     if (message.kind === "ui.ack-profile-cancel") {
       await deps.sessionCommands.acknowledgeProfileCancel(message.sid);
       return;
+    }
+
+    if (message.kind === "ui.dismiss-export") {
+      await deps.sessionCommands.dismissExportPrompt(message.sid);
+      return;
+    }
+
+    if (message.kind === "ui.passphrase-status" || message.kind === "ui.forget-passphrase") {
+      if (message.kind === "ui.forget-passphrase") {
+        await deps.passphrases.forget();
+      }
+
+      const status = {
+        kind: "sw.passphrase-status" as const,
+        remembered: (await deps.passphrases.get()) !== undefined
+      };
+
+      if (port) {
+        portRegistry.sendPortMessage(port, status);
+        return;
+      }
+
+      return status;
     }
 
     if (message.kind === "ui.request-session-list") {

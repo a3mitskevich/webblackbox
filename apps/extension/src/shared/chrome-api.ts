@@ -124,6 +124,21 @@ export type ChromeApi = {
   };
   i18n?: {
     getUILanguage(): string;
+    getMessage?(messageName: string, substitutions?: string | string[]): string;
+  };
+  notifications?: {
+    create(
+      notificationId: string,
+      options: {
+        type: "basic";
+        iconUrl: string;
+        title: string;
+        message: string;
+        priority?: number;
+      }
+    ): Promise<string> | void;
+    clear(notificationId: string): Promise<boolean> | void;
+    onClicked: { addListener(callback: (notificationId: string) => void): void };
   };
   /** Persisted timers: they fire after the service worker was stopped and restarted. */
   alarms?: {
@@ -291,6 +306,7 @@ export type ChromeApi = {
     session?: {
       get(keys: string): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
+      remove?(keys: string | string[]): Promise<void>;
       setAccessLevel?(options: { accessLevel: "TRUSTED_CONTEXTS" }): Promise<void>;
     };
     managed?: {

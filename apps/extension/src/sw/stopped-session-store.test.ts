@@ -1,9 +1,8 @@
 import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 import { describe, expect, it, vi } from "vitest";
 
-import { createDefaultProfile } from "../shared/profiles/presets.js";
 import { resolveUnexportedRetentionMs } from "../shared/profiles/local-data.js";
-import { findBuiltInProfile } from "../shared/profiles/presets.js";
+import { createDefaultProfile } from "../shared/profiles/presets.js";
 import {
   clearRetentionAlarm,
   createStoppedSessionStore,
@@ -16,6 +15,7 @@ import {
   type SnapshotStorageAreaLike,
   type StoppedSessionSnapshot
 } from "./stopped-session-store.js";
+import { KEPT_UNTIL_EXPORTED_EXPIRES_AT, resolveExpiresAt } from "./stopped-sessions.js";
 
 function snapshot(
   sid: string,
@@ -193,15 +193,28 @@ describe("retention", () => {
 
   it("schedules one persisted alarm at the profile's retention and clears it on disposal", async () => {
     const alarms = { create: vi.fn(), clear: vi.fn(async () => true) };
-    const fullCapture = findBuiltInProfile("builtin:full-capture");
-    expect(fullCapture).toBeDefined();
-    const expiresAt = 2_000 + resolveUnexportedRetentionMs(fullCapture ?? createDefaultProfile());
+    const profile = {
+      ...createDefaultProfile(),
+      localData: { deleteAfterExport: true, unexportedRetentionMinutes: 5 }
+    };
+    const expiresAt = resolveExpiresAt(2_000, resolveUnexportedRetentionMs(profile));
 
     await expect(scheduleRetentionAlarm(alarms, "S-1", expiresAt)).resolves.toBe(true);
     await clearRetentionAlarm(alarms, "S-1");
 
     expect(expiresAt).toBe(2_000 + 5 * 60_000);
     expect(alarms.create).toHaveBeenCalledWith("webblackbox.retention:S-1", { when: expiresAt });
+    expect(alarms.clear).toHaveBeenCalledWith("webblackbox.retention:S-1");
+  });
+
+  it("schedules no alarm for a recording kept until it is exported", async () => {
+    const alarms = { create: vi.fn(), clear: vi.fn(async () => true) };
+    const expiresAt = resolveExpiresAt(2_000, resolveUnexportedRetentionMs(createDefaultProfile()));
+
+    expect(expiresAt).toBe(KEPT_UNTIL_EXPORTED_EXPIRES_AT);
+    await expect(scheduleRetentionAlarm(alarms, "S-1", expiresAt)).resolves.toBe(true);
+
+    expect(alarms.create).not.toHaveBeenCalled();
     expect(alarms.clear).toHaveBeenCalledWith("webblackbox.retention:S-1");
   });
 
@@ -230,6 +243,31 @@ describe("interrupted snapshots", () => {
     expect(parsed.map((row) => [row.sid, row.interruption])).toEqual([
       ["S-interrupted", interruption],
       ["S-bad", undefined]
+    ]);
+  });
+});
+
+describe("fallback and export prompt", () => {
+  it("keeps a valid Light fallback and the export prompt, and drops an invalid fallback", () => {
+    const captureFallback = {
+      at: 1_500,
+      reason: "canceled-by-user" as const,
+      from: "full" as const,
+      to: "lite" as const,
+      detail: "canceled_by_user"
+    };
+    const parsed = parseStoppedSessionSnapshots(
+      JSON.parse(
+        JSON.stringify([
+          snapshot("S-fallback", { captureFallback, exportPrompt: true }),
+          { ...snapshot("S-bad"), captureFallback: { at: 1, reason: "boom" }, exportPrompt: "yes" }
+        ])
+      )
+    );
+
+    expect(parsed.map((row) => [row.sid, row.captureFallback, row.exportPrompt])).toEqual([
+      ["S-fallback", captureFallback, true],
+      ["S-bad", undefined, undefined]
     ]);
   });
 });

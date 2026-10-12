@@ -1,3 +1,5 @@
+import { DEFAULT_CAPTURE_POLICY } from "@webblackbox/protocol";
+
 /**
  * Persisted bookkeeping for stopped sessions. The in-memory cleanup timer of a stopped
  * session dies with the MV3 service worker, so each stop is recorded in
@@ -31,14 +33,43 @@ export function parseStoppedSessionRecords(value: unknown): StoppedSessionRecord
   }, []);
 }
 
-/** Stopped-session lifetime: the in-memory TTL, capped by the configured local retention. */
+/**
+ * `expiresAt` of a recording kept until it is exported or deleted: no timer deletes it, only the
+ * end of the at-rest key (the browser closing) does.
+ */
+export const KEPT_UNTIL_EXPORTED_EXPIRES_AT = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Stopped-session lifetime: the profile's retention, capped by the capture policy's local
+ * retention; null = kept until exported or deleted. Such a recording is capped only by a local
+ * retention below the default one, which an administrator (or a v1 option) set on purpose.
+ */
 export function resolveStoppedSessionTtlMs(
-  inMemoryTtlMs: number,
+  profileTtlMs: number | null,
   localRetentionTtlMs: number | undefined
-): number {
+): number | null {
+  if (profileTtlMs === null) {
+    return isPositiveFinite(localRetentionTtlMs) &&
+      localRetentionTtlMs < DEFAULT_CAPTURE_POLICY.retention.localTtlMs
+      ? localRetentionTtlMs
+      : null;
+  }
+
   return isPositiveFinite(localRetentionTtlMs)
-    ? Math.min(inMemoryTtlMs, localRetentionTtlMs)
-    : inMemoryTtlMs;
+    ? Math.min(profileTtlMs, localRetentionTtlMs)
+    : profileTtlMs;
+}
+
+/** When a recording stopped at `from` expires; `KEPT_UNTIL_EXPORTED_EXPIRES_AT` for no TTL. */
+export function resolveExpiresAt(from: number, ttlMs: number | null): number {
+  return ttlMs === null
+    ? KEPT_UNTIL_EXPORTED_EXPIRES_AT
+    : Math.min(from + ttlMs, KEPT_UNTIL_EXPORTED_EXPIRES_AT);
+}
+
+/** The recording waits for its export or deletion: no retention timer is scheduled. */
+export function isKeptUntilExported(expiresAt: number): boolean {
+  return expiresAt >= KEPT_UNTIL_EXPORTED_EXPIRES_AT;
 }
 
 export function upsertStoppedSessionRecord(

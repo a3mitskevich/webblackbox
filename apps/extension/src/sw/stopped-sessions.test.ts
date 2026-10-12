@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isKeptUntilExported,
+  KEPT_UNTIL_EXPORTED_EXPIRES_AT,
   MAX_STOPPED_SESSION_RECORDS,
   parseStoppedSessionRecords,
   pruneStoppedSessionRecords,
   removeStoppedSessionRecord,
+  resolveExpiresAt,
   resolveStoppedSessionTtlMs,
   shouldSweepStoredSession,
   upsertStoppedSessionRecord,
@@ -40,6 +43,33 @@ describe("stopped session records", () => {
     expect(resolveStoppedSessionTtlMs(TEN_MINUTES, 60_000)).toBe(60_000);
     expect(resolveStoppedSessionTtlMs(TEN_MINUTES, 0)).toBe(TEN_MINUTES);
     expect(resolveStoppedSessionTtlMs(TEN_MINUTES, Number.NaN)).toBe(TEN_MINUTES);
+  });
+
+  it("keeps a recording without a profile retention unless a lowered local retention caps it", () => {
+    expect(resolveStoppedSessionTtlMs(null, undefined)).toBeNull();
+    // The capture policy default (24 h) is no cap for a recording kept until exported.
+    expect(resolveStoppedSessionTtlMs(null, 24 * 60 * 60_000)).toBeNull();
+    expect(resolveStoppedSessionTtlMs(null, 60_000)).toBe(60_000);
+    expect(resolveExpiresAt(5_000, null)).toBe(KEPT_UNTIL_EXPORTED_EXPIRES_AT);
+    expect(resolveExpiresAt(5_000, 60_000)).toBe(65_000);
+    expect(isKeptUntilExported(KEPT_UNTIL_EXPORTED_EXPIRES_AT)).toBe(true);
+    expect(isKeptUntilExported(65_000)).toBe(false);
+  });
+
+  it("never prunes or sweeps a record kept until export", () => {
+    const kept = record("S-kept", 1, KEPT_UNTIL_EXPORTED_EXPIRES_AT);
+
+    expect(pruneStoppedSessionRecords([kept], Date.now(), new Set())).toEqual([kept]);
+    expect(parseStoppedSessionRecords([kept])).toEqual([kept]);
+    expect(
+      shouldSweepStoredSession({
+        session: { sid: "S-kept", startedAt: 1 },
+        liveSids: new Set(),
+        records: new Map([["S-kept", kept]]),
+        now: Date.now(),
+        bootedAt: Date.now()
+      })
+    ).toBe(false);
   });
 
   it("upserts and removes records immutably", () => {

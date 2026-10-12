@@ -10,5 +10,17 @@
   },
   "extensionCommandMarkBug": {
     "message": "创建用户标记"
+  },
+  "notifyExportTitle": {
+    "message": "录制已停止——请导出"
+  },
+  "notifyExportMessage": {
+    "message": "录制会一直保留，直到你导出或删除它。点击立即导出。"
+  },
+  "notifyFallbackTitle": {
+    "message": "完整捕获已停止"
+  },
+  "notifyFallbackMessage": {
+    "message": "录制以“轻量”模式继续：不再捕获响应正文、完整控制台、截图和 DevTools 数据。打开扩展弹窗查看详情。"
   }
 }

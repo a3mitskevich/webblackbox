@@ -8,6 +8,7 @@ import { createDefaultRecorderPlugins } from "@webblackbox/recorder";
 import { vi } from "vitest";
 
 import { DEFAULT_PERFORMANCE_BUDGET } from "../shared/performance-budget.js";
+import type { RecordingProfile } from "../shared/profiles/model.js";
 import { createDefaultProfile } from "../shared/profiles/presets.js";
 import { FullBodyCapture } from "./full-body-capture.js";
 import { LIVE_SESSION_SNAPSHOTS_KEY, type LiveSessionSnapshot } from "./live-session-store.js";
@@ -105,6 +106,18 @@ export function createFullBodyCaptureStub(): FullBodyCapture {
   });
 }
 
+/** Minutes the harness profile keeps an unexported recording (the pre-task-61 default). */
+const HARNESS_RETENTION_MINUTES = 10;
+export const HARNESS_RETENTION_MS = HARNESS_RETENTION_MINUTES * 60_000;
+
+/** A profile with a retention timer; the built-in profiles keep recordings until exported. */
+export function timedRetentionProfile(): RecordingProfile {
+  return {
+    ...createDefaultProfile(),
+    localData: { deleteAfterExport: true, unexportedRetentionMinutes: HARNESS_RETENTION_MINUTES }
+  };
+}
+
 export function createRuntimeInit(overrides: Partial<SessionRuntimeInit> = {}): SessionRuntimeInit {
   return {
     sid: "S-1",
@@ -112,7 +125,7 @@ export function createRuntimeInit(overrides: Partial<SessionRuntimeInit> = {}): 
     mode: "lite",
     profile: {
       request: "auto",
-      selection: { profile: createDefaultProfile(), source: "default", extended: false },
+      selection: { profile: timedRetentionProfile(), source: "default", extended: false },
       profileConfig: DEFAULT_RECORDER_CONFIG,
       visualsCaptured: { screenshots: true, screenRecordings: false }
     },
@@ -149,7 +162,7 @@ export function snapshot(
     title: "Example",
     profile: {
       request: "auto",
-      selection: { profile: createDefaultProfile(), source: "default", extended: false },
+      selection: { profile: timedRetentionProfile(), source: "default", extended: false },
       profileConfig: DEFAULT_RECORDER_CONFIG,
       visualsCaptured: { screenshots: true, screenRecordings: false }
     },

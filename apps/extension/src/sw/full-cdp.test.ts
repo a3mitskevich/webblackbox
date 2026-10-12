@@ -155,7 +155,7 @@ type DepsHarness = {
   ingested: IngestedEvent[];
   enqueueCalls: Array<{ bestEffort: boolean }>;
   pendingTasks: Array<Promise<void>>;
-  stoppedTabs: number[];
+  detachedRuntimes: Array<{ tabId: number; reason: string }>;
   artifactReasons: string[];
   screenshotReasons: string[];
   incidentReasons: string[];
@@ -173,7 +173,7 @@ function createDepsHarness(
   const ingested: IngestedEvent[] = [];
   const enqueueCalls: Array<{ bestEffort: boolean }> = [];
   const pendingTasks: Array<Promise<void>> = [];
-  const stoppedTabs: number[] = [];
+  const detachedRuntimes: Array<{ tabId: number; reason: string }> = [];
   const artifactReasons: string[] = [];
   const screenshotReasons: string[] = [];
   const incidentReasons: string[] = [];
@@ -190,8 +190,8 @@ function createDepsHarness(
       pendingTasks.push(task());
       return true;
     },
-    stopSession: (tabId) => {
-      stoppedTabs.push(tabId);
+    onDebuggerDetach: (runtime, reason) => {
+      detachedRuntimes.push({ tabId: runtime.tabId, reason });
       return Promise.resolve();
     },
     captureFullModeArtifacts: (_runtime, reason) => {
@@ -221,7 +221,7 @@ function createDepsHarness(
     ingested,
     enqueueCalls,
     pendingTasks,
-    stoppedTabs,
+    detachedRuntimes,
     artifactReasons,
     screenshotReasons,
     incidentReasons,
@@ -383,12 +383,15 @@ describe("attachCdp", () => {
     expect(runtime.screenshotInterval).toBeNull();
   });
 
-  it("continues without CDP when the debugger cannot attach, and warns", async () => {
+  it("reports the failure when the debugger cannot attach, cleans up and warns", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const harness = createDepsHarness({ router: { attachError: "not allowed" } });
     const runtime = createRuntime(harness.controller);
 
-    await harness.controller.attachCdp(runtime);
+    await expect(harness.controller.attachCdp(runtime)).resolves.toEqual({
+      ok: false,
+      error: "not allowed"
+    });
 
     expect(runtime.cdpRouter).toBeNull();
     expect(runtime.enabledCdpSessions.size).toBe(0);
@@ -434,16 +437,16 @@ describe("attachCdp", () => {
     ).toBe(true);
   });
 
-  it("stops the session when the debugger detaches from its tab", async () => {
+  it("reports a debugger detach from its tab with Chrome's reason", async () => {
     const harness = createDepsHarness();
     const runtime = createRuntime(harness.controller);
 
-    await harness.controller.attachCdp(runtime);
+    await expect(harness.controller.attachCdp(runtime)).resolves.toEqual({ ok: true });
     harness.routerKit.emitDetach({ tabId: 999, reason: "target_closed" });
-    expect(harness.stoppedTabs).toEqual([]);
+    expect(harness.detachedRuntimes).toEqual([]);
 
-    harness.routerKit.emitDetach({ tabId: TAB_ID, reason: "target_closed" });
-    expect(harness.stoppedTabs).toEqual([TAB_ID]);
+    harness.routerKit.emitDetach({ tabId: TAB_ID, reason: "canceled_by_user" });
+    expect(harness.detachedRuntimes).toEqual([{ tabId: TAB_ID, reason: "canceled_by_user" }]);
   });
 });
 
