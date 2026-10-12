@@ -29,7 +29,7 @@ export function factsFromEvents(events: readonly ArchiveEvent[]): ArchiveFacts {
     "click-target": of("user.click").some((data) => hasReadableTarget(asData(data.target))),
     dom: of("dom.snapshot").length > 0 || of("dom.rrweb.event").some(isFullSnapshot),
     exception: of("error.exception", "error.unhandledrejection").some(hasReadableMessage),
-    iframe: events.some(isFromChildFrame) || requests.some(isChildFrameDocument),
+    iframe: events.some(isFromChildFrame) || documentFrameCount(requests) > 1,
     navigation: events.some((event) => event.type.startsWith("nav.")),
     "network-cache": responses.some(isFromCache) || of("network.finished").some(isFromCache),
     "network-pending": hasPendingRequest(requests, events),
@@ -82,8 +82,13 @@ function isFromChildFrame(event: ArchiveEvent): boolean {
   );
 }
 
-function isChildFrameDocument(data: Data): boolean {
-  return data.type === "Document" && typeof data.parentFrameId === "string";
+/** CDP document loads keep the tab's main frame id across navigations; an iframe adds another. */
+function documentFrameCount(requests: readonly Data[]): number {
+  return new Set(
+    requests
+      .filter((data) => data.type === "Document" && typeof data.frameId === "string")
+      .map((data) => data.frameId)
+  ).size;
 }
 
 function isFromCache(data: Data): boolean {

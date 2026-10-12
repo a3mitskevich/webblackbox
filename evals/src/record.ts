@@ -163,6 +163,8 @@ async function recordScenario(
       console.warn(`  service worker exceptions: ${swExceptions.join(" | ")}`);
     }
 
+    // Chrome's log only matters when a recording fails.
+    await rm(harness.chromeLogPath, { force: true });
     return { ...base, bytes: (await stat(target)).size, symptomReproduced };
   } catch (error) {
     return {
