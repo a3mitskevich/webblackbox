@@ -2,8 +2,6 @@
 
 import { createServer } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { CdpClient, closeClient } from "./lib/cdp-client.mjs";
 import {
@@ -36,11 +34,9 @@ import {
   readPortTrafficStats,
   summarizePortTraffic
 } from "./lib/port-traffic.mjs";
+import { DEFAULT_EXTENSION_DIR, EXTENSION_FILES } from "./lib/extension-paths.mjs";
 
-const root = dirname(fileURLToPath(import.meta.url));
-const extensionRoot = resolve(root, "..");
-
-const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? resolve(extensionRoot, "build");
+const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? DEFAULT_EXTENSION_DIR;
 const remotePort = Number(process.env.WB_E2E_REMOTE_PORT ?? "9234");
 const headless = (process.env.WB_E2E_HEADLESS ?? "1") !== "0";
 const profileDir =
@@ -129,12 +125,15 @@ async function main() {
     (target) =>
       target.type === "service_worker" &&
       typeof target.url === "string" &&
-      target.url === `chrome-extension://${extensionId}/sw.js`,
+      target.url === `chrome-extension://${extensionId}/${EXTENSION_FILES.serviceWorker}`,
     8_000,
     "Extension service worker target not found"
   ).catch(() => null);
 
-  const popupTarget = await openTarget(baseUrl, `chrome-extension://${extensionId}/popup.html`);
+  const popupTarget = await openTarget(
+    baseUrl,
+    `chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`
+  );
   state.openedTargetIds.push(popupTarget.id);
 
   if (!swTarget) {
@@ -144,7 +143,7 @@ async function main() {
       (target) =>
         target.type === "service_worker" &&
         typeof target.url === "string" &&
-        target.url === `chrome-extension://${extensionId}/sw.js`,
+        target.url === `chrome-extension://${extensionId}/${EXTENSION_FILES.serviceWorker}`,
       20_000,
       "Extension service worker target not found after popup warmup"
     );
@@ -201,7 +200,7 @@ async function main() {
     browserClient,
     (target) =>
       typeof target.url === "string" &&
-      target.url === `chrome-extension://${extensionId}/offscreen.html`,
+      target.url === `chrome-extension://${extensionId}/${EXTENSION_FILES.offscreenPage}`,
     20_000,
     "Offscreen document target not found"
   );
@@ -354,7 +353,7 @@ async function main() {
     browserClient,
     (target) =>
       typeof target.url === "string" &&
-      target.url === `chrome-extension://${extensionId}/offscreen.html`,
+      target.url === `chrome-extension://${extensionId}/${EXTENSION_FILES.offscreenPage}`,
     20_000,
     "Offscreen document target did not close after session deletion"
   );

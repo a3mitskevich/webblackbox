@@ -16,7 +16,7 @@ import {
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import * as z from "zod";
 
-import { openArchivePlayer, resolveArchivePath } from "./session-tools.js";
+import { defineArchiveTool } from "./registry.js";
 
 /**
  * DOM analysis tools on the rrweb log of an archive (task 60): the page at any moment
@@ -43,10 +43,6 @@ const MAX_DIFF_ITEMS = 200;
 const DEFAULT_ACTION_WINDOW_MS = 2_000;
 const MAX_WINDOW_MS = 600_000;
 
-const archiveFields = {
-  path: z.string().min(1).describe("Path to a .webblackbox or .zip archive."),
-  passphrase: z.string().min(1).max(4096).optional().describe("Passphrase for encrypted archives.")
-};
 const maxBytesField = z
   .number()
   .int()
@@ -56,7 +52,6 @@ const maxBytesField = z
   .describe(`Budget for the returned DOM text in UTF-8 bytes (default ${DEFAULT_MAX_BYTES}).`);
 
 export const domAtInput = {
-  ...archiveFields,
   mono: z.number().finite().optional().describe("The moment (mono ms). Default: the session end."),
   eventId: z
     .string()
@@ -93,8 +88,6 @@ export const domAtInput = {
 };
 
 export type DomAtArgs = {
-  path: string;
-  passphrase?: string;
   mono?: number;
   eventId?: string;
   selector?: string;
@@ -106,7 +99,6 @@ export type DomAtArgs = {
 };
 
 export const elementContextInput = {
-  ...archiveFields,
   actionId: z
     .string()
     .min(1)
@@ -125,8 +117,6 @@ export const elementContextInput = {
 };
 
 export type ElementContextArgs = {
-  path: string;
-  passphrase?: string;
   actionId?: string;
   eventId?: string;
   nodeId?: number;
@@ -135,7 +125,6 @@ export type ElementContextArgs = {
 };
 
 export const domDiffInput = {
-  ...archiveFields,
   fromMono: z.number().finite().optional().describe("Start of the comparison (mono ms)."),
   toMono: z.number().finite().optional().describe("End of the comparison (mono ms)."),
   actionId: z
@@ -168,8 +157,6 @@ export const domDiffInput = {
 };
 
 export type DomDiffArgs = {
-  path: string;
-  passphrase?: string;
   fromMono?: number;
   toMono?: number;
   actionId?: string;
@@ -255,10 +242,7 @@ function resolveMono(
 }
 
 /** `dom_at` on an open archive. */
-export function domAtFromPlayer(
-  player: WebBlackboxPlayer,
-  args: Omit<DomAtArgs, "path" | "passphrase">
-) {
+export function domAtFromPlayer(player: WebBlackboxPlayer, args: DomAtArgs) {
   const events = player.events;
   const at = resolveMono(events, args.mono, args.eventId);
   const replay = RrwebDomReplay.fromEvents(events);
@@ -450,10 +434,7 @@ function targetOfEvent(
 }
 
 /** `element_context` on an open archive. */
-export function elementContextFromPlayer(
-  player: WebBlackboxPlayer,
-  args: Omit<ElementContextArgs, "path" | "passphrase">
-) {
+export function elementContextFromPlayer(player: WebBlackboxPlayer, args: ElementContextArgs) {
   const events = player.events;
   const replay = RrwebDomReplay.fromEvents(events);
   let target: Target;
@@ -548,10 +529,7 @@ function fitDiff(diff: RrwebDomDiffResult, maxBytes: number): RrwebDomDiffResult
 }
 
 /** `dom_diff` on an open archive. */
-export function domDiffFromPlayer(
-  player: WebBlackboxPlayer,
-  args: Omit<DomDiffArgs, "path" | "passphrase">
-) {
+export function domDiffFromPlayer(player: WebBlackboxPlayer, args: DomDiffArgs) {
   const events = player.events;
   const replay = RrwebDomReplay.fromEvents(events);
   const windowMs = clamp(args.windowMs, DEFAULT_ACTION_WINDOW_MS, 1, MAX_WINDOW_MS);
@@ -620,20 +598,37 @@ export function domDiffFromPlayer(
   };
 }
 
-export async function domAt(args: DomAtArgs) {
-  const archive = resolveArchivePath(args.path);
-  const player = await openArchivePlayer(archive, args.passphrase);
-  return { archive, ...domAtFromPlayer(player, args) };
-}
+export const domAtTool = defineArchiveTool({
+  name: "dom_at",
+  description:
+    "The page's DOM at a moment (mono or an event's time), rebuilt from the archive's rrweb log: " +
+    "compact HTML or an outline of the page, a subtree (nodeId) or selector matches, within a " +
+    "byte budget. Elements carry wb-id for drill-down; recorder gaps are reported.",
+  inputSchema: domAtInput,
+  run: async (args, archive) => ({
+    data: { archive: archive.path, ...domAtFromPlayer(await archive.open(), args) }
+  })
+});
 
-export async function elementContext(args: ElementContextArgs) {
-  const archive = resolveArchivePath(args.path);
-  const player = await openArchivePlayer(archive, args.passphrase);
-  return { archive, ...elementContextFromPlayer(player, args) };
-}
+export const elementContextTool = defineArchiveTool({
+  name: "element_context",
+  description:
+    "The element an action or a user.click / user.input event targeted (or a wb-id at a moment): " +
+    "its outerHTML, attributes, path of ancestors, siblings and nearby text, from the rrweb log.",
+  inputSchema: elementContextInput,
+  run: async (args, archive) => ({
+    data: { archive: archive.path, ...elementContextFromPlayer(await archive.open(), args) }
+  })
+});
 
-export async function domDiff(args: DomDiffArgs) {
-  const archive = resolveArchivePath(args.path);
-  const player = await openArchivePlayer(archive, args.passphrase);
-  return { archive, ...domDiffFromPlayer(player, args) };
-}
+export const domDiffTool = defineArchiveTool({
+  name: "dom_diff",
+  description:
+    "What changed in the DOM between two moments, or around an action / event (just before it to " +
+    "the end of the action or windowMs later): elements added and removed, attribute, text and " +
+    "field value changes, with wb-ids and exact counts.",
+  inputSchema: domDiffInput,
+  run: async (args, archive) => ({
+    data: { archive: archive.path, ...domDiffFromPlayer(await archive.open(), args) }
+  })
+});

@@ -9,12 +9,34 @@ import JSZip from "jszip";
 import type { ExportManifest, WebBlackboxEvent } from "@webblackbox/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { domAt, domDiff, elementContext } from "./dom-tools.js";
+import { openArchivePlayer } from "../session-tools.js";
+import {
+  domAtFromPlayer,
+  domDiffFromPlayer,
+  elementContextFromPlayer,
+  type DomAtArgs,
+  type DomDiffArgs,
+  type ElementContextArgs
+} from "./dom.js";
+
+type WithPath<T> = T & { path: string };
+
+async function domAt({ path, ...args }: WithPath<DomAtArgs>) {
+  return domAtFromPlayer(await openArchivePlayer(path), args);
+}
+
+async function elementContext({ path, ...args }: WithPath<ElementContextArgs>) {
+  return elementContextFromPlayer(await openArchivePlayer(path), args);
+}
+
+async function domDiff({ path, ...args }: WithPath<DomDiffArgs>) {
+  return domDiffFromPlayer(await openArchivePlayer(path), args);
+}
 
 // Real recordings shared with player-sdk's tests (see its test-support/rrweb-fixtures.ts).
 const FIXTURES = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  "../../../packages/player-sdk/src/__fixtures__/rrweb"
+  "../../../../packages/player-sdk/src/__fixtures__/rrweb"
 );
 
 function fixture(name: string): WebBlackboxEvent[] {

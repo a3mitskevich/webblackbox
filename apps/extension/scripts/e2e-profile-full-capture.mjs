@@ -22,7 +22,6 @@ const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
 const harness = createProfileE2eHarness({
   name: "profile-full-capture",
-  appRoot,
   defaultPort: "9232"
 });
 const passphrase = "webblackbox-full-capture-e2e";

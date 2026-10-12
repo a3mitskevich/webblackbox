@@ -31,5 +31,5 @@
       "@zumer/snapdom": ["./node_modules/@zumer/snapdom/types/snapdom.d.ts"]
     }
   },
-  "include": ["src/**/*.ts", "tsup.config.ts", "scripts/**/*.mjs"]
+  "include": ["src/**/*.ts", "entrypoints/**/*.ts", "wxt.config.ts", "scripts/**/*.mjs"]
 }

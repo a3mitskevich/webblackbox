@@ -1,22 +1,16 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-
 import { runInNewContext } from "node:vm";
 
-import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
 import {
-  contentScriptScopePlugin,
-  isWrappedInScriptScope,
-  wrapInScriptScope
-} from "../../scripts/lib/content-script-scope.mjs";
-
-import {
   assertExtensionBuild,
-  createChromeArchive,
-  createExtensionManifest,
+  CLASSIC_SCRIPT_FILES,
+  createManifestFields,
+  isStrictScopedScript,
+  profileForMode,
   validateExtensionManifest
 } from "../../scripts/lib/extension-build.mjs";
 import {
@@ -24,19 +18,31 @@ import {
   MANAGED_CATEGORY_LEVELS,
   MANAGED_SCHEMA_FILE
 } from "../../scripts/lib/managed-schema.mjs";
+import { EXTENSION_FILES } from "./extension-files.ts";
 import { CAPTURE_CATEGORY_LEVELS } from "./profiles/categories.ts";
+
+/** What WXT emits for the `manifest` of `wxt.config.ts`, the entrypoints and `package.json`. */
+function wxtManifest(profile = "dev") {
+  return {
+    manifest_version: 3,
+    ...createManifestFields({ profile }),
+    version: "1.2.3",
+    icons: { 16: "icon/16.png", 128: "icon/128.png" },
+    background: { type: "module", service_worker: EXTENSION_FILES.serviceWorker },
+    action: { default_title: "WebBlackbox", default_popup: EXTENSION_FILES.popupPage },
+    options_ui: { open_in_tab: true, page: EXTENSION_FILES.optionsPage }
+  };
+}
 
 describe("managed storage schema", () => {
   it("is declared by every manifest profile", () => {
     for (const profile of ["dev", "store-safe"]) {
-      const manifest = createExtensionManifest({ version: "1.0.0", profile });
-
-      expect(manifest.storage).toEqual({ managed_schema: MANAGED_SCHEMA_FILE });
+      expect(createManifestFields({ profile }).storage).toEqual({
+        managed_schema: MANAGED_SCHEMA_FILE
+      });
     }
 
-    const manifest = createExtensionManifest({ version: "1.0.0" });
-    delete manifest.storage;
-    expect(validateExtensionManifest(manifest, { version: "1.0.0" })).toContain(
+    expect(validateExtensionManifest({ ...wxtManifest(), storage: undefined })).toContain(
       `Manifest must declare storage.managed_schema = ${MANAGED_SCHEMA_FILE}.`
     );
   });
@@ -57,6 +63,8 @@ describe("managed storage schema", () => {
   });
 });
 
+const asWxtIife = (code) => `(function(){"use strict";${code}})();\n`;
+
 describe("content script scope", () => {
   // A content script with a guard, as bundled: top-level `var` state, then the guard check.
   const guardedScript = `
@@ -76,8 +84,8 @@ describe("content script scope", () => {
     expect(bare.readStarted()).toBe(false);
 
     const scoped = {};
-    runInNewContext(wrapInScriptScope(guardedScript), scoped);
-    runInNewContext(wrapInScriptScope(guardedScript), scoped);
+    runInNewContext(asWxtIife(guardedScript), scoped);
+    runInNewContext(asWxtIife(guardedScript), scoped);
     expect(scoped.readStarted()).toBe(true);
   });
 
@@ -92,7 +100,7 @@ describe("content script scope", () => {
     expect(bare).toHaveProperty("N");
 
     const scoped = { $: jQuery };
-    runInNewContext(wrapInScriptScope(minifiedHooks), scoped);
+    runInNewContext(asWxtIife(minifiedHooks), scoped);
     expect(scoped.$).toBe(jQuery);
     expect(Object.keys(scoped)).toEqual(["$"]);
   });
@@ -105,226 +113,167 @@ describe("content script scope", () => {
     expect(bare).toHaveProperty("leaked", 1);
 
     const scoped = {};
-    expect(() => runInNewContext(wrapInScriptScope(sloppyAssignment), scoped)).toThrow(
+    expect(() => runInNewContext(asWxtIife(sloppyAssignment), scoped)).toThrow(
       /leaked is not defined/
     );
     expect(scoped).not.toHaveProperty("leaked");
   });
 
-  it("keeps the bundle's first line on the wrapper's second line", () => {
-    const code = "var a = 1;\nvar b = 2;";
-    const lines = wrapInScriptScope(code).split("\n");
+  it("accepts only one anonymous strict-mode IIFE", () => {
+    const map = "//# sourceMappingURL=content.js.map";
 
-    expect(lines[0]).toContain('"use strict";');
-    expect(lines.slice(1, 3)).toEqual(["var a = 1;", "var b = 2;"]);
-    // A bundle wrapped without strict mode (before it was added) no longer passes the build check.
-    expect(isWrappedInScriptScope(`(() => {\n${code}\n})();\n`)).toBe(false);
-  });
-
-  it("wraps the classic scripts only and moves their source maps with them", () => {
-    const plugin = contentScriptScopePlugin();
-    const map = { version: 3, sources: ["a.ts"], names: [], mappings: "AAAA;AACA" };
-
-    for (const file of ["content.js", "injected.js", "injected-dom.js"]) {
-      const code = `// module\nvar a = 1;\n//# sourceMappingURL=${file}.map`;
-      const result = plugin.renderChunk(code, {
-        path: `/x/build/${file}`,
-        map: JSON.stringify(map)
-      });
-      const wrapped = result?.code ?? "";
-
-      // The bundle keeps its lines and columns one line lower, and so does its map.
-      expect(wrapped.split("\n").slice(1, 3)).toEqual(["// module", "var a = 1;"]);
-      expect(result?.map).toEqual({ ...map, mappings: ";AAAA;AACA" });
-      expect(wrapped.trimEnd().endsWith("})();")).toBe(true);
-      expect(isWrappedInScriptScope(wrapped)).toBe(true);
-      // As emitted: tsup appends the source map comment after the plugin ran.
-      expect(isWrappedInScriptScope(`${wrapped}//# sourceMappingURL=${file}.map`)).toBe(true);
-    }
-
-    const code = "// module\nvar a = 1;";
-    expect(plugin.renderChunk(code, { path: "/x/build/content.js" })).toEqual({
-      code: wrapInScriptScope(code)
-    });
-    expect(plugin.renderChunk(code, { path: "/x/build/content-agent.js" })).toBeUndefined();
-    expect(plugin.renderChunk(code, { path: "/x/build/sw.js" })).toBeUndefined();
-    expect(isWrappedInScriptScope(code)).toBe(false);
-    expect(isWrappedInScriptScope(`${code}\n//# sourceMappingURL=x.js.map`)).toBe(false);
+    expect(isStrictScopedScript(`${asWxtIife("var a=1;")}${map}`)).toBe(true);
+    expect(isStrictScopedScript(`(() => { "use strict"; var a = 1; })();`)).toBe(true);
+    // Scoped, but sloppy: a bundle built without the directive (before #50).
+    expect(isStrictScopedScript(`(function(){var a=1;})();`)).toBe(false);
+    // Strict, but the directive is not the body's first statement.
+    expect(isStrictScopedScript(`(function(){var a=1;"use strict";})();`)).toBe(false);
+    expect(isStrictScopedScript(`var a=1;${map}`)).toBe(false);
+    expect(isStrictScopedScript("function N() {}")).toBe(false);
+    expect(isStrictScopedScript("class G {}")).toBe(false);
+    // Rolldown's `output.strict`: a named IIFE declares its name in the page.
+    expect(isStrictScopedScript(`"use strict";var injected=${asWxtIife("")}`)).toBe(false);
+    expect(isStrictScopedScript(`${asWxtIife("")}${asWxtIife("")}`)).toBe(false);
+    expect(isStrictScopedScript("export {};")).toBe(false);
   });
 
   it("fails the build check when a classic script leaks top-level bindings", async () => {
     const root = await mkdtemp(resolve(tmpdir(), "webblackbox-extension-scope-test-"));
 
     try {
-      await writeBuildFixture(root, createExtensionManifest({ version: "1.2.3" }));
-      await expect(assertExtensionBuild(root, { version: "1.2.3" })).resolves.toBeTruthy();
+      await writeBuildFixture(root, wxtManifest());
+      await expect(assertExtensionBuild(root)).resolves.toBeTruthy();
 
-      await writeFile(resolve(root, "injected-dom.js"), "var $=!1;\n");
-      await expect(assertExtensionBuild(root, { version: "1.2.3" })).rejects.toThrow(
-        /injected-dom\.js/
-      );
-
-      await writeFile(resolve(root, "injected.js"), "var $=!1;\n");
-      await expect(assertExtensionBuild(root, { version: "1.2.3" })).rejects.toThrow(
-        /injected\.js/
-      );
+      for (const file of CLASSIC_SCRIPT_FILES) {
+        await writeBuildFixture(root, wxtManifest());
+        await writeFile(resolve(root, file), "var $=!1;\n");
+        await expect(assertExtensionBuild(root)).rejects.toThrow(file);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 });
 
-describe("extension build manifest", () => {
-  it("creates a development manifest with explicit CSP", () => {
-    const manifest = createExtensionManifest({ version: "1.2.3" });
-
-    expect(manifest.version).toBe("1.2.3");
-    expect(manifest.default_locale).toBe("en");
-    expect(manifest.name).toBe("__MSG_extensionName__");
-    expect(manifest.key).toBeTypeOf("string");
-    expect(manifest.permissions).not.toContain("activeTab");
-    expect(manifest.permissions).not.toContain("cookies");
-    expect(manifest.permissions).toContain("tabCapture");
-    expect(manifest.content_security_policy?.extension_pages).toContain("script-src 'self'");
-    expect(manifest.content_security_policy?.extension_pages).not.toContain("'unsafe-inline'");
-    expect(validateExtensionManifest(manifest, { version: "1.2.3" })).toEqual([]);
+describe("extension manifest", () => {
+  it("takes the profile from the WXT mode", () => {
+    expect(profileForMode("production")).toBe("dev");
+    expect(profileForMode("development")).toBe("dev");
+    expect(profileForMode("store-safe")).toBe("store-safe");
+    expect(() => createManifestFields({ profile: "firefox" })).toThrow(/firefox/);
   });
 
-  it("leaves the content script to runtime registration in the development manifest", () => {
-    const manifest = createExtensionManifest({ version: "1.2.3" });
+  it("leaves the version, icons and entrypoint fields to WXT", () => {
+    const fields = createManifestFields();
 
-    expect(manifest).not.toHaveProperty("content_scripts");
-    expect(manifest.permissions).toEqual(expect.arrayContaining(["scripting", "webNavigation"]));
-    expect(manifest.host_permissions).toEqual(["<all_urls>"]);
+    for (const field of [
+      "manifest_version",
+      "version",
+      "icons",
+      "background",
+      "action",
+      "options_ui",
+      "options_page",
+      "content_scripts",
+      "web_accessible_resources",
+      "key"
+    ]) {
+      expect(fields).not.toHaveProperty(field);
+    }
+  });
 
-    const withStaticScript = {
-      ...manifest,
-      content_scripts: [{ matches: ["<all_urls>"], js: ["content.js"], all_frames: true }]
-    };
-
-    expect(validateExtensionManifest(withStaticScript, { version: "1.2.3" })).toContain(
-      "Dev manifest must not declare static content_scripts; the service worker registers the content script at runtime."
-    );
-
-    const withoutNavigation = {
-      ...manifest,
-      permissions: manifest.permissions.filter((permission) => permission !== "webNavigation")
-    };
-
-    expect(validateExtensionManifest(withoutNavigation, { version: "1.2.3" })).toContain(
-      "Dev manifest must include 'webNavigation' permission."
+  it("accepts what WXT emits for both profiles", () => {
+    expect(validateExtensionManifest(wxtManifest())).toEqual([]);
+    expect(validateExtensionManifest(wxtManifest("store-safe"), { profile: "store-safe" })).toEqual(
+      []
     );
   });
 
-  it("creates a store-safe manifest without broad capture permissions", () => {
-    const manifest = createExtensionManifest({
-      version: "1.2.3",
-      release: true,
-      profile: "store-safe"
-    });
+  it("keeps the dev profile's capture permissions and the store-safe profile's limits", () => {
+    const dev = wxtManifest();
 
-    expect(manifest).not.toHaveProperty("key");
-    expect(manifest.permissions).toContain("activeTab");
-    expect(manifest.permissions).toContain("tabCapture");
-    expect(manifest.permissions).not.toContain("debugger");
-    expect(manifest.permissions).not.toContain("tabs");
-    expect(manifest.permissions).not.toContain("webRequest");
-    expect(manifest.permissions).not.toContain("webNavigation");
-    expect(manifest).not.toHaveProperty("host_permissions");
-    expect(manifest).not.toHaveProperty("content_scripts");
+    expect(dev.permissions).toEqual(
+      expect.arrayContaining(["debugger", "tabCapture", "scripting", "webNavigation"])
+    );
+    expect(dev.permissions).not.toContain("activeTab");
+    expect(dev.permissions).not.toContain("cookies");
+    expect(dev.host_permissions).toEqual(["<all_urls>"]);
     expect(
-      validateExtensionManifest(manifest, {
-        version: "1.2.3",
-        release: true,
-        profile: "store-safe"
+      validateExtensionManifest({
+        ...dev,
+        permissions: dev.permissions.filter((permission) => permission !== "webNavigation")
       })
-    ).toEqual([]);
+    ).toContain(`permissions must be exactly: ${dev.permissions.join(", ")}.`);
+
+    const storeSafe = wxtManifest("store-safe");
+
+    expect(storeSafe.permissions).toContain("activeTab");
+    for (const permission of ["debugger", "tabs", "webRequest", "webNavigation"]) {
+      expect(storeSafe.permissions).not.toContain(permission);
+    }
+    expect(storeSafe).not.toHaveProperty("host_permissions");
+    expect(
+      validateExtensionManifest(
+        { ...storeSafe, host_permissions: ["<all_urls>"] },
+        { profile: "store-safe" }
+      )
+    ).toContain("Store-safe manifest must not declare host_permissions.");
   });
 
-  it("creates a release manifest without the development key", () => {
-    const manifest = createExtensionManifest({ version: "1.2.3", release: true });
+  it("rejects what a page could probe or what would inject the content script statically", () => {
+    const manifest = wxtManifest();
 
-    expect(manifest).not.toHaveProperty("key");
-    expect(validateExtensionManifest(manifest, { version: "1.2.3", release: true })).toEqual([]);
-  });
-
-  it("fails validation when explicit CSP is removed", () => {
-    const manifest = createExtensionManifest({ version: "1.2.3", release: true });
-
-    delete manifest.content_security_policy;
-
-    expect(validateExtensionManifest(manifest, { version: "1.2.3", release: true })).toContain(
-      "Manifest must declare an explicit content_security_policy.extension_pages."
+    expect(
+      validateExtensionManifest({
+        ...manifest,
+        web_accessible_resources: [{ resources: ["injected.js"], matches: ["<all_urls>"] }]
+      })
+    ).toContain("Manifest must not declare web_accessible_resources.");
+    expect(
+      validateExtensionManifest({
+        ...manifest,
+        content_scripts: [{ matches: ["<all_urls>"], js: [EXTENSION_FILES.contentScript] }]
+      })
+    ).toContain(
+      "Manifest must not declare content_scripts: the service worker registers or injects the content script."
     );
   });
 
-  it("fails validation when inline styles are re-enabled in the CSP", () => {
-    const manifest = createExtensionManifest({ version: "1.2.3", release: true });
-    manifest.content_security_policy.extension_pages =
-      "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;";
+  it("keeps an explicit extension-page CSP without inline styles", () => {
+    const manifest = wxtManifest();
+    const csp = manifest.content_security_policy.extension_pages;
 
-    expect(validateExtensionManifest(manifest, { version: "1.2.3", release: true })).toContain(
-      "Manifest content_security_policy.extension_pages must not include 'unsafe-inline'."
-    );
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toContain("style-src 'self';");
+    expect(
+      validateExtensionManifest({ ...manifest, content_security_policy: undefined })
+    ).toContain("Manifest must declare content_security_policy.extension_pages.");
+    expect(
+      validateExtensionManifest({
+        ...manifest,
+        content_security_policy: {
+          extension_pages: csp.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'")
+        }
+      })
+    ).toContain("content_security_policy.extension_pages must not include 'unsafe-inline'.");
   });
 
-  it("packages a release archive without the development key", async () => {
-    const root = await mkdtemp(resolve(tmpdir(), "webblackbox-extension-build-test-"));
-    const sourceDir = resolve(root, "build");
-    const archivePath = resolve(root, "archive.zip");
-
-    try {
-      await writeBuildFixture(sourceDir, createExtensionManifest({ version: "1.2.3" }));
-
-      const archive = await createChromeArchive({
-        sourceDir,
-        outputPath: archivePath
-      });
-
-      const zip = await JSZip.loadAsync(await readFile(archive.path));
-      const packagedManifest = JSON.parse(await zip.file("manifest.json").async("text"));
-
-      expect(archive.manifest.version).toBe("1.2.3");
-      expect(archive.strippedKeys).toEqual(["key"]);
-      expect(packagedManifest.version).toBe("1.2.3");
-      expect(packagedManifest).not.toHaveProperty("key");
-      expect(zip.file("popup.js")).toBeTruthy();
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+  it("lets the WXT dev server serve the pages' stylesheets during `wxt dev` only", () => {
+    expect(
+      createManifestFields({ command: "serve" }).content_security_policy.extension_pages
+    ).toContain("style-src 'self' http://localhost:*;");
+    expect(
+      createManifestFields({ command: "build" }).content_security_policy.extension_pages
+    ).not.toContain("localhost");
   });
 
-  it("packages store-safe archives without reintroducing broad permissions", async () => {
-    const root = await mkdtemp(resolve(tmpdir(), "webblackbox-extension-store-test-"));
-    const sourceDir = resolve(root, "build");
-    const archivePath = resolve(root, "archive.zip");
-
-    try {
-      await writeBuildFixture(
-        sourceDir,
-        createExtensionManifest({
-          version: "1.2.3",
-          profile: "store-safe"
-        })
-      );
-
-      const archive = await createChromeArchive({
-        sourceDir,
-        outputPath: archivePath
-      });
-
-      const zip = await JSZip.loadAsync(await readFile(archive.path));
-      const packagedManifest = JSON.parse(await zip.file("manifest.json").async("text"));
-
-      expect(packagedManifest).not.toHaveProperty("key");
-      expect(packagedManifest.permissions).toContain("tabCapture");
-      expect(packagedManifest.permissions).not.toContain("debugger");
-      expect(packagedManifest.permissions).not.toContain("webRequest");
-      expect(packagedManifest).not.toHaveProperty("host_permissions");
-      expect(packagedManifest).not.toHaveProperty("content_scripts");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+  it("requires the service worker the e2e scripts and the build look for", () => {
+    expect(
+      validateExtensionManifest({
+        ...wxtManifest(),
+        background: { type: "module", service_worker: "sw.js" }
+      })
+    ).toContain(`background.service_worker must be ${EXTENSION_FILES.serviceWorker}.`);
   });
 });
 
@@ -335,27 +284,12 @@ async function writeBuildFixture(outputDir, manifest) {
     "_locales/en/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
     "_locales/ru/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
     "_locales/zh_CN/messages.json": '{"extensionName":{"message":"WebBlackbox"}}\n',
-    "content-agent.js": "export {};\n",
-    "content.js": wrapInScriptScope("void 0;"),
-    "injected.js": wrapInScriptScope("void 0;"),
-    "injected-dom.js": wrapInScriptScope("void 0;"),
-    "offscreen.html": "<!doctype html><title>offscreen</title>\n",
-    "offscreen.js": "export {};\n",
-    "options.html": "<!doctype html><title>options</title>\n",
-    "options.js": "export {};\n",
-    "popup.html": "<!doctype html><title>popup</title>\n",
-    "popup.js": "export {};\n",
-    "sessions.html": "<!doctype html><title>sessions</title>\n",
-    "sessions.js": "export {};\n",
-    "styles.css": "body{margin:0;}\n",
-    "options.css": "main{margin:0;}\n",
-    "sessions.css": "main{margin:0;}\n",
-    "sw.js": "export {};\n",
-    "icon/16.png": "icon",
-    "icon/32.png": "icon",
-    "icon/48.png": "icon",
-    "icon/96.png": "icon",
-    "icon/128.png": "icon"
+    ...Object.fromEntries(
+      Object.values(EXTENSION_FILES).map((file) => [
+        file,
+        CLASSIC_SCRIPT_FILES.includes(file) ? asWxtIife("void 0;") : "export {};\n"
+      ])
+    )
   };
 
   await Promise.all(
