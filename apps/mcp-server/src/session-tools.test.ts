@@ -200,6 +200,54 @@ describe("session tools", () => {
     expect((await summarizeSession({ path: plain })).parallelTabs.recorded).toBe(false);
   });
 
+  it("reports what the export left out and an interrupted recording", async () => {
+    const root = await mkdtemp(join(tmpdir(), "wb-mcp-positive-completeness-"));
+    tempDirs.push(root);
+
+    const events = createRegressionEvents();
+    const interruption = {
+      reason: "service-worker-restart" as const,
+      detectedAt: 9_000,
+      lastSeenAt: 8_000
+    };
+    const truncation = { reason: "size-limit" as const, events: 12, chunks: 2, limit: 1_048_576 };
+    const cut = join(root, "cut.webblackbox");
+    const old = join(root, "old.webblackbox");
+
+    await writeFile(
+      cut,
+      Buffer.from(
+        await createArchiveFixture(
+          events,
+          {},
+          {
+            completeness: {
+              storedEvents: events.length + 12,
+              storedChunks: 3,
+              truncations: [truncation],
+              interruption
+            }
+          }
+        )
+      )
+    );
+    await writeFile(old, Buffer.from(await createArchiveFixture(events)));
+
+    expect((await summarizeSession({ path: cut })).completeness.export).toEqual({
+      recorded: true,
+      whole: false,
+      storedEvents: events.length + 12,
+      exportedEvents: events.length,
+      truncations: [truncation],
+      interruption
+    });
+    expect((await summarizeSession({ path: old })).completeness.export).toMatchObject({
+      recorded: false,
+      truncations: [],
+      interruption: null
+    });
+  });
+
   it("finds root-cause candidates with nearby network and console context", async () => {
     const root = await mkdtemp(join(tmpdir(), "wb-mcp-positive-root-cause-"));
     tempDirs.push(root);
@@ -379,7 +427,8 @@ describe("session tools", () => {
 
 async function createArchiveFixture(
   events: WebBlackboxEvent[],
-  extraFiles: Record<string, string> = {}
+  extraFiles: Record<string, string> = {},
+  manifestPatch: Partial<ExportManifest> = {}
 ): Promise<Uint8Array> {
   const zip = new JSZip();
   const firstEvent = events[0];
@@ -427,7 +476,8 @@ async function createArchiveFixture(
       chunkCount: 1,
       blobCount: 0,
       durationMs
-    }
+    },
+    ...manifestPatch
   };
 
   const files = new Map<string, string>();
