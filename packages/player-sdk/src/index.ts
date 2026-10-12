@@ -119,6 +119,7 @@ export {
   type ArchiveLoadLimits
 } from "./archive-limits.js";
 
+export * from "./a11y-snapshots.js";
 export * from "./activity-feed.js";
 export * from "./compare-endpoints.js";
 export * from "./console-entries.js";

@@ -1,6 +1,7 @@
 import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_POINTER_CAPTURE_OPTIONS,
+  type A11ySnapshotTrigger,
   type CapturePolicy,
   type PointerCaptureOptions
 } from "@webblackbox/protocol";
@@ -42,6 +43,7 @@ import {
   EVENT_BUFFER_SOFT_LIMIT,
   LiteEventBuffer
 } from "./lite-event-buffer.js";
+import { LiteA11yCapture } from "./lite-a11y-capture.js";
 import { installInjectedBridgeListener } from "./lite-injected-bridge.js";
 import { LiteInputCapture } from "./lite-input-capture.js";
 import {
@@ -147,6 +149,13 @@ export class LiteCaptureAgent {
     emitViewportSnapshot: (reason) => this.emitViewportSnapshot(reason),
     emitLifecycleEvent: (rawType, payload) => this.emitLifecycleEvent(rawType, payload)
   });
+  private readonly a11yCapture = new LiteA11yCapture({
+    policy: () => this.capturePolicy,
+    isRecording: () => this.recordingActive && !this.disposed,
+    isTopLevelFrame: () => this.isTopLevelFrame,
+    emit: (rawType, payload) => this.queueEvent(rawType, payload),
+    listen: (target, type, listener) => this.listen(target, type, listener)
+  });
   private injectedBridgeNonce: string | null = null;
   private indicator: HTMLDivElement | null = null;
   private mutationObserver: MutationObserver | null = null;
@@ -226,6 +235,8 @@ export class LiteCaptureAgent {
 
     if (!state.active && wasRecording) {
       this.pointerCapture.flushPending();
+      // The last state of the page, under the policy the session recorded with.
+      this.a11yCapture.stop();
     }
 
     this.recordingActive = state.active;
@@ -254,6 +265,7 @@ export class LiteCaptureAgent {
 
       if (!wasRecording) {
         this.eventBuffer.flushPreRecordingBuffer();
+        this.a11yCapture.start();
       }
 
       this.ensureIndicator(this.sid, this.mode);
@@ -289,6 +301,18 @@ export class LiteCaptureAgent {
     if (this.shouldCaptureScreenshots()) {
       this.scheduleScreenshotCapture("marker", true);
     }
+  }
+
+  /**
+   * Asks for an accessibility snapshot after a trigger the host saw (in Full mode the debugger,
+   * not the page, reports errors). It waits for the page to settle like the page's own triggers.
+   */
+  public requestA11ySnapshot(trigger: A11ySnapshotTrigger): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.a11yCapture.request(trigger);
   }
 
   /** Forces indicator rendering state regardless of capture state. */
@@ -334,6 +358,7 @@ export class LiteCaptureAgent {
     }
 
     this.disposed = true;
+    this.a11yCapture.dispose();
     this.syncScriptSourceMapScanner(false);
     this.stopWatchingPasswordReveals();
     this.stopMutationAndSnapshots();
@@ -1314,6 +1339,10 @@ export class LiteCaptureAgent {
     }
 
     this.eventBuffer.enqueue(event);
+
+    if (isPayloadRecord(event.payload)) {
+      this.a11yCapture.observe(event.rawType, event.payload);
+    }
   }
 
   private ensureIndicator(sid?: string, mode?: string): void {
@@ -1366,6 +1395,10 @@ export class LiteCaptureAgent {
       target.removeEventListener(type, wrapped, options);
     });
   }
+}
+
+function isPayloadRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 /** Default sanitized sampling profile used by `LiteCaptureAgent`. */

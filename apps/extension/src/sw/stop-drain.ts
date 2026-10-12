@@ -14,7 +14,9 @@ export const STOP_DRAIN_CONTENT_RAW_TYPES: ReadonlySet<string> = new Set([
   "localStorageSnapshot",
   "indexedDbSnapshot",
   "cookieSnapshot",
-  "screenshot"
+  "screenshot",
+  // The last accessibility snapshot of the page.
+  "a11ySnapshot"
 ]);
 
 /**

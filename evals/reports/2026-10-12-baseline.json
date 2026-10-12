@@ -1,0 +1,2277 @@
+{
+  "meta": {
+    "label": "baseline",
+    "date": "2026-10-12",
+    "commit": "a8311fd4",
+    "requestedModel": "sonnet",
+    "lang": "ru",
+    "judgeModel": null,
+    "archivesRecordedAt": "2026-10-12T18:27:52.847Z"
+  },
+  "results": [
+    {
+      "caseId": "case-01",
+      "scenarioId": "silent-validation",
+      "title": "Silent client validation blocks the submit",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": false,
+      "rubricPass": false,
+      "partial": true,
+      "score": 0.67,
+      "required": [
+        {
+          "id": "client-validation",
+          "description": "Names client-side validation (pattern/format check) as the blocker",
+          "matched": true
+        },
+        {
+          "id": "email-field",
+          "description": "Points at the email field",
+          "matched": false
+        }
+      ],
+      "bonus": [
+        {
+          "id": "plus-sign",
+          "description": "Notices the '+' in the address",
+          "matched": true
+        },
+        {
+          "id": "no-request",
+          "description": "States that no request reached the server",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-error",
+          "description": "Blames a server/API error",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "Clicking 'Create account' fires a form submit event, but the page's client-side submit handling sends no request, causes no navigation and shows no error. The likeliest cause is a silent client-side validation failure or a cancelled submit. The recording can't confirm which, so the exact cause is unproven.",
+        "evidence": [
+          "Only two requests exist in the whole session: GET http://127.0.0.1:44362/signup/ (200) and GET /favicon.ico (204). No POST or XHR/fetch was made after the clicks.",
+          "No failed or slow requests, 0 error events and 0 console entries were captured.",
+          "The user typed into three INPUT fields with lengths 12, 26 and 12. The 26 characters match anna.qa+signup@example.com. Values are redacted.",
+          "Two clicks on the same BUTTON (selector:c2d65762a4a6, 150x40 px, page scrolled 80 px) at mono ~…217702 and ~…219733, about 2 s apart.",
+          "Each click is immediately followed by a user.submit on the same FORM (E-00000031, E-00000038), so the submit handler ran.",
+          "Each user.click.reaction reports mutated:true with 0.8 ms and 0.4 ms latency, so only a trivial synchronous DOM change happened and no navigation followed.",
+          "Both submit action spans have requestCount 0 and errorCount 0.",
+          "Cookie, localStorage and IndexedDB snapshots all have count 0, so nothing was persisted."
+        ],
+        "missingData": [
+          "DOM snapshot and mutation data (blocked by privacy policy 'dom-raw-snapshot-disabled'), so the visible page state, any validation message and the button state are unknown.",
+          "Console output or stack traces, which would reveal a swallowed exception.",
+          "Unredacted form values, to check the email and password against validation rules.",
+          "Application JS and source maps for the submit handler, to see why it doesn't send a request.",
+          "No screenshots."
+        ],
+        "confidence": "low",
+        "structured": true
+      },
+      "toolCalls": {
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 5,
+      "tokens": {
+        "input": 6,
+        "output": 2651,
+        "cacheRead": 27860,
+        "cacheCreation": 18880,
+        "total": 49397
+      },
+      "costUsd": 0.104828,
+      "durationMs": 21047,
+      "turns": 6,
+      "evidence": {
+        "click-target": false,
+        "user-input": false,
+        "dom": false,
+        "network-status": true
+      }
+    },
+    {
+      "caseId": "case-01",
+      "scenarioId": "silent-validation",
+      "title": "Silent client validation blocks the submit",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": false,
+      "rubricPass": false,
+      "partial": true,
+      "score": 0.5,
+      "required": [
+        {
+          "id": "client-validation",
+          "description": "Names client-side validation (pattern/format check) as the blocker",
+          "matched": false
+        },
+        {
+          "id": "email-field",
+          "description": "Points at the email field",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "plus-sign",
+          "description": "Notices the '+' in the address",
+          "matched": true
+        },
+        {
+          "id": "no-request",
+          "description": "States that no request reached the server",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-error",
+          "description": "Blames a server/API error",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "Clicking 'Create account' fires a submit event on form#signup, but the client-side submit handling stops without sending any request, navigation or visible feedback. This is probably a silent early return or preventDefault after a failed check, but the page code isn't in the recording, so the exact cause is unconfirmed.",
+        "evidence": [
+          "Only two requests exist in the whole session: GET http://127.0.0.1:44716/signup/ (200, text/html) and GET /favicon.ico (204). There are no failed or slow requests.",
+          "Two clicks on button#create ('Create account', about 18:24:09.2 and 18:24:11.3) each produced a user.submit event on FORM#signup within about 1 ms, so native validation did not block the submit.",
+          "No network.request (XHR, fetch or form POST) and no navigation followed either submit. The page stayed on /signup/ for about 6 s afterwards.",
+          "Each submit had a user.click.reaction with mutated:true and about 1 ms latency, so a synchronous DOM change happened, but the DOM snapshots before and after have the same hash (2e040f48…) and the screenshots after both clicks are identical (f612890d…).",
+          "There are 0 errors and no console errors or exceptions. The only console entry is the DevTools hint 'Input elements should have autocomplete attributes (suggested: current-password)'.",
+          "The tester filled #name ('Anna Petrova'), #email ('anna.qa+signup@example.com') and #password (12 characters), each with input and change events before the click.",
+          "Cookies, localStorage and IndexedDB were all empty, and there was no WebSocket or SSE traffic."
+        ],
+        "missingData": [
+          "The page's HTML and JavaScript, including the form#signup submit handler source",
+          "The content of the DOM mutations after each click, since only summaries were captured",
+          "Console logs from the handler, because none were emitted",
+          "Whether any validation attribute (pattern or required) or a hidden field caused the early exit"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "export_har": 1,
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1
+      },
+      "toolCallCount": 5,
+      "tokens": {
+        "input": 8,
+        "output": 2678,
+        "cacheRead": 54430,
+        "cacheCreation": 25917,
+        "total": 83033
+      },
+      "costUsd": 0.135907,
+      "durationMs": 26140,
+      "turns": 6,
+      "evidence": {
+        "click-target": true,
+        "user-input": true,
+        "dom": true,
+        "network-status": true
+      }
+    },
+    {
+      "caseId": "case-02",
+      "scenarioId": "hidden-error-toast",
+      "title": "500 on save; the error toast is hidden by CSS",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 0.67,
+      "required": [
+        {
+          "id": "status-500",
+          "description": "Finds the 500 response",
+          "matched": true
+        },
+        {
+          "id": "endpoint",
+          "description": "Names the profile save request",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "hidden-toast",
+          "description": "Explains why no error was visible (toast hidden)",
+          "matched": false
+        },
+        {
+          "id": "error-code",
+          "description": "Quotes the server error",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "no-request",
+          "description": "Claims no request was sent",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The profile save sends PUT /api/profile, which the server answers with HTTP 500, so the new display name is never persisted. The UI shows no error (only a brief button disabled/enabled flicker), so the failure is silent and the old name returns after reload.",
+        "evidence": [
+          "PUT http://127.0.0.1:44954/api/profile (reqId 25) returned 500 Internal Server Error in 2 ms; it is the only failed request in the session",
+          "The request was sent ~1 ms after the click on the BUTTON (Save changes, A-000001) at x≈104,y≈356, on page /account/profile/ (Profile · Northwind Shop)",
+          "The user focused an INPUT and entered a 12-character value (redacted) just before the click, which matches 'Anna Petrova'. The change and blur events fired on pointerdown on the button",
+          "After the click, a DOM mutation batch of 3 mutations followed (1 added node, 2 attribute changes on 'disabled'), consistent with the button blinking",
+          "No console errors, no JS exceptions, no retry and no further requests after the 500, so the client does not surface or handle the failure",
+          "The GET of the page returned 200 and the favicon returned 204, so the page and session were otherwise healthy"
+        ],
+        "missingData": [
+          "Response body and headers of the 500 (lite mode, body capture disabled), so the server-side reason is unknown",
+          "Request body of the PUT, so the payload sent can't be verified",
+          "Content of the added DOM node (error or success message?) and any DOM snapshot, which was blocked by privacy policy",
+          "The page reload and the old name reappearing are not in the recording",
+          "Front-end source or source maps and server logs"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 1974,
+        "cacheRead": 26109,
+        "cacheCreation": 14632,
+        "total": 42721
+      },
+      "costUsd": 0.0808909,
+      "durationMs": 17118,
+      "turns": 5,
+      "evidence": {
+        "network-status": true,
+        "network-response-body": false,
+        "dom": false
+      }
+    },
+    {
+      "caseId": "case-02",
+      "scenarioId": "hidden-error-toast",
+      "title": "500 on save; the error toast is hidden by CSS",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 0.83,
+      "required": [
+        {
+          "id": "status-500",
+          "description": "Finds the 500 response",
+          "matched": true
+        },
+        {
+          "id": "endpoint",
+          "description": "Names the profile save request",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "hidden-toast",
+          "description": "Explains why no error was visible (toast hidden)",
+          "matched": true
+        },
+        {
+          "id": "error-code",
+          "description": "Quotes the server error",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "no-request",
+          "description": "Claims no request was sent",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "Clicking 'Save changes' sends PUT /api/profile with {displayName:'Anna Petrova', phone:'+48 600 100 200'} and the backend responds 500 Internal Server Error, so the name is never persisted and reverts on reload. The UI swallows the failure: the save button only blinks (disabled toggled) and no clear error is shown. The reason for the 500 is not visible in the recording.",
+        "evidence": [
+          "User typed 'Anna Petrova' into INPUT#display-name (user.input E-00000027), then clicked BUTTON#save 'Save changes' (user.click E-00000039)",
+          "PUT http://127.0.0.1:43780/api/profile (reqId 208926.7) with body {\"displayName\":\"Anna Petrova\",\"phone\":\"+48 600 100 200\"} - client sent the correct new name",
+          "Response: 500 Internal Server Error, application/json, 60-byte body, ~67.7 ms (E-00000029)",
+          "Console error E-00000030: 'Failed to load resource: the server responded with a status of 500 (Internal Server Error)' for /api/profile; there are no JS exceptions (0 errors)",
+          "DOM mutation batch E-00000044 after the response: attribute 'disabled' changed on button#save plus one node added under div#toast, matching the 'button blinks' report",
+          "No further /api/profile request after the failure (no retry); the other requests were GET /account/profile/ 200 and GET /favicon.ico 204",
+          "localStorage, IndexedDB and cookie snapshots are empty, so nothing was stored client-side"
+        ],
+        "missingData": [
+          "Text of the 500 response body (only hash/size captured), which would give the server's error reason",
+          "Server logs or stack trace for the 500",
+          "Text of the toast and the DOM content after the failure (only mutation summaries and snapshot hashes)",
+          "Client JS source or handler code showing how non-2xx responses are handled",
+          "Whether the unedited phone field in the payload is what the server rejects"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "export_har": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 5,
+      "tokens": {
+        "input": 8,
+        "output": 2585,
+        "cacheRead": 48047,
+        "cacheCreation": 17105,
+        "total": 67745
+      },
+      "costUsd": 0.0990907,
+      "durationMs": 20965,
+      "turns": 6,
+      "evidence": {
+        "network-status": true,
+        "network-response-body": true,
+        "dom": true
+      }
+    },
+    {
+      "caseId": "case-03",
+      "scenarioId": "click-handler-exception",
+      "title": "Exception in the click handler",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": false,
+      "rubricPass": false,
+      "partial": true,
+      "score": 0.33,
+      "required": [
+        {
+          "id": "type-error",
+          "description": "Finds the exception thrown on click",
+          "matched": true
+        },
+        {
+          "id": "variant",
+          "description": "Ties it to the missing variant/sku",
+          "matched": false
+        }
+      ],
+      "bonus": [
+        {
+          "id": "empty-variants",
+          "description": "Notices the API returns no variants",
+          "matched": false
+        },
+        {
+          "id": "handler",
+          "description": "Names the handler",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-error",
+          "description": "Blames a failing request",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "Clicking Add to cart triggers an uncaught exception in /static/js/product-page.js (line 13, col 54) before any add-to-cart request is made, so the cart never updates. The page had earlier requested the literal URL /api/products/:id, with the route placeholder unsubstituted, which may be why the handler lacks valid product data (not confirmed).",
+        "evidence": [
+          "Two user.click events (E-00000021 and E-00000031) on the same BUTTON at x=93,y=286 (rect 34,266.9, 119x40, selector token selector:9575c57782b9)",
+          "Each click is followed within about 1 ms by an error.exception (E-00000022 and E-00000032) in http://127.0.0.1:44590/static/js/product-page.js at line 13, col 54, with identical fingerprint fp-8w6qjt",
+          "Both action spans (A-000001, A-000002) have requestCount 0, so no add-to-cart request was sent after either click",
+          "user.click.reaction shows mutated:false for both clicks, so the UI did not change in response",
+          "On page load GET /api/products/:id returned 200, with the literal ':id' unsubstituted in the URL",
+          "Other requests all succeeded: GET /catalog/trail-backpack/ 200, GET /static/js/product-page.js 200, GET /favicon.ico 204; no failed or slow requests",
+          "Storage snapshots show 0 cookies, 0 localStorage and 0 IndexedDB entries (counts only), and there are no console, WebSocket or SSE entries"
+        ],
+        "missingData": [
+          "Exception message and stack trace are redacted, so the exact failing expression is unknown",
+          "No source maps or script source for product-page.js",
+          "No response bodies captured, so the content of the /api/products/:id response is unknown",
+          "No DOM snapshot or cart counter state; storage values are redacted to counts only",
+          "Button text and id are hashed, so the label cannot be verified from the recording"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2490,
+        "cacheRead": 26420,
+        "cacheCreation": 16792,
+        "total": 45708
+      },
+      "costUsd": 0.094722,
+      "durationMs": 19051,
+      "turns": 5,
+      "evidence": {
+        "exception": false,
+        "click-target": false,
+        "network-response-body": false
+      }
+    },
+    {
+      "caseId": "case-03",
+      "scenarioId": "click-handler-exception",
+      "title": "Exception in the click handler",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 0.83,
+      "required": [
+        {
+          "id": "type-error",
+          "description": "Finds the exception thrown on click",
+          "matched": true
+        },
+        {
+          "id": "variant",
+          "description": "Ties it to the missing variant/sku",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "empty-variants",
+          "description": "Notices the API returns no variants",
+          "matched": false
+        },
+        {
+          "id": "handler",
+          "description": "Names the handler",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-error",
+          "description": "Blames a failing request",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The click handler addToCart in product-page.js throws 'TypeError: Cannot read properties of undefined (reading 'sku')' at line 13:54 on every click of #add, so no cart request is made and the counter stays 0. Which object was undefined (probably the product data from /api/products/42, or a lookup into it) can't be confirmed because the response body and script source aren't readable.",
+        "evidence": [
+          "User clicked BUTTON#add ('Add to cart') at E-00000041 and again at E-00000052, both at x=93,y=286",
+          "E-00000034 (about 2 ms after click 1) and E-00000048 (after click 2): TypeError: Cannot read properties of undefined (reading 'sku')",
+          "Stack: at HTMLButtonElement.addToCart (http://127.0.0.1:43732/static/js/product-page.js:13:54), same fingerprint fp-ntwqk8 both times",
+          "Requests: GET /catalog/trail-backpack/ 200; GET /static/js/product-page.js 200 (744 B); GET /api/products/42 200 application/json (64 B); GET /favicon.ico 204; no failed or slow requests",
+          "No network request of any kind follows either click, so the handler failed before sending an add-to-cart call",
+          "Cookies, localStorage and IndexedDB are empty; no console output other than the two exceptions; no WebSocket/SSE; no parallel tabs"
+        ],
+        "missingData": [
+          "Body of GET /api/products/42 (64 bytes); the blob is not exposed by the HAR export or the query tools",
+          "Source of product-page.js, line 13 (no source maps), so the undefined expression before .sku is unknown",
+          "Variable or scope values at the time of the throw"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "export_har": 1,
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 2,
+        "session_summary": 1,
+        "symbolicate_stack": 1
+      },
+      "toolCallCount": 7,
+      "tokens": {
+        "input": 10,
+        "output": 2986,
+        "cacheRead": 76888,
+        "cacheCreation": 25363,
+        "total": 105247
+      },
+      "costUsd": 0.1390208,
+      "durationMs": 23661,
+      "turns": 8,
+      "evidence": {
+        "exception": true,
+        "click-target": true,
+        "network-response-body": true
+      }
+    },
+    {
+      "caseId": "case-04",
+      "scenarioId": "covered-button",
+      "title": "A transparent banner covers the button, the click hits the banner",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 0.67,
+      "required": [
+        {
+          "id": "covered",
+          "description": "States the click hit another element that covers the button",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "no-request",
+          "description": "Notices the coupon request was never sent",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "coupon-invalid",
+          "description": "Blames the coupon or the API",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "Clicking Apply triggers no client-side action: no coupon request is sent and the DOM does not change. The click lands on a wide (712x64) DIV rather than a button, so either an overlay or wrapper intercepts the click or the Apply control is a non-functional DIV. This is not a server rejection or a script error.",
+        "evidence": [
+          "Only two requests in the session: GET http://127.0.0.1:43648/cart/coupon/ -> 200 and GET /favicon.ico -> 204; no coupon-apply request (POST or GET) after either click",
+          "Two clicks (E-00000020 and E-00000027) at (706,259), both with target tag DIV (selector:e5ace9e7d8df, rect x34 y244 w712 h64), not a BUTTON or INPUT",
+          "user.click.reaction events E-00000022 and E-00000028 report mutated:false within a 1000 ms window, so the DOM did not change (no total update, no message)",
+          "Action spans A-000001 and A-000002 have requestCount 0 and errorCount 0",
+          "Session has 0 errors, 0 console entries and 0 failed or slow requests",
+          "User typed 8 characters (length 8, value redacted, consistent with SPRING10) into an INPUT; change and blur fired at the same moment as the pointerdown on the DIV"
+        ],
+        "missingData": [
+          "DOM snapshot or mutation data (privacy.violation: dom-raw-snapshot-disabled), so the Apply element's markup, text and whether an overlay covers it are unknown",
+          "Redacted class names and element text for the clicked DIV, so I cannot confirm it is the Apply button",
+          "Redacted input value, so the exact coupon text typed is unverified",
+          "Event listener and JS handler information, plus source or console logs showing why no request was issued",
+          "Storage contents (local storage snapshot is counts-only with count 0) and any cart or coupon state"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2192,
+        "cacheRead": 26558,
+        "cacheCreation": 15058,
+        "total": 43814
+      },
+      "costUsd": 0.0848198,
+      "durationMs": 18654,
+      "turns": 5,
+      "evidence": {
+        "click-target": false,
+        "dom": false,
+        "network-status": true
+      }
+    },
+    {
+      "caseId": "case-04",
+      "scenarioId": "covered-button",
+      "title": "A transparent banner covers the button, the click hits the banner",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 0.67,
+      "required": [
+        {
+          "id": "covered",
+          "description": "States the click hit another element that covers the button",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "no-request",
+          "description": "Notices the coupon request was never sent",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "coupon-invalid",
+          "description": "Blames the coupon or the API",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The tester's clicks never reached the Apply button. Both landed on the full-width #promo-strip banner ('Free delivery from €50') at (706,259), so no coupon request was sent and the UI had no reason to change. The banner most likely overlaps the button, but the recording doesn't show the button's position or the CSS.",
+        "evidence": [
+          "Only two requests exist in the session: GET http://127.0.0.1:43330/cart/coupon/ (200) and GET /favicon.ico (204). There is no coupon or apply request, and none failed or was slow.",
+          "E-00000020/21: focus and input on INPUT#coupon with value 'SPRING10' (length 8).",
+          "E-00000023/26/27: pointerdown, pointerup and click at (706,259) have target DIV#promo-strip, text 'Free delivery from €50', rect x34 y244 w712 h64. The target is not a button.",
+          "E-00000024/25: the press on the banner blurs #coupon and fires a change event on it, which is the only effect of the click.",
+          "E-00000035: a second click at the same coordinates also targets #promo-strip.",
+          "E-00000030 and E-00000037: user.click.reaction has mutated:false for both clicks, so no DOM change followed.",
+          "The session has no console entries or errors, and cookie and localStorage snapshots are empty. Nothing failed silently, because nothing was triggered."
+        ],
+        "missingData": [
+          "The DOM and CSS of the Apply button, such as its position or the banner's z-index or overlay. The only DOM snapshot has no mutations or CSS detail I could read.",
+          "No event targets the Apply button, so its location relative to the banner is unknown.",
+          "Both screenshots are identical, so they show nothing about the page state.",
+          "Why the colleague's coupon worked: viewport, layout or browser differences are not recorded."
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "export_har": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 5,
+      "tokens": {
+        "input": 8,
+        "output": 2260,
+        "cacheRead": 52764,
+        "cacheCreation": 23083,
+        "total": 78115
+      },
+      "costUsd": 0.1202244,
+      "durationMs": 21339,
+      "turns": 6,
+      "evidence": {
+        "click-target": true,
+        "dom": true,
+        "network-status": true
+      }
+    },
+    {
+      "caseId": "case-05",
+      "scenarioId": "wrong-request-body",
+      "title": "Request body uses the wrong field name; the API answers 400",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": false,
+      "rubricPass": false,
+      "partial": true,
+      "score": 0.4,
+      "required": [
+        {
+          "id": "status-400",
+          "description": "Finds the 400 response",
+          "matched": true
+        },
+        {
+          "id": "field-name",
+          "description": "Identifies the postal code field mismatch",
+          "matched": false
+        }
+      ],
+      "bonus": [
+        {
+          "id": "mismatch",
+          "description": "States the field name is wrong (zipcode vs postalCode)",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-outage",
+          "description": "Blames a server crash/outage",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "Clicking 'Continue to payment' sends POST /api/checkout/address, which the server rejects with 400 Bad Request after 3 ms, apparently a validation rejection of the submitted address data. The UI shows only a generic 'Something went wrong' message and offers no way to fix the input, so retries with the same data fail. The postal code '00-590' is the likely trigger but is not confirmed.",
+        "evidence": [
+          "POST http://127.0.0.1:44566/api/checkout/address (reqId 25) returned 400 Bad Request, duration 3 ms, ok=false, with no network error text",
+          "The request was sent about 1 ms after the click on the BUTTON (A-000001, E-00000032, selector:3fcd25c2c5ed, rect ~195x40) on the page http://127.0.0.1:44566/checkout/address/",
+          "Before the click, three INPUT fields were filled with text of length 16, 8 and 6; the 6-character value matches the postal code '00-590'. Values are redacted",
+          "Only the page load (200) and favicon (204) succeeded, and the POST is the only failed request",
+          "No console errors or exceptions were recorded, so this is not a client-side JS crash; the 400 is the only failure signal",
+          "A DOM mutation added one node 13 ms after the click, with no navigation, consistent with an error message being rendered",
+          "A 3 ms response time suggests a fast server-side input validation rejection"
+        ],
+        "missingData": [
+          "Request body of POST /api/checkout/address (which fields and values were sent, e.g. how the postal code was serialized)",
+          "Response body or error message of the 400 response, which would say which field failed validation",
+          "Actual field values and the rendered error text (redacted; the raw DOM snapshot was blocked by the privacy policy)",
+          "Request and response headers",
+          "Console logs of any client-side handling of the 400",
+          "Any retry attempt, which would confirm the repeated failure the tester describes",
+          "Cookie, localStorage and IndexedDB contents (counts only)"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2403,
+        "cacheRead": 26128,
+        "cacheCreation": 16108,
+        "total": 44645
+      },
+      "costUsd": 0.0910868,
+      "durationMs": 19002,
+      "turns": 5,
+      "evidence": {
+        "network-status": true,
+        "network-request-body": false,
+        "network-response-body": false
+      }
+    },
+    {
+      "caseId": "case-05",
+      "scenarioId": "wrong-request-body",
+      "title": "Request body uses the wrong field name; the API answers 400",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 0.8,
+      "required": [
+        {
+          "id": "status-400",
+          "description": "Finds the 400 response",
+          "matched": true
+        },
+        {
+          "id": "field-name",
+          "description": "Identifies the postal code field mismatch",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "mismatch",
+          "description": "States the field name is wrong (zipcode vs postalCode)",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-outage",
+          "description": "Blames a server crash/outage",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The POST /api/checkout/address request submitted by 'Continue to payment' was rejected by the server with 400 Bad Request, and the UI turned that into a generic 'Something went wrong' message. The payload sends the postcode as `zipcode` (\"00-590\"), which the API most likely does not accept (field name or format mismatch), so every retry fails the same way; the 400 body that would confirm this is not in the recording.",
+        "evidence": [
+          "User filled #street='Marszałkowska 10', #city='Warszawa', #zip='00-590' (user.input/change/blur events), then clicked button#continue 'Continue to payment' at ~18:25:17.578",
+          "POST http://127.0.0.1:44988/api/checkout/address (reqId 224318.7, Fetch, initiator script) with JSON body {\"street\":\"Marszałkowska 10\",\"city\":\"Warszawa\",\"zipcode\":\"00-590\"}",
+          "Response: 400 Bad Request, application/json, 172 bytes, ~13-65 ms; the only failed request in the session (3 requests total, no slow ones, no network-level failure)",
+          "Console: only 'Failed to load resource: the server responded with a status of 400 (Bad Request)' for /api/checkout/address; no JS exceptions or stack traces were captured",
+          "The form input #zip is sent under key 'zipcode'; the fields were all filled and valid-looking, so the client-side input was not empty",
+          "No cookies, localStorage or IndexedDB entries were present, and no other tabs were open, so storage and connection state are not involved"
+        ],
+        "missingData": [
+          "Response body of the 400 (it would name the rejected field and reason); only the HTML document body was captured",
+          "The text the UI actually rendered for the error and the page JS that builds the payload and handles the response",
+          "Server logs or the API contract for /api/checkout/address (expected field names or postcode format)"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "export_har": 1,
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 2,
+        "session_summary": 1
+      },
+      "toolCallCount": 6,
+      "tokens": {
+        "input": 10,
+        "output": 2736,
+        "cacheRead": 69128,
+        "cacheCreation": 19219,
+        "total": 91093
+      },
+      "costUsd": 0.1111688,
+      "durationMs": 21770,
+      "turns": 7,
+      "evidence": {
+        "network-status": true,
+        "network-request-body": true,
+        "network-response-body": true
+      }
+    },
+    {
+      "caseId": "case-06",
+      "scenarioId": "websocket-stale",
+      "title": "WebSocket closes and the page never reconnects; the status stays stale",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": false,
+      "rubricPass": false,
+      "partial": true,
+      "score": 0.5,
+      "required": [
+        {
+          "id": "websocket",
+          "description": "Looks at the WebSocket",
+          "matched": true
+        },
+        {
+          "id": "closed",
+          "description": "Finds that the socket closed/dropped",
+          "matched": false
+        }
+      ],
+      "bonus": [
+        {
+          "id": "no-reconnect",
+          "description": "Notes the missing reconnect",
+          "matched": true
+        },
+        {
+          "id": "close-code",
+          "description": "Quotes the close code",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-status",
+          "description": "Blames the order status data on the server",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The order page loaded the order once (GET /orders/:id/ 200) and opened the live-update WebSocket ws://127.0.0.1:43654/ws/orders (101), but no frames were captured on the socket and there was no polling or reconnect. The 'Ready for pickup' update therefore never reached the page, which stayed on the initial 'Preparing' status. Whether the server never pushed it or the client dropped it cannot be told from this recording.",
+        "evidence": [
+          "E-6/E-7: GET http://127.0.0.1:43654/orders/:id/ returned 200 in 5 ms (one-time load; the URL shows the template ':id', not 1042)",
+          "E-8/E-9: GET ws://127.0.0.1:43654/ws/orders returned 101 Switching Protocols, so the WebSocket connected successfully",
+          "Realtime stats: wsFrames=0 and sseMessages=0, so no status-update message was captured on the socket",
+          "No WebSocket close, error or reconnect events, and no repeat requests to the order endpoint (no polling fallback) during the ~4 s recording",
+          "0 errors, 0 failed requests and 0 slow requests; the only console entry is an empty debug message (E-15)",
+          "No user actions or clicks were recorded, so there is no element the tester interacted with",
+          "E-16: privacy.violation blocked dom.snapshot (dom-raw-snapshot-disabled, policy mode private); no DOM snapshots or mutations exist",
+          "Cookie, localStorage and IndexedDB snapshots are counts only with 0 values"
+        ],
+        "missingData": [
+          "WebSocket frame payloads and direction, including any subscribe message sent by the client (lite mode captured none)",
+          "WebSocket close or error events over a longer period; the recording is only ~4 s",
+          "Server-side logs showing whether the 'ready' update was published to this connection or order",
+          "DOM snapshots or mutations showing the displayed status text",
+          "The real order ID in the URLs; the recording shows ':id'",
+          "Response bodies (none captured) and storage values",
+          "The tester's actions (none recorded)"
+        ],
+        "confidence": "low",
+        "structured": true
+      },
+      "toolCalls": {
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2096,
+        "cacheRead": 25932,
+        "cacheCreation": 10951,
+        "total": 38985
+      },
+      "costUsd": 0.06736919999999999,
+      "durationMs": 19248,
+      "turns": 5,
+      "evidence": {
+        "websocket": false,
+        "dom": false
+      }
+    },
+    {
+      "caseId": "case-06",
+      "scenarioId": "websocket-stale",
+      "title": "WebSocket closes and the page never reconnects; the status stays stale",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 0.83,
+      "required": [
+        {
+          "id": "websocket",
+          "description": "Looks at the WebSocket",
+          "matched": true
+        },
+        {
+          "id": "closed",
+          "description": "Finds that the socket closed/dropped",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "no-reconnect",
+          "description": "Notes the missing reconnect",
+          "matched": true
+        },
+        {
+          "id": "close-code",
+          "description": "Quotes the close code",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-status",
+          "description": "Blames the order status data on the server",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The order page's live-update WebSocket (ws://127.0.0.1:43952/ws/orders?orderId=1042) delivered only the initial {\"orderId\":1042,\"status\":\"preparing\"} frame and was closed about 1.5 s later. The client does not reconnect and has no polling fallback, so the UI stayed on 'Preparing' and never received the later 'Ready for pickup' status.",
+        "evidence": [
+          "GET http://127.0.0.1:43952/orders/1042/ returned 200 text/html, cache-control: no-store (title 'Order #1042 · Northwind Shop')",
+          "network.ws.open for ws://127.0.0.1:43952/ws/orders?orderId=1042 (req 229356.5), initiated by script, a few ms after navigation commit",
+          "Only one WS frame was received: {\"orderId\":1042,\"status\":\"preparing\"} (37 bytes, text)",
+          "network.ws.close for the same socket ~1.5 s after open; console.entry debug 'order updates closed' 1 ms later (stack top is the recorder's injected.js, so the log may come from the extension hook rather than the app)",
+          "No second network.ws.open, no further WS frames, and no XHR/fetch to any order-status endpoint for the remaining ~11.5 s; the only HTTP requests are the document and favicon.ico (204)",
+          "DOM snapshots after the close have identical content hash 0ce7b02d…, and no further DOM mutations were recorded, so the UI never changed from 'preparing'",
+          "0 console errors, 0 failed or slow requests, no user input events; cookies, localStorage and IndexedDB were all empty, so no user element or storage state is implicated"
+        ],
+        "missingData": [
+          "WebSocket close code and reason, and who initiated the close (server, proxy or client)",
+          "Any server-side 'ready' event or log showing whether it was ever sent on this channel",
+          "The application's client JS source, to confirm there is no reconnect or polling logic (inferred only from absent traffic)",
+          "A recording long enough to cover the time the order became 'Ready for pickup'"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2398,
+        "cacheRead": 26033,
+        "cacheCreation": 17288,
+        "total": 45725
+      },
+      "costUsd": 0.0957473,
+      "durationMs": 19306,
+      "turns": 5,
+      "evidence": {
+        "websocket": true,
+        "dom": true
+      }
+    },
+    {
+      "caseId": "case-07",
+      "scenarioId": "endless-spinner",
+      "title": "Report request never answers; the spinner spins forever",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 1,
+      "required": [
+        {
+          "id": "pending",
+          "description": "Finds the request that never completes",
+          "matched": true
+        },
+        {
+          "id": "endpoint",
+          "description": "Names the report request",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "no-timeout",
+          "description": "Notes the missing timeout/error handling on the client",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "error-status",
+          "description": "Claims the request failed with an error status",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "After the click, the page sent GET /api/reports/sales (reqId 25) and that request never got a response, so the UI stays on 'Generating…' with no error or timeout handling. The recording shows only that the request stayed pending; the server-side reason (likely a hung or very slow report endpoint for the 30-day range) is not visible.",
+        "evidence": [
+          "Page: http://127.0.0.1:44938/reports/sales/ ('Sales report · Northwind Shop'); GET /reports/sales/ returned 200 in 5ms and GET /favicon.ico returned 204",
+          "User click (E-00000018, action A-000001) on a BUTTON at about (215,239), selector hashed (selector:d5bff8092703); label not recorded",
+          "1 ms after the click, GET http://127.0.0.1:44938/api/reports/sales (reqId 25, E-00000013) was issued, with no query string",
+          "Request 25 has no network.response and no failure event; the other two requests have responses",
+          "A DOM mutation (2 added nodes under div[id:t_1o7ahxh]) follows the click, consistent with a loading indicator appearing",
+          "0 console entries, 0 errors, 0 failed requests; the recording ends about 2.2 s after the click with the request still unanswered",
+          "No cookie, localStorage or IndexedDB data, and no WebSocket or SSE traffic in the recording"
+        ],
+        "missingData": [
+          "Response status, headers and body for request 25 (it never completed; lite mode captured no bodies)",
+          "Request headers and body, so the 'Last 30 days' parameter cannot be verified",
+          "Server-side logs or timing",
+          "DOM snapshot or text, so the spinner and button label can't be read; a raw snapshot was blocked by the privacy policy",
+          "Anything after about 2.2 s past the click; the recording is about 5.5 s, not the 'more than a minute' the tester reported"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2396,
+        "cacheRead": 26104,
+        "cacheCreation": 13387,
+        "total": 41893
+      },
+      "costUsd": 0.0801304,
+      "durationMs": 18197,
+      "turns": 5,
+      "evidence": {
+        "network-pending": true,
+        "click-target": false
+      }
+    },
+    {
+      "caseId": "case-07",
+      "scenarioId": "endless-spinner",
+      "title": "Report request never answers; the spinner spins forever",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 1,
+      "required": [
+        {
+          "id": "pending",
+          "description": "Finds the request that never completes",
+          "matched": true
+        },
+        {
+          "id": "endpoint",
+          "description": "Names the report request",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "no-timeout",
+          "description": "Notes the missing timeout/error handling on the client",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "error-status",
+          "description": "Claims the request failed with an error status",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "After clicking Generate report, the page sent GET /api/reports/sales?range=30d and that request never got a response or error in the recording. The server most likely hung on that endpoint, and the page has no timeout or error handling, so «Generating…» stays on screen indefinitely. The server-side cause can't be confirmed from the recording.",
+        "evidence": [
+          "user.click (E-00000031) on button#generate, text 'Generate report', on http://127.0.0.1:43822/reports/sales/",
+          "About 1 ms after the click, network.request E-00000026: GET http://127.0.0.1:43822/api/reports/sales?range=30d, id 236579.7, type Fetch, initiator script, hasUserGesture true",
+          "That request id has only a network.request event: no network.response, network.finished or loadingFailed, so no status and no duration",
+          "The recording continues about 12.5 s after the click with the request still unanswered",
+          "A DOM mutation on div#report (+2 nodes) right after the click, then identical dom.snapshot hashes with 23 nodes: the page never changed after the loading state",
+          "0 console entries, 0 errors, 0 failed requests and 0 slow requests: no error is shown or logged, matching the report",
+          "The page document (/reports/sales/ 200) and /favicon.ico (204) loaded fine; there are no cookies, localStorage or IndexedDB entries and no WebSocket/SSE traffic"
+        ],
+        "missingData": [
+          "Server response, status or timing for /api/reports/sales?range=30d (the request has no response event)",
+          "Server-side logs showing why the endpoint did not answer",
+          "Client JS source to confirm there is no timeout or catch handling",
+          "Recording beyond about 12.5 s after the click, so the tester's full minute-plus wait is not covered"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "network_issues": 1,
+        "query_events": 2,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 5,
+      "tokens": {
+        "input": 8,
+        "output": 2333,
+        "cacheRead": 53017,
+        "cacheCreation": 21992,
+        "total": 77350
+      },
+      "costUsd": 0.1166157,
+      "durationMs": 19913,
+      "turns": 6,
+      "evidence": {
+        "network-pending": true,
+        "click-target": true
+      }
+    },
+    {
+      "caseId": "case-08",
+      "scenarioId": "auth-redirect-loop",
+      "title": "An expired token in localStorage causes an account ↔ login redirect loop",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": false,
+      "rubricPass": false,
+      "partial": true,
+      "score": 0.63,
+      "required": [
+        {
+          "id": "status-401",
+          "description": "Finds the 401 answers",
+          "matched": true
+        },
+        {
+          "id": "loop",
+          "description": "Identifies the redirect loop",
+          "matched": true
+        },
+        {
+          "id": "token",
+          "description": "Blames the expired/stale token",
+          "matched": false
+        }
+      ],
+      "bonus": [
+        {
+          "id": "storage",
+          "description": "Locates the token in localStorage",
+          "matched": true
+        },
+        {
+          "id": "login-check",
+          "description": "Explains the login page only checks token presence",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-down",
+          "description": "Blames a server outage",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The user has no valid session (no cookie, and GET /api/me returns 401 every time), and the front-end auth guard loops /account/ -> /login/ -> /account/ instead of showing the login form, leaving the page on 'Signing you in…'. The login page most likely redirects back to /account/ because of a stale client-side auth marker (a local-storage entry), but the recording cannot confirm this.",
+        "evidence": [
+          "5 repeated cycles within ~200 ms (about 1829.8s–1832.0s mono offsets): GET http://127.0.0.1:44226/account/ 200 -> GET /api/me 401 -> GET /login/ 200 -> back to /account/",
+          "GET http://127.0.0.1:44226/api/me returned 401 Unauthorized six times (reqIds 25, 29, 34, 40, 45, 51), each 2–4 ms",
+          "GET /login/ returned 200 every time but was immediately followed by another GET /account/, so no login form was ever shown",
+          "Cookie snapshot at start: count 0 (no session cookie); localStorage snapshot count 1; IndexedDB count 0",
+          "No console errors or JS exceptions (0 errors), so this is application logic, not a crash; favicon.ico net::ERR_ABORTED (req 36) is incidental",
+          "No click or action spans recorded: the only user step is navigating to /account/"
+        ],
+        "missingData": [
+          "Response bodies and headers for /api/me, /account/ and /login/ (Location, Set-Cookie, 401 payload)",
+          "Names and values of cookies and the local-storage entry (counts-only/redacted), so the stale-token hypothesis is unverified",
+          "DOM snapshots and console logs, so the 'Signing you in…' markup and the redirect code are not visible",
+          "Initiator or stack for the navigations, and why the session expired or was cleared (lite mode)"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2307,
+        "cacheRead": 27221,
+        "cacheCreation": 20294,
+        "total": 49828
+      },
+      "costUsd": 0.10698010000000001,
+      "durationMs": 17552,
+      "turns": 5,
+      "evidence": {
+        "navigation": false,
+        "network-status": true,
+        "storage-value": false,
+        "network-response-body": false
+      }
+    },
+    {
+      "caseId": "case-08",
+      "scenarioId": "auth-redirect-loop",
+      "title": "An expired token in localStorage causes an account ↔ login redirect loop",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 0.88,
+      "required": [
+        {
+          "id": "status-401",
+          "description": "Finds the 401 answers",
+          "matched": true
+        },
+        {
+          "id": "loop",
+          "description": "Identifies the redirect loop",
+          "matched": true
+        },
+        {
+          "id": "token",
+          "description": "Blames the expired/stale token",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "storage",
+          "description": "Locates the token in localStorage",
+          "matched": true
+        },
+        {
+          "id": "login-check",
+          "description": "Explains the login page only checks token presence",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-down",
+          "description": "Blames a server outage",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The stored localStorage authToken is a JWT that expired on 2026-09-01 (exp 1788220800), and the session is on 2026-10-12. /api/me returns 401 for it, and the client does not clear the token. It redirects to /login/?next=/account/, which bounces back to /account/ (presumably because the login page still sees a stored token), so the pages loop and end on a 'Signing you in…' state with no login form.",
+        "evidence": [
+          "6 × GET http://127.0.0.1:44014/api/me → 401 Unauthorized (reqs 244808.7, .12, .16, .20, .25, .29), JSON, 173 bytes, each initiated by script on /account/",
+          "The request carries Authorization: Bearer <JWT> with payload {sub:u-311, exp:1788220800} (2026-09-01); the server's response date header is Mon, 12 Oct 2026 18:26:12 GMT, so the token was expired",
+          "12 nav.commit events alternate /account/ and /login/?next=/account/ within ~250 ms, each navigation script-initiated with no user input; the referer chain /account/ → /login/?next=/account/ → /account/ repeats",
+          "localStorage snapshot contains authToken (valueLength 93) with the same expired JWT, still present after the loop; no cookies; IndexedDB empty",
+          "Console shows 6 'Failed to load resource: the server responded with a status of 401 (Unauthorized)' errors for /api/me and no JS exceptions",
+          "Last /login/ response body is 1680 bytes (hash c7a6990b…) versus the 1820-byte /account/ body"
+        ],
+        "missingData": [
+          "No application JS or source in the capture, so the exact 401 handling and the login-page redirect logic are inferred, not observed",
+          "The 401 response bodies were not captured (still loading when recording stopped), so the server's reason (expired vs invalid signature) is unknown",
+          "The final 'Signing you in…' DOM and the login-page body were not read; the DOM snapshot coverage is low (about 26%, longest gap 5.2 s)",
+          "No user click or input events were found, so the element the user clicked to open 'Account' is unknown",
+          "No evidence of what changed since yesterday (the token's issue time or earlier valid state is not in the recording)"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 2,
+        "session_summary": 1
+      },
+      "toolCallCount": 5,
+      "tokens": {
+        "input": 8,
+        "output": 3022,
+        "cacheRead": 63011,
+        "cacheCreation": 32437,
+        "total": 98478
+      },
+      "costUsd": 0.16628510000000002,
+      "durationMs": 24339,
+      "turns": 6,
+      "evidence": {
+        "navigation": true,
+        "network-status": true,
+        "storage-value": true,
+        "network-response-body": false
+      }
+    },
+    {
+      "caseId": "case-09",
+      "scenarioId": "iframe-exception",
+      "title": "Exception inside the payment iframe",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": false,
+      "rubricPass": false,
+      "partial": true,
+      "score": 0.4,
+      "required": [
+        {
+          "id": "reference-error",
+          "description": "Finds the ReferenceError",
+          "matched": false
+        },
+        {
+          "id": "iframe",
+          "description": "Locates it in the payment iframe/widget",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "function",
+          "description": "Names formatAmount",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "card-declined",
+          "description": "Blames the card or the payment API",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The click handler of the «Pay» button inside the payment widget iframe (/widgets/pay/frame.js, line 3 col 3) throws an uncaught exception on every click. The payment is never submitted, so the UI stays on 'Waiting for payment…'. The exception message and stack are redacted, so the exact failing statement is unknown.",
+        "evidence": [
+          "The user clicked the BUTTON (selector:acdf3992f88d, 103x33 px) in the content-iframe at A-000001 and again at A-000002.",
+          "Each click was followed within about 0.5 ms by an error.exception in frame content-frame-8 at http://127.0.0.1:45142/widgets/pay/frame.js:3:3, with the same fingerprint fp-8w6qjt (E-00000037 and E-00000046).",
+          "Both user.click.reaction events report mutated:false, so the click produced no visible DOM change.",
+          "Only 4 network requests were recorded and none was made after either click: GET /checkout/payment/ (200), GET /widgets/pay/frame.html (200), GET /widgets/pay/frame.js (200), GET /favicon.ico (204). There were no failed or slow requests, and no payment POST.",
+          "Before the click the user filled two iframe INPUTs (19 characters and 5 characters, values redacted), with normal change and blur events.",
+          "The page is http://127.0.0.1:45142/checkout/payment/, titled 'Payment · Northwind Shop'. The recording has no console output, no WebSocket or SSE traffic, and empty storage snapshots."
+        ],
+        "missingData": [
+          "Exception message and stack trace (redacted by the privacy policy), so the failing statement at frame.js:3:3 is unknown",
+          "The source of frame.js and its source maps; there are no response bodies in the lite capture",
+          "A DOM snapshot of the iframe, so the 'Waiting for payment…' text and the button's state cannot be seen",
+          "Any postMessage traffic between the widget and the parent page",
+          "The actual card and expiry values, which are redacted, so I can't rule out a value-parsing problem in the handler"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2283,
+        "cacheRead": 26343,
+        "cacheCreation": 18695,
+        "total": 47327
+      },
+      "costUsd": 0.1002563,
+      "durationMs": 17195,
+      "turns": 5,
+      "evidence": {
+        "iframe": false,
+        "exception": false,
+        "click-target": false
+      }
+    },
+    {
+      "caseId": "case-09",
+      "scenarioId": "iframe-exception",
+      "title": "Exception inside the payment iframe",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 1,
+      "required": [
+        {
+          "id": "reference-error",
+          "description": "Finds the ReferenceError",
+          "matched": true
+        },
+        {
+          "id": "iframe",
+          "description": "Locates it in the payment iframe/widget",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "function",
+          "description": "Names formatAmount",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "card-declined",
+          "description": "Blames the card or the payment API",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The click handler on the Pay button in the payment widget iframe (frame.js) calls formatAmount(), which references an undefined identifier `currencyFormatter`. It throws an uncaught ReferenceError on every click, so no payment request is ever sent and the UI stays on 'Waiting for payment…'. This is a client-side JS bug in the widget script, not a network or validation problem.",
+        "evidence": [
+          "E-00000053 / A-000003: click on BUTTON#pay (text 'Pay €64.50') inside the iframe http://127.0.0.1:43802/widgets/pay/frame.html, after #card='4242 4242 4242 4242' and #expiry='09/28' were entered",
+          "E-00000041 (about 2 ms after the first click) and E-00000058 (after the second click, A-000004, E-00000062): uncaught error.exception 'ReferenceError: currencyFormatter is not defined', fingerprint fp-mx3vbx, count 2",
+          "Stack: at formatAmount (http://127.0.0.1:43802/widgets/pay/frame.js:3:3) <- HTMLButtonElement.<anonymous> (frame.js:8:60), so the click listener calls formatAmount, which fails",
+          "Network: only 4 requests (GET /checkout/payment/ 200, GET /widgets/pay/frame.html 200, GET /widgets/pay/frame.js 200 text/javascript 360 bytes, GET /favicon.ico 204); 0 failed, 0 slow, and no payment or API request after either click",
+          "DOM snapshot after the second click (E-00000064) has the same content hash as the earlier snapshot, so the UI did not change and 'Waiting for payment…' stayed",
+          "No console warnings or errors other than the two ReferenceErrors, and no input validation errors"
+        ],
+        "missingData": [
+          "The text of frame.js (only blob metadata was visible), so it is unknown why currencyFormatter is undefined (missing declaration, typo, or a script or definition that was never loaded)",
+          "Source maps or the original source for frame.js lines 3 and 8",
+          "Server-side or application state, since no payment request was made"
+        ],
+        "confidence": "high",
+        "structured": true
+      },
+      "toolCalls": {
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 2,
+        "session_summary": 1
+      },
+      "toolCallCount": 5,
+      "tokens": {
+        "input": 8,
+        "output": 2474,
+        "cacheRead": 48498,
+        "cacheCreation": 17359,
+        "total": 68339
+      },
+      "costUsd": 0.0990418,
+      "durationMs": 19517,
+      "turns": 6,
+      "evidence": {
+        "iframe": true,
+        "exception": true,
+        "click-target": true
+      }
+    },
+    {
+      "caseId": "case-10",
+      "scenarioId": "stale-cache",
+      "title": "The re-read cart comes from the HTTP cache and shows the old quantity",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": false,
+      "rubricPass": false,
+      "partial": true,
+      "score": 0.5,
+      "required": [
+        {
+          "id": "cache",
+          "description": "Identifies caching as the cause",
+          "matched": false
+        },
+        {
+          "id": "endpoint",
+          "description": "Names the cart request",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "cache-header",
+          "description": "Points at the Cache-Control/max-age header",
+          "matched": false
+        },
+        {
+          "id": "patch-ok",
+          "description": "Notes the update itself succeeded",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "patch-failed",
+          "description": "Claims the update request failed",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The cart \"+\" button handler sends PATCH /api/cart/items/:id with an unsubstituted ':id' placeholder instead of the coffee item's real ID. The server returns 200 and the follow-up GET /api/cart presumably returns unchanged data, so the UI keeps showing 1 and €12.50. The server appears to count each PATCH, which would explain the 3 packs on the order, but bodies were not captured, so that part is unconfirmed.",
+        "evidence": [
+          "Two clicks on the same BUTTON (selector:f310145a443f) on http://127.0.0.1:44970/cart/ (E-00000024 and E-00000037)",
+          "Each click triggers PATCH http://127.0.0.1:44970/api/cart/items/:id, which returns 200 in 2 ms (req 26 and req 28); the URL has a literal ':id' segment while other URLs are concrete",
+          "Each PATCH is followed by GET http://127.0.0.1:44970/api/cart returning 200 (req 27 and req 29), then a DOM mutation batch re-rendering two strong elements (t_1ac6lp2 and t_07f7rcg)",
+          "No failed requests, no slow requests, 0 console entries and 0 errors, so the failure is silent",
+          "Two PATCH calls plus the original quantity of 1 would give 3 packs, which matches the order the tester saw"
+        ],
+        "missingData": [
+          "Request and response bodies for the PATCH and GET /api/cart (body capture was disabled)",
+          "DOM snapshot or text of the quantity and total elements (raw snapshots were blocked by the privacy policy)",
+          "The checkout and order request, to confirm the 3 packs",
+          "Request headers and stack traces to show whether the ':id' URL was built by the client or rewritten",
+          "Cart storage state (storage snapshots are counts-only and show 0 entries)"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2506,
+        "cacheRead": 26273,
+        "cacheCreation": 17929,
+        "total": 46714
+      },
+      "costUsd": 0.0994153,
+      "durationMs": 20446,
+      "turns": 5,
+      "evidence": {
+        "network-cache": false,
+        "network-response-body": false,
+        "network-request-body": false
+      }
+    },
+    {
+      "caseId": "case-10",
+      "scenarioId": "stale-cache",
+      "title": "The re-read cart comes from the HTTP cache and shows the old quantity",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 1,
+      "required": [
+        {
+          "id": "cache",
+          "description": "Identifies caching as the cause",
+          "matched": true
+        },
+        {
+          "id": "endpoint",
+          "description": "Names the cart request",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "cache-header",
+          "description": "Points at the Cache-Control/max-age header",
+          "matched": true
+        },
+        {
+          "id": "patch-ok",
+          "description": "Notes the update itself succeeded",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "patch-failed",
+          "description": "Claims the update request failed",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "After each PATCH the page re-fetches GET /api/cart, but that response carries 'cache-control: private, max-age=600' and is served from the browser HTTP cache. The page keeps re-rendering the stale quantity 1 and €12.50 while the server has already accepted the changes. The 3 packs in the order come from the server-side state diverging from the display.",
+        "evidence": [
+          "The initial GET http://127.0.0.1:43692/api/cart returned 200 (82 bytes) with 'cache-control: private, max-age=600'.",
+          "The user clicked BUTTON#inc (aria-label 'Increase', text '+') twice, at x=281,y=192, about 2 s apart.",
+          "Each click sent PATCH http://127.0.0.1:43692/api/cart/items/1 with body {\"qty\":2}, and both returned 200 (35 bytes). The second click did not send qty 3, so the page was working from a stale quantity of 1.",
+          "Each PATCH was followed by GET /api/cart with 200 in about 3 ms, no connection/keep-alive/transfer-encoding headers and a date header of 18:26:46 GMT (the initial load time). The PATCH responses are dated 18:26:48 and 18:26:50. This indicates a cache hit.",
+          "All three GET /api/cart responses have the same body hash (91c615764c7694220a2a71ab1cfdc9fedb4ffa7757196de3f00ceac5762b8872) and size (82 bytes), so the cart returned never changed.",
+          "After each click the only DOM mutations were replacements of strong#qty and strong#total, re-rendered from the stale cart.",
+          "There were 0 errors, 0 console entries, 0 failed requests and 0 slow requests. localStorage, IndexedDB and cookies were empty."
+        ],
+        "missingData": [
+          "The actual JSON bodies of GET /api/cart and the PATCH response are not readable with the available tools, only their hashes and sizes. The cart quantity of 1 is inferred from the report and the identical hash.",
+          "The checkout or order request and response are not in the recording, so the 3 packs in the final order are unverified.",
+          "The semantics of the PATCH are unknown: whether qty is an absolute value or a delta, and how the server arrived at 3.",
+          "Page JavaScript and server code are not available, so the cache-then-render logic and any intended cache-busting are inferred from network behaviour only.",
+          "Chrome's cache-hit flags (fromDiskCache/fromMemoryCache) are not in the captured events. The cache-hit conclusion rests on the timing, the missing connection headers, the old date header and the identical hash."
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "export_har": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 5,
+      "tokens": {
+        "input": 8,
+        "output": 2843,
+        "cacheRead": 49039,
+        "cacheCreation": 25129,
+        "total": 77019
+      },
+      "costUsd": 0.13386589999999998,
+      "durationMs": 23411,
+      "turns": 6,
+      "evidence": {
+        "network-cache": true,
+        "network-response-body": true,
+        "network-request-body": true
+      }
+    },
+    {
+      "caseId": "case-11",
+      "scenarioId": "feature-flag-storage",
+      "title": "A leftover localStorage flag override disables checkout",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": false,
+      "rubricPass": false,
+      "partial": false,
+      "score": 0,
+      "required": [
+        {
+          "id": "override",
+          "description": "Finds the local override",
+          "matched": true
+        },
+        {
+          "id": "flag",
+          "description": "Names the flag",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "server-true",
+          "description": "Notes the server flag is on",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-disabled",
+          "description": "Claims the server turned checkout off",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": true
+        }
+      ],
+      "answer": {
+        "rootCause": "The recording does not show the cause. The Place order button is likely disabled client-side by a checkout-disabled flag, either from this tester's /api/flags response or from a stale localStorage entry. This is an inference: no flag values were captured, and the clicks sent no requests and raised no errors.",
+        "evidence": [
+          "GET http://127.0.0.1:43332/checkout/review/ returned 200, and GET /api/flags returned 200 (4 ms) right after page load",
+          "Zero failed or slow requests, zero console entries and zero errors in the whole session; no checkout or order request was ever sent",
+          "The user clicked the same BUTTON (rect x=34,y=230,w=289.6,h=39.75) twice (E-00000016/17 and E-00000020/21) with no network activity, error or action span following either click",
+          "localStorage snapshot reports count=1 (values redacted) while cookies=0 and IndexedDB=0, so some client-side persisted state exists",
+          "privacy.violation E-00000022 shows the DOM snapshot was blocked (dom-raw-snapshot-disabled), so the button's disabled state and error text were not captured"
+        ],
+        "missingData": [
+          "Response body of GET /api/flags (body capture is 0 bytes, network is metadata-only)",
+          "The localStorage key and value (storage is counts-only)",
+          "DOM snapshot or screenshots showing the button's disabled attribute and the 'Checkout temporarily unavailable' text",
+          "Console logs (metadata only, no entries)",
+          "A comparison recording from a tester whose Place order button works"
+        ],
+        "confidence": "low",
+        "structured": true
+      },
+      "toolCalls": {
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2078,
+        "cacheRead": 25926,
+        "cacheCreation": 13749,
+        "total": 41759
+      },
+      "costUsd": 0.0783806,
+      "durationMs": 17473,
+      "turns": 5,
+      "evidence": {
+        "storage-value": false,
+        "network-response-body": false,
+        "dom": false
+      }
+    },
+    {
+      "caseId": "case-11",
+      "scenarioId": "feature-flag-storage",
+      "title": "A leftover localStorage flag override disables checkout",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 0.8,
+      "required": [
+        {
+          "id": "override",
+          "description": "Finds the local override",
+          "matched": true
+        },
+        {
+          "id": "flag",
+          "description": "Names the flag",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "server-true",
+          "description": "Notes the server flag is on",
+          "matched": false
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "server-disabled",
+          "description": "Claims the server turned checkout off",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The checkout button is rendered disabled as 'Checkout temporarily unavailable' because the tester's browser has a stale localStorage override flagOverrides={\"newCheckout\":false,...}, which most likely overrides the feature flags from /api/flags (200). Other testers don't have this override, so they see 'Place order'. This is an inference: the recording doesn't show the flags response contents or the page code that applies the override.",
+        "evidence": [
+          "localStorage snapshot (E-00000032): the only key is flagOverrides = {\"newCheckout\":false,\"darkMode\":true}",
+          "GET http://127.0.0.1:45094/checkout/review/ returned 200 (no-store, text/html, 2065 bytes)",
+          "GET http://127.0.0.1:45094/api/flags (fetch, script-initiated) returned 200 application/json, 60 bytes, so the flag fetch itself did not fail",
+          "GET /favicon.ico returned 204 (irrelevant)",
+          "No failed or slow requests, no console entries and no JS errors anywhere in the session",
+          "The user clicked BUTTON #checkout (idToken 'checkout') with the text 'Checkout temporarily unavailable' twice (E-00000025/26 and E-00000029/30). No network request, error or navigation followed either click, so the button is inert.",
+          "No cookies and no IndexedDB databases, so auth or session state doesn't explain the difference"
+        ],
+        "missingData": [
+          "Body of /api/flags (only its size, 60 bytes, and hash are exposed), so it is unknown whether the server also sends newCheckout=false",
+          "The page's JavaScript, so how flagOverrides is merged with the server flags is unconfirmed",
+          "A recording or localStorage from a working tester for comparison",
+          "When or how flagOverrides was set (no storage-change events, no earlier history)",
+          "DOM mutation history; only the start snapshot exists, so the moment the button became disabled isn't visible"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "export_har": 1,
+        "find_root_cause_candidates": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1
+      },
+      "toolCallCount": 5,
+      "tokens": {
+        "input": 8,
+        "output": 2454,
+        "cacheRead": 50456,
+        "cacheCreation": 23042,
+        "total": 75960
+      },
+      "costUsd": 0.12176959999999999,
+      "durationMs": 26937,
+      "turns": 6,
+      "evidence": {
+        "storage-value": true,
+        "network-response-body": true,
+        "dom": true
+      }
+    },
+    {
+      "caseId": "case-12",
+      "scenarioId": "double-submit",
+      "title": "A slow order request without a disabled button leads to a duplicate order",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 1,
+      "required": [
+        {
+          "id": "two-posts",
+          "description": "Finds the two order requests",
+          "matched": true
+        },
+        {
+          "id": "endpoint",
+          "description": "Names the order request",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "no-guard",
+          "description": "Explains the missing guard (button not disabled / no idempotency)",
+          "matched": true
+        },
+        {
+          "id": "slow",
+          "description": "Notices the slow response",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "single-request",
+          "description": "Claims only one request was sent",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The Place order button gave no feedback and stayed active while the first POST /api/orders took ~2.5s. The second click 1.4s later sent another POST /api/orders, and the server created a second order for it, so the customer was charged twice. There is no client in-flight guard and no server-side deduplication.",
+        "evidence": [
+          "Two user.click events on the same BUTTON at (94,250) on /checkout/confirm/, with the same selector token: E-00000018 at mono 1791829410886.9 and E-00000025 at 1791829412301.3, 1.41s apart",
+          "Two separate POST http://127.0.0.1:44470/api/orders requests: reqId 25 sent at 410888 and reqId 26 sent at 412302, right after the second click",
+          "Both requests returned 201 Created, with durations of 2503 ms and 2504 ms, so the server accepted and created both orders",
+          "Both user.click.reaction events show mutated:false within 1000ms; the first DOM mutation (one added p node) came only at 413642 after the first response, so the user saw no feedback for about 2.5s",
+          "No console errors, no JS errors, no failed requests (0 errors, 0 failed); this is not a crash or network failure",
+          "No WebSocket or SSE traffic; the session had only 4 requests (the page GET, favicon and 2 POSTs)"
+        ],
+        "missingData": [
+          "Request and response bodies and headers were not captured, so it is unknown whether the two POSTs were identical or carried an idempotency key",
+          "Response order IDs are unknown, so it is not confirmed that two distinct orders were created",
+          "No DOM snapshot, so the button's disabled or loading state is not directly confirmed",
+          "No application source, so it is unknown whether the missing guard is client-side, server-side or both"
+        ],
+        "confidence": "high",
+        "structured": true
+      },
+      "toolCalls": {
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2131,
+        "cacheRead": 26792,
+        "cacheCreation": 10940,
+        "total": 39869
+      },
+      "costUsd": 0.0677612,
+      "durationMs": 16468,
+      "turns": 5,
+      "evidence": {
+        "click-target": false,
+        "network-status": true,
+        "network-timing": true,
+        "network-response-body": false
+      }
+    },
+    {
+      "caseId": "case-12",
+      "scenarioId": "double-submit",
+      "title": "A slow order request without a disabled button leads to a duplicate order",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 1,
+      "required": [
+        {
+          "id": "two-posts",
+          "description": "Finds the two order requests",
+          "matched": true
+        },
+        {
+          "id": "endpoint",
+          "description": "Names the order request",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "no-guard",
+          "description": "Explains the missing guard (button not disabled / no idempotency)",
+          "matched": true
+        },
+        {
+          "id": "slow",
+          "description": "Notices the slow response",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "single-request",
+          "description": "Claims only one request was sent",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "The 'Place order' button (#place-order) stays enabled with no in-flight guard while POST /api/orders takes ~2.5 s. The user's second click sent a duplicate identical order request, and the server (no idempotency key in the request) created an order for each, giving two orders and two charges.",
+        "evidence": [
+          "user.click E-00000031 on BUTTON#place-order ('Place order') at t≈21.80s triggered POST http://127.0.0.1:44348/api/orders (reqId 262474.7), body {\"cartId\":\"c-7781\",\"paymentMethod\":\"card-on-file\"}",
+          "user.click E-00000039 on the same BUTTON#place-order at the same coordinates (94,250), ~1.4s later at t≈23.21s, while the first request was still pending, triggered a second POST /api/orders (reqId 262474.8) with an identical body",
+          "Both POSTs returned 201 Created, each taking ~2.5s (2505.6 ms and 2506.9 ms), so the server accepted and processed both",
+          "Neither request carries an Idempotency-Key or similar dedup header; the request headers are only accept-language, referer, user-agent, content-type and sec-ch-ua*",
+          "The only DOM changes after the clicks were a p#confirmation node added at the first response and replaced at the second (E-00000044, E-00000053); no attribute mutations were recorded, so there is no sign of a disabled button or loading state",
+          "No console errors, no JS exceptions and no failed requests in the session, so this is a logic flaw (missing double-submit protection) and not a crash"
+        ],
+        "missingData": [
+          "Contents of the two 29-byte response bodies (the order IDs) are not shown by the tools, so I can't confirm the server created two distinct orders",
+          "The tester's order history and payment/charge records are not in the recording, so the double charge is inferred from the two 201 responses",
+          "Client source code and server code are unavailable, so I can't tell whether the button's disabled state is missing or only not captured, or whether the server ignores idempotency keys",
+          "Why the server takes ~2.5 s is not visible in the recording"
+        ],
+        "confidence": "high",
+        "structured": true
+      },
+      "toolCalls": {
+        "export_har": 1,
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1,
+        "summarize_actions": 1
+      },
+      "toolCallCount": 5,
+      "tokens": {
+        "input": 8,
+        "output": 2534,
+        "cacheRead": 46391,
+        "cacheCreation": 16745,
+        "total": 65678
+      },
+      "costUsd": 0.09697510000000001,
+      "durationMs": 23078,
+      "turns": 6,
+      "evidence": {
+        "click-target": true,
+        "network-status": true,
+        "network-timing": true,
+        "network-response-body": true
+      }
+    },
+    {
+      "caseId": "case-13",
+      "scenarioId": "search-race",
+      "title": "Out-of-order search responses: the slower, older query overwrites the newer results",
+      "profile": "default",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 1,
+      "required": [
+        {
+          "id": "race",
+          "description": "Identifies out-of-order responses / race",
+          "matched": true
+        },
+        {
+          "id": "queries",
+          "description": "Names the two queries",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "fix",
+          "description": "Suggests ignoring stale responses (abort/sequence check)",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "search-backend",
+          "description": "Blames the search index returning wrong items for 'laptop'",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "Out-of-order responses in the search box (race condition). The 'lap' request was slow (1800 ms) and the later 'laptop' request was fast (153 ms), so the stale 'lap' response arrived last and overwrote the correct results. The client doesn't cancel or ignore stale requests.",
+        "evidence": [
+          "user.input on the same INPUT (selector:fddf5907e33a): length 3 at mono 1791829430191, then length 6 at 1791829431145 (values redacted; consistent with 'lap' then 'laptop')",
+          "GET http://127.0.0.1:43334/api/search reqId 25 started at 1791829430394 and returned 200 at 1791829432194 (duration 1800 ms)",
+          "GET http://127.0.0.1:43334/api/search reqId 26 started at 1791829431348 and returned 200 at 1791829431501 (duration 153 ms), so it finished about 700 ms before the earlier request 25",
+          "dom.mutation.batch on ul[id:t_1cgbz6j] at 1791829431751 added 3 nodes after response 26, which matches the brief flash of laptops",
+          "dom.mutation.batch on the same ul at 1791829432447 removed 3 and added 5 nodes after response 25, which matches the list changing to 'Lap desk' / 'Lapel pin'",
+          "No errors, no failed requests and no console entries; all /api/search responses were 200, so the fault is client-side ordering"
+        ],
+        "missingData": [
+          "Query strings of the /api/search requests (the URLs have no q parameter)",
+          "Response bodies, so the actual results for each request are not visible",
+          "Unredacted input values",
+          "DOM text content and snapshots (lite mode)",
+          "Application source code or logs showing whether there is any abort or stale-response guard"
+        ],
+        "confidence": "medium",
+        "structured": true
+      },
+      "toolCalls": {
+        "network_issues": 1,
+        "query_events": 2,
+        "session_summary": 1
+      },
+      "toolCallCount": 4,
+      "tokens": {
+        "input": 6,
+        "output": 2154,
+        "cacheRead": 27770,
+        "cacheCreation": 9586,
+        "total": 39516
+      },
+      "costUsd": 0.06267299999999999,
+      "durationMs": 16164,
+      "turns": 5,
+      "evidence": {
+        "network-timing": true,
+        "network-response-body": false,
+        "user-input": false
+      }
+    },
+    {
+      "caseId": "case-13",
+      "scenarioId": "search-race",
+      "title": "Out-of-order search responses: the slower, older query overwrites the newer results",
+      "profile": "full-capture",
+      "model": "claude-sonnet-5-5",
+      "pass": true,
+      "rubricPass": true,
+      "partial": false,
+      "score": 1,
+      "required": [
+        {
+          "id": "race",
+          "description": "Identifies out-of-order responses / race",
+          "matched": true
+        },
+        {
+          "id": "queries",
+          "description": "Names the two queries",
+          "matched": true
+        }
+      ],
+      "bonus": [
+        {
+          "id": "fix",
+          "description": "Suggests ignoring stale responses (abort/sequence check)",
+          "matched": true
+        }
+      ],
+      "forbidden": [
+        {
+          "id": "search-backend",
+          "description": "Blames the search index returning wrong items for 'laptop'",
+          "matched": false
+        },
+        {
+          "id": "undetermined",
+          "description": "Declares the root cause undetermined",
+          "matched": false
+        }
+      ],
+      "answer": {
+        "rootCause": "Race condition in the live search: the page fires a fetch on each input and renders whichever response arrives last, with no abort or latest-request check. The slow GET /api/search?q=lap (~1.8 s) resolved after the fast GET /api/search?q=laptop, so the stale 'lap' results overwrote the correct 'laptop' results.",
+        "evidence": [
+          "User typed into INPUT#q (textbox): first value 'lap' (user.input E-00000024), then 'laptop' (E-00000026) about 750 ms later.",
+          "GET http://127.0.0.1:44024/api/search?q=lap (req 267778.7, Fetch, script-initiated) was sent at mono ≈…661626 and returned 200 only at ≈…663430, with receiveHeaders ≈1802 ms (duration 1807 ms, the only slow request).",
+          "GET http://127.0.0.1:44024/api/search?q=laptop (req 267778.8) was sent at ≈…662584 and returned 200 at ≈…662738 (~150 ms), about 700 ms before the earlier q=lap response.",
+          "Responses arrived out of order (laptop, then lap), matching the tester's report that laptops flash briefly and are then replaced by 'Lap desk' and 'Lapel pin'.",
+          "No failed requests, no console errors, no WebSocket/SSE traffic; all search responses are 200, so the fault is client-side ordering and not a server error."
+        ],
+        "missingData": [
+          "Response bodies for the two search calls were not inspected, so the item lists (laptops vs 'Lap desk'/'Lapel pin') are inferred from the tester's report and timing.",
+          "Application source code and the rendering handler are not visible, so the absence of AbortController or a request-id guard is inferred from behavior, not seen directly.",
+          "DOM state after the final render was not checked in the recording."
+        ],
+        "confidence": "high",
+        "structured": true
+      },
+      "toolCalls": {
+        "network_issues": 1,
+        "query_events": 1,
+        "session_summary": 1
+      },
+      "toolCallCount": 3,
+      "tokens": {
+        "input": 4,
+        "output": 1850,
+        "cacheRead": 14296,
+        "cacheCreation": 13726,
+        "total": 29876
+      },
+      "costUsd": 0.07484160000000001,
+      "durationMs": 14579,
+      "turns": 4,
+      "evidence": {
+        "network-timing": true,
+        "network-response-body": true,
+        "user-input": true
+      }
+    }
+  ]
+}

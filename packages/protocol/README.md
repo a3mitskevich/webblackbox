@@ -112,6 +112,7 @@ WebBlackbox currently defines 76 event types (`WEBBLACKBOX_EVENT_TYPES`) in 12 c
 - `dom.snapshot` — Full DOM snapshot (content-addressable blob)
 - `dom.diff` — DOM diff between snapshots
 - `dom.rrweb.event` — rrweb-compatible events (currently emitted as lite mutation summaries)
+- `dom.a11y.snapshot` — Accessibility tree of the viewport at a key moment (action, error, navigation, marker, stop) as compact text (`- button "Pay" [disabled]`), with its trigger, masking level and cut info (`formatA11yTree` / `parseA11yTree`)
 
 ### Screen Events
 

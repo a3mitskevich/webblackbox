@@ -18,7 +18,9 @@ The extension records with the `Maximum` profile out of the box (see [Recording 
 - storage counts, not values or key names
 - privacy provenance and scanner results
 
-The base policy does not collect raw input values, storage values, cookies, raw headers, request bodies, or response bodies. Screenshots are off in the Lite engine; the Full engine takes them unless the profile's visual capture is set to none. The Lite engine records no DOM text; the Full engine records the page DOM (snapshots and changes) at the default `dom` level, masked by the profile's rules: blocked selectors are left out, content masking applies to the text and attributes, and field values are never written unless the profile records input values.
+The base policy does not collect raw input values, storage values, cookies, raw headers, request bodies, or response bodies. Screenshots are off in the Lite engine; the Full engine takes them unless the profile's visual capture is set to none. The Lite engine records no DOM markup; the Full engine records the page DOM (snapshots and changes) at the default `dom` level, masked by the profile's rules: blocked selectors are left out, content masking applies to the text and attributes, and field values are never written unless the profile records input values.
+
+Both engines record accessibility snapshots (below), which carry the visible text of the viewport through the same masking rules.
 
 Nothing is recorded until the user presses `Record` in a tab: no profile or site rule starts a recording.
 
@@ -32,6 +34,17 @@ What the extension records is decided by the recording profile in effect: the de
 - Source maps: in the Full engine a profile records each script's source map reference unless it turns source maps off; `Maximum` also embeds the maps in the archive. To embed a map the extension fetches it itself, sending cookies only when the map is on the script's own origin.
 - In the Full engine the page DOM is recorded at the default `dom` level (`masked`) the same way as at `allow`, through the masking rules of the profile; `wireframe` and `off` keep it out. The Lite engine records the DOM only at `allow`.
 - Any profile can be deleted, the built-in ones included; "Restore recommended profiles" in Options brings back the deleted built-ins. Recording needs at least one profile: with none left, the popup asks for one and links to Options → Profiles. Profiles from the enterprise policy (`managed:*`) cannot be deleted by the user. Site rules that point at a deleted profile are kept, flagged in Options, and skipped until the profile exists again.
+
+## Accessibility Snapshots
+
+At key moments (after a click, a form submit or Enter, an error, a new page or route change, a marker, and at Stop) the page's capture agent writes a `dom.a11y.snapshot`: the roles, accessible names, states and visible text of what intersects the viewport of the top document (same-origin frames included), as compact text. They are bounded (800 nodes, 24 000 characters, 40 ms of page time; a cut is marked) and capped at 30 per minute.
+
+- Every profile that records the DOM records them (`dom` other than `off`), in both engines.
+- Blocked selectors apply in every mode, as in the DOM snapshot, inside open shadow roots and same-origin frames too: a matching element keeps only its role (`[masked]`), and its content never reaches another node's name (labels, `aria-labelledby`, captions, button text). An invalid blocked selector fails closed to the `wireframe` level.
+- `masked` and `allow`: names and text go through the DOM snapshot's text rules: `dom` value patterns and, with the built-in heuristics, URL query stripping, credential masking and secret-naming JSON. Field values (typed text, the picked option of a select, a range input, an editable region) are written only where the inputs policy allows them (password, one-time-code and card fields never while masking is on). A page in `designMode` is recorded at the `wireframe` level unless the profile records input values.
+- `wireframe`: roles and states only, no names, text, values or title.
+- With content masking off (`Full capture`, which keeps no blocked selectors) they are recorded as captured, field values included when the profile records input values.
+- The recorder drops a snapshot as a privacy violation when the page reports weaker masking than the profile requires.
 
 ## Parallel Tabs
 

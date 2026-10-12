@@ -398,7 +398,10 @@ function isDroppedAttribute(element: Element, name: string): boolean {
 }
 
 function sanitizeAttributeValue(name: string, value: string, context: SanitizeContext): string {
-  if (mentionsSecretName(name, context.extraNameParts) || isSecretJson(value, context)) {
+  if (
+    mentionsSecretName(name, context.extraNameParts) ||
+    isSecretJson(value, context.extraNameParts)
+  ) {
     return MASKED_TEXT;
   }
 
@@ -413,8 +416,8 @@ function sanitizeAttributeValue(name: string, value: string, context: SanitizeCo
 }
 
 /** JSON page state (`data-props='{"auth":{"sid":…}}'`, `<pre>{…}</pre>`) naming a secret field. */
-function isSecretJson(text: string, context: SanitizeContext): boolean {
-  return /^\s*[[{]/.test(text) && mentionsSecretName(unescapeForScan(text), context.extraNameParts);
+function isSecretJson(text: string, extraNameParts: readonly string[]): boolean {
+  return /^\s*[[{]/.test(text) && mentionsSecretName(unescapeForScan(text), extraNameParts);
 }
 
 /** URL attributes and URL-shaped values (`data-src`) are sanitized like every recorded URL. */
@@ -448,6 +451,20 @@ function enforceTextInvariant(text: string, replacement: string, maskWhole: bool
   return maskWhole ? stripped : redactCredentials(stripped, replacement);
 }
 
+/**
+ * Visible text under the built-in heuristics keeps its words; URLs lose their queries, credentials
+ * are masked, and JSON page state naming a secret field is masked whole.
+ */
+export function sanitizeVisibleText(
+  text: string,
+  rules: RedactionRules,
+  extraNameParts: readonly string[]
+): string {
+  return isSecretJson(text, extraNameParts)
+    ? MASKED_TEXT
+    : maskDomText(enforceTextInvariant(text, MASKED_TEXT, false), rules);
+}
+
 /** Visible text keeps its words; URLs lose their queries and credentials are masked. */
 function sanitizeTextNodes(root: Element | DocumentFragment, context: SanitizeContext): void {
   for (const node of collectNodes(root, NodeFilter.SHOW_TEXT)) {
@@ -456,9 +473,7 @@ function sanitizeTextNodes(root: Element | DocumentFragment, context: SanitizeCo
     }
 
     const text = node.nodeValue ?? "";
-    const sanitized = isSecretJson(text, context)
-      ? MASKED_TEXT
-      : maskDomText(enforceTextInvariant(text, MASKED_TEXT, false), context.rules);
+    const sanitized = sanitizeVisibleText(text, context.rules, context.extraNameParts);
 
     if (sanitized !== text) {
       node.nodeValue = sanitized;

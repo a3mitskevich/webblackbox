@@ -77,6 +77,7 @@ import {
   type SessionRuntime
 } from "./session-registry.js";
 import type { StopDrainTracker } from "./stop-drain.js";
+import type { A11ySnapshotRequester } from "./a11y-snapshot-requests.js";
 import type { StoppedSessionLifecycleController } from "./stopped-session-lifecycle.js";
 import { resolveTabsContextLevel, type TabsContextTracker } from "./tabs-context/tracker.js";
 
@@ -139,6 +140,8 @@ export type SessionCommandsDeps = {
   createPipeline: (sid: string) => SessionPipelineClient;
   loadPerformanceBudgetConfig: () => Promise<PerformanceBudgetConfig>;
   monotonicTime: () => number;
+  /** Full mode: asks the page for an accessibility snapshot after errors the debugger saw. */
+  a11ySnapshotRequests?: A11ySnapshotRequester;
   /** The lowest-priority badge (the update notice), shown when nothing else claims it. */
   idleBadgeNotice?: () => Promise<BadgeSpec | null>;
   /** System notifications for a recording that waits for its export or fell back to Light. */
@@ -345,6 +348,7 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
           evaluatePerformanceBudget(runtime, event);
           deps.pipelineBuffer.enqueuePipelineEvent(runtime, event);
           deps.stoppedSessionLifecycle.checkpointLiveSession(runtime);
+          deps.a11ySnapshotRequests?.onEvent(runtime, event);
         },
         onFreeze: (reason) => {
           deps.handleFreezeNotice(runtime, reason);

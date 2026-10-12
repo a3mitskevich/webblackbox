@@ -1,4 +1,5 @@
 import type {
+  A11ySnapshotTrigger,
   CaptureMode,
   CapturePolicy,
   ExportPolicy,
@@ -168,6 +169,13 @@ export type RecordingStatusMessage = {
   pointer?: PointerCaptureOptions;
 };
 
+/** Full mode: the debugger saw an error; the page takes an accessibility snapshot for it. */
+export type A11ySnapshotRequestMessage = {
+  kind: "sw.a11y-snapshot-request";
+  sid: string;
+  trigger: A11ySnapshotTrigger;
+};
+
 export type FreezeNoticeMessage = {
   kind: "sw.freeze";
   sid: string;
@@ -286,6 +294,7 @@ export type PipelineStatusMessage = {
 export type ExtensionOutboundMessage =
   | RecordingStatusMessage
   | FreezeNoticeMessage
+  | A11ySnapshotRequestMessage
   | SessionListMessage
   | ExportStatusMessage
   | PipelineStatusMessage
