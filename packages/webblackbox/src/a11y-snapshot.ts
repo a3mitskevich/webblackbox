@@ -36,6 +36,8 @@ const SKIPPED_TAGS = new Set([
   "BASE"
 ]);
 const OWN_UI_ATTRIBUTE = "data-webblackbox-indicator";
+/** Deepest DOM nesting walked: deeper markup is reported as cut, never a stack overflow. */
+const MAX_DOM_DEPTH = 256;
 /** How often (in visited elements) the walk checks its time budget. */
 const DEADLINE_CHECK_EVERY = 32;
 /** Roles whose accessible name is their text: their subtree is not written separately. */
@@ -125,6 +127,9 @@ type WalkContext = {
   /** Children the time budget left unwalked (each may hide a subtree). */
   skipped: number;
   timedOut: boolean;
+  /** Current DOM nesting of the walk, and the elements left out below `MAX_DOM_DEPTH`. */
+  domDepth: number;
+  tooDeep: number;
   frames: number;
 };
 
@@ -153,12 +158,14 @@ export function captureA11ySnapshot(options: A11ySnapshotOptions): DomA11ySnapsh
     visited: 0,
     skipped: 0,
     timedOut: false,
+    domDepth: 0,
+    tooDeep: 0,
     frames: 0
   };
   const roots = walkChildren(document.body, context, readViewportRect(window), 0);
   const formatted = formatA11yTree(roots, {
-    omittedBefore: context.timedOut ? Math.max(1, context.skipped) : 0,
-    cutReason: "time budget"
+    omittedBefore: (context.timedOut ? Math.max(1, context.skipped) : 0) + context.tooDeep,
+    cutReason: context.timedOut ? "time budget, elements not examined" : "depth budget"
   });
 
   return {
@@ -233,6 +240,13 @@ function walkChildren(
     }
   };
 
+  if (context.domDepth >= MAX_DOM_DEPTH) {
+    context.tooDeep += parent.childElementCount;
+    return nodes;
+  }
+
+  context.domDepth += 1;
+
   for (const child of listChildren(parent)) {
     if (context.timedOut) {
       context.skipped += 1;
@@ -262,6 +276,7 @@ function walkChildren(
   }
 
   flushText();
+  context.domDepth -= 1;
   return nodes;
 }
 

@@ -201,7 +201,7 @@ describe("captureA11ySnapshot", () => {
 
     expect(snapshot?.truncated).toBe(true);
     expect(snapshot?.omittedNodes).toBeGreaterThan(0);
-    expect(snapshot?.tree).toMatch(/# cut: \d+ more nodes \(time budget\)$/);
+    expect(snapshot?.tree).toMatch(/# cut: \d+ more nodes \(time budget, elements not examined\)$/);
   });
 
   it("bounds a huge page by the node budget", () => {
@@ -218,6 +218,23 @@ describe("captureA11ySnapshot", () => {
     expect(snapshot?.nodeCount).toBe(800);
     expect(snapshot?.omittedNodes).toBe(5_200);
     expect(snapshot?.tree.length).toBeLessThanOrEqual(24_064);
+  });
+
+  it("reports markup nested past the depth bound as cut instead of overflowing the stack", () => {
+    let html = "<button>Deep</button>";
+
+    // jsdom itself overflows its stack on much deeper markup; real Chrome is checked deeper.
+    for (let index = 0; index < 1_000; index += 1) {
+      html = `<div>${html}</div>`;
+    }
+
+    document.body.innerHTML = `<h1>Top</h1>${html}`;
+    const snapshot = captureA11ySnapshot({ policy: policy(), trigger: TRIGGER, maxWalkMs: 60_000 });
+
+    expect(snapshot?.tree).toMatch(
+      /^- heading "Top" \[level=1\]\n# cut: 1 more nodes \(depth budget\)$/
+    );
+    expect(snapshot?.truncated).toBe(true);
   });
 
   it("inlines same-origin frames under their iframe node", () => {
