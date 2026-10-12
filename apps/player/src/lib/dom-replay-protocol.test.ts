@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   DOM_REPLAY_MAX_REPORTED_URLS,
   parseFrameToPlayerMessage,
-  parsePlayerToFrameMessage
+  parsePlayerToFrameMessage,
+  replayTargetOrigin
 } from "./dom-replay-protocol.js";
 
 describe("parsePlayerToFrameMessage", () => {
@@ -77,5 +78,12 @@ describe("parseFrameToPlayerMessage", () => {
     expect(parseFrameToPlayerMessage({ type: "wb-replay/highlight", nodeId: "4" })).toBeNull();
     expect(parseFrameToPlayerMessage({ type: "wb-replay/loaded" })).toBeNull();
     expect(parseFrameToPlayerMessage("wb-replay/ready")).toBeNull();
+  });
+});
+
+describe("replayTargetOrigin", () => {
+  it("targets this origin, or any when the origin is opaque", () => {
+    expect(replayTargetOrigin("http://127.0.0.1:4177")).toBe("http://127.0.0.1:4177");
+    expect(replayTargetOrigin("null")).toBe("*");
   });
 });

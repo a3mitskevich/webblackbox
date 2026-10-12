@@ -4,10 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="referrer" content="no-referrer" />
     <!--
-      DOM replay frame (spike, task 56). Loaded by the Player in <iframe sandbox="allow-scripts">
-      (opaque origin). Its own policy: scripts only from this page's bundle; inline styles and
-      blob: stylesheets for the rebuilt page; images, fonts and media only from blob:/data: (the
-      archive), never from the recorded site; no fetch/XHR/WebSocket, no frames from elsewhere.
+      DOM replay frame (spike, task 56). Loaded by the Player in
+      <iframe sandbox="allow-scripts allow-same-origin">. Its own policy, which rrweb's nested
+      rebuild iframe inherits: scripts only from this page's bundle (no inline scripts or event
+      handlers); inline styles and blob: stylesheets for the rebuilt page; images, fonts and media
+      only from blob:/data: (the archive), never from the recorded site; no fetch/XHR/WebSocket.
     -->
     <meta
       http-equiv="Content-Security-Policy"

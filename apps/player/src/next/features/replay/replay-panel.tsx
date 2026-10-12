@@ -6,6 +6,7 @@ import { formatOffset } from "../../../core/format.js";
 import {
   DOM_REPLAY_FRAME_PATH,
   parseFrameToPlayerMessage,
+  replayTargetOrigin,
   type DomReplayResource,
   type FrameToPlayerMessage,
   type PlayerToFrameMessage
@@ -97,16 +98,22 @@ function ReplayView({
       : state.playheadMono
   );
 
-  // The frame has an opaque origin: messages can only target "*", and replies are recognized
-  // by their source window, then validated.
+  // Replies count only from the frame's window on this origin, and are validated.
   const post = useCallback((message: PlayerToFrameMessage) => {
-    frameRef.current?.contentWindow?.postMessage(message, "*");
+    frameRef.current?.contentWindow?.postMessage(
+      message,
+      replayTargetOrigin(window.location.origin)
+    );
   }, []);
 
   useEffect(() => {
     let disposed = false;
     const onMessage = (event: MessageEvent) => {
-      if (event.source === null || event.source !== frameRef.current?.contentWindow) {
+      if (
+        event.source === null ||
+        event.source !== frameRef.current?.contentWindow ||
+        event.origin !== window.location.origin
+      ) {
         return;
       }
 
@@ -174,9 +181,11 @@ function ReplayView({
           ref={frameRef}
           className="rp-frame"
           src={DOM_REPLAY_FRAME_PATH}
-          // Scripts for the replay page itself only; no allow-same-origin: the frame cannot
-          // reach the Player's storage, keys or DOM, and the rebuilt page runs no scripts.
-          sandbox="allow-scripts"
+          // Same origin on purpose: rrweb rebuilds the page in a nested `allow-same-origin`
+          // iframe, which an opaque-origin parent could not reach. The recorded page still runs
+          // no scripts (that nested sandbox has no allow-scripts, and the frame's CSP allows
+          // only its own script file); the sandbox adds no popups, forms or top navigation.
+          sandbox="allow-scripts allow-same-origin"
           referrerPolicy="no-referrer"
           title={t("frameTitle")}
           data-testid="replay-frame"

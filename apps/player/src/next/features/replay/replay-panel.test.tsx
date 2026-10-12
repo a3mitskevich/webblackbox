@@ -84,7 +84,13 @@ async function renderReplay(bytes: Uint8Array) {
 }
 
 function fromFrame(frame: HTMLIFrameElement, data: unknown): void {
-  window.dispatchEvent(new MessageEvent("message", { data, source: frame.contentWindow }));
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      data,
+      source: frame.contentWindow,
+      origin: window.location.origin
+    })
+  );
 }
 
 afterEach(() => {
@@ -105,7 +111,7 @@ describe("DOM replay panel", () => {
     const { store } = await renderReplay(bytes);
     const frame = (await screen.findByTestId("replay-frame")) as HTMLIFrameElement;
 
-    expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+    expect(frame).toHaveAttribute("sandbox", "allow-scripts allow-same-origin");
     expect(frame).toHaveAttribute("src", "./replay/index.html");
 
     const post = vi.spyOn(frame.contentWindow!, "postMessage");
@@ -115,14 +121,22 @@ describe("DOM replay panel", () => {
     });
     const load = post.mock.calls.find(([message]) => message.type === "wb-replay/load");
     expect(load?.[0].events).toHaveLength(3);
-    expect(load?.[1]).toBe("*");
+    expect(load?.[1]).toBe(window.location.origin);
 
-    // Replies from any other window are ignored.
+    // Replies from any other window or origin are ignored.
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: { type: "wb-replay/error", message: "spoofed" },
-          source: window
+          source: window,
+          origin: window.location.origin
+        })
+      );
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: "wb-replay/error", message: "spoofed" },
+          source: frame.contentWindow,
+          origin: "https://evil.test"
         })
       );
       fromFrame(frame, {

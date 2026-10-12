@@ -1,7 +1,12 @@
-// Messages between the Player and the sandboxed DOM replay frame (`public/replay/index.html`,
-// spike task 56). The frame runs in an opaque origin, so both sides check the message source
-// (the frame's window / `window.parent`) and validate every message: the frame renders untrusted
-// archive content and must not be able to drive the Player beyond these replies.
+// Messages between the Player and the DOM replay frame (`public/replay/index.html`, spike task
+// 56). Both sides check the message source (the frame's window / `window.parent`) and origin, and
+// validate every message: the frame renders untrusted archive content and must not be able to
+// drive the Player beyond these replies.
+
+/** Where messages to the other side may go: this origin, or anywhere when it is opaque (file:). */
+export function replayTargetOrigin(origin: string): string {
+  return origin === "null" ? "*" : origin;
+}
 import type { RrwebRecordedEvent } from "@webblackbox/protocol";
 
 export const DOM_REPLAY_FRAME_PATH = "./replay/index.html";

@@ -1,9 +1,11 @@
-// The sandboxed DOM replay page (spike, task 56). It runs in an iframe with
-// `sandbox="allow-scripts"` (an opaque origin: no access to the Player's storage, keys or DOM)
-// under its own CSP (`public/replay/index.html`): inline styles are allowed because the rebuilt
-// page needs them, scripts come only from this bundle, and resources load only from blob:/data:.
-// rrweb rebuilds the recorded page in a nested `sandbox="allow-same-origin"` iframe, so the
-// recorded page never runs scripts either.
+// The DOM replay page (spike, task 56). The Player embeds it in
+// `<iframe sandbox="allow-scripts allow-same-origin">` under its own CSP
+// (`public/replay/index.html`): inline styles are allowed because the rebuilt page needs them,
+// scripts come only from this bundle, and resources load only from blob:/data:. rrweb rebuilds
+// the recorded page in a nested `sandbox="allow-same-origin"` iframe (no scripts) that inherits
+// this CSP, so the recorded page never runs scripts nor reaches the network. The frame must be
+// same-origin: under an opaque-origin parent the nested iframe gets its own opaque origin (the
+// sandbox flags are inherited) and rrweb cannot reach its document.
 import "@rrweb/replay/dist/style.css";
 import "./frame.css";
 
@@ -12,6 +14,7 @@ import { Replayer } from "@rrweb/replay";
 import {
   DOM_REPLAY_MAX_REPORTED_URLS,
   parsePlayerToFrameMessage,
+  replayTargetOrigin,
   type DomReplayResource,
   type FrameToPlayerMessage,
   type PlayerToFrameMessage
@@ -28,8 +31,7 @@ let objectUrls: string[] = [];
 let recordedSize = { width: 0, height: 0 };
 
 function send(message: FrameToPlayerMessage): void {
-  // The parent's origin is not readable from an opaque origin; replies carry no archive data.
-  window.parent.postMessage(message, "*");
+  window.parent.postMessage(message, replayTargetOrigin(window.location.origin));
 }
 
 function toErrorMessage(error: unknown): string {
@@ -116,7 +118,9 @@ function load(message: LoadMessage): void {
 
 function showHighlight(nodeId: number): void {
   const node = replayer?.getMirror().getNode(nodeId) ?? null;
-  const element = node instanceof Element ? node : (node?.parentElement ?? null);
+  // The node lives in the rebuilt page's realm: `instanceof Element` of this window is false.
+  const element =
+    node?.nodeType === Node.ELEMENT_NODE ? (node as Element) : (node?.parentElement ?? null);
 
   if (!highlightBox || !element) {
     if (highlightBox) {
@@ -169,7 +173,7 @@ function seek(message: SeekMessage): void {
 }
 
 window.addEventListener("message", (event) => {
-  if (event.source !== window.parent) {
+  if (event.source !== window.parent || event.origin !== window.location.origin) {
     return;
   }
 

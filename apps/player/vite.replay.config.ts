@@ -1,12 +1,13 @@
 import { defineConfig } from "vite";
 
 /**
- * The sandboxed DOM replay frame (spike, task 56), built after the Player into build/replay/
- * next to `public/replay/index.html`. A classic IIFE script on purpose: the frame has an opaque
- * origin (`sandbox="allow-scripts"`), and a module script would be a CORS request with
- * `Origin: null` that the static Player host does not allow.
+ * The DOM replay frame (spike, task 56), built after the Player into build/replay/ next to
+ * `public/replay/index.html`: one self-contained classic script (rrweb's replayer and the frame
+ * glue) and one stylesheet, so the frame's CSP can stay `script-src 'self'` with no module graph.
  */
 export default defineConfig({
+  // The Player build already copied `public/` (with replay/index.html) into build/.
+  publicDir: false,
   resolve: {
     tsconfigPaths: true
   },
