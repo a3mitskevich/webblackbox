@@ -51,6 +51,10 @@ createExtensionI18n({
   pageTitleKey: "pageTitleOffscreen"
 });
 const pipelines = new Map<string, FlightRecorderPipeline>();
+/** Pipeline requests in progress: a final flush waits for what they write. */
+const pendingPipelineRequests = new Set<Promise<void>>();
+/** Final flushes run in turn, so each settles only once everything before it is written. */
+let pipelinesFlushed: Promise<void> = Promise.resolve();
 // Every pipeline writes through this AES-GCM storage once the service worker sends the key.
 const atRestStorage = createAtRestStorageProvider({
   onPurged: (result) => {
@@ -180,15 +184,24 @@ function isRequestOfKind(message: unknown, kind: string): boolean {
   );
 }
 
-/** Writes every pipeline's unflushed tail to the encrypted store; failures are only logged. */
-async function flushAllPipelines(): Promise<void> {
-  await Promise.all(
-    [...pipelines.values()].map((pipeline) =>
-      pipeline.flush().catch((error: unknown) => {
-        console.warn("[WebBlackbox] failed to flush a recording pipeline", error);
-      })
-    )
-  );
+/**
+ * Writes every pipeline's unflushed tail to the encrypted store once the requests in progress
+ * are done; failures are only logged. A flush that finds the tail already taken by an earlier
+ * one still waits for that one's write, so the worker never closes the document mid-write.
+ */
+function flushAllPipelines(): Promise<void> {
+  pipelinesFlushed = pipelinesFlushed.then(async () => {
+    await Promise.allSettled([...pendingPipelineRequests]);
+    await Promise.all(
+      [...pipelines.values()].map((pipeline) =>
+        pipeline.flush().catch((error: unknown) => {
+          console.warn("[WebBlackbox] failed to flush a recording pipeline", error);
+        })
+      )
+    );
+  });
+
+  return pipelinesFlushed;
 }
 
 function handleServiceWorkerMessage(raw: unknown): void {
@@ -221,9 +234,13 @@ function handleServiceWorkerMessage(raw: unknown): void {
         console.warn("[WebBlackbox] failed to install the at-rest encryption key", error);
       });
       return;
-    case "sw.pipeline-request":
-      void handlePipelineRequest(message);
+    case "sw.pipeline-request": {
+      const request = handlePipelineRequest(message);
+
+      pendingPipelineRequests.add(request);
+      void request.finally(() => pendingPipelineRequests.delete(request));
       return;
+    }
   }
 }
 

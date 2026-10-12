@@ -16,7 +16,7 @@ import {
   storedRecords,
   storedSnapshots
 } from "./stopped-session-lifecycle-harness.js";
-import { retentionAlarmName } from "./stopped-session-store.js";
+import { retentionAlarmName, STOPPED_SESSION_SNAPSHOTS_KEY } from "./stopped-session-store.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -125,6 +125,61 @@ describe("interrupted recordings", () => {
     expect(harness.lifecycle.toStoppedSessionSnapshot(runtime as SessionRuntime)).toMatchObject({
       interruption
     });
+  });
+
+  it("keeps the data of an interrupted recording it failed to keep, for the next worker", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(90_000);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const harness = createHarness({ indexedDB: {} as IDBFactory });
+    await harness.sessionArea.set({
+      [LIVE_SESSION_SNAPSHOTS_KEY]: [
+        liveSnapshot("S-failed", 70_000),
+        liveSnapshot("S-kept", 80_000)
+      ]
+    });
+    const set = vi.mocked(harness.sessionArea.set);
+    const write = set.getMockImplementation();
+    let failures = 1;
+    set.mockImplementation(async (items: Record<string, unknown>) => {
+      if (STOPPED_SESSION_SNAPSHOTS_KEY in items && failures > 0) {
+        failures -= 1;
+        throw new Error("quota");
+      }
+
+      await write?.(items);
+    });
+
+    await harness.lifecycle.restoreStoppedSessions();
+
+    expect(harness.registry.getBySid("S-failed")).toBeUndefined();
+    expect(harness.registry.getBySid("S-kept")?.interruption).toMatchObject({
+      reason: "service-worker-restart"
+    });
+    expect(storedLiveSnapshots(harness.sessionArea)).toEqual([
+      expect.objectContaining({ sid: "S-failed" })
+    ]);
+
+    const stored = (["S-failed", "S-kept", "S-orphan"] as const).map((sid): SessionMetadata => ({
+      sid,
+      tabId: 7,
+      startedAt: 1_000,
+      mode: "lite",
+      url: "u",
+      tags: []
+    }));
+    harness.sweepStoredSessions.mockImplementation(
+      async (shouldDelete: (session: SessionMetadata) => boolean) => ({
+        deleted: stored.filter(shouldDelete).map((session) => session.sid),
+        failed: []
+      })
+    );
+    await harness.lifecycle.sweepStalePipelineSessions();
+
+    const sweep = harness.sweepStoredSessions.mock.calls[0]?.[0] as (
+      session: SessionMetadata
+    ) => boolean;
+    expect(stored.filter(sweep).map((session) => session.sid)).toEqual(["S-orphan"]);
   });
 
   it("drops the checkpoint of a recording that stopped before it was forgotten", async () => {

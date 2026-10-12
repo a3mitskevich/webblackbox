@@ -481,6 +481,36 @@ describe("offscreen pipelines outlive their worker", () => {
     });
   });
 
+  it("answers a restarted worker's flush request only after the disconnect flush is written", async () => {
+    await startSession();
+    let resolveWrite: () => void = () => undefined;
+    // The disconnect flush takes the tail and writes it; a later flush finds nothing left.
+    pipelineMock.instances[0]?.flush
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveWrite = resolve;
+          })
+      )
+      .mockImplementation(async () => undefined);
+    const sendResponse = vi.fn();
+
+    port.disconnect();
+    runtimeMessageHandler?.({ kind: "sw.offscreen-flush" }, {}, sendResponse);
+    await vi.waitFor(() => {
+      expect(pipelineMock.instances[0]?.flush).toHaveBeenCalledTimes(1);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sendResponse).not.toHaveBeenCalled();
+
+    resolveWrite();
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+    });
+    expect(pipelineMock.instances[0]?.flush).toHaveBeenCalledTimes(2);
+  });
+
   it("answers a restarted worker's flush request once the pipelines are written", async () => {
     await startSession();
     let resolveFlush: () => void = () => undefined;

@@ -26,6 +26,8 @@ const playerSdkEntry = resolve(workspaceRoot, "packages/player-sdk/dist/index.js
 const exportPassphrase = "webblackbox-e2e-passphrase";
 // Logged while the interrupted session records; the default policy keeps console metadata only.
 const interruptedMarker = "sw-restart-e2e-interrupted";
+/** Shortest wait between the marker and the worker's stop (page clock ~ test clock). */
+const MARKER_DELIVERY_FLOOR_MS = 4_000;
 
 const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? resolve(appRoot, "build");
 const remotePort = Number(process.env.WB_E2E_REMOTE_PORT ?? "9233");
@@ -134,17 +136,21 @@ async function main() {
   );
 
   const interrupted = await startRecording(popupClient, pageClient, pageUrl);
-  await pageClient.evaluate(
-    `(() => { console.info(${JSON.stringify(interruptedMarker)}); return true; })()`
+  const countedBeforeMarker = await readEventCount(popupClient, interrupted.sid);
+  // Page clock: console text is stored redacted, so the archive is checked by event time.
+  const markerLoggedAt = await pageClient.evaluate(
+    `(() => { const at = Date.now(); console.info(${JSON.stringify(interruptedMarker)}); return at; })()`
   );
-  // Long enough for the batch to reach the offscreen pipeline and the Start checkpoint to land.
   await waitFor(
     async () =>
       (await readLiveCheckpointSids(popupClient)).includes(interrupted.sid) ? true : null,
     10_000,
     "The running recording was not checkpointed"
   );
-  await sleep(1_500);
+  // The worker counted the marker and its pipeline batch (120 ms) reached the offscreen
+  // document. Under load the lite page path alone can take over two seconds, hence the floor.
+  await waitForSettledEventCount(popupClient, interrupted.sid, countedBeforeMarker);
+  await sleep(Math.max(500, markerLoggedAt + MARKER_DELIVERY_FLOOR_MS - Date.now()));
   console.log("Interrupted session (recording at SW stop):", JSON.stringify(interrupted));
 
   await terminateServiceWorker(browserClient, swTarget.id);
@@ -184,7 +190,7 @@ async function main() {
     { storedBeforeExport, interrupted }
   );
 
-  await checkInterruptedArchive(popupClient, interrupted.sid);
+  await checkInterruptedArchive(popupClient, interrupted.sid, markerLoggedAt);
 
   const second = await recordAndStop(popupClient, pageClient, pageUrl);
   console.log("Second session (after SW restart):", JSON.stringify(second));
@@ -287,6 +293,29 @@ async function requestSessionList(popupClient) {
   `);
 }
 
+async function readEventCount(popupClient, sid) {
+  const sessions = await requestSessionList(popupClient);
+  const count = sessions.find((session) => session?.sid === sid)?.eventCount;
+  return typeof count === "number" ? count : 0;
+}
+
+/** Waits until the worker counted new events of `sid` and the count stopped moving. */
+async function waitForSettledEventCount(popupClient, sid, countedBefore) {
+  let previous = -1;
+
+  await waitFor(
+    async () => {
+      const count = await readEventCount(popupClient, sid);
+      const settled = count > countedBefore && count === previous;
+      previous = count;
+      return settled ? true : null;
+    },
+    15_000,
+    "The worker did not count the events logged before the stop",
+    500
+  );
+}
+
 async function readLiveCheckpointSids(popupClient) {
   return popupClient.evaluate(`
     (async () => {
@@ -298,7 +327,7 @@ async function readLiveCheckpointSids(popupClient) {
 }
 
 /** Exports the interrupted recording and opens the archive with the built player-sdk. */
-async function checkInterruptedArchive(popupClient, sid) {
+async function checkInterruptedArchive(popupClient, sid, markerLoggedAt) {
   const exportStartedAt = Date.now();
   const exported = await exportSession(popupClient, sid);
   assert(exported?.ok === true, "Export of the interrupted session failed", exported);
@@ -345,7 +374,10 @@ async function checkInterruptedArchive(popupClient, sid) {
   });
   const report = player.getCaptureCompleteness().export;
   const types = new Set(player.events.map((event) => event.type));
-  const markerFound = types.has("meta.config") && types.has("console.entry");
+  // Logged just before the worker died: archived only if the pipeline tail was saved.
+  const markerFound =
+    types.has("meta.config") &&
+    player.events.some((event) => event.type === "console.entry" && event.t >= markerLoggedAt);
 
   assert(
     report.interruption?.reason === "service-worker-restart",
@@ -360,7 +392,13 @@ async function checkInterruptedArchive(popupClient, sid) {
   assert(
     markerFound,
     "The interrupted session's archive lacks the events recorded before the stop",
-    { types: [...types] }
+    {
+      types: [...types],
+      markerLoggedAt,
+      consoleTimes: player.events
+        .filter((event) => event.type === "console.entry")
+        .map((event) => event.t)
+    }
   );
   console.log(
     "Interrupted archive:",

@@ -182,8 +182,14 @@ export function createStoppedSessionLifecycle(
       }
 
       if (!stoppedSids.has(snapshot.sid)) {
-        await keepInterruptedSession(snapshot, detectedAt);
-        kept += 1;
+        try {
+          await keepInterruptedSession(snapshot, detectedAt);
+          kept += 1;
+        } catch (error) {
+          // Its checkpoint stays: the sweep keeps the data, and the next worker retries.
+          console.warn("[WebBlackbox] failed to keep an interrupted recording", error);
+          continue;
+        }
       }
 
       // Kept now, or it stopped before its checkpoint was dropped.
@@ -518,10 +524,15 @@ export function createStoppedSessionLifecycle(
     const records = await updateStoppedSessionRecords((current) => current);
     const now = Date.now();
     const recordsBySid = new Map(records.map((record) => [record.sid, record]));
+    // Running here, or left running by an earlier worker and not kept yet: not orphans.
+    const liveSids = new Set([
+      ...deps.sessionRegistry.bySid.keys(),
+      ...(await liveStore.list()).map((snapshot) => snapshot.sid)
+    ]);
     const result = await deps.sweepStoredSessions((session) =>
       shouldSweepStoredSession({
         session,
-        liveSids: new Set(deps.sessionRegistry.bySid.keys()),
+        liveSids,
         records: recordsBySid,
         now,
         bootedAt: deps.bootedAt
