@@ -293,6 +293,7 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
           trackSessionCounters(runtime, event);
           evaluatePerformanceBudget(runtime, event);
           deps.pipelineBuffer.enqueuePipelineEvent(runtime, event);
+          deps.stoppedSessionLifecycle.checkpointLiveSession(runtime);
         },
         onFreeze: (reason) => {
           deps.handleFreezeNotice(runtime, reason);
@@ -309,6 +310,8 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     );
 
     sessionRegistry.register(runtime);
+    // Kept as interrupted, not swept as an orphan, if this worker dies while it records.
+    await deps.stoppedSessionLifecycle.rememberLiveSession(runtime);
     deps.recordedTabWatch.sync(true);
 
     if (mode === "lite") {
@@ -427,6 +430,7 @@ export function createSessionCommands(deps: SessionCommandsDeps): SessionCommand
     });
     // Written now and again after the final flush: the worker may die while the page drains.
     await deps.stoppedSessionLifecycle.rememberStoppedSession(runtime);
+    await deps.stoppedSessionLifecycle.forgetLiveSession(runtime.sid);
 
     await refreshActionBadge();
 

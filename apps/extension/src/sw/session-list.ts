@@ -27,7 +27,9 @@ export function toSessionMetadata(runtime: SessionRuntime): SessionMetadata {
     mode: runtime.mode,
     url: sanitizeUrlForPrivacy(runtime.url),
     title: runtime.title,
-    tags: [...runtime.tags]
+    tags: [...runtime.tags],
+    // The archive of an interrupted recording says so (manifest completeness).
+    ...(runtime.interruption ? { interruption: { ...runtime.interruption } } : {})
   };
 }
 
@@ -54,6 +56,7 @@ function toSessionListItem(
     tags: [...runtime.tags],
     note: runtime.note,
     profileName: runtime.profile.selection.profile.name,
+    ...(runtime.interruption ? { interruption: { ...runtime.interruption } } : {}),
     ...(runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
       ? { profileCancel: toProfileCancelNotice(runtime.profile.cancellation) }
       : {})

@@ -324,6 +324,14 @@ export function createLastSessionPanel(options: {
 
   return el("section", { className: "wb-panel wb-popup__last" }, [
     panelHead(t("popupLastSessionTitle"), sessionMeta(session, options.now, format)),
+    ...(session.interruption
+      ? [
+          el("p", { className: "wb-popup__hint", dataset: { interrupted: "" } }, [
+            el("span", { className: "wb-badge wb-badge--alert", text: t("popupInterruptedBadge") }),
+            ` ${t("popupInterruptedHint")}`
+          ])
+        ]
+      : []),
     createStats(session, format, { compact: true }),
     el("div", { className: "wb-popup__export-row" }, [
       el("span", { className: "wb-popup__hint", text: options.limitsText }),

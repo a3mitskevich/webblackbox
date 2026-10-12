@@ -255,13 +255,25 @@ describe("options page", () => {
 
     // The recorder fields live in the Default profile: the first save creates the store.
     expect(storedDefaultProfile(storage.data)?.sampling).toEqual({ domFlushMs: 150 });
-    expect(JSON.parse(localStorage.getItem(ARCHIVE_KEY) ?? "null")).toEqual(
-      expect.objectContaining({ maxArchiveMb: 256 })
-    );
+    // The window stays off (0): the export keeps the whole session up to the size limit.
+    expect(JSON.parse(localStorage.getItem(ARCHIVE_KEY) ?? "null")).toEqual({
+      version: 2,
+      maxArchiveMb: 256,
+      recentMinutes: 0
+    });
     expect(storage.data[LEGACY_OPTIONS_KEY]).toBeUndefined();
     expect(storage.data[BUDGET_KEY]).toBeUndefined();
     expect(saveState()).toMatch(/^Saved at /);
     expect(saveButton().disabled).toBe(true);
+
+    // 0 turns the limit off again.
+    typeNumber("archiveMaxSizeMb", "0");
+    saveButton().click();
+    await flush();
+
+    expect(JSON.parse(localStorage.getItem(ARCHIVE_KEY) ?? "null")).toMatchObject({
+      maxArchiveMb: 0
+    });
   });
 
   it("offers page injection modes with their trade-offs and saves the choice on its own", async () => {

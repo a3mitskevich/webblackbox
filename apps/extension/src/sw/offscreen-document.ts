@@ -1,4 +1,8 @@
 import type { ChromeApi } from "../shared/chrome-api.js";
+import { OFFSCREEN_FLUSH_REQUEST_KIND } from "../shared/offscreen-messages.js";
+
+/** How long an orphaned document gets to persist its pipelines before it is closed. */
+export const ORPHANED_FLUSH_TIMEOUT_MS = 3_000;
 
 export type OffscreenDocumentDeps = {
   offscreen: ChromeApi["offscreen"] | undefined;
@@ -6,6 +10,8 @@ export type OffscreenDocumentDeps = {
   offscreenPath: string;
   /** Known sessions; an offscreen document is only orphaned when the worker tracks none. */
   sidCount: () => number;
+  /** Bound on the orphaned document's final flush; defaults to {@link ORPHANED_FLUSH_TIMEOUT_MS}. */
+  orphanedFlushTimeoutMs?: number;
 };
 
 export type OffscreenDocumentController = {
@@ -56,16 +62,43 @@ export function createOffscreenDocumentController(
   /**
    * An offscreen document that outlives a service worker restart keeps pipelines and
    * capture streams the new worker does not track, and its port died with the old worker.
-   * Stopped recordings were flushed to the encrypted store when they stopped and are
-   * re-attached on demand, so close it and let the next request create a fresh one.
+   * Stopped recordings were flushed to the encrypted store when they stopped, and recordings
+   * that were still running are kept as interrupted ones: the document is first asked to write
+   * their last events (bounded), then closed, and the next request creates a fresh one.
    */
   async function closeOrphanedOffscreenDocument(): Promise<void> {
     if (deps.sidCount() > 0 || !(await hasOffscreenDocument())) {
       return;
     }
 
+    await flushOrphanedDocument();
     console.info("[WebBlackbox] closing offscreen document orphaned by a service worker restart");
     await deps.offscreen?.closeDocument();
+  }
+
+  async function flushOrphanedDocument(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(
+        () => resolve("timeout"),
+        deps.orphanedFlushTimeoutMs ?? ORPHANED_FLUSH_TIMEOUT_MS
+      );
+    });
+
+    try {
+      const outcome = await Promise.race([
+        deps.runtime?.sendMessage?.({ kind: OFFSCREEN_FLUSH_REQUEST_KIND }),
+        timeout
+      ]);
+
+      if (outcome === "timeout") {
+        console.warn("[WebBlackbox] orphaned offscreen document did not confirm its final flush");
+      }
+    } catch (error) {
+      console.warn("[WebBlackbox] orphaned offscreen document could not flush", error);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async function createOffscreenDocumentIfMissing(): Promise<void> {

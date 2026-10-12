@@ -184,7 +184,7 @@ Build entries:
 - `pnpm e2e:completeness:full` (and `:reload`) records a realistic fixture site with Full capture and checks that the archive holds every body the policy asked for, or a `network.body.skipped` event saying why it is missing. `:heavy` adds a burst of JSON reports sent with about 220 MB of binary media, past Chrome's default 200 MB body buffer, and still expects no `not-retained` body.
 - `pnpm e2e:pointer` checks pointer capture (clicks with targets and geometry, right/middle clicks, long press, drag, wheel, hover, mousemove samples) in both engines.
 - `pnpm e2e:tabs-context` checks that other tabs of the recorded site reach the archive and tabs of other sites never do.
-- `pnpm e2e:sw-restart` terminates the service worker mid-run and checks that the next session starts, exports, and that orphaned IndexedDB sessions are swept.
+- `pnpm e2e:sw-restart` terminates the service worker mid-run — while a session records — and checks that the recording it left running is listed as interrupted and exports an archive player-sdk opens with its events and its interruption, that the next session starts and exports, and that orphaned IndexedDB sessions are swept.
 - `pnpm e2e:ui` compares screenshots of the popup, options and sessions pages against `e2e-baselines/ui/` (`pnpm e2e:ui:update` refreshes them).
 - `pnpm e2e:injection` checks over CDP which frames run `content.js` in both injection modes: before Start, after Start, in an iframe added later, after a reload and a navigation, in a tab that is not recorded and after Stop. `pnpm e2e:injection:idle` measures the idle cost of both modes with many tabs (`WB_E2E_INJECTION_BENCH_TABS`, default 50).
 - `pnpm e2e:page-globals` checks in Lite and Full that recording adds no page (MAIN world) globals and replaces none: it compares every own property of `window` and its descriptor before Start with after Start, after captured actions and after Stop. Only the hooks' install flag and nonce setter are allowed (`ALLOWED_PAGE_GLOBALS`).
@@ -225,7 +225,7 @@ Build entries:
 ### Export
 
 1. User clicks **Export** in the popup or on the Sessions page and enters a passphrase (at least 8 characters)
-2. The export policy from Options → Export & encryption is applied (defaults: `maxArchiveBytes=100MB`, `recentWindowMs=20 minutes`); in the Full engine, screenshots and tab video are included when the recording captured them
+2. The export policy from Options → Export & encryption is applied (default: the whole session — size limit and recent window are 0, off); in the Full engine, screenshots and tab video are included when the recording captured them. Whatever a limit leaves out is recorded in the archive, and the Player's "About this recording" shows it
 3. Service worker signals the pipeline to export with policy and the (required) passphrase
 4. Pipeline finalizes indexes and generates the encrypted archive (format 2: event chunks, indexes, blobs, `privacy/manifest.json` and the full `meta/manifest.json` are encrypted; only the `manifest.json` envelope with the encryption parameters and `integrity/hashes.json` stay plaintext)
 5. Service worker downloads the `.webblackbox` file via `chrome.downloads`; by default (per profile) the local recording is then deleted

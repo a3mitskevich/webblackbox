@@ -7,6 +7,7 @@ import {
   type ContentStatus
 } from "../../core/archive-contents.js";
 import { formatRecordedAt } from "../../core/format.js";
+import { formatExportNotices, formatExportSummary } from "../../lib/export-completeness-view.js";
 import type { NextMessageKey } from "../../lib/i18n.js";
 import { useController, useI18n, usePlayerState } from "../context.js";
 import type { LoadedArchive } from "../state.js";
@@ -84,6 +85,7 @@ function ContentsList({ contents }: { contents: ArchiveContents }) {
   const locale = usePlayerState((state) => state.locale);
   const n = (value: number): string => i18n.formatNumber(value);
   const { media, network, realtime, console, storage, dom, perf } = contents;
+  const exported = contents.export;
   const bodies = network.bodies;
   const reasons = Object.entries(bodies.skipReasons)
     .flatMap(([reason, count]) => {
@@ -177,6 +179,9 @@ function ContentsList({ contents }: { contents: ArchiveContents }) {
               gap: i18n.formatSeconds(dom.longestGapMs)
             })}
       </Fact>
+      <Fact id="export" title={i18n.tn("contentsExport")} status={exported.status}>
+        {formatExportSummary(exported, i18n)}
+      </Fact>
       <Fact id="perf" title={i18n.tn("contentsPerf")} status={perf.status}>
         {perf.status === "none"
           ? i18n.tn("perfNone")
@@ -237,6 +242,10 @@ export default function ArchiveInfoDialog() {
     () => (archive ? profileBannerLines(archive, i18n) : []),
     [archive, i18n]
   );
+  const exportNotices = useMemo(
+    () => (contents ? formatExportNotices(contents.export, i18n) : []),
+    [contents, i18n]
+  );
 
   return (
     <ModalDialog
@@ -254,6 +263,12 @@ export default function ArchiveInfoDialog() {
               {i18n.tn("noPlaybackEvents")}
             </p>
           ) : null}
+          {exportNotices.map((line) => (
+            <p key={line} className="notice warn" data-testid="export-notice-line">
+              <Icon name="flag" />
+              {line}
+            </p>
+          ))}
           {banners.map((line) => (
             <p key={line} className="notice warn" data-testid="profile-banner-line">
               <Icon name="flag" />

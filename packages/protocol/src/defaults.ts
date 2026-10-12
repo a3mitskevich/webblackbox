@@ -101,9 +101,10 @@ export const DEFAULT_RECORDER_CONFIG: RecorderConfig = {
   sitePolicies: []
 };
 
+/** The whole session: no recent window and no size limit unless the user sets one. */
 export const DEFAULT_EXPORT_POLICY: ExportPolicy = {
   includeScreenshots: false,
   includeScreenRecordings: false,
-  maxArchiveBytes: 100 * 1024 * 1024,
-  recentWindowMs: 20 * 60 * 1000
+  maxArchiveBytes: null,
+  recentWindowMs: null
 };

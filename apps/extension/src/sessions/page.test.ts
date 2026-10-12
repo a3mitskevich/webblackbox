@@ -9,8 +9,9 @@ type PortMessageHandler = (message: unknown) => void;
 const DEFAULT_EXPORT_POLICY = {
   includeScreenshots: false,
   includeScreenRecordings: false,
-  maxArchiveBytes: 100 * 1024 * 1024,
-  recentWindowMs: 20 * 60 * 1000
+  // The whole session: no size limit, no recent window.
+  maxArchiveBytes: null,
+  recentWindowMs: null
 };
 
 class FakePort {

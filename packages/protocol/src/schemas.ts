@@ -252,6 +252,14 @@ export const recorderConfigSchema = z
   })
   .strict();
 
+export const sessionInterruptionSchema = z
+  .object({
+    reason: z.literal("service-worker-restart"),
+    detectedAt: z.number().finite(),
+    lastSeenAt: z.number().finite().optional()
+  })
+  .strict();
+
 export const sessionMetadataSchema = z
   .object({
     sid: z.string().min(1),
@@ -262,7 +270,8 @@ export const sessionMetadataSchema = z
     mode: captureModeSchema,
     url: z.string().min(1),
     title: z.string().optional(),
-    tags: z.array(z.string())
+    tags: z.array(z.string()),
+    interruption: sessionInterruptionSchema.optional()
   })
   .strict();
 
@@ -309,6 +318,32 @@ export const exportStatsSchema = z
     blobCount: z.number().int().nonnegative(),
     // Derived from wall-clock event timestamps, which are fractional (timeOrigin + now()).
     durationMs: z.number().finite().nonnegative()
+  })
+  .strict();
+
+export const archiveTruncationSchema = z
+  .object({
+    reason: z.enum([
+      "recent-window",
+      "size-limit",
+      "screenshots-excluded",
+      "screen-recordings-excluded",
+      "chunk-unreadable"
+    ]),
+    events: z.number().int().nonnegative(),
+    chunks: z.number().int().nonnegative(),
+    fromT: z.number().finite().optional(),
+    toT: z.number().finite().optional(),
+    limit: z.number().int().positive().optional()
+  })
+  .strict();
+
+export const archiveCompletenessSchema = z
+  .object({
+    storedEvents: z.number().int().nonnegative(),
+    storedChunks: z.number().int().nonnegative(),
+    truncations: z.array(archiveTruncationSchema),
+    interruption: sessionInterruptionSchema.optional()
   })
   .strict();
 
@@ -443,6 +478,7 @@ export const exportManifestSchema = z
     chunkCodec: chunkCodecSchema,
     redactionProfile: redactionProfileSchema,
     stats: exportStatsSchema,
+    completeness: archiveCompletenessSchema.optional(),
     encryption: exportEncryptionSchema.optional()
   })
   .strict();

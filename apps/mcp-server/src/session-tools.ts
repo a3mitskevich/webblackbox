@@ -3,6 +3,7 @@ import { extname, resolve } from "node:path";
 import {
   readTabsContext,
   WebBlackboxPlayer,
+  type CaptureCompletenessReport,
   type TabsContextSummary
 } from "@webblackbox/player-sdk";
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
@@ -391,6 +392,11 @@ export async function summarizeSession(args: SessionSummaryArgs): Promise<{
     errorText: string | null;
   }>;
   parallelTabs: ParallelTabsSummary;
+  /**
+   * What the archive holds against what was asked for, including what the export left out
+   * (`completeness.export.truncations`) and whether the recording was interrupted.
+   */
+  completeness: CaptureCompletenessReport;
 }> {
   const archivePath = resolveArchivePath(args.path);
   const archiveStat = await stat(archivePath);
@@ -490,7 +496,8 @@ export async function summarizeSession(args: SessionSummaryArgs): Promise<{
     topErrorFingerprints,
     topSlowRequests,
     failedRequests,
-    parallelTabs: summarizeParallelTabs(events, topN)
+    parallelTabs: summarizeParallelTabs(events, topN),
+    completeness: player.getCaptureCompleteness()
   };
 }
 

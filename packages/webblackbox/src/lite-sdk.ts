@@ -650,12 +650,13 @@ function resolveExportPolicy(options: WebBlackboxLiteExportOptions): ExportPolic
   };
 }
 
+/** A positive limit clamped to `[min, max]`; anything else is `fallback` (`null`: no limit). */
 function normalizeExportBoundedInt(
   value: unknown,
-  fallback: number,
+  fallback: number | null,
   min: number,
   max: number
-): number {
+): number | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return fallback;
   }

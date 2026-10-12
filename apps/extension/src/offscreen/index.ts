@@ -8,6 +8,7 @@ import { createExtensionI18n } from "../shared/i18n.js";
 import { PORT_NAMES } from "../shared/messages.js";
 import {
   OFFSCREEN_CONNECT_REQUEST_KIND,
+  OFFSCREEN_FLUSH_REQUEST_KIND,
   parsePipelineRequest,
   parseSwToOffscreenMessage,
   PIPELINE_RESPONSE_KIND,
@@ -50,6 +51,19 @@ createExtensionI18n({
   pageTitleKey: "pageTitleOffscreen"
 });
 const pipelines = new Map<string, FlightRecorderPipeline>();
+/** Requests that write a pipeline's events or blobs; captures and exports are not waited for. */
+const PIPELINE_WRITE_OPS: ReadonlySet<OffscreenPipelineRequestMessage["op"]> = new Set([
+  "ingest",
+  "ingestBatch",
+  "flush",
+  "putBlob"
+]);
+/** Pipeline writes in progress: a final flush waits for them. */
+const pendingPipelineWrites = new Set<Promise<void>>();
+/** How long a final flush waits for writes in progress; under the worker's 3 s bound. */
+const PIPELINE_WRITES_WAIT_MS = 2_000;
+/** Final flushes run in turn, so each settles only once everything before it is written. */
+let pipelinesFlushed: Promise<void> = Promise.resolve();
 // Every pipeline writes through this AES-GCM storage once the service worker sends the key.
 const atRestStorage = createAtRestStorageProvider({
   onPurged: (result) => {
@@ -94,7 +108,16 @@ let reconnectAttempts = 0;
 console.info("[WebBlackbox] offscreen pipeline initialized");
 
 chromeApi?.runtime?.onMessage.addListener((message, sender, sendResponse) => {
-  if (!isOffscreenConnectRequest(message) || sender.tab) {
+  if (sender.tab) {
+    return;
+  }
+
+  if (isRequestOfKind(message, OFFSCREEN_FLUSH_REQUEST_KIND)) {
+    void flushAllPipelines().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
+  if (!isRequestOfKind(message, OFFSCREEN_CONNECT_REQUEST_KIND)) {
     return;
   }
 
@@ -126,6 +149,9 @@ function connectToServiceWorker(): void {
 
     port = null;
     stopServiceWorkerKeepalive();
+    // The worker may be gone for good: what the pipelines hold in memory is written now, so a
+    // recording it left running keeps its last events as an interrupted one.
+    void flushAllPipelines();
     scheduleReconnectWhileBusy();
   });
 
@@ -161,12 +187,46 @@ function clearReconnectTimer(): void {
   }
 }
 
-function isOffscreenConnectRequest(message: unknown): boolean {
+function isRequestOfKind(message: unknown, kind: string): boolean {
   return (
-    message !== null &&
-    typeof message === "object" &&
-    (message as { kind?: unknown }).kind === OFFSCREEN_CONNECT_REQUEST_KIND
+    message !== null && typeof message === "object" && (message as { kind?: unknown }).kind === kind
   );
+}
+
+/**
+ * Writes every pipeline's unflushed tail to the encrypted store once the requests in progress
+ * are done; failures are only logged. A flush that finds the tail already taken by an earlier
+ * one still waits for that one's write, so the worker never closes the document mid-write.
+ */
+function flushAllPipelines(): Promise<void> {
+  pipelinesFlushed = pipelinesFlushed
+    .then(async () => {
+      // Bounded: a write that never settles must not hold every later flush back.
+      await settledWithin(Promise.allSettled([...pendingPipelineWrites]), PIPELINE_WRITES_WAIT_MS);
+      await Promise.all(
+        [...pipelines.values()].map((pipeline) =>
+          Promise.resolve()
+            .then(() => pipeline.flush())
+            .catch((error: unknown) => {
+              console.warn("[WebBlackbox] failed to flush a recording pipeline", error);
+            })
+        )
+      );
+    })
+    .catch((error: unknown) => {
+      console.warn("[WebBlackbox] failed to flush the recording pipelines", error);
+    });
+
+  return pipelinesFlushed;
+}
+
+function settledWithin(work: Promise<unknown>, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+
+  return Promise.race([work.then(() => undefined), timeout]).finally(() => clearTimeout(timer));
 }
 
 function handleServiceWorkerMessage(raw: unknown): void {
@@ -199,9 +259,15 @@ function handleServiceWorkerMessage(raw: unknown): void {
         console.warn("[WebBlackbox] failed to install the at-rest encryption key", error);
       });
       return;
-    case "sw.pipeline-request":
-      void handlePipelineRequest(message);
+    case "sw.pipeline-request": {
+      const request = handlePipelineRequest(message);
+
+      if (PIPELINE_WRITE_OPS.has(message.op)) {
+        pendingPipelineWrites.add(request);
+        void request.finally(() => pendingPipelineWrites.delete(request));
+      }
       return;
+    }
   }
 }
 

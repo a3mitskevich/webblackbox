@@ -310,10 +310,10 @@ import {
 // - encryption: local at rest and archive "required", archive key envelope "passphrase"
 // - retention: localTtlMs 24 h
 //
-// DEFAULT_EXPORT_POLICY:
+// DEFAULT_EXPORT_POLICY (the whole session):
 // - includeScreenshots: false, includeScreenRecordings: false
-// - maxArchiveBytes: 100 * 1024 * 1024
-// - recentWindowMs: 20 * 60 * 1000
+// - maxArchiveBytes: null (no size limit)
+// - recentWindowMs: null (no recent window)
 ```
 
 `DEFAULT_RECORDER_CONFIG` is a shared baseline. Runtime products may apply product-specific
