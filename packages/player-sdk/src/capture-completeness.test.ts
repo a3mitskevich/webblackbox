@@ -13,7 +13,10 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-async function openArchive(inputs: EventInput[]): Promise<WebBlackboxPlayer> {
+async function openArchive(
+  inputs: EventInput[],
+  manifestPatch: Partial<ExportManifest> = {}
+): Promise<WebBlackboxPlayer> {
   const zip = new JSZip();
   const events: WebBlackboxEvent[] = inputs.map((input, index) => ({
     v: 1,
@@ -38,7 +41,8 @@ async function openArchive(inputs: EventInput[]): Promise<WebBlackboxPlayer> {
       blockedSelectors: [],
       hashSensitiveValues: true
     },
-    stats: { eventCount: events.length, chunkCount: 1, blobCount: 0, durationMs: 40_000 }
+    stats: { eventCount: events.length, chunkCount: 1, blobCount: 0, durationMs: 40_000 },
+    ...manifestPatch
   };
 
   zip.file("manifest.json", JSON.stringify(manifest));
@@ -313,5 +317,74 @@ describe("capture completeness", () => {
       idbSnapshots: 1,
       idbRecords: 1
     });
+  });
+
+  it("reports an older archive as not recording what its export left out", async () => {
+    const report = (await openArchive([META_CONFIG])).getCaptureCompleteness();
+
+    expect(report.export).toEqual({
+      recorded: false,
+      whole: false,
+      storedEvents: null,
+      exportedEvents: 1,
+      truncations: [],
+      interruption: null
+    });
+    expect(formatCaptureCompletenessReport(report)).toContain(
+      "Export: 1 events (archive does not record what the export left out)"
+    );
+  });
+
+  it("reports a whole export of a recording that ended with Stop", async () => {
+    const report = (
+      await openArchive([META_CONFIG], {
+        completeness: { storedEvents: 1, storedChunks: 1, truncations: [] }
+      })
+    ).getCaptureCompleteness();
+
+    expect(report.export).toMatchObject({ recorded: true, whole: true, storedEvents: 1 });
+    expect(formatCaptureCompletenessReport(report)).toContain(
+      "Export: 1/1 stored events (whole session)"
+    );
+  });
+
+  it("reports what the export left out and an interrupted recording", async () => {
+    const truncation = {
+      reason: "recent-window" as const,
+      events: 40,
+      chunks: 2,
+      fromT: Date.UTC(2026, 0, 1, 10, 0, 0),
+      toT: Date.UTC(2026, 0, 1, 10, 20, 0),
+      limit: 600_000
+    };
+    const interruption = {
+      reason: "service-worker-restart" as const,
+      detectedAt: Date.UTC(2026, 0, 1, 11, 0, 0),
+      lastSeenAt: Date.UTC(2026, 0, 1, 10, 59, 30)
+    };
+    const player = await openArchive([META_CONFIG], {
+      completeness: { storedEvents: 41, storedChunks: 3, truncations: [truncation], interruption }
+    });
+    // The export section describes the whole archive, whatever the range asked for.
+    const report = player.getCaptureCompleteness({ monoStart: 5, monoEnd: 6 });
+    const lines = formatCaptureCompletenessReport(report);
+
+    expect(report.export).toEqual({
+      recorded: true,
+      whole: false,
+      storedEvents: 41,
+      exportedEvents: 1,
+      truncations: [truncation],
+      interruption
+    });
+    expect(lines).toContain("Export: 1/41 stored events");
+    expect(lines).toContain(
+      "  left out (recent-window): 40 events, 2 chunks, 2026-01-01T10:00:00.000Z – " +
+        "2026-01-01T10:20:00.000Z, limit 600000"
+    );
+    expect(lines).toContain(
+      "Interrupted: recording ended without Stop (service-worker-restart), noticed " +
+        "2026-01-01T11:00:00.000Z, last seen 2026-01-01T10:59:30.000Z"
+    );
   });
 });

@@ -164,12 +164,26 @@ async function openClickSession(
   return WebBlackboxPlayer.open(exported.bytes, { passphrase: LEGACY_PASSPHRASE });
 }
 
+/** Archives from before completeness was recorded: nothing claimed, nothing flagged. */
+function expectUnrecordedExport(player: WebBlackboxPlayer): void {
+  expect(player.archive.manifest.completeness).toBeUndefined();
+  expect(player.getCaptureCompleteness().export).toEqual({
+    recorded: false,
+    whole: false,
+    storedEvents: null,
+    exportedEvents: EXPECTED_EVENT_IDS.length,
+    truncations: [],
+    interruption: null
+  });
+}
+
 describe("archive compatibility", () => {
   it("opens a format 1 archive (plaintext manifest, no encryption)", async () => {
     const player = await WebBlackboxPlayer.open(await readFixture("legacy-format1.webblackbox"));
 
     expect(player.archive.manifest.protocolVersion).toBe(1);
     await expectFixtureSession(player);
+    expectUnrecordedExport(player);
   });
 
   it("opens a format 2 archive written by the JSZip exporter", async () => {
@@ -182,6 +196,7 @@ describe("archive compatibility", () => {
     expect(player.archive.manifest.protocolVersion).toBe(2);
     expect(player.archive.manifest.chunkCodec).toBe("none");
     await expectFixtureSession(player);
+    expectUnrecordedExport(player);
   });
 
   it("opens the same session exported by the current pipeline (gzip chunks)", async () => {
@@ -193,6 +208,13 @@ describe("archive compatibility", () => {
     expect(player.archive.manifest.chunkCodec).toBe("gzip");
     expect(player.archive.timeIndex.every((entry) => entry.codec === "gzip")).toBe(true);
     await expectFixtureSession(player);
+    expect(player.getCaptureCompleteness().export).toMatchObject({
+      recorded: true,
+      whole: true,
+      storedEvents: EXPECTED_EVENT_IDS.length,
+      exportedEvents: EXPECTED_EVENT_IDS.length,
+      interruption: null
+    });
   });
 
   it("finds events by terms the bounded inverted index leaves out", async () => {

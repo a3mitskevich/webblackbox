@@ -104,6 +104,7 @@ export {
   MAX_MISSING_SAMPLES,
   type BodyCompleteness,
   type CaptureCompletenessReport,
+  type ExportCompleteness,
   type MimeCompleteness
 } from "./capture-completeness.js";
 
@@ -604,13 +605,15 @@ export class WebBlackboxPlayer {
   /**
    * What the archive holds against what its capture policy asked for: body ratios by MIME type
    * (with every loss explained or counted as missing), DOM changes, WebSocket frames, console,
-   * storage values and perf signals.
+   * storage values and perf signals; and, for the whole archive whatever the range, what the
+   * export left out and whether the recording was interrupted.
    */
   public getCaptureCompleteness(range?: PlayerRange): CaptureCompletenessReport {
     return buildCaptureCompletenessReport({
       events: this.query({ range }),
       waterfall: this.getNetworkWaterfall(range),
-      realtime: this.getRealtimeNetworkTimeline(range)
+      realtime: this.getRealtimeNetworkTimeline(range),
+      manifest: this.archive.manifest
     });
   }
 
