@@ -23,6 +23,12 @@ import {
   summarizeSession
 } from "./session-tools.js";
 import { createArchivePathGuard } from "./path-guard.js";
+import {
+  findOnPageInArchive,
+  findOnPageInput,
+  getPageStateAt,
+  pageStateAtInput
+} from "./page-state-tools.js";
 import { symbolicateArchiveStacks, symbolicateStackInput } from "./symbolicate-tools.js";
 
 export const SERVER_NAME = "webblackbox-mcp-server";
@@ -326,6 +332,47 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
           eventId,
           stack,
           mapsDir: mapsDir === undefined ? undefined : await guardPath(mapsDir),
+          limit
+        })
+      );
+    }
+  );
+
+  server.tool(
+    "page_state_at",
+    "What the user saw and could do at a moment: the accessibility snapshot (roles, names, " +
+      "states, visible text of the viewport) taken for an event or action, and the nearest " +
+      "snapshots before and after it. Pass exactly one of eventId, actionId, mono or t.",
+    pageStateAtInput,
+    async ({ path, passphrase, eventId, actionId, mono, t, maxChars }) => {
+      return toTextPayload(
+        await getPageStateAt({
+          path: await guardPath(path),
+          passphrase,
+          eventId,
+          actionId,
+          mono,
+          t,
+          maxChars
+        })
+      );
+    }
+  );
+
+  server.tool(
+    "find_on_page",
+    "When something was on screen: the spans of accessibility snapshots in which a text (in " +
+      "names and values) and/or a role (alert, dialog, button…) appeared, and when it disappeared.",
+    findOnPageInput,
+    async ({ path, passphrase, text, role, monoStart, monoEnd, limit }) => {
+      return toTextPayload(
+        await findOnPageInArchive({
+          path: await guardPath(path),
+          passphrase,
+          text,
+          role,
+          monoStart,
+          monoEnd,
           limit
         })
       );
