@@ -40,9 +40,11 @@ What the extension records is decided by the recording profile in effect. The `D
 At key moments (after a click, a form submit or Enter, an error, a new page or route change, a marker, and at Stop) the page's capture agent writes a `dom.a11y.snapshot`: the roles, accessible names, states and visible text of what intersects the viewport of the top document (same-origin frames included), as compact text. They are bounded (800 nodes, 24 000 characters, 40 ms of page time; a cut is marked) and capped at 30 per minute.
 
 - Every profile that records the DOM records them (`dom` other than `off`), in both engines.
-- `masked` and `allow`: names and text go through the profile's DOM rules: elements matching a blocked selector keep only their role (`[masked]`), `dom` value patterns and, with the built-in heuristics, credential masking apply. Field values are written only where the inputs policy allows them (password, one-time-code and card fields never while masking is on). An invalid blocked selector fails closed to the `wireframe` level.
+- Blocked selectors apply in every mode, as in the DOM snapshot, inside open shadow roots and same-origin frames too: a matching element keeps only its role (`[masked]`), and its content never reaches another node's name (labels, `aria-labelledby`, captions, button text). An invalid blocked selector fails closed to the `wireframe` level.
+- `masked` and `allow`: names and text go through the DOM snapshot's text rules: `dom` value patterns and, with the built-in heuristics, URL query stripping, credential masking and secret-naming JSON. Field values (typed text, the picked option of a select, a range input, an editable region) are written only where the inputs policy allows them (password, one-time-code and card fields never while masking is on). A page in `designMode` is recorded at the `wireframe` level unless the profile records input values.
 - `wireframe`: roles and states only, no names, text, values or title.
-- With content masking off (`Full capture`) they are recorded as captured, field values included when the profile records input values.
+- With content masking off (`Full capture`, which keeps no blocked selectors) they are recorded as captured, field values included when the profile records input values.
+- The recorder drops a snapshot as a privacy violation when the page reports weaker masking than the profile requires.
 
 ## Parallel Tabs
 

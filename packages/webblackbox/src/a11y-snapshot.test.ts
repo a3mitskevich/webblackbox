@@ -64,7 +64,8 @@ describe("captureA11ySnapshot", () => {
         '    - textbox "Email" [required] [invalid]',
         '    - checkbox "Remember me" [checked]',
         '    - text: "Remember me"',
-        '    - combobox "Country": "Spain"',
+        // The picked option is an input value: kept only with `inputs: allow`.
+        '    - combobox "Country"',
         '    - button "Pay now" [disabled]',
         '  - alert: "Card declined"',
         '  - paragraph: "Total: 42 €"',
@@ -96,10 +97,19 @@ describe("captureA11ySnapshot", () => {
     expect(
       tree(policy({ categories: { inputs: "allow" }, redaction: { blockedSelectors: [] } }))
     ).toBe('- textbox "Name": "Ada"\n- textbox "Password"');
-    // Masking off (Full capture): every value as typed.
+    // Masking off (Full capture, which keeps no blocked selectors): every value as typed.
+    expect(
+      tree(
+        policy({
+          categories: { inputs: "allow" },
+          redaction: { contentRedaction: false, blockedSelectors: [] }
+        })
+      )
+    ).toBe('- textbox "Name": "Ada"\n- textbox "Password": "hunter2"');
+    // Blocked selectors a profile keeps still apply with masking off, as in the DOM snapshot.
     expect(
       tree(policy({ categories: { inputs: "allow" }, redaction: { contentRedaction: false } }))
-    ).toBe('- textbox "Name": "Ada"\n- textbox "Password": "hunter2"');
+    ).toBe('- textbox "Name": "Ada"\n- textbox [masked]');
   });
 
   it("masks blocked selectors: no name, text or children", () => {
@@ -112,6 +122,72 @@ describe("captureA11ySnapshot", () => {
     expect(
       tree(policy({ redaction: { contentRedaction: false, blockedSelectors: [] } }))
     ).toContain('- button "Reveal 4111 1111 1111 1111"');
+  });
+
+  it("keeps blocked content out of names, labels, captions and values", () => {
+    document.body.innerHTML = `
+      <span id="who" class="secret">Ada Lovelace</span>
+      <button aria-labelledby="who">x</button>
+      <button>Pay <span class="secret">4111 1111</span></button>
+      <label>Card <b class="secret">holder Ada</b><input></label>
+      <fieldset><legend>Owner <i class="secret">Ada</i></legend></fieldset>
+      <div contenteditable="true">Draft <span class="secret">salary 90k</span></div>`;
+    const masked = tree(policy({ categories: { inputs: "allow" } }));
+
+    expect(masked).not.toMatch(/Ada|4111|salary/);
+    expect(masked).toContain('- button "Pay"');
+    expect(masked).toContain('- textbox "Card"');
+    expect(masked).toContain('- group "Owner"');
+  });
+
+  it("masks blocked selectors inside open shadow roots and same-origin frames", () => {
+    document.body.innerHTML = `<div id="host"></div><iframe title="Widget"></iframe>`;
+    document.getElementById("host")!.attachShadow({ mode: "open" }).innerHTML =
+      `<p class="secret">Shadow secret</p>`;
+    document.querySelector("iframe")!.contentDocument!.body.innerHTML =
+      `<p class="secret">Frame secret</p><button>Inside</button>`;
+
+    const text = tree();
+
+    expect(text).not.toMatch(/Shadow secret|Frame secret/);
+    expect(text).toContain("- paragraph [masked]");
+    expect(text).toContain('- button "Inside"');
+  });
+
+  it("drops widget values under wireframe and masks them otherwise", () => {
+    document.body.innerHTML = `
+      <div role="slider" aria-valuetext="Balance 900 ORD-12345"></div>
+      <input type="range" aria-label="Volume" value="30">`;
+
+    expect(tree(policy({ categories: { dom: "wireframe" } }))).toBe("- slider\n- slider");
+    expect(
+      tree(policy({ redaction: { valuePatterns: [{ pattern: "ORD-\\d+", targets: ["dom"] }] } }))
+    ).toBe('- slider: "Balance 900 [REDACTED]"\n- slider "Volume"');
+    expect(tree(policy({ categories: { inputs: "allow" } }))).toContain('- slider "Volume": "30"');
+  });
+
+  it("strips URL queries and secret-naming JSON from text like the DOM snapshot", () => {
+    document.body.innerHTML = `
+      <a href="/cb">https://a.test/cb?code=SECRETQ&amp;state=1</a>
+      <pre>{"auth":{"password":"hunter2"}}</pre>`;
+    const text = tree();
+
+    expect(text).toContain('- link "https://a.test/cb"');
+    expect(text).not.toMatch(/SECRETQ|hunter2/);
+  });
+
+  it("records no page text while designMode makes the page an editor", () => {
+    document.body.innerHTML = `<p>Dear Ada</p>`;
+    document.designMode = "on";
+
+    try {
+      const snapshot = captureA11ySnapshot({ policy: policy(), trigger: TRIGGER });
+
+      expect(snapshot?.masking).toBe("wireframe");
+      expect(snapshot?.tree).toBe("- paragraph");
+    } finally {
+      document.designMode = "off";
+    }
   });
 
   it("fails closed to wireframe when a blocked selector is invalid", () => {

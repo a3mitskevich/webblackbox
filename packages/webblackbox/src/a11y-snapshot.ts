@@ -13,9 +13,9 @@ import {
   maskDomText,
   usesBuiltInHeuristics
 } from "@webblackbox/protocol/redaction-rules";
-import { redactCredentials } from "@webblackbox/protocol/secret-detection";
 
 import { isCoveredByBlockedSelector, readCapturableInputValue } from "./input-value-policy.js";
+import { sanitizeVisibleText } from "./raw-dom-snapshot.js";
 
 // The page side of `dom.a11y.snapshot`: a minimal accessibility tree (roles, accessible names,
 // states, visible text) of what intersects the viewport, computed from the DOM. Chrome's own tree
@@ -23,7 +23,6 @@ import { isCoveredByBlockedSelector, readCapturableInputValue } from "./input-va
 // call, for the whole document. The rules follow the common cases of HTML-AAM and accname;
 // exotic ones (CSS generated content, aria-owns) are not modelled.
 
-const MASKED_TEXT = "[REDACTED]";
 const SKIPPED_TAGS = new Set([
   "SCRIPT",
   "STYLE",
@@ -119,7 +118,8 @@ export type A11ySnapshotOptions = {
 type WalkContext = {
   policy: CapturePolicy;
   masking: A11ySnapshotMasking;
-  blocked: ReadonlySet<Element>;
+  /** The profile's redaction rules, without blocked selectors when one of them is invalid. */
+  redaction: CapturePolicy["redaction"];
   focused: Element | null;
   now: () => number;
   deadline: number;
@@ -145,13 +145,14 @@ export function captureA11ySnapshot(options: A11ySnapshotOptions): DomA11ySnapsh
 
   const now = options.now ?? (() => performance.now());
   const startedAt = now();
-  const masking = resolveMasking(options.policy);
-  const blocked = masking === "masked" ? collectBlockedElements(document, options.policy) : null;
+  const redaction = options.policy.redaction;
+  // Blocked selectors apply in every mode, like in the DOM snapshot. An invalid one fails closed:
+  // no names, text or values at all.
+  const selectorsValid = areValidSelectors(redaction.blockedSelectors);
   const context: WalkContext = {
     policy: options.policy,
-    // An invalid blocked selector fails closed: no names, text or values at all.
-    masking: masking === "masked" && blocked === null ? "wireframe" : masking,
-    blocked: blocked ?? new Set(),
+    masking: selectorsValid ? resolveMasking(options.policy) : "wireframe",
+    redaction: selectorsValid ? redaction : { ...redaction, blockedSelectors: [] },
     focused: document.activeElement,
     now,
     deadline: startedAt + (options.maxWalkMs ?? A11Y_SNAPSHOT_LIMITS.maxWalkMs),
@@ -193,30 +194,49 @@ export function captureA11ySnapshot(options: A11ySnapshotOptions): DomA11ySnapsh
 }
 
 function resolveMasking(policy: CapturePolicy): A11ySnapshotMasking {
-  if (policy.categories.dom === "wireframe") {
+  // `designMode` makes the whole page an editor without any attribute to find: its text is typed
+  // input, which only the `allow` inputs level records.
+  if (
+    policy.categories.dom === "wireframe" ||
+    (document.designMode === "on" && policy.categories.inputs !== "allow")
+  ) {
     return "wireframe";
   }
 
   return isContentRedactionEnabled(policy.redaction) ? "masked" : "none";
 }
 
-/** Elements matching a blocked selector (and not re-allowed); null when a selector is invalid. */
-function collectBlockedElements(root: Document, policy: CapturePolicy): Set<Element> | null {
-  const blocked = new Set<Element>();
+function areValidSelectors(selectors: readonly string[]): boolean {
+  const probe = document.createElement("div");
 
-  for (const selector of policy.redaction.blockedSelectors) {
+  return selectors.every((selector) => {
     try {
-      for (const element of root.querySelectorAll(selector)) {
-        if (isCoveredByBlockedSelector(element, policy.redaction)) {
-          blocked.add(element);
-        }
-      }
+      probe.matches(selector);
+      return true;
     } catch {
-      return null;
+      return false;
     }
-  }
+  });
+}
 
-  return blocked;
+/**
+ * A blocked selector matches the element itself and no unmask selector re-allows it. Enough for
+ * walked elements, whose ancestors were checked on the way down (in every shadow root and frame).
+ */
+function isBlockedHere(element: Element, context: WalkContext): boolean {
+  const { redaction } = context;
+  return (
+    redaction.blockedSelectors.some((selector) => element.matches(selector)) &&
+    isCoveredByBlockedSelector(element, redaction)
+  );
+}
+
+/** A blocked selector covers the element or an ancestor: elements reached by id or label. */
+function isBlockedAnywhere(element: Element, context: WalkContext): boolean {
+  return (
+    context.redaction.blockedSelectors.length > 0 &&
+    isCoveredByBlockedSelector(element, context.redaction)
+  );
 }
 
 function readViewportRect(view: Window): Rect {
@@ -325,7 +345,7 @@ function walkElement(
     return { nodes: [] };
   }
 
-  if (context.blocked.has(element)) {
+  if (isBlockedHere(element, context)) {
     return { nodes: [{ role: role ?? "generic", states: ["masked"] }] };
   }
 
@@ -348,7 +368,7 @@ function buildRoleNode(
   depth: number
 ): A11yTreeNode {
   const node: A11yTreeNode = { role };
-  const name = computeName(element, role);
+  const name = computeName(element, role, context);
   const states = readStates(element, role, context);
   const value = readValue(element, role, context);
 
@@ -546,7 +566,7 @@ function hasLandmarkScopeAncestor(element: Element): boolean {
 }
 
 /** The accessible name, simplified accname: labelledby, label, native labels, content, title. */
-function computeName(element: Element, role: string): string {
+function computeName(element: Element, role: string, context: WalkContext): string {
   const labelledBy = element.getAttribute("aria-labelledby");
 
   if (labelledBy) {
@@ -554,7 +574,7 @@ function computeName(element: Element, role: string): string {
       .split(/\s+/)
       .map((id) => {
         const label = id ? element.ownerDocument.getElementById(id) : null;
-        return label ? readVisibleText(label) : "";
+        return label ? readVisibleText(label, context) : "";
       })
       .join(" ");
     const collapsed = collapseWhitespace(text);
@@ -570,14 +590,14 @@ function computeName(element: Element, role: string): string {
     return label;
   }
 
-  const native = readNativeName(element);
+  const native = readNativeName(element, context);
 
   if (native) {
     return native;
   }
 
   if (NAME_FROM_CONTENT_ROLES.has(role)) {
-    const content = collapseWhitespace(readVisibleText(element));
+    const content = collapseWhitespace(readVisibleText(element, context));
 
     if (content) {
       return content;
@@ -587,7 +607,7 @@ function computeName(element: Element, role: string): string {
   return collapseWhitespace(element.getAttribute("title") ?? "");
 }
 
-function readNativeName(element: Element): string {
+function readNativeName(element: Element, context: WalkContext): string {
   if (isTag(element, "INPUT")) {
     const input = element as HTMLInputElement;
     const type = input.type.toLowerCase();
@@ -604,7 +624,7 @@ function readNativeName(element: Element): string {
   if (isTag(element, "INPUT") || isTag(element, "TEXTAREA") || isTag(element, "SELECT")) {
     const field = element as HTMLInputElement;
     const fromLabels = collapseWhitespace(
-      Array.from(field.labels ?? [], (label) => readVisibleText(label, element)).join(" ")
+      Array.from(field.labels ?? [], (label) => readVisibleText(label, context, element)).join(" ")
     );
 
     return fromLabels || collapseWhitespace(element.getAttribute("placeholder") ?? "");
@@ -616,8 +636,10 @@ function readNativeName(element: Element): string {
 
   const captionSelector = NATIVE_CAPTION_SELECTORS[element.localName];
 
-  if (captionSelector) {
-    return collapseWhitespace(element.querySelector(captionSelector)?.textContent ?? "");
+  const caption = captionSelector ? element.querySelector(captionSelector) : null;
+
+  if (caption) {
+    return collapseWhitespace(readVisibleText(caption, context));
   }
 
   return "";
@@ -632,8 +654,15 @@ const NATIVE_CAPTION_SELECTORS: Readonly<Record<string, string>> = {
   details: ":scope > summary"
 };
 
-/** Text of a subtree without hidden parts, scripts or `skip` (a labelled field inside its label). */
-function readVisibleText(root: Element, skip?: Element): string {
+/**
+ * Text of a subtree without hidden parts, scripts, blocked elements or `skip` (a labelled field
+ * inside its label).
+ */
+function readVisibleText(root: Element, context: WalkContext, skip?: Element): string {
+  if (isBlockedAnywhere(root, context)) {
+    return "";
+  }
+
   let text = "";
   const walker = root.ownerDocument.createTreeWalker(
     root,
@@ -648,7 +677,8 @@ function readVisibleText(root: Element, skip?: Element): string {
           node === skip ||
           SKIPPED_TAGS.has(node.tagName) ||
           node.getAttribute("aria-hidden") === "true" ||
-          node.hasAttribute("hidden")
+          node.hasAttribute("hidden") ||
+          isBlockedHere(node, context)
         ) {
           return NodeFilter.FILTER_REJECT;
         }
@@ -809,31 +839,36 @@ function isInvalid(element: Element): boolean {
 
 /** Numeric widget values; typed field values only where the inputs policy allows them. */
 function readValue(element: Element, role: string, context: WalkContext): string | undefined {
-  if (role === "slider" || role === "progressbar" || role === "meter") {
-    const text = element.getAttribute("aria-valuetext") ?? readNumericValue(element);
-    return text ? clip(text) : undefined;
-  }
+  const isRangeRole = role === "slider" || role === "progressbar" || role === "meter";
 
-  if (!VALUE_ROLES.has(role) || context.masking === "wireframe") {
+  if ((!isRangeRole && !VALUE_ROLES.has(role)) || context.masking === "wireframe") {
     return undefined;
   }
 
+  // A range input is a field the user set; other range widgets show the page's own value.
   if (isTag(element, "INPUT") || isTag(element, "TEXTAREA")) {
     return readTypedValue(element as HTMLInputElement, context);
   }
 
-  // A select shows one of the page's own options; an editable region shows page text.
+  if (isRangeRole) {
+    const text = element.getAttribute("aria-valuetext") ?? readNumericValue(element);
+    return text ? clip(maskText(text, context)) : undefined;
+  }
+
+  // The option the user picked and the text typed into an editable region are input values.
+  if (context.policy.categories.inputs !== "allow") {
+    return undefined;
+  }
+
   const shown = isTag(element, "SELECT")
     ? ((element as HTMLSelectElement).selectedOptions[0]?.textContent ?? "")
-    : context.policy.categories.inputs === "allow"
-      ? (element.textContent ?? "")
-      : "";
+    : readVisibleText(element, context);
   const collapsed = collapseWhitespace(shown);
   return collapsed ? clip(maskText(collapsed, context)) : undefined;
 }
 
 function readNumericValue(element: Element): string | null {
-  if (isTag(element, "INPUT") || isTag(element, "PROGRESS") || isTag(element, "METER")) {
+  if (isTag(element, "PROGRESS") || isTag(element, "METER")) {
     return String((element as HTMLInputElement).value);
   }
 
@@ -876,11 +911,12 @@ function maskText(text: string, context: WalkContext): string {
     return text;
   }
 
+  // The DOM snapshot's text rules: user value patterns, plus with the built-in heuristics URL
+  // queries, credentials and secret-naming JSON.
   const rules = context.policy.redaction;
-  const withoutCredentials = usesBuiltInHeuristics(rules)
-    ? redactCredentials(text, MASKED_TEXT)
-    : text;
-  return maskDomText(withoutCredentials, rules);
+  return usesBuiltInHeuristics(rules)
+    ? sanitizeVisibleText(text, rules, rules.redactBodyPatterns)
+    : maskDomText(text, rules);
 }
 
 function collapseWhitespace(text: string): string {
