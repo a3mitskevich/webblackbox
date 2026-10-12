@@ -22,6 +22,14 @@ import {
   summarizeNetworkIssues,
   summarizeSession
 } from "./session-tools.js";
+import {
+  domAt,
+  domAtInput,
+  domDiff,
+  domDiffInput,
+  elementContext,
+  elementContextInput
+} from "./dom-tools.js";
 import { createArchivePathGuard } from "./path-guard.js";
 import { symbolicateArchiveStacks, symbolicateStackInput } from "./symbolicate-tools.js";
 
@@ -330,6 +338,35 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
         })
       );
     }
+  );
+
+  server.tool(
+    "dom_at",
+    "The page's DOM at a moment (mono or an event's time), rebuilt from the archive's rrweb log: " +
+      "compact HTML or an outline of the page, a subtree (nodeId) or selector matches, within a " +
+      "byte budget. Elements carry wb-id for drill-down; recorder gaps are reported.",
+    domAtInput,
+    async ({ path, ...rest }) =>
+      toTextPayload(await domAt({ path: await guardPath(path), ...rest }))
+  );
+
+  server.tool(
+    "element_context",
+    "The element an action or a user.click / user.input event targeted (or a wb-id at a moment): " +
+      "its outerHTML, attributes, path of ancestors, siblings and nearby text, from the rrweb log.",
+    elementContextInput,
+    async ({ path, ...rest }) =>
+      toTextPayload(await elementContext({ path: await guardPath(path), ...rest }))
+  );
+
+  server.tool(
+    "dom_diff",
+    "What changed in the DOM between two moments, or around an action / event (just before it to " +
+      "the end of the action or windowMs later): elements added and removed, attribute, text and " +
+      "field value changes, with wb-ids and exact counts.",
+    domDiffInput,
+    async ({ path, ...rest }) =>
+      toTextPayload(await domDiff({ path: await guardPath(path), ...rest }))
   );
 
   return server;

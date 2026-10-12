@@ -107,6 +107,18 @@ node dist/cli.js --version
 | `compare_sessions`           | Compare two archives (event/action/error/network/perf/storage deltas + endpoint-level regressions)                                                       |
 | `symbolicate_stack`          | Map minified stack traces (error events, one event, or a pasted stack) to original sources using maps embedded in the archive plus an optional `mapsDir` |
 
+### DOM tools
+
+The page's DOM rebuilt from the archive's rrweb log (recorded by default in every profile that records the DOM).
+Times are `mono` ms; every element carries its rrweb node id (`wb-id` / `nodeId`) for drill-down, and every result is
+size-capped (`maxBytes`, `depth`, `maxItems`) and says what it cut.
+
+| Tool              | Description                                                                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dom_at`          | The page at a moment (`mono` or an event's time): compact HTML or an outline of the page, a subtree (`nodeId`) or `selector` matches; recorder gaps listed |
+| `element_context` | The element an action (`actionId`) or a `user.click` / `user.input` event targeted, or a `nodeId`: outerHTML, attributes, ancestors, siblings, nearby text |
+| `dom_diff`        | What changed between two moments or around an action / event: elements added and removed, attribute, text and field value changes, exact counts            |
+
 ## Notes
 
 - Archive paths are resolved from the current working directory if relative.
@@ -115,6 +127,9 @@ node dist/cli.js --version
 - `query_events` defaults to payload-hidden output (`includeData=false`) to avoid huge responses.
 - `symbolicate_stack` reads only `.map` files under `mapsDir` (symbolic links are skipped) and never fetches URLs recorded in the archive.
 - Range-scoped tools (`monoStart` / `monoEnd`) preload only intersecting chunks when opening archives.
+- The DOM tools need an rrweb log (`dom.rrweb.event`, schema `rrweb/v2`). Pages over the recorder's node limit, and
+  moments when the recorder paused under pressure, have none: the tools say so (`available: false`, `gap`) instead of
+  guessing; `query_events` still lists the agent's own `dom.snapshot` events there.
 
 ## License
 

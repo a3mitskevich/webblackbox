@@ -98,4 +98,24 @@ describe("mcp-server", () => {
 
     await client.close();
   });
+
+  it("lists the DOM tools and guards their archive path with --allow-dir", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "wb-mcp-server-")));
+    const allowed = join(root, "allowed");
+    await mkdir(allowed);
+    const client = await connectClient({ allowedDirs: [allowed] });
+    const { tools } = await client.listTools();
+
+    for (const name of ["dom_at", "element_context", "dom_diff"]) {
+      expect(tools.map((tool) => tool.name)).toContain(name);
+      const outside = await client.callTool({
+        name,
+        arguments: { path: join(root, "other.webblackbox"), nodeId: 1, fromMono: 1, toMono: 2 }
+      });
+      expect(outside.isError, name).toBe(true);
+      expect(readTextBlocks(outside).join("\n")).toContain("outside the allowed directories");
+    }
+
+    await client.close();
+  });
 });
