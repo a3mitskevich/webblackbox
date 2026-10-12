@@ -116,6 +116,11 @@ export type CaptureCompletenessReport = {
     coverage: number;
     /** Longest stretch without any DOM event, including the session start and end. */
     longestGapMs: number;
+    /** Accessibility snapshots (`dom.a11y.snapshot`) and how many were cut by their budget. */
+    a11ySnapshots: number;
+    a11yTruncated: number;
+    /** Snapshot triggers the per-minute cap left without a snapshot. */
+    a11yDroppedTriggers: number;
   };
   realtime: {
     wsFrames: number;
@@ -459,6 +464,10 @@ function summarizeDom(
     lastChange === undefined ? 0 : endMono - lastChange
   ];
 
+  const a11y = events
+    .filter((event) => event.type === "dom.a11y.snapshot")
+    .map((event) => asObject(event.data));
+
   return {
     snapshots: countType(domEvents, "dom.snapshot"),
     mutationBatches: countType(domEvents, "dom.mutation.batch"),
@@ -468,7 +477,13 @@ function summarizeDom(
       durationMs > 0 && firstChange !== undefined && lastChange !== undefined
         ? Math.min(1, (lastChange - firstChange) / durationMs)
         : 0,
-    longestGapMs: Math.max(0, ...gaps)
+    longestGapMs: Math.max(0, ...gaps),
+    a11ySnapshots: a11y.length,
+    a11yTruncated: a11y.filter((data) => data?.truncated === true).length,
+    a11yDroppedTriggers: a11y.reduce(
+      (sum, data) => sum + (typeof data?.droppedTriggers === "number" ? data.droppedTriggers : 0),
+      0
+    )
   };
 }
 

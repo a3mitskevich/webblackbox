@@ -302,6 +302,9 @@ describe("capture completeness", () => {
       { type: "dom.snapshot", mono: 9_000, data: { reason: "mutation" } },
       { type: "dom.rrweb.event", mono: 9_100, data: {} },
       { type: "perf.vitals", mono: 9_500, data: { metric: "layout-shift" } },
+      // Accessibility snapshots are counted apart: they are not DOM changes.
+      { type: "dom.a11y.snapshot", mono: 12_000, data: { truncated: true, droppedTriggers: 2 } },
+      { type: "dom.a11y.snapshot", mono: 15_000, data: { truncated: false } },
       { type: "user.marker", mono: 20_000, data: {} }
     ]);
 
@@ -313,7 +316,10 @@ describe("capture completeness", () => {
       rrwebEvents: 1,
       snapshotReasons: { start: 1, mutation: 1 },
       coverage: (9_100 - 1_000) / 20_000,
-      longestGapMs: 20_000 - 9_100
+      longestGapMs: 20_000 - 9_100,
+      a11ySnapshots: 2,
+      a11yTruncated: 1,
+      a11yDroppedTriggers: 2
     });
     expect(perf.vitals).toBe(1);
   });
