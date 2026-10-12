@@ -5,11 +5,19 @@ import { createActionBadge, type BadgeSpec } from "./action-badge.js";
 const UPDATE: BadgeSpec = { text: "↑", color: "#1667b8" };
 
 function createHarness(
-  options: { recording?: boolean; unread?: boolean; update?: BadgeSpec | null } = {}
+  options: {
+    recording?: boolean;
+    degraded?: boolean;
+    unread?: boolean;
+    pendingExport?: boolean;
+    update?: BadgeSpec | null;
+  } = {}
 ) {
   const flags = {
     recording: options.recording ?? false,
+    degraded: options.degraded ?? false,
     unread: options.unread ?? false,
+    pendingExport: options.pendingExport ?? false,
     update: options.update === undefined ? UPDATE : options.update
   };
   const action = {
@@ -21,7 +29,9 @@ function createHarness(
   const badge = createActionBadge({
     action,
     isRecording: () => flags.recording,
+    isRecordingDegraded: () => flags.degraded,
     hasUnreadProfileNotice: () => flags.unread,
+    hasPendingExport: () => flags.pendingExport,
     idleNotice: async () => flags.update
   });
   const text = () => action.setBadgeText.mock.lastCall?.[0].text;
@@ -34,6 +44,32 @@ afterEach(() => {
 });
 
 describe("action badge precedence", () => {
+  it("shows LITE instead of REC while a recording fell back from Full to Light", async () => {
+    const harness = createHarness({ recording: true, degraded: true, pendingExport: true });
+
+    await harness.badge.refresh();
+    expect(harness.text()).toBe("LITE");
+
+    harness.flags.degraded = false;
+    await harness.badge.refresh();
+    expect(harness.text()).toBe("REC");
+  });
+
+  it("asks to export a stopped recording below the profile notice and above the update", async () => {
+    const harness = createHarness({ unread: true, pendingExport: true });
+
+    await harness.badge.refresh();
+    expect(harness.text()).toBe("!");
+
+    harness.flags.unread = false;
+    await harness.badge.refresh();
+    expect(harness.text()).toBe("SAVE");
+
+    harness.flags.pendingExport = false;
+    await harness.badge.refresh();
+    expect(harness.text()).toBe("↑");
+  });
+
   it("REC beats the profile-change notice and the update notice", async () => {
     const harness = createHarness({ recording: true, unread: true });
 

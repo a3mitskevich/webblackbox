@@ -33,18 +33,19 @@ type KindCase = {
 const KIND_CASES: KindCase[] = [
   {
     kind: "ui.start",
-    minimal: { kind: "ui.start", mode: "lite" },
+    // Without a mode the profile's own engine starts (the popup's one Record button).
+    minimal: { kind: "ui.start" },
     complete: {
       kind: "ui.start",
       tabId: 17,
       mode: "full",
       reloadPage: true,
       visualCapture: "none",
-      profileId: "builtin:qa"
+      profileId: "builtin:maximum"
     },
-    required: ["mode"],
+    required: [],
     wrongTypes: {
-      mode: ["max", 1, null],
+      mode: ["max", 1],
       tabId: ["17", -1, 1.5, Number.NaN],
       reloadPage: ["yes", 1],
       visualCapture: ["video", true],
@@ -118,6 +119,27 @@ const KIND_CASES: KindCase[] = [
     complete: { kind: "ui.ack-profile-cancel", sid: "S-1" },
     required: ["sid"],
     wrongTypes: { sid: [false] }
+  },
+  {
+    kind: "ui.dismiss-export",
+    minimal: { kind: "ui.dismiss-export", sid: "S-1" },
+    complete: { kind: "ui.dismiss-export", sid: "S-1" },
+    required: ["sid"],
+    wrongTypes: { sid: ["", 3] }
+  },
+  {
+    kind: "ui.passphrase-status",
+    minimal: { kind: "ui.passphrase-status" },
+    complete: { kind: "ui.passphrase-status" },
+    required: [],
+    wrongTypes: {}
+  },
+  {
+    kind: "ui.forget-passphrase",
+    minimal: { kind: "ui.forget-passphrase" },
+    complete: { kind: "ui.forget-passphrase" },
+    required: [],
+    wrongTypes: {}
   },
   {
     kind: "ui.resolve-profile",

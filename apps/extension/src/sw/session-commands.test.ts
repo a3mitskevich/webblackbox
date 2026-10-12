@@ -5,8 +5,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { normalizeEnterprisePolicy } from "../shared/options-storage.js";
 import { DEFAULT_PERFORMANCE_BUDGET } from "../shared/performance-budget.js";
 import { AUTO_PROFILE_ID, type ProfileSelection } from "../shared/profiles/resolve.js";
-import { createDefaultProfile } from "../shared/profiles/presets.js";
+import {
+  BUILT_IN_PROFILE_IDS,
+  createDefaultProfile,
+  findBuiltInProfile
+} from "../shared/profiles/presets.js";
 import { FullBodyCapture } from "./full-body-capture.js";
+import type { CdpAttachResult } from "./full-cdp.js";
 import type { SessionPipelineClient } from "./offscreen-client.js";
 import {
   createSessionCommands,
@@ -106,7 +111,14 @@ type Harness = {
 };
 
 function createHarness(
-  options: { selection?: ProfileSelection; storage?: Record<string, unknown> } = {}
+  options: {
+    selection?: ProfileSelection;
+    storage?: Record<string, unknown>;
+    tabUrl?: string;
+    attach?: CdpAttachResult;
+    screenRecording?: { allowed: boolean; error?: Error };
+    action?: SessionCommandsDeps["action"];
+  } = {}
 ): Harness {
   const registry = createSessionRegistry();
   const storageLocal = createStorageLocal(options.storage);
@@ -147,13 +159,17 @@ function createHarness(
       scheduleProfileReevaluation: vi.fn()
     } as unknown as SessionCommandsDeps["profile"],
     fullCdp: {
-      attachCdp: vi.fn(async () => undefined),
+      attachCdp: vi.fn(async () => options.attach ?? { ok: true }),
       createFullBodyCapture: () => createFullBodyCaptureStub(),
       cleanupCdpInstrumentation: vi.fn(async () => undefined)
     } as unknown as SessionCommandsDeps["fullCdp"],
     screenRecording: {
-      shouldStartScreenRecording: () => false,
-      startScreenRecording: vi.fn(async () => undefined),
+      shouldStartScreenRecording: () => options.screenRecording?.allowed ?? false,
+      startScreenRecording: vi.fn(async () => {
+        if (options.screenRecording?.error) {
+          throw options.screenRecording.error;
+        }
+      }),
       stopScreenRecording: vi.fn(async () => undefined)
     } as unknown as SessionCommandsDeps["screenRecording"],
     storageArtifacts: {
@@ -174,12 +190,16 @@ function createHarness(
       sweepStalePipelineSessions: vi.fn(async () => undefined)
     } as unknown as SessionCommandsDeps["stoppedSessionLifecycle"],
     tabs: {
-      get: vi.fn(async () => ({ id: TAB_ID, url: "https://example.test/app", title: "Example" })),
+      get: vi.fn(async () => ({
+        id: TAB_ID,
+        url: options.tabUrl ?? "https://example.test/app",
+        title: "Example"
+      })),
       reload: vi.fn(async () => undefined),
       sendMessage
     } as unknown as SessionCommandsDeps["tabs"],
     scripting: undefined,
-    action: undefined,
+    action: options.action,
     storageLocal: storageLocal as unknown as SessionCommandsDeps["storageLocal"],
     broadcast,
     notifyOffscreenPipelineStatus: vi.fn(),
@@ -195,7 +215,12 @@ function createHarness(
     ensureOffscreenDocument: vi.fn(async () => undefined),
     createPipeline: () => createPipelineStub(),
     loadPerformanceBudgetConfig: vi.fn(async () => ({ ...DEFAULT_PERFORMANCE_BUDGET })),
-    monotonicTime: () => 0
+    monotonicTime: () => 0,
+    notifications: {
+      notifyExportPending: vi.fn(),
+      notifyCaptureFallback: vi.fn(),
+      clear: vi.fn()
+    }
   };
 
   return {
@@ -340,5 +365,199 @@ describe("restoreRuntimeState", () => {
     );
     expect(harness.deps.stoppedSessionLifecycle.restoreStoppedSessions).toHaveBeenCalledTimes(1);
     expect(harness.pushSessionList).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the SAVE badge for a restored recording that still waits for its export", async () => {
+    const setBadgeText = vi.fn(async () => undefined);
+    const harness = createHarness({
+      action: { setBadgeText, setBadgeBackgroundColor: vi.fn(async () => undefined) }
+    });
+    vi.mocked(harness.deps.stoppedSessionLifecycle.restoreStoppedSessions).mockImplementation(
+      async () => {
+        const runtime = createRuntime();
+        runtime.stoppedAt = 1_000;
+        runtime.exportPrompt = true;
+        harness.registry.registerBySid(runtime);
+      }
+    );
+
+    await harness.commands.restoreRuntimeState();
+
+    expect(setBadgeText).toHaveBeenLastCalledWith({ text: "SAVE" });
+  });
+});
+
+function maximumSelection(): ProfileSelection {
+  const profile = findBuiltInProfile(BUILT_IN_PROFILE_IDS.maximum);
+
+  if (!profile) {
+    throw new Error("Maximum preset is missing");
+  }
+
+  return { profile, source: "default", extended: true };
+}
+
+function ingestedOfType(harness: Harness, rawType: string): Array<Record<string, unknown>> {
+  return vi
+    .mocked(harness.deps.ingestRawEvent)
+    .mock.calls.map(([event]) => event)
+    .filter((event) => event.rawType === rawType)
+    .map((event) => event.payload as Record<string, unknown>);
+}
+
+describe("Full → Light fallback", () => {
+  it("starts the profile's own engine when Start names none", async () => {
+    const harness = createHarness({ selection: maximumSelection() });
+
+    await expect(harness.commands.startSession(TAB_ID, undefined)).resolves.toBe("full");
+    expect(harness.deps.fullCdp.attachCdp).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a browser page in Light from the start and says why", async () => {
+    const harness = createHarness({
+      selection: maximumSelection(),
+      tabUrl: "https://chromewebstore.google.com/detail/x"
+    });
+
+    await expect(harness.commands.startSession(TAB_ID, "full")).resolves.toBe("lite");
+    const runtime = harness.registry.getByTab(TAB_ID);
+
+    expect(harness.deps.fullCdp.attachCdp).not.toHaveBeenCalled();
+    expect(runtime?.mode).toBe("lite");
+    expect(runtime?.captureFallback).toMatchObject({ reason: "restricted-page", to: "lite" });
+    expect(ingestedOfType(harness, "config")[0]).toMatchObject({
+      captureFallback: { reason: "restricted-page", from: "full", to: "lite" }
+    });
+  });
+
+  it("goes on in Light when the debugger cannot attach", async () => {
+    const harness = createHarness({
+      selection: maximumSelection(),
+      attach: { ok: false, error: "Another debugger is already attached" }
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(harness.commands.startSession(TAB_ID, "full")).resolves.toBe("lite");
+    const runtime = harness.registry.getByTab(TAB_ID) as SessionRuntime;
+
+    expect(runtime.mode).toBe("lite");
+    expect(runtime.config.mode).toBe("lite");
+    expect(runtime.captureFallback).toMatchObject({
+      reason: "attach-failed",
+      detail: "Another debugger is already attached"
+    });
+    expect(harness.deps.liteNetworkBaseline.install).toHaveBeenCalled();
+    expect(harness.deps.notifications?.notifyCaptureFallback).toHaveBeenCalledWith(runtime);
+    // The page switches to page-side capture; the last status it got says Light.
+    expect(harness.sendMessage).toHaveBeenLastCalledWith(
+      TAB_ID,
+      expect.objectContaining({ kind: "sw.recording-status", active: true, mode: "lite" })
+    );
+    const configs = ingestedOfType(harness, "config");
+    expect(configs).toHaveLength(2);
+    expect(configs[1]).toMatchObject({
+      mode: "lite",
+      profile: { id: BUILT_IN_PROFILE_IDS.maximum },
+      captureFallback: { reason: "attach-failed", from: "full", to: "lite" }
+    });
+  });
+
+  it("falls back once when the user cancels Chrome's debugging bar, and records the detach", async () => {
+    const harness = createHarness({ selection: maximumSelection() });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await harness.commands.startSession(TAB_ID, "full");
+    const runtime = harness.registry.getByTab(TAB_ID) as SessionRuntime;
+
+    await harness.commands.handleDebuggerDetach(runtime, "canceled_by_user");
+    await harness.commands.handleDebuggerDetach(runtime, "canceled_by_user");
+
+    expect(runtime.mode).toBe("lite");
+    expect(runtime.captureFallback).toMatchObject({
+      reason: "canceled-by-user",
+      detail: "canceled_by_user"
+    });
+    expect(ingestedOfType(harness, "debugger-detach")).toEqual([{ reason: "canceled_by_user" }]);
+    expect(harness.deps.fullCdp.cleanupCdpInstrumentation).toHaveBeenCalledTimes(1);
+    expect(harness.registry.getByTab(TAB_ID)).toBe(runtime);
+  });
+
+  it("leaves a recording that Stop finished while the fallback was under way", async () => {
+    const harness = createHarness({ selection: maximumSelection() });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await harness.commands.startSession(TAB_ID, "full");
+    const runtime = harness.registry.getByTab(TAB_ID) as SessionRuntime;
+    vi.mocked(harness.deps.liteNetworkBaseline.install).mockClear();
+    vi.mocked(harness.deps.fullCdp.cleanupCdpInstrumentation).mockImplementationOnce(async () => {
+      runtime.stopping = true;
+    });
+
+    await harness.commands.handleDebuggerDetach(runtime, "canceled_by_user");
+
+    expect(runtime.mode).toBe("full");
+    expect(runtime.captureFallback).toBeUndefined();
+    expect(harness.deps.liteNetworkBaseline.install).not.toHaveBeenCalled();
+    expect(ingestedOfType(harness, "config")).toHaveLength(1);
+    expect(harness.deps.notifications?.notifyCaptureFallback).not.toHaveBeenCalled();
+  });
+
+  it("stops the recording when the debugger left because the tab is gone", async () => {
+    const harness = createHarness({ selection: maximumSelection() });
+    await harness.commands.startSession(TAB_ID, "full");
+    const runtime = harness.registry.getByTab(TAB_ID) as SessionRuntime;
+    vi.mocked(harness.deps.tabs?.get as (tabId: number) => Promise<unknown>).mockRejectedValue(
+      new Error("No tab with id")
+    );
+
+    await harness.commands.handleDebuggerDetach(runtime, "target_closed");
+
+    expect(runtime.captureFallback).toBeUndefined();
+    expect(runtime.stoppedAt).toEqual(expect.any(Number));
+    expect(harness.registry.getByTab(TAB_ID)).toBeUndefined();
+  });
+
+  it("keeps recording without the tab video when it cannot start", async () => {
+    const harness = createHarness({
+      selection: maximumSelection(),
+      screenRecording: { allowed: true, error: new Error("tabCapture denied") }
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(harness.commands.startSession(TAB_ID, "full")).resolves.toBe("full");
+
+    expect(harness.registry.getByTab(TAB_ID)).toBeDefined();
+    expect(ingestedOfType(harness, "notice")).toEqual([
+      { code: "screen-recording-failed", message: "tabCapture denied" }
+    ]);
+  });
+});
+
+describe("export prompt", () => {
+  it("asks for the export after Stop until the recording is exported or put off", async () => {
+    const harness = createHarness();
+    await harness.commands.startSession(TAB_ID, "lite");
+    const runtime = harness.registry.getByTab(TAB_ID) as SessionRuntime;
+
+    await harness.commands.stopSession(TAB_ID);
+
+    expect(runtime.exportPrompt).toBe(true);
+    expect(harness.deps.notifications?.notifyExportPending).toHaveBeenCalledWith(runtime);
+
+    await harness.commands.dismissExportPrompt(runtime.sid);
+
+    expect(runtime.exportPrompt).toBe(false);
+    expect(harness.deps.notifications?.clear).toHaveBeenCalledWith(runtime.sid);
+    expect(harness.deps.stoppedSessionLifecycle.rememberStoppedSession).toHaveBeenLastCalledWith(
+      runtime
+    );
+  });
+
+  it("does not put off the export of a recording that still runs", async () => {
+    const harness = createHarness();
+    await harness.commands.startSession(TAB_ID, "lite");
+    const runtime = harness.registry.getByTab(TAB_ID) as SessionRuntime;
+
+    await harness.commands.dismissExportPrompt(runtime.sid);
+
+    expect(runtime.exportPrompt).toBeUndefined();
   });
 });

@@ -6,6 +6,7 @@ import {
   classifyPortSender,
   isBroadcastDeliveredToPort,
   isInboundKindAllowed,
+  isInboundMessageAllowed,
   type SenderTrustContext
 } from "./port-sender.js";
 
@@ -145,6 +146,25 @@ describe("isInboundKindAllowed", () => {
     expect(isInboundKindAllowed("content.events", "offscreen")).toBe(false);
     expect(isInboundKindAllowed("ui.start", "untrusted")).toBe(false);
     expect(isInboundKindAllowed("content.events", "untrusted")).toBe(false);
+  });
+
+  it("keeps the remembered passphrase and the export prompt to extension pages", () => {
+    for (const kind of ["ui.passphrase-status", "ui.forget-passphrase", "ui.dismiss-export"]) {
+      expect(isInboundKindAllowed(kind, "extension-page")).toBe(true);
+      expect(isInboundKindAllowed(kind, "content")).toBe(false);
+    }
+  });
+});
+
+describe("isInboundMessageAllowed", () => {
+  it("lets only extension pages export with the remembered passphrase", () => {
+    const remembered = { kind: "ui.export", sid: "S-1" };
+    const typed = { kind: "ui.export", sid: "S-1", passphrase: "passphrase-1" };
+
+    expect(isInboundMessageAllowed(remembered, "extension-page")).toBe(true);
+    expect(isInboundMessageAllowed(remembered, "content")).toBe(false);
+    expect(isInboundMessageAllowed(typed, "content")).toBe(true);
+    expect(isInboundMessageAllowed({ kind: "ui.start" }, "untrusted")).toBe(false);
   });
 });
 

@@ -14,13 +14,12 @@ import {
   type CaptureCategoryKey
 } from "./categories.js";
 import {
-  DEFAULT_PROFILE_ID,
   DEFAULT_SOURCE_MAP_MAX_BYTES,
   withoutRedactionUnmask,
   type ProfileSourceMapMode,
   type RecordingProfile
 } from "./model.js";
-import { STANDARD_CAPTURE_CEILING } from "./presets.js";
+import { DEFAULT_BUILT_IN_PROFILE_ID, STANDARD_CAPTURE_CEILING } from "./presets.js";
 import { findMatchingRule, type ProfilePageContext } from "./rules.js";
 import type { ProfilesState } from "./storage.js";
 
@@ -52,7 +51,7 @@ export type ArchivedProfileInfo = {
 
 /**
  * Picks the profile for a page: an explicit choice wins, then the best matching site rule, then
- * the store default, then the first profile left. The chosen profile runs as it is on every host;
+ * the store default, then Maximum, then the first profile left. The chosen profile runs as it is on every host;
  * enterprise data category caps are applied later, on the recorder config. Returns null when no
  * profile exists at all: recording needs one.
  */
@@ -76,7 +75,7 @@ export function selectRecordingProfile(input: {
     explicit ??
     ruleProfile ??
     byId(state.store.defaultProfileId) ??
-    byId(DEFAULT_PROFILE_ID) ??
+    byId(DEFAULT_BUILT_IN_PROFILE_ID) ??
     state.catalog[0];
 
   if (!profile) {

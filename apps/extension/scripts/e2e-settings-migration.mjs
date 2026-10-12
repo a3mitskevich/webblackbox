@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
-// E2E: the one-time move of v1 `webblackbox.options` into the profiles store. A v1 record as the
-// options page saved it (sampling, freeze-on-error, redaction, site body policies, performance
-// budget) is written with no profiles store, as an older version left it. After a browser restart
-// the service worker's start migrates it: the Default profile carries the v1 values, the budget has
-// its own key, the settings are marked current and v1 options are gone. Start picks the Default
-// profile and keeps a Lite start in Lite, as v1 options did.
+// E2E: the one-time settings moves at the service worker's start.
+// 1. v1 `webblackbox.options` (sampling, freeze-on-error, redaction, site body policies,
+//    performance budget) with no profiles store, as an older version left it: after a browser
+//    restart the customised Default profile carries the v1 values as "Default (custom)", the
+//    budget has its own key, the settings are at version 2 and v1 options are gone. Maximum is
+//    the default profile; the kept Default still records, and a Lite start of it stays Lite.
+// 2. A version-1 profiles store that names the removed presets (Full capture as the default, a
+//    rule for QA, a deleted Full): after a restart they point at Maximum, Light stays deleted.
 
 import { createServer } from "node:http";
 
@@ -89,16 +91,7 @@ async function main() {
 
   await harness.stopBrowser();
   const { popup, swExceptions } = await harness.launch(pageUrl, { keepProfile: true });
-  const stored = await waitFor(
-    () =>
-      popup.evaluate(`
-        chrome.storage.local.get(null).then((values) =>
-          values[${JSON.stringify(SETTINGS_VERSION_KEY)}] === 1 ? values : null
-        )
-      `),
-    15_000,
-    "The service worker did not migrate the settings at its start"
-  );
+  const stored = await waitForSettingsVersion(popup, 2);
   const defaultProfile = stored[PROFILES_KEY]?.profiles?.find(
     (profile) => profile.id === "default"
   );
@@ -110,8 +103,9 @@ async function main() {
     { budget: stored[BUDGET_KEY] }
   );
   assert(
-    stored[PROFILES_KEY]?.defaultProfileId === "default" && defaultProfile,
-    "The profiles store has no Default profile",
+    stored[PROFILES_KEY]?.defaultProfileId === "builtin:maximum" &&
+      defaultProfile?.name === "Default (custom)",
+    "Maximum is not the default, or the customised Default was not kept as Default (custom)",
     stored[PROFILES_KEY]
   );
   assert(
@@ -134,15 +128,13 @@ async function main() {
     `chrome.runtime.sendMessage({ kind: "ui.resolve-profile", tabId: ${tabId} })`
   );
   assert(
-    preview?.selection?.id === "default" &&
-      preview.selection.source === "default" &&
-      preview.selection.requiresFull === false,
-    "Start does not pick the migrated Default profile in either engine",
+    preview?.selection?.id === "builtin:maximum" && preview.selection.source === "default",
+    "Record does not pick Maximum after the migration",
     preview
   );
 
   await popup.evaluate(
-    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "lite" })`
+    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "lite", profileId: "default" })`
   );
   const session = await waitFor(
     () =>
@@ -155,8 +147,8 @@ async function main() {
     "The Lite recording did not start"
   );
   assert(
-    session.mode === "lite",
-    "A Lite start of the migrated Default did not stay Lite",
+    session.mode === "lite" && session.profileName === "Default (custom)",
+    "A Lite start of the kept Default did not stay Lite",
     session
   );
 
@@ -166,8 +158,66 @@ async function main() {
   assert(stopped?.ok !== false, "Stopping the recording failed", stopped);
   assert(swExceptions.length === 0, "Service worker threw", swExceptions);
 
+  await assertRemovedPresetsMigrate(popup, pageUrl);
+
   console.log("Settings migration E2E passed.");
   await harness.cleanup();
+}
+
+/** A version-1 store naming the removed presets: they all point at Maximum after a restart. */
+async function assertRemovedPresetsMigrate(popup, pageUrl) {
+  const versionOneStore = {
+    schemaVersion: 2,
+    defaultProfileId: "builtin:full-capture",
+    profiles: [],
+    rules: [
+      {
+        id: "stage-qa",
+        name: "Stage QA",
+        profileId: "builtin:qa",
+        priority: 5,
+        enabled: true,
+        match: { hosts: ["stage.example.test"] }
+      }
+    ],
+    extendedCaptureHosts: [],
+    removedRecommendedProfileIds: ["builtin:full", "builtin:lite"]
+  };
+
+  await popup.evaluate(`
+    chrome.storage.local
+      .set({
+        ${JSON.stringify(PROFILES_KEY)}: ${JSON.stringify(versionOneStore)},
+        ${JSON.stringify(SETTINGS_VERSION_KEY)}: 1
+      })
+      .then(() => true)
+  `);
+  await harness.stopBrowser();
+  const restarted = await harness.launch(pageUrl, { keepProfile: true });
+  const migrated = (await waitForSettingsVersion(restarted.popup, 2))[PROFILES_KEY];
+
+  assert(
+    migrated?.defaultProfileId === "builtin:maximum" &&
+      migrated.rules?.[0]?.profileId === "builtin:maximum" &&
+      sameValue(migrated.removedRecommendedProfileIds, ["builtin:lite"]) &&
+      migrated.profiles?.length === 0,
+    "The removed presets were not moved to Maximum",
+    migrated
+  );
+  assert(restarted.swExceptions.length === 0, "Service worker threw", restarted.swExceptions);
+}
+
+async function waitForSettingsVersion(popup, version) {
+  return waitFor(
+    () =>
+      popup.evaluate(`
+        chrome.storage.local.get(null).then((values) =>
+          values[${JSON.stringify(SETTINGS_VERSION_KEY)}] === ${version} ? values : null
+        )
+      `),
+    15_000,
+    "The service worker did not migrate the settings at its start"
+  );
 }
 
 /** Deep equality that ignores object key order (Chrome storage returns keys sorted). */

@@ -1,5 +1,6 @@
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
+import { ranInFullEngine } from "../shared/capture-fallback.js";
 import type {
   ScreenRecordingChunkMessage,
   ScreenRecordingEndedMessage,
@@ -40,9 +41,13 @@ export type ScreenRecordingController = {
 export function createScreenRecordingController(
   deps: ScreenRecordingDeps
 ): ScreenRecordingController {
+  /**
+   * Full records the tab video when the profile allows it. A recording that left Full because the
+   * debugger stopped or failed keeps it: tab capture does not need the debugger.
+   */
   function shouldStartScreenRecording(runtime: SessionRuntime): boolean {
     return (
-      runtime.mode === "full" &&
+      ranInFullEngine(runtime) &&
       runtime.config.capturePolicy?.categories.screenRecordings === "allow"
     );
   }

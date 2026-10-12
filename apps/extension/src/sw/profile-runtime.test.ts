@@ -59,7 +59,7 @@ function fakeChrome(options: {
 
 const STAGE_RULE = {
   id: "stage",
-  profileId: BUILT_IN_PROFILE_IDS.qa,
+  profileId: BUILT_IN_PROFILE_IDS.maximum,
   priority: 1,
   enabled: true,
   match: { hosts: ["*.stage.test"], metaTag: { name: "environment", value: "qa" } }
@@ -243,25 +243,30 @@ describe("buildProfilePreview", () => {
     const selection = selectRecordingProfile({
       state,
       page: { url: "https://mail.example.org/" },
-      requestedProfileId: BUILT_IN_PROFILE_IDS.qa
+      requestedProfileId: BUILT_IN_PROFILE_IDS.maximum
     });
     const preview = buildProfilePreview(state, selection);
 
-    expect(preview.catalog.find((entry) => entry.id === BUILT_IN_PROFILE_IDS.qa)).toEqual({
-      id: BUILT_IN_PROFILE_IDS.qa,
-      name: "QA",
+    expect(preview.catalog.map((entry) => entry.id)).toEqual([
+      BUILT_IN_PROFILE_IDS.maximum,
+      BUILT_IN_PROFILE_IDS.lite
+    ]);
+    expect(preview.catalog.find((entry) => entry.id === BUILT_IN_PROFILE_IDS.maximum)).toEqual({
+      id: BUILT_IN_PROFILE_IDS.maximum,
+      name: "Maximum",
       base: "full",
       extended: true,
       readOnly: true
     });
     // Extended profiles run on any host: no downgrade to Full.
     expect(preview.selection).toEqual({
-      id: BUILT_IN_PROFILE_IDS.qa,
-      name: "QA",
+      id: BUILT_IN_PROFILE_IDS.maximum,
+      name: "Maximum",
       base: "full",
       source: "explicit",
       extended: true,
-      requiresFull: true
+      requiresFull: true,
+      visual: "both"
     });
     expect(buildProfilePreview(state, selection, ["console"]).selection?.enterpriseCapped).toEqual([
       "console"
@@ -270,7 +275,7 @@ describe("buildProfilePreview", () => {
 
   it("upgrades a Lite start to Full for a profile that needs it, as startSession does", async () => {
     const fullCaptureCopy = {
-      ...duplicateProfile(findBuiltInProfile(BUILT_IN_PROFILE_IDS.fullCapture)!, { id: "copy" }),
+      ...duplicateProfile(findBuiltInProfile(BUILT_IN_PROFILE_IDS.maximum)!, { id: "copy" }),
       name: "My capture"
     };
     const { api } = fakeChrome({
@@ -303,9 +308,9 @@ describe("buildProfilePreview", () => {
     };
 
     expect(startWith("copy")).toEqual({ engine: "full", requiresFull: true });
-    expect(startWith(BUILT_IN_PROFILE_IDS.qa)).toEqual({ engine: "full", requiresFull: true });
+    expect(startWith(BUILT_IN_PROFILE_IDS.maximum)).toEqual({ engine: "full", requiresFull: true });
     expect(startWith(DEFAULT_PROFILE_ID)).toEqual({ engine: "lite", requiresFull: false });
-    expect(startWith(BUILT_IN_PROFILE_IDS.full)).toEqual({ engine: "lite", requiresFull: false });
+    expect(startWith(BUILT_IN_PROFILE_IDS.lite)).toEqual({ engine: "lite", requiresFull: false });
   });
 
   it("ignores v1 options left in storage: only the migration reads them", async () => {
@@ -323,8 +328,9 @@ describe("buildProfilePreview", () => {
     const state = await loadProfilesState(api, KEYS);
     const selection = selectRecordingProfile({ state, page: { url: "https://a.example/" } });
 
-    expect(selection?.profile).toEqual(createDefaultProfile());
-    expect(selection && resolveStartEngine("lite", selection.profile)).toBe("lite");
+    // Without a migrated store the fresh defaults apply: Maximum, not the v1 console setting.
+    expect(selection?.profile).toEqual(findBuiltInProfile(BUILT_IN_PROFILE_IDS.maximum));
+    expect(state.store.profiles).toEqual([]);
   });
 
   it("returns an empty catalog and no selection once every profile is deleted", async () => {

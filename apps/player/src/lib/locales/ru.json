@@ -108,6 +108,14 @@
   "profileBannerCancelUnknown": "Запись остановлена раньше времени: профиль записи изменился ({reason}).",
   "profileBannerDowngraded": "Записано по профилю {name} вместо {requested}: {requested} был запрещён на этом сайте, поэтому данных, которые записывает только {requested}, нет.",
   "profileBannerCapped": "Политика организации ограничила профиль {name}: {categories}.",
+  "profileBannerFallback": "Полный захват остановился в {time} ({reason}): запись продолжилась в режиме «Лёгкий», поэтому после этого нет тел ответов, полной консоли, скриншотов и данных DevTools.",
+  "captureFallbackReasons": {
+    "restricted-page": "страница не допускает отладчик",
+    "attach-failed": "отладчик не смог подключиться",
+    "canceled-by-user": "на плашке отладки Chrome нажали «Отмена»",
+    "target-closed": "отлаживаемая страница пропала",
+    "detached": "Chrome отключил отладчик"
+  },
   "profileBannerUnknownProfile": "неизвестный профиль",
   "summaryParallelTabs": "Других вкладок этого сайта: {count}",
   "summaryParallelTabsDetail": "Не больше {max} одновременно, {start} на старте записи; того же источника: {sameOrigin}, того же сайта: {sameSite}. Нажмите, чтобы открыть подробности.",

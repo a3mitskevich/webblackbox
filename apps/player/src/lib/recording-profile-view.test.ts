@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { createPlayerI18n } from "./i18n.js";
 import {
+  formatCaptureFallbackBanner,
   formatPrivacyViolationText,
   formatRecordingProfileBanner,
   formatRecordingProfileSummary,
@@ -112,5 +113,32 @@ describe("recording profile view", () => {
       "Recorded with Full instead of Full capture: Full capture was not allowed on this site, so data only Full capture records is missing.",
       "The organization's policy limited QA: console, network."
     ]);
+  });
+});
+
+describe("capture fallback banner", () => {
+  it("says when and why the recording left Full, in the UI language", () => {
+    const fallback = {
+      at: Date.UTC(2026, 0, 1, 10, 5, 0),
+      mono: 5,
+      reason: "canceled-by-user",
+      from: "full",
+      to: "lite"
+    };
+    const [line] = formatCaptureFallbackBanner(fallback, i18n);
+
+    expect(line).toContain("Cancel was pressed on Chrome's debugging bar");
+    expect(line).toContain("went on in Light");
+    expect(formatCaptureFallbackBanner(fallback, createPlayerI18n("ru"))[0]).toContain("«Лёгкий»");
+  });
+
+  it("shows an unknown reason as recorded and nothing without a fallback", () => {
+    expect(
+      formatCaptureFallbackBanner(
+        { at: 0, mono: 0, reason: "something-new", from: "full", to: "lite" },
+        i18n
+      )[0]
+    ).toContain("(something-new)");
+    expect(formatCaptureFallbackBanner(null, i18n)).toEqual([]);
   });
 });

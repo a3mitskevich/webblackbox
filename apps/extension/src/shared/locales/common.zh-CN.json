@@ -27,5 +27,7 @@
   "unitLabelMilliseconds": "ms",
   "unitLabelMinutes": "min",
   "unitLabelPercent": "%",
-  "localDataRestartNotice": "浏览器重启后，未导出的录制会被清除。"
+  "localDataRestartNotice": "浏览器重启后，未导出的录制会被清除。",
+  "profileNameMaximum": "最大",
+  "profileNameLight": "轻量"
 }

@@ -6,7 +6,6 @@ import {
 
 import { FULL_MODE_BODY_CAPTURE_MAX_BYTES } from "../body-capture-limits.js";
 import { completeCaptureCategories, type CaptureCategories } from "./categories.js";
-import { FULL_CAPTURE_LOCAL_DATA_SETTINGS } from "./local-data.js";
 import {
   BUILT_IN_PROFILE_ID_PREFIX,
   DEFAULT_PROFILE_ID,
@@ -15,28 +14,26 @@ import {
 } from "./model.js";
 
 export const BUILT_IN_PROFILE_IDS = {
-  lite: `${BUILT_IN_PROFILE_ID_PREFIX}lite`,
-  full: `${BUILT_IN_PROFILE_ID_PREFIX}full`,
-  qa: `${BUILT_IN_PROFILE_ID_PREFIX}qa`,
-  fullCapture: `${BUILT_IN_PROFILE_ID_PREFIX}full-capture`
+  maximum: `${BUILT_IN_PROFILE_ID_PREFIX}maximum`,
+  lite: `${BUILT_IN_PROFILE_ID_PREFIX}lite`
 } as const;
 
-const QA_BODY_MAX_BYTES = 256 * 1024;
-// The Full mode default: a profile that turns bodies on without a limit gets the same.
-const FULL_CAPTURE_BODY_MAX_BYTES = FULL_MODE_BODY_CAPTURE_MAX_BYTES;
-const FULL_CAPTURE_MOUSEMOVE_HZ = 60;
+/** The profile a fresh install records with, and where references to removed presets go. */
+export const DEFAULT_BUILT_IN_PROFILE_ID: string = BUILT_IN_PROFILE_IDS.maximum;
 
-const QA_BODY_MIME_ALLOWLIST = [
-  "application/json",
-  "application/*+json",
-  "application/graphql",
-  "application/graphql-response+json",
-  "text/plain",
-  "text/xml",
-  "application/xml",
-  "application/*+xml",
-  "application/x-www-form-urlencoded"
+/**
+ * Presets of earlier versions (Full, QA and Full capture, which became Maximum). The settings
+ * migration and the managed policy map references to them to Maximum.
+ */
+export const REMOVED_BUILT_IN_PROFILE_IDS: readonly string[] = [
+  `${BUILT_IN_PROFILE_ID_PREFIX}full`,
+  `${BUILT_IN_PROFILE_ID_PREFIX}qa`,
+  `${BUILT_IN_PROFILE_ID_PREFIX}full-capture`
 ];
+
+// The Full mode default: a profile that turns bodies on without a limit gets the same.
+const MAXIMUM_BODY_MAX_BYTES = FULL_MODE_BODY_CAPTURE_MAX_BYTES;
+const MAXIMUM_MOUSEMOVE_HZ = 60;
 
 const ALL_TEXT_BODY_MIME_ALLOWLIST = [
   "text/*",
@@ -100,7 +97,11 @@ export function createBaseProfile(
   };
 }
 
-/** The editable "Default" profile with today's defaults. */
+/**
+ * The editable "Default" profile of earlier versions: Lite-mode defaults, the engine picked in
+ * the popup. Fresh installs no longer get it; v1 options still migrate into it, and a customised
+ * one is kept as a user profile.
+ */
 export function createDefaultProfile(): RecordingProfile {
   return createBaseProfile({
     id: DEFAULT_PROFILE_ID,
@@ -109,54 +110,21 @@ export function createDefaultProfile(): RecordingProfile {
   });
 }
 
-const LITE_PRESET = createBaseProfile({
+const LIGHT_PRESET = createBaseProfile({
   id: BUILT_IN_PROFILE_IDS.lite,
-  name: "Lite",
-  description: "Page-side signals and network metadata. No bodies, console text or input values.",
+  name: "Light",
+  description:
+    "Page-side signals and network metadata, no debugger. No bodies, console text or input values.",
   base: "lite"
 });
 
-const FULL_PRESET = createBaseProfile({
-  id: BUILT_IN_PROFILE_IDS.full,
-  name: "Full",
-  description:
-    "CDP network, navigation, screenshots and the page DOM (masked). No bodies, console text " +
-    "or input values.",
-  base: "full"
-});
-
-const QA_PRESET = createBaseProfile({
-  id: BUILT_IN_PROFILE_IDS.qa,
-  name: "QA",
-  description:
-    "Console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots, the page DOM " +
-    "(masked), and paths and titles of other tabs of the site.",
-  base: "full",
-  categories: {
-    ...DEFAULT_CATEGORIES,
-    actions: "allow",
-    console: "allow",
-    network: "body-allowlist",
-    screenshots: "allow",
-    cdp: "safe-subset",
-    tabsContext: "allow"
-  },
-  network: {
-    bodyMimeAllowlist: QA_BODY_MIME_ALLOWLIST,
-    bodyMaxBytes: QA_BODY_MAX_BYTES,
-    includeUrls: [],
-    excludeUrls: []
-  },
-  sourceMaps: { mode: "embed" }
-});
-
-const FULL_CAPTURE_PRESET = createBaseProfile({
-  id: BUILT_IN_PROFILE_IDS.fullCapture,
-  name: "Full capture",
+const MAXIMUM_PRESET = createBaseProfile({
+  id: BUILT_IN_PROFILE_IDS.maximum,
+  name: "Maximum",
   description:
     "Everything, recorded raw (no content masking): console with stacks, all textual bodies, " +
-    "input values and keys (passwords included), storage values, the raw DOM, screenshots, " +
-    "optional tab video, 60 Hz pointer, other tabs of the site.",
+    "input values and keys (passwords included), storage values, the raw DOM, screenshots and " +
+    "tab video, 60 Hz pointer, other tabs of the site. The archive is always encrypted.",
   base: "full",
   categories: {
     actions: "allow",
@@ -177,7 +145,7 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
   },
   network: {
     bodyMimeAllowlist: ALL_TEXT_BODY_MIME_ALLOWLIST,
-    bodyMaxBytes: FULL_CAPTURE_BODY_MAX_BYTES,
+    bodyMaxBytes: MAXIMUM_BODY_MAX_BYTES,
     includeUrls: [],
     excludeUrls: []
   },
@@ -189,31 +157,27 @@ const FULL_CAPTURE_PRESET = createBaseProfile({
     blockedSelectors: []
   },
   pointer: {
-    mousemoveHz: FULL_CAPTURE_MOUSEMOVE_HZ,
+    mousemoveHz: MAXIMUM_MOUSEMOVE_HZ,
     hover: true,
     drag: true,
     wheel: true
   },
-  sourceMaps: { mode: "embed" },
-  localData: { ...FULL_CAPTURE_LOCAL_DATA_SETTINGS }
+  // Screenshots and the tab video, without a choice in the popup (owner decision, task 61).
+  visual: "both",
+  sourceMaps: { mode: "embed" }
+  // No `localData`: an unexported recording is kept until it is exported or deleted.
 });
 
 /** Read-only presets, in display order. */
-export const BUILT_IN_PROFILES: readonly RecordingProfile[] = [
-  LITE_PRESET,
-  FULL_PRESET,
-  QA_PRESET,
-  FULL_CAPTURE_PRESET
-];
+export const BUILT_IN_PROFILES: readonly RecordingProfile[] = [MAXIMUM_PRESET, LIGHT_PRESET];
 
 /**
- * Profiles "Restore recommended profiles" brings back: the editable Default and every preset.
- * Each of them can be deleted.
+ * Profiles "Restore recommended profiles" brings back: the built-in presets. Each of them can be
+ * deleted.
  */
-export const RECOMMENDED_PROFILE_IDS: readonly string[] = [
-  DEFAULT_PROFILE_ID,
-  ...BUILT_IN_PROFILES.map((profile) => profile.id)
-];
+export const RECOMMENDED_PROFILE_IDS: readonly string[] = BUILT_IN_PROFILES.map(
+  (profile) => profile.id
+);
 
 export function isRecommendedProfileId(id: string): boolean {
   return RECOMMENDED_PROFILE_IDS.includes(id);

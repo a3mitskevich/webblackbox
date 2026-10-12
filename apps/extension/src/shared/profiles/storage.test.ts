@@ -60,7 +60,11 @@ describe("migrateLegacyOptionsToProfiles", () => {
     expect(store.defaultProfileId).toBe(DEFAULT_PROFILE_ID);
     expect(store.profiles).toEqual([createDefaultProfile()]);
     expect(store.rules).toEqual([]);
-    expect(store).toEqual(createDefaultProfilesStore());
+    expect(store).toEqual({
+      ...createDefaultProfilesStore(),
+      defaultProfileId: DEFAULT_PROFILE_ID,
+      profiles: [createDefaultProfile()]
+    });
   });
 
   it("carries every v1 knob into the Default profile", () => {
@@ -199,27 +203,32 @@ describe("parseProfilesStore", () => {
     expect(JSON.parse(JSON.stringify(profile?.recorder))).toEqual({ freezeOnError: false });
   });
 
-  it("re-adds a missing Default profile", () => {
+  it("no longer re-adds a missing Default profile", () => {
     const parsed = parseProfilesStore(storeWith({ profiles: [] }));
 
-    expect(parsed?.store.profiles.map((profile) => profile.id)).toEqual([DEFAULT_PROFILE_ID]);
+    expect(parsed?.store.profiles).toEqual([]);
+    expect(serializeProfilesStore(storeWith({ profiles: [] })).profiles).toEqual([]);
   });
 });
 
 describe("resolveProfilesState", () => {
-  it("uses a Default profile with today's defaults when no store exists", () => {
+  it("records with Maximum when no store exists", () => {
     const state = resolveProfilesState({ rawProfilesStore: undefined });
 
+    expect(createDefaultProfilesStore()).toEqual({
+      schemaVersion: PROFILES_SCHEMA_VERSION,
+      defaultProfileId: BUILT_IN_PROFILE_IDS.maximum,
+      profiles: [],
+      rules: [],
+      extendedCaptureHosts: []
+    });
     expect(state.store).toEqual(createDefaultProfilesStore());
     expect(state.issues).toEqual([]);
     expect(state.catalog.map((profile) => profile.id)).toEqual([
-      DEFAULT_PROFILE_ID,
-      BUILT_IN_PROFILE_IDS.lite,
-      BUILT_IN_PROFILE_IDS.full,
-      BUILT_IN_PROFILE_IDS.qa,
-      BUILT_IN_PROFILE_IDS.fullCapture
+      BUILT_IN_PROFILE_IDS.maximum,
+      BUILT_IN_PROFILE_IDS.lite
     ]);
-    expect(state.catalog[0]).toEqual(createDefaultProfile());
+    expect(state.catalog[0]).toEqual(findBuiltInProfile(BUILT_IN_PROFILE_IDS.maximum));
   });
 
   it("falls back to the defaults and reports a corrupt store", () => {
@@ -236,7 +245,7 @@ describe("resolveProfilesState", () => {
       rawProfilesStore: storeWith({ defaultProfileId: "ghost" })
     });
 
-    expect(state.store.defaultProfileId).toBe(DEFAULT_PROFILE_ID);
+    expect(state.store.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
     expect(state.issues).toEqual([{ kind: "missing-default-profile", id: "ghost" }]);
     expect(state.catalog[0]?.recorder.freezeOnError).toBeUndefined();
   });
@@ -246,7 +255,9 @@ describe("resolveProfilesState", () => {
       profiles: [duplicateProfile(createDefaultProfile(), { id: "corp", name: "Corp" })],
       rules: [
         { id: "m1", profileId: "corp", priority: 5, enabled: true, match: {} },
-        { id: "m2", profileId: BUILT_IN_PROFILE_IDS.qa, priority: 5, enabled: true, match: {} }
+        { id: "m2", profileId: BUILT_IN_PROFILE_IDS.lite, priority: 5, enabled: true, match: {} },
+        // A preset of earlier versions: Maximum now.
+        { id: "m3", profileId: "builtin:qa", priority: 5, enabled: true, match: {} }
       ]
     });
     const state = resolveProfilesState({
@@ -259,7 +270,8 @@ describe("resolveProfilesState", () => {
     expect(state.catalog.map((profile) => profile.id)).toContain("managed:corp");
     expect(state.rules.map((rule) => [rule.id, rule.profileId])).toEqual([
       ["managed:m1", "managed:corp"],
-      ["managed:m2", BUILT_IN_PROFILE_IDS.qa],
+      ["managed:m2", BUILT_IN_PROFILE_IDS.lite],
+      ["managed:m3", BUILT_IN_PROFILE_IDS.maximum],
       ["u1", "default"]
     ]);
   });
@@ -384,19 +396,20 @@ describe("deleting and restoring recommended profiles", () => {
   const catalogIds = (store: RecordingProfilesStore): string[] =>
     resolveProfilesState({ rawProfilesStore: store }).catalog.map((profile) => profile.id);
 
-  it("hides deleted presets and the Default profile from the catalog", () => {
+  it("hides deleted presets from the catalog; Default is no longer a recommended profile", () => {
     const store = storeWith({
       profiles: [],
-      removedRecommendedProfileIds: [DEFAULT_PROFILE_ID, BUILT_IN_PROFILE_IDS.qa]
+      removedRecommendedProfileIds: [DEFAULT_PROFILE_ID, BUILT_IN_PROFILE_IDS.lite]
     });
     const parsed = parseProfilesStore(store);
 
-    expect(parsed?.store.profiles).toEqual([]);
-    expect(catalogIds(store)).toEqual([
-      BUILT_IN_PROFILE_IDS.lite,
-      BUILT_IN_PROFILE_IDS.full,
-      BUILT_IN_PROFILE_IDS.fullCapture
+    expect(RECOMMENDED_PROFILE_IDS).toEqual([
+      BUILT_IN_PROFILE_IDS.maximum,
+      BUILT_IN_PROFILE_IDS.lite
     ]);
+    expect(parsed?.store.profiles).toEqual([]);
+    expect(parsed?.store.removedRecommendedProfileIds).toEqual([BUILT_IN_PROFILE_IDS.lite]);
+    expect(catalogIds(store)).toEqual([BUILT_IN_PROFILE_IDS.maximum]);
   });
 
   it("leaves stores that never deleted a recommended profile byte-identical", () => {
@@ -426,13 +439,15 @@ describe("deleting and restoring recommended profiles", () => {
     };
     const withoutDefault = removeProfileFromStore(storeWith({ rules: [rule] }), DEFAULT_PROFILE_ID);
 
+    // A Default profile kept from earlier versions is a user profile: deleted for good.
     expect(withoutDefault.profiles).toEqual([]);
-    expect(withoutDefault.removedRecommendedProfileIds).toEqual([DEFAULT_PROFILE_ID]);
+    expect(withoutDefault.removedRecommendedProfileIds).toBeUndefined();
     expect(withoutDefault.rules).toEqual([rule]);
-    expect(withoutDefault.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.lite);
+    expect(withoutDefault.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
 
-    const withoutLite = removeProfileFromStore(withoutDefault, BUILT_IN_PROFILE_IDS.lite);
-    expect(withoutLite.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.full);
+    const withoutMaximum = removeProfileFromStore(withoutDefault, BUILT_IN_PROFILE_IDS.maximum);
+    expect(withoutMaximum.removedRecommendedProfileIds).toEqual([BUILT_IN_PROFILE_IDS.maximum]);
+    expect(withoutMaximum.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.lite);
 
     const copy = duplicateProfile(createDefaultProfile(), { id: "mine" });
     const withCopy = storeWith({
@@ -449,7 +464,10 @@ describe("deleting and restoring recommended profiles", () => {
   });
 
   it("can remove every profile; the catalog is then empty", () => {
-    const empty = RECOMMENDED_PROFILE_IDS.reduce(removeProfileFromStore, storeWith({}));
+    const empty = RECOMMENDED_PROFILE_IDS.reduce(
+      removeProfileFromStore,
+      storeWith({ profiles: [] })
+    );
     const state = resolveProfilesState({ rawProfilesStore: empty });
 
     expect(serializeProfilesStore(empty).removedRecommendedProfileIds).toEqual([
@@ -476,15 +494,25 @@ describe("deleting and restoring recommended profiles", () => {
     ]);
   });
 
-  it("points a default deleted with everything else back at Default on restore", () => {
+  it("points a default deleted with everything else back at Maximum on restore", () => {
     const mine = duplicateProfile(createDefaultProfile(), { id: "mine" });
     const empty = [...RECOMMENDED_PROFILE_IDS, "mine"].reduce(
       removeProfileFromStore,
-      storeWith({ defaultProfileId: "mine", profiles: [createDefaultProfile(), mine] })
+      storeWith({ defaultProfileId: "mine", profiles: [mine] })
     );
 
     expect(empty.defaultProfileId).toBe("mine");
-    expect(restoreRecommendedProfiles(empty).defaultProfileId).toBe(DEFAULT_PROFILE_ID);
+    expect(restoreRecommendedProfiles(empty).defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
+  });
+
+  it("keeps a default that still exists on restore", () => {
+    const mine = duplicateProfile(createDefaultProfile(), { id: "mine" });
+    const store = removeProfileFromStore(
+      storeWith({ defaultProfileId: "mine", profiles: [mine] }),
+      BUILT_IN_PROFILE_IDS.maximum
+    );
+
+    expect(restoreRecommendedProfiles(store).defaultProfileId).toBe("mine");
   });
 
   it("keeps an enterprise profile as the default on restore", () => {

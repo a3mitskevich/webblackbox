@@ -8,7 +8,7 @@ The store-safe build (`pnpm --filter @webblackbox/extension build:store-safe`, t
 
 ## Data Flow
 
-1. Capture adapters apply the recording profile's categories and redaction rules before data enters the recorder pipeline. Categories decide what is captured; masking applies the user's rules on a best-effort basis and can be turned off per profile (the `Full capture` preset records raw).
+1. Capture adapters apply the recording profile's categories and redaction rules before data enters the recorder pipeline. Categories decide what is captured; masking applies the user's rules on a best-effort basis and can be turned off per profile (the `Maximum` profile records raw).
 2. The ingest gate rejects or replaces policy-violating artifacts with `privacy.violation` events.
 3. Archives include `privacy/manifest.json` (encrypted like the rest of the archive) with policy, categories, encryption status, and the scanner result.
 4. The share server analyses each uploaded archive itself (encryption, which private files are encrypted) instead of trusting client-supplied metadata.

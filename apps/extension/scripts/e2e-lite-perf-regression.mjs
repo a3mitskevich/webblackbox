@@ -2197,10 +2197,12 @@ async function startSessionFromPopup(popupClient, mode, expectedUrl) {
         };
       }
 
+      // Light is the Lite-engine profile: the default (Maximum) always records in Full.
       await chrome.runtime.sendMessage({
         kind: 'ui.start',
         tabId: target.id,
-        mode: ${JSON.stringify(mode)}
+        mode: ${JSON.stringify(mode)},
+        ...(${JSON.stringify(mode)} === 'lite' ? { profileId: 'builtin:lite' } : {})
       });
 
       return {

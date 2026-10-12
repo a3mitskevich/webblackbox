@@ -21,14 +21,14 @@ Top-level keys: `siteAllowlist`, `siteDenylist`, `dataCategoryCaps`, `disableLab
     "disableLabMode": true,
     "playerUrl": "https://player.example.com/",
     "retention": {
-      "localTtlMs": 86400000,
+      "localTtlMs": 3600000,
       "shareTtlMs": 604800000
     }
   }
 }
 ```
 
-`siteDenylist` wins over `siteAllowlist`. If `siteAllowlist` is non-empty, recording is denied outside the allowlist. `disableLabMode` caps `cdp` and `heapProfiles` to `off` and turns a `lab` capture policy into `private`. `dataCategoryCaps` accepts the categories `actions`, `inputs`, `dom`, `screenshots`, `screenRecordings`, `console`, `network`, `storage`, `indexedDb`, `cookies`, `cdp`, `heapProfiles` and `tabsContext`, with the same levels as a profile's categories. `dataCategoryCaps` are a ceiling for every recording profile, presets included; the popup names the capped categories and archives record them. If the policy changes what a running recording's profile may record, the recording is stopped as soon as the policy changes and the user is told why.
+`siteDenylist` wins over `siteAllowlist`. If `siteAllowlist` is non-empty, recording is denied outside the allowlist. `disableLabMode` caps `cdp` and `heapProfiles` to `off` and turns a `lab` capture policy into `private`. `dataCategoryCaps` accepts the categories `actions`, `inputs`, `dom`, `screenshots`, `screenRecordings`, `console`, `network`, `storage`, `indexedDb`, `cookies`, `cdp`, `heapProfiles` and `tabsContext`, with the same levels as a profile's categories. `dataCategoryCaps` are a ceiling for every recording profile, the built-in ones included; the popup names the capped categories and archives record them. If the policy changes what a running recording's profile may record, the recording is stopped as soon as the policy changes and the user is told why.
 
 Capping `cdp` to `off` (directly, or through `disableLabMode` as in the example above) takes away the Full engine's data source: the debugger is never attached, so a Full recording gets no network, runtime errors or CDP screenshots, and the `webRequest` network baseline runs only for Lite recordings. Leave `cdp` uncapped and `disableLabMode` off if your users need the Full engine.
 
@@ -40,16 +40,16 @@ The policy is read when a recording starts, with a 3-second limit: Chrome can ho
 
 ### Managed Recording Profiles And Rules
 
-The same policy object may ship read-only recording profiles and site rules. They appear to users as `managed:<id>` and cannot be edited or deleted, only duplicated. Users can delete the built-in presets; a rule that points at a deleted preset is skipped until the user restores the recommended profiles. Rules may point at managed profiles or at the built-in presets (`builtin:lite`, `builtin:full`, `builtin:qa`, `builtin:full-capture`). Rules never start recording; they only pick the profile.
+The same policy object may ship read-only recording profiles and site rules. They appear to users as `managed:<id>` and cannot be edited or deleted, only duplicated. Users can delete the built-in profiles; a rule that points at a deleted one is skipped until the user restores the recommended profiles. Rules may point at managed profiles or at the built-in `builtin:maximum` (Maximum, the default for everyone) and `builtin:lite` (Light). Rules that still name presets of earlier versions (`builtin:full`, `builtin:qa`, `builtin:full-capture`) are read as `builtin:maximum`. Rules never start recording; they only pick the profile.
 
 ```json
 {
   "enterprisePolicy": {
     "rules": [
       {
-        "id": "stage-qa",
+        "id": "stage-light",
         "name": "Stage environments",
-        "profileId": "builtin:qa",
+        "profileId": "builtin:lite",
         "priority": 10,
         "enabled": true,
         "match": { "hosts": ["*.stage.example.com"] }
@@ -59,7 +59,7 @@ The same policy object may ship read-only recording profiles and site rules. The
 }
 ```
 
-Profiles use the same JSON shape as the options page export (`Export JSON`). Only `id` and `name` are required: missing blocks and fields (`categories`, `redaction`, `network`, `pointer`, `sampling`, `recorder`, `export`, `base`, `unmaskSelectors`, `sitePolicies`) take the built-in defaults (those of an unedited `Default` profile), the optional `description`, `visual` and `localData` may be left out (a partial `localData` is completed with the defaults: delete after export, 10 minutes' retention), and a profile with an invalid value is skipped and reported on the options page. The managed schema does not declare every profile field: `sourceMaps`, `basePolicy` and the redaction fields `contentRedaction`, `builtInHeuristics`, `redactQueryParams`, `redactStorageKeys` and `valuePatterns` are missing, so check `chrome://policy` for schema errors after pasting an exported profile and don't count on those fields reaching the extension. A list you set replaces the default list instead of adding to it: a `redaction.blockedSelectors` without `input[type='password']` and the other default entries blocks only what you list.
+Profiles use the same JSON shape as the options page export (`Export JSON`). Only `id` and `name` are required: missing blocks and fields (`categories`, `redaction`, `network`, `pointer`, `sampling`, `recorder`, `export`, `base`, `unmaskSelectors`, `sitePolicies`) take the base defaults (Light-engine metadata capture, as the `Light` profile has them), the optional `description`, `visual` and `localData` may be left out (a partial `localData` is completed with the defaults: delete after export, and keep an unexported recording until it is exported or deleted unless `unexportedRetentionMinutes` is set), and a profile with an invalid value is skipped and reported on the options page. The managed schema does not declare every profile field: `sourceMaps`, `basePolicy` and the redaction fields `contentRedaction`, `builtInHeuristics`, `redactQueryParams`, `redactStorageKeys` and `valuePatterns` are missing, so check `chrome://policy` for schema errors after pasting an exported profile and don't count on those fields reaching the extension. A list you set replaces the default list instead of adding to it: a `redaction.blockedSelectors` without `input[type='password']` and the other default entries blocks only what you list.
 
 ## Self-Hosted Share Server
 
@@ -84,4 +84,4 @@ Audit entries are redacted and must not contain raw URLs, payloads, selectors, p
 
 ## Retention And Deletion
 
-Use managed extension `retention` caps for local sessions and share server TTL settings for shared archives. `retention.localTtlMs` caps how long a stopped, unexported recording is kept (the shorter of it and the profile's retention); recordings never outlive the browser session either way. `retention.shareTtlMs` is only recorded in the archive's capture policy; the share server's TTL settings decide when shares expire. Revocation blocks share access immediately. Expired archives are pruned after the configured expired-retention window.
+Use managed extension `retention` caps for local sessions and share server TTL settings for shared archives. `retention.localTtlMs` caps how long a stopped, unexported recording is kept: the shorter of it and the profile's retention. Recordings of profiles without a retention (the built-in ones) are kept until they are exported or deleted, so for them only a cap below the 24-hour default applies. Recordings never outlive the browser session either way. `retention.shareTtlMs` is only recorded in the archive's capture policy; the share server's TTL settings decide when shares expire. Revocation blocks share access immediately. Expired archives are pruned after the configured expired-retention window.

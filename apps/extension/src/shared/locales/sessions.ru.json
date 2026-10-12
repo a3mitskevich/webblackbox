@@ -14,7 +14,7 @@
   "sessionsFallbackTab": "Вкладка {tabId}",
   "sessionsDeletePrompt": "Удалить запись {sid}? Локальные данные архива будут удалены.",
   "sessionsExportDialogTitle": "Экспорт записи",
-  "sessionsExportDialogBody": "Архивы всегда шифруются (AES-GCM). Введите пароль не короче 8 символов: он понадобится, чтобы открыть архив.",
+  "sessionsExportDialogBody": "Архивы всегда шифруются (AES-GCM). Введите пароль не короче 8 символов: он понадобится, чтобы открыть архив. Пароль запоминается до закрытия браузера.",
   "sessionsConfirmDeleteTitle": "Подтвердите удаление",
   "sessionsTitle": "Записи",
   "sessionsSearchLabel": "Поиск записей",
@@ -46,5 +46,9 @@
   "sessionsActionOpenPlayer": "Экспортировать и открыть в Player",
   "sessionsOpenPlayerHint": "Архив сохранится в загрузки, затем откроется Player. Перетащите в него скачанный файл .webblackbox; ничего никуда не загружается.",
   "sessionsActionNotes": "Теги и заметки",
-  "sessionsNoMatches": "Нет записей, подходящих под фильтры."
+  "sessionsNoMatches": "Нет записей, подходящих под фильтры.",
+  "sessionsStatusFallback": "ПЕРЕХОД В ЛЁГКИЙ",
+  "sessionsFallbackHint": "Полный захват остановился (отладчик недоступен, отменён или отключён); запись продолжилась в режиме «Лёгкий». Архив отмечает, когда и почему.",
+  "sessionsStatusNotExported": "НЕ ЭКСПОРТИРОВАНА",
+  "sessionsNotExportedHint": "Хранится на этом устройстве, пока вы её не экспортируете или не удалите (до закрытия браузера)."
 }

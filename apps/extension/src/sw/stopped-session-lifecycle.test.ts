@@ -5,7 +5,6 @@ import {
 } from "@webblackbox/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveUnexportedRetentionMs } from "../shared/profiles/local-data.js";
 import { createDefaultProfile } from "../shared/profiles/presets.js";
 import { createSessionRuntime, type SessionRuntime } from "./session-registry.js";
 import {
@@ -14,6 +13,7 @@ import {
   createHarness,
   createRuntime,
   createRuntimeInit,
+  HARNESS_RETENTION_MS,
   registerStopped,
   seedSnapshots,
   snapshot,
@@ -23,7 +23,11 @@ import {
 } from "./stopped-session-lifecycle-harness.js";
 import { STOPPED_SESSION_PURGE_RETRY_MS } from "./stopped-session-lifecycle.js";
 import { retentionAlarmName } from "./stopped-session-store.js";
-import { STOPPED_SESSIONS_STORAGE_KEY, type StoppedSessionRecord } from "./stopped-sessions.js";
+import {
+  KEPT_UNTIL_EXPORTED_EXPIRES_AT,
+  STOPPED_SESSIONS_STORAGE_KEY,
+  type StoppedSessionRecord
+} from "./stopped-sessions.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -33,7 +37,7 @@ afterEach(() => {
 describe("toStoppedSessionSnapshot", () => {
   it("copies every field a later worker needs to rebuild the session", () => {
     const { lifecycle } = createHarness();
-    const profileRetentionMs = resolveUnexportedRetentionMs(createDefaultProfile());
+    const profileRetentionMs = HARNESS_RETENTION_MS;
     const cancellation = {
       reason: "rule-changed" as const,
       trigger: "navigation" as const,
@@ -97,7 +101,7 @@ describe("toStoppedSessionSnapshot", () => {
     vi.useFakeTimers();
     vi.setSystemTime(50_000);
     const { lifecycle } = createHarness();
-    const profileRetentionMs = resolveUnexportedRetentionMs(createDefaultProfile());
+    const profileRetentionMs = HARNESS_RETENTION_MS;
 
     const result = lifecycle.toStoppedSessionSnapshot(createRuntime());
 
@@ -168,7 +172,7 @@ describe("restoreStoppedSessions", () => {
     await harness.lifecycle.restoreStoppedSessions();
 
     const runtime = harness.registry.getBySid("S-kept");
-    const profileRetentionMs = resolveUnexportedRetentionMs(createDefaultProfile());
+    const profileRetentionMs = HARNESS_RETENTION_MS;
     expect(runtime).toBeDefined();
     expect(harness.registry.getByTab(7)).toBeUndefined();
     expect(runtime?.stoppedAt).toBe(2_000);
@@ -329,11 +333,44 @@ describe("expireStoppedSession / scheduleStoppedRuntimeCleanup", () => {
     harness.lifecycle.scheduleStoppedRuntimeCleanup(runtime);
     expect(runtime.cleanupTimer).not.toBeNull();
 
-    await vi.advanceTimersByTimeAsync(resolveUnexportedRetentionMs(createDefaultProfile()));
+    await vi.advanceTimersByTimeAsync(HARNESS_RETENTION_MS);
 
     expect(runtime.pipeline.close).toHaveBeenCalledWith({ purge: true });
     expect(harness.registry.getBySid("S-1")).toBeUndefined();
     expect(runtime.cleanupTimer).toBeNull();
+  });
+
+  it("keeps a recording without a retention until it is exported or deleted", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000);
+    const keptProfile = createDefaultProfile();
+    const withTimer = createHarness({ alarms: undefined });
+    const timerless = registerStopped(withTimer, {
+      profile: {
+        ...createRuntimeInit().profile,
+        selection: { profile: keptProfile, source: "default", extended: false }
+      }
+    });
+    const withAlarms = createHarness();
+    const alarmless = registerStopped(withAlarms, {
+      profile: {
+        ...createRuntimeInit().profile,
+        selection: { profile: keptProfile, source: "default", extended: false }
+      }
+    });
+
+    withTimer.lifecycle.scheduleStoppedRuntimeCleanup(timerless);
+    withAlarms.lifecycle.scheduleStoppedRuntimeCleanup(alarmless);
+    await withAlarms.lifecycle.rememberStoppedSessionRecord(alarmless);
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+
+    expect(timerless.cleanupTimer).toBeNull();
+    expect(timerless.pipeline.close).not.toHaveBeenCalled();
+    expect(withAlarms.alarms.create).not.toHaveBeenCalled();
+    expect(withAlarms.alarms.clear).toHaveBeenCalledWith(retentionAlarmName("S-1"));
+    expect(storedRecords(withAlarms.localArea)).toEqual([
+      { sid: "S-1", stoppedAt: 2_000, expiresAt: KEPT_UNTIL_EXPORTED_EXPIRES_AT }
+    ]);
   });
 
   it("re-scheduling replaces a pending timer", async () => {
@@ -347,7 +384,7 @@ describe("expireStoppedSession / scheduleStoppedRuntimeCleanup", () => {
     harness.lifecycle.scheduleStoppedRuntimeCleanup(runtime);
 
     expect(runtime.cleanupTimer).not.toBe(first);
-    await vi.advanceTimersByTimeAsync(resolveUnexportedRetentionMs(createDefaultProfile()));
+    await vi.advanceTimersByTimeAsync(HARNESS_RETENTION_MS);
     expect(runtime.pipeline.close).toHaveBeenCalledTimes(1);
   });
 
@@ -387,7 +424,8 @@ describe("expireStoppedSession / scheduleStoppedRuntimeCleanup", () => {
 
 describe("disposeStoppedSession / purge", () => {
   it("runs the full purge path and closes the offscreen document once unused", async () => {
-    const harness = createHarness();
+    const clearSessionNotification = vi.fn();
+    const harness = createHarness({ clearSessionNotification });
     const runtime = registerStopped(harness);
     await harness.lifecycle.rememberStoppedSession(runtime);
     await harness.lifecycle.rememberStoppedSessionRecord(runtime);
@@ -403,6 +441,8 @@ describe("disposeStoppedSession / purge", () => {
     expect(storedRecords(harness.localArea)).toEqual([]);
     expect(harness.alarms.clear).toHaveBeenCalledWith(retentionAlarmName("S-1"));
     expect(harness.refreshActionBadge).toHaveBeenCalledTimes(1);
+    // An export that deleted the recording, or its expiry, leaves no notification behind.
+    expect(clearSessionNotification).toHaveBeenCalledWith("S-1");
     expect(harness.closeOffscreenDocument).toHaveBeenCalledTimes(1);
     expect(harness.pushSessionList).toHaveBeenCalledTimes(1);
     expect(harness.persistRuntimeState).toHaveBeenCalledTimes(1);
@@ -494,7 +534,7 @@ describe("stopped session records", () => {
   it("writes sid, stoppedAt and expiresAt through the serialized queue", async () => {
     const localArea = createArea({ delayed: true });
     const harness = createHarness({ localStorageArea: localArea });
-    const profileRetentionMs = resolveUnexportedRetentionMs(createDefaultProfile());
+    const profileRetentionMs = HARNESS_RETENTION_MS;
 
     await Promise.all([
       harness.lifecycle.rememberStoppedSessionRecord(registerStopped(harness, { sid: "S-1" })),

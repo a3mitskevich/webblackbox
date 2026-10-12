@@ -62,8 +62,8 @@ const FULL_MODE_REQUIRED_FOLLOWUP_METHODS = new Set(["Target.attachedToTarget"])
 
 /**
  * What the full-mode CDP plumbing needs from the service worker: event ingestion, the session
- * queue, session stop on debugger detach, the artifact captures (screenshots, traces, profiles)
- * and the body capture policy. Everything stateful stays on `SessionRuntime`.
+ * queue, the Light fallback on debugger detach, the artifact captures (screenshots, traces,
+ * profiles) and the body capture policy. Everything stateful stays on `SessionRuntime`.
  */
 export type FullCdpDeps = {
   createRouter: () => CdpRouter;
@@ -73,7 +73,8 @@ export type FullCdpDeps = {
     task: () => Promise<void>,
     options?: { bestEffort?: boolean }
   ) => boolean;
-  stopSession: (tabId: number) => Promise<void>;
+  /** The debugger left the recorded tab (`chrome.debugger.onDetach`, with Chrome's reason). */
+  onDebuggerDetach: (runtime: SessionRuntime, reason: string) => Promise<void>;
   captureFullModeArtifacts: (runtime: SessionRuntime, reason: string) => Promise<void>;
   captureScreenshot: (runtime: SessionRuntime, reason: string) => Promise<void>;
   shouldCaptureIncidentArtifacts: (runtime: SessionRuntime) => boolean;
@@ -87,8 +88,11 @@ export type FullCdpDeps = {
   bodyRedactedToken: string;
 };
 
+/** Whether the debugger is recording the tab; `error` says why not. */
+export type CdpAttachResult = { ok: true } | { ok: false; error: string };
+
 export type FullCdpController = {
-  attachCdp: (runtime: SessionRuntime) => Promise<void>;
+  attachCdp: (runtime: SessionRuntime) => Promise<CdpAttachResult>;
   /** Matches `SessionRuntimeDeps.createFullBodyCapture`; wired into every session runtime. */
   createFullBodyCapture: (getRuntime: () => SessionRuntime) => FullBodyCapture;
   cleanupCdpInstrumentation: (runtime: SessionRuntime, router: CdpRouter | null) => Promise<void>;
@@ -96,7 +100,7 @@ export type FullCdpController = {
 };
 
 export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
-  async function attachCdp(runtime: SessionRuntime): Promise<void> {
+  async function attachCdp(runtime: SessionRuntime): Promise<CdpAttachResult> {
     let router: CdpRouter | null = null;
 
     try {
@@ -177,7 +181,9 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
 
       const unsubscribeDetach = router.onDetach((event) => {
         if (event.tabId === runtime.tabId) {
-          void deps.stopSession(runtime.tabId);
+          void deps.onDebuggerDetach(runtime, event.reason).catch((error: unknown) => {
+            console.warn("[WebBlackbox] failed to handle the debugger detach", error);
+          });
         }
       });
 
@@ -203,6 +209,12 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
         });
       });
       await enableScriptDebugger(runtime, router, { tabId: runtime.tabId });
+
+      // The debugger left while it was being set up and the recording went on in Light: the
+      // fallback cleaned up already, so start no Full artifacts or screenshot timer.
+      if (runtime.captureFallback) {
+        return { ok: true };
+      }
 
       runtime.cdpRouter = router;
 
@@ -235,9 +247,12 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
           );
         }, screenshotIntervalMs);
       }
+
+      return { ok: true };
     } catch (error) {
       await cleanupCdpInstrumentation(runtime, router);
       console.warn("[WebBlackbox] failed to attach debugger", error);
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 

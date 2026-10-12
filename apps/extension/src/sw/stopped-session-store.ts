@@ -1,9 +1,11 @@
 import type { CaptureMode, RecorderConfig, SessionInterruption } from "@webblackbox/protocol";
 
+import { parseCaptureFallback, type CaptureFallback } from "../shared/capture-fallback.js";
 import type { FullModeVisualCapture } from "../shared/messages.js";
 import type { ProfileSelection } from "../shared/profiles/resolve.js";
 import type { ProfileCancellation } from "./profile-change.js";
 import type { CapturedVisuals } from "./profile-runtime.js";
+import { isKeptUntilExported } from "./stopped-sessions.js";
 
 /**
  * Stopped, unexported recordings stay listed and exportable until the browser closes, although
@@ -50,6 +52,10 @@ export type StoppedSessionSnapshot = {
   purgeAttempts?: number;
   /** Set for a recording an earlier worker left running: it ended without Stop. */
   interruption?: SessionInterruption;
+  /** Set when the recording left the Full engine and went on in Light. */
+  captureFallback?: CaptureFallback;
+  /** Not exported yet: the popup asks to export it. */
+  exportPrompt?: boolean;
 };
 
 export type SnapshotStorageAreaLike = {
@@ -133,8 +139,9 @@ export type RetentionAlarmsLike = {
 };
 
 /**
- * Schedules the deletion of a stopped recording at `expiresAt`. Returns false without
- * `chrome.alarms`; the caller then falls back to a timer that dies with the worker.
+ * Schedules the deletion of a stopped recording at `expiresAt`; a recording kept until it is
+ * exported gets no alarm (a stale one is cleared). Returns false without `chrome.alarms`; the
+ * caller then falls back to a timer that dies with the worker.
  */
 export async function scheduleRetentionAlarm(
   alarms: RetentionAlarmsLike | undefined,
@@ -143,6 +150,11 @@ export async function scheduleRetentionAlarm(
 ): Promise<boolean> {
   if (!alarms) {
     return false;
+  }
+
+  if (isKeptUntilExported(expiresAt)) {
+    await alarms.clear(retentionAlarmName(sid));
+    return true;
   }
 
   await alarms.create(retentionAlarmName(sid), { when: expiresAt });
@@ -251,7 +263,8 @@ function parseStoppedSessionSnapshot(value: unknown): StoppedSessionSnapshot | n
     stoppedAt: value.stoppedAt,
     expiresAt: value.expiresAt,
     purgeAttempts: isFiniteNumber(value.purgeAttempts) ? Math.max(0, value.purgeAttempts) : 0,
-    ...(interruption ? { interruption } : {})
+    ...(interruption ? { interruption } : {}),
+    ...(value.exportPrompt === true ? { exportPrompt: true } : {})
   };
 }
 
@@ -276,7 +289,7 @@ export function parseSessionInterruption(value: unknown): SessionInterruption | 
 /** What every session snapshot (stopped or live) holds: identity, URL, profile, config, counters. */
 export type SessionSnapshotCore = Omit<
   StoppedSessionSnapshot,
-  "stoppedAt" | "expiresAt" | "purgeAttempts" | "interruption"
+  "stoppedAt" | "expiresAt" | "purgeAttempts" | "interruption" | "exportPrompt"
 >;
 
 /** Parses the shared snapshot fields; the caller checks its own timing fields. */
@@ -311,6 +324,7 @@ export function parseSessionSnapshotCore(value: unknown): SessionSnapshotCore | 
     const raw = isRecord(counters) ? counters[key] : undefined;
     return isFiniteNumber(raw) ? raw : 0;
   };
+  const captureFallback = parseCaptureFallback(value.captureFallback);
 
   // The snapshot was written by this extension into a trusted-contexts-only area: the nested
   // profile and config are taken as written.
@@ -328,7 +342,8 @@ export function parseSessionSnapshotCore(value: unknown): SessionSnapshotCore | 
       errorCount: count("errorCount"),
       sizeBytes: count("sizeBytes"),
       budgetAlertCount: count("budgetAlertCount")
-    }
+    },
+    ...(captureFallback ? { captureFallback } : {})
   };
 }
 

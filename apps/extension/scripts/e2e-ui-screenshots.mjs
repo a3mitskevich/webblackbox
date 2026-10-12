@@ -61,36 +61,35 @@ const FIXED_NOW = Date.UTC(2026, 8, 21, 10, 30, 0);
 const MINUTE = 60_000;
 const TAB = { id: 17, url: "https://shop.example.com/cart", title: "Cart · Example Shop" };
 const CATALOG = [
-  { id: "default", name: "Default", base: "lite", extended: false, readOnly: false },
-  { id: "builtin:lite", name: "Lite", base: "lite", extended: false, readOnly: true },
-  { id: "builtin:full", name: "Full", base: "full", extended: false, readOnly: true },
-  { id: "builtin:qa", name: "QA", base: "full", extended: true, readOnly: true },
-  { id: "builtin:full-capture", name: "Full capture", base: "full", extended: true, readOnly: true }
+  { id: "builtin:maximum", name: "Maximum", base: "full", extended: true, readOnly: true },
+  { id: "builtin:lite", name: "Light", base: "lite", extended: false, readOnly: true }
 ];
+/** A fresh install: Record uses Maximum, the default profile. */
 const PREVIEW_DEFAULT = {
   kind: "sw.profile-preview",
   catalog: CATALOG,
   selection: {
-    id: "default",
-    name: "Default",
-    base: "lite",
+    id: "builtin:maximum",
+    name: "Maximum",
+    base: "full",
     source: "default",
-    extended: false,
-    requiresFull: false
+    extended: true,
+    requiresFull: true,
+    visual: "both"
   }
 };
+/** A site rule picks Light for the stage hosts. */
 const PREVIEW_RULE = {
   kind: "sw.profile-preview",
   catalog: CATALOG,
   selection: {
-    id: "builtin:qa",
-    name: "QA",
-    base: "full",
+    id: "builtin:lite",
+    name: "Light",
+    base: "lite",
     source: "rule",
     ruleName: "Stage",
-    extended: true,
-    // QA records bodies and screenshots: the popup locks the engine to Full.
-    requiresFull: true
+    extended: false,
+    requiresFull: false
   }
 };
 /** Every profile was deleted: the popup asks for one instead of offering Start. */
@@ -105,7 +104,8 @@ const SESSION_BASE = {
   errorCount: 3,
   budgetAlertCount: 1,
   sizeBytes: 2_480_000,
-  profileName: "QA"
+  profileId: "builtin:maximum",
+  profileName: "Maximum"
 };
 const STOPPED_SESSION = {
   ...SESSION_BASE,
@@ -113,6 +113,8 @@ const STOPPED_SESSION = {
   startedAt: FIXED_NOW - 14 * MINUTE,
   stoppedAt: FIXED_NOW - 2 * MINUTE
 };
+/** Right after Stop: the popup's export step. */
+const PROMPTING_SESSION = { ...STOPPED_SESSION, exportPrompt: true };
 const ACTIVE_SESSION = {
   ...SESSION_BASE,
   active: true,
@@ -121,6 +123,18 @@ const ACTIVE_SESSION = {
   errorCount: 1,
   budgetAlertCount: 0,
   sizeBytes: 731_000
+};
+/** Chrome's debugging bar was cancelled: the recording goes on in Light. */
+const FALLBACK_SESSION = {
+  ...ACTIVE_SESSION,
+  mode: "lite",
+  captureFallback: {
+    at: FIXED_NOW - 2 * MINUTE,
+    reason: "canceled-by-user",
+    from: "full",
+    to: "lite",
+    detail: "canceled_by_user"
+  }
 };
 /** Recording elsewhere while this tab has a stopped session: the tallest popup layout. */
 const ACTIVE_OTHER_TAB_SESSION = {
@@ -137,7 +151,11 @@ const START_REJECTED = {
 };
 const SESSIONS_PAGE_FIXTURE = [
   ACTIVE_SESSION,
-  { ...STOPPED_SESSION, tags: ["checkout", "bug-1234"], note: "Coupon field rejects valid code" },
+  {
+    ...PROMPTING_SESSION,
+    tags: ["checkout", "bug-1234"],
+    note: "Coupon field rejects valid code"
+  },
   {
     sid: "wb-1789990000-ffee0011",
     tabId: 23,
@@ -151,7 +169,8 @@ const SESSIONS_PAGE_FIXTURE = [
     errorCount: 0,
     budgetAlertCount: 0,
     sizeBytes: 11_400_000,
-    profileName: "Default"
+    profileId: "builtin:lite",
+    profileName: "Light"
   },
   {
     sid: "wb-1789900000-00aa77bb",
@@ -166,14 +185,19 @@ const SESSIONS_PAGE_FIXTURE = [
     errorCount: 12,
     budgetAlertCount: 4,
     sizeBytes: 905_000,
-    profileName: "Full capture"
+    profileId: "builtin:maximum",
+    profileName: "Maximum",
+    captureFallback: {
+      at: FIXED_NOW - 3 * 24 * 60 * MINUTE + 2 * MINUTE,
+      reason: "attach-failed",
+      from: "full",
+      to: "lite"
+    }
   }
 ];
 
 /** Candidate selectors so the same script captures the previous and the redesigned UI. */
 const START_SELECTORS = ["[data-action='start']", "[data-action='start-lite']"];
-const LITE_ENGINE_SELECTORS = ["input[name='capture-mode'][value='lite']"];
-const FULL_ENGINE_SELECTORS = ["input[name='capture-mode'][value='full']"];
 /** Start asks whether to reload the page first (both engines) unless Options turned that off. */
 const START_WITHOUT_RELOAD_SELECTORS = ["[data-action='start-direct']"];
 
@@ -181,21 +205,30 @@ const POPUP_STATES = [
   { name: "popup-idle", sessions: [], preview: PREVIEW_DEFAULT },
   { name: "popup-no-profile", sessions: [STOPPED_SESSION], preview: PREVIEW_NO_PROFILE },
   { name: "popup-ready-rule", sessions: [STOPPED_SESSION], preview: PREVIEW_RULE },
-  { name: "popup-recording", sessions: [ACTIVE_SESSION], preview: PREVIEW_RULE },
+  { name: "popup-recording", sessions: [ACTIVE_SESSION], preview: PREVIEW_DEFAULT },
+  { name: "popup-fallback", sessions: [FALLBACK_SESSION], preview: PREVIEW_DEFAULT },
+  { name: "popup-export-step", sessions: [PROMPTING_SESSION], preview: PREVIEW_DEFAULT },
+  {
+    name: "popup-export-step-remembered",
+    sessions: [PROMPTING_SESSION],
+    preview: PREVIEW_DEFAULT,
+    passphraseRemembered: true
+  },
   {
     name: "popup-passphrase",
-    sessions: [STOPPED_SESSION],
-    preview: PREVIEW_RULE,
+    sessions: [PROMPTING_SESSION],
+    preview: PREVIEW_DEFAULT,
     steps: [{ click: ["[data-action='export']"] }]
   },
   {
     name: "popup-exporting",
-    sessions: [STOPPED_SESSION],
-    preview: PREVIEW_RULE,
+    sessions: [PROMPTING_SESSION],
+    preview: PREVIEW_DEFAULT,
     // Archives are always encrypted: the dialog only submits a passphrase of 8+ characters.
     steps: [
       { click: ["[data-action='export']"] },
       { type: { selector: "#wb-passphrase-input", value: "ui-shots-passphrase" } },
+      { type: { selector: "#wb-passphrase-confirm", value: "ui-shots-passphrase" } },
       { click: ["[data-passphrase-submit]"] }
     ]
   },
@@ -212,28 +245,22 @@ const POPUP_STATES = [
     steps: [{ click: START_SELECTORS }, { click: START_WITHOUT_RELOAD_SELECTORS, optional: true }]
   },
   {
-    name: "popup-lite-reload",
+    name: "popup-reload",
     sessions: [],
     preview: PREVIEW_DEFAULT,
-    steps: [{ click: LITE_ENGINE_SELECTORS, optional: true }, { click: START_SELECTORS }]
-  },
-  {
-    name: "popup-full-reload",
-    sessions: [],
-    preview: PREVIEW_DEFAULT,
-    steps: [{ click: FULL_ENGINE_SELECTORS }, { click: START_SELECTORS }]
+    steps: [{ click: START_SELECTORS }]
   }
 ];
 
 const OPTIONS_SECTIONS = ["profiles", "rules", "sensitivity", "sampling", "export"];
 /**
- * An unsaved new site rule and an unsaved pointer setting, typed without leaving the rules
+ * An unsaved new site rule and an unsaved performance budget, typed without leaving the rules
  * section (switching sections would ask first). Nothing is saved by the shots.
  */
 const OPTIONS_DIRTY_STEPS = [
   { click: ["[data-action='rule-add']"] },
   { type: { selector: "[data-rule-id] [name='ruleName']", value: "Stage" } },
-  { type: { selector: "#scrollHz", value: "30" } }
+  { type: { selector: "#budgetLcpWarnMs", value: "3000" } }
 ];
 const PAGE_SHOTS = [
   { name: "options-420", page: EXTENSION_FILES.optionsPage, width: 420, height: 900 },
@@ -367,6 +394,7 @@ async function capturePopupState(browser, extensionId, state, outDir) {
     sessions: state.sessions,
     preview: state.preview,
     sendMessageResponse: state.sendMessageResponse,
+    passphraseRemembered: state.passphraseRemembered === true,
     port: "webblackbox:popup"
   });
 
@@ -667,6 +695,13 @@ function buildStubSource(fixture) {
 
       if (message && message.kind === "ui.resolve-profile" && fixture.preview) {
         setTimeout(() => emit(fixture.preview), 0);
+      }
+
+      if (message && message.kind === "ui.passphrase-status") {
+        setTimeout(
+          () => emit({ kind: "sw.passphrase-status", remembered: fixture.passphraseRemembered === true }),
+          0
+        );
       }
     },
     disconnect() {}

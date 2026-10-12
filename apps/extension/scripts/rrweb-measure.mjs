@@ -14,8 +14,8 @@
 // - with WB_RRWEB_PLAYER=1 (rrweb only): opens the archive in the built Player, the DOM replay
 //   tab, steps through the clicks and records the highlight results and seek times.
 //
-// WB_RRWEB_HEAVY_ROWS sizes the heavy SPA (default 2,500 rows). WB_RRWEB_SITE=heavy|realistic, WB_E2E_MODE=lite|full, WB_RRWEB_PROFILE=default|dom-allow|
-// full-capture, WB_RRWEB_DURATION_MS, WB_RRWEB_CLICK_EVERY_MS, WB_RRWEB_OUT (JSON),
+// WB_RRWEB_HEAVY_ROWS sizes the heavy SPA (default 2,500 rows). WB_RRWEB_SITE=heavy|realistic, WB_E2E_MODE=lite|full,
+// WB_RRWEB_PROFILE=light (masked; alias "default")|maximum (raw; alias "full-capture")|dom-allow, WB_RRWEB_DURATION_MS, WB_RRWEB_CLICK_EVERY_MS, WB_RRWEB_OUT (JSON),
 // WB_RRWEB_SCREENSHOT (PNG of the Player), WB_RRWEB_RELOAD_AFTER_START=1 (resources load inside
 // the recording, so their bodies can reach the archive), WB_RRWEB_ARCHIVE_OUT (a copy of the
 // archive, passphrase "webblackbox-rrweb-measure"). Wrap it in `timeout`.
@@ -36,7 +36,10 @@ const repoRoot = resolve(appRoot, "..", "..");
 const site = process.env.WB_RRWEB_SITE ?? "heavy";
 const mode = process.env.WB_E2E_MODE ?? "lite";
 const variant = process.env.WB_RRWEB_VARIANT ?? "recording";
-const profileChoice = process.env.WB_RRWEB_PROFILE ?? "default";
+/** Earlier names of the choices, from before the Maximum / Light presets (task 61). */
+const PROFILE_ALIASES = { default: "light", "full-capture": "maximum" };
+const requestedProfile = process.env.WB_RRWEB_PROFILE ?? "light";
+const profileChoice = PROFILE_ALIASES[requestedProfile] ?? requestedProfile;
 const durationMs = Number(process.env.WB_RRWEB_DURATION_MS ?? 60_000);
 const clickEveryMs = Number(process.env.WB_RRWEB_CLICK_EVERY_MS ?? 4_000);
 const checkPlayer = process.env.WB_RRWEB_PLAYER === "1";
@@ -162,7 +165,10 @@ async function readMetrics(page) {
   return Object.fromEntries(metrics.map(({ name, value }) => [name, value]));
 }
 
-/** "dom-allow": the Default profile with the raw DOM and input values (blocked selectors kept). */
+/**
+ * The profile to record with, as the store's default: the built-in Light or Maximum, or
+ * "dom-allow" (Lite defaults with the raw DOM and input values, blocked selectors kept).
+ */
 async function configureProfile(popup, protocol) {
   const profiles =
     profileChoice === "dom-allow"
@@ -192,7 +198,7 @@ async function configureProfile(popup, protocol) {
     chrome.storage.local.set({
       "webblackbox.profiles": {
         schemaVersion: 2,
-        defaultProfileId: "default",
+        defaultProfileId: ${JSON.stringify(profileIdFor(profileChoice))},
         profiles: ${JSON.stringify(profiles)},
         rules: [],
         extendedCaptureHosts: []
@@ -200,11 +206,17 @@ async function configureProfile(popup, protocol) {
     }).then(() => true)
   `);
 
-  return profileChoice === "dom-allow"
-    ? DOM_ALLOW_PROFILE_ID
-    : profileChoice === "full-capture"
-      ? "builtin:full-capture"
-      : null;
+  return profileIdFor(profileChoice);
+}
+
+function profileIdFor(choice) {
+  const id = {
+    light: "builtin:lite",
+    maximum: "builtin:maximum",
+    "dom-allow": DOM_ALLOW_PROFILE_ID
+  }[choice];
+  assert(id, `Unknown WB_RRWEB_PROFILE "${requestedProfile}" (light, maximum or dom-allow)`);
+  return id;
 }
 
 /** The element a click at the center of `selector` hits, described as the archive can show it. */

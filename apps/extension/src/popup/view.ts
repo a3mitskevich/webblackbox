@@ -1,7 +1,8 @@
 import type { CaptureMode } from "@webblackbox/protocol";
 
 import type { ExtensionMessageKey } from "../shared/i18n.js";
-import type { FullModeVisualCapture, SessionListItem } from "../shared/messages.js";
+import type { SessionListItem } from "../shared/messages.js";
+import { displayProfileName } from "../shared/profiles/display-name.js";
 import { el } from "../shared/ui/dom.js";
 import { icon, type IconName } from "../shared/ui/icons.js";
 
@@ -95,43 +96,6 @@ export function actionButton(
   return button;
 }
 
-export type SegmentOption<TValue extends string> = { value: TValue; label: string };
-
-/** One-row radio group styled as a segmented control; native radios keep keyboard support. */
-export function createSegmentedControl<TValue extends string>(options: {
-  label: string;
-  name: string;
-  value: TValue;
-  disabled?: boolean;
-  segments: Array<SegmentOption<TValue>>;
-}): HTMLElement {
-  const labelId = `wb-segmented-${options.name}`;
-  const group = el("div", {
-    className: "wb-segmented__options",
-    attrs: { role: "radiogroup", "aria-labelledby": labelId }
-  });
-
-  for (const segment of options.segments) {
-    const input = el("input", {
-      className: "wb-segmented__input",
-      attrs: { type: "radio", name: options.name, value: segment.value }
-    });
-    input.checked = segment.value === options.value;
-    input.disabled = options.disabled ?? false;
-    group.append(
-      el("label", { className: "wb-segmented__option" }, [
-        input,
-        el("span", { text: segment.label })
-      ])
-    );
-  }
-
-  return el("div", { className: "wb-segmented" }, [
-    el("span", { className: "wb-segmented__label", text: options.label, attrs: { id: labelId } }),
-    group
-  ]);
-}
-
 export function createStateLine(text: string, incident: string | null): HTMLElement {
   const line = el("p", { className: "wb-popup__state" }, [el("span", { text })]);
 
@@ -142,7 +106,7 @@ export function createStateLine(text: string, incident: string | null): HTMLElem
   return line;
 }
 
-function createStats(
+export function createSessionStats(
   session: SessionListItem,
   format: PopupFormatters,
   options: { compact: boolean }
@@ -177,10 +141,16 @@ function createStats(
   );
 }
 
-function sessionMeta(session: SessionListItem, now: number, format: PopupFormatters): string {
+export function sessionMeta(
+  session: SessionListItem,
+  now: number,
+  format: PopupFormatters
+): string {
   return [
     format.formatMode(session.mode),
-    ...(session.profileName ? [session.profileName] : []),
+    ...(session.profileName
+      ? [displayProfileName({ id: session.profileId, name: session.profileName }, format.t)]
+      : []),
     session.active
       ? format.formatDuration(session.startedAt, now)
       : format.formatRelativeTime(session.stoppedAt ?? session.startedAt, now)
@@ -209,7 +179,7 @@ export function createRecordingPanel(options: {
 
   return el("section", { className: "wb-panel wb-panel--live wb-popup__live" }, [
     panelHead(t("popupRecordingTitle"), sessionMeta(session, now, format)),
-    createStats(session, format, { compact: false }),
+    createSessionStats(session, format, { compact: false }),
     el("div", { className: "wb-popup__row" }, [
       actionButton(t("popupMarker"), "marker", "surface", { iconName: "marker" }),
       actionButton(t("popupStop"), "stop", "danger", { iconName: "stop" })
@@ -245,71 +215,22 @@ function createOtherTabRecordingRow(
   );
 }
 
-const VISUAL_SEGMENTS: Array<{ value: FullModeVisualCapture; key: ExtensionMessageKey }> = [
-  { value: "screenshots", key: "popupVisualShots" },
-  { value: "recording", key: "popupVisualVideo" },
-  { value: "both", key: "popupFullVisualBoth" },
-  { value: "none", key: "popupFullVisualNone" }
-];
-
-export function visualCaptureLabel(t: Translate, value: FullModeVisualCapture): string {
-  const segment = VISUAL_SEGMENTS.find((entry) => entry.value === value);
-  return segment ? t(segment.key) : value;
-}
-
-export function createStartPanel(options: {
+/** The default path: one Record button under the profile it records with. */
+export function createRecordPanel(options: {
   t: Translate;
-  profilePicker: HTMLElement;
-  engine: CaptureMode;
-  visualCapture: FullModeVisualCapture;
-  pinnedVisual?: FullModeVisualCapture;
-  /** The profile needs Full: the switch shows Full, disabled; the profile hint says why. */
-  engineLocked: boolean;
+  profileLine: HTMLElement;
   pending: boolean;
 }): HTMLElement {
   const { t } = options;
-  const panel = el("section", { className: "wb-panel wb-popup__start" }, [
-    options.profilePicker,
-    createSegmentedControl<CaptureMode>({
-      label: t("popupEngineLabel"),
-      name: "capture-mode",
-      value: options.engine,
-      disabled: options.pending || options.engineLocked,
-      segments: [
-        { value: "lite", label: t("modeLite") },
-        { value: "full", label: t("modeFull") }
-      ]
-    })
-  ]);
 
-  if (options.engine === "full") {
-    panel.append(
-      options.pinnedVisual
-        ? el("p", {
-            className: "wb-popup__hint",
-            text: t("popupVisualPinned", { value: visualCaptureLabel(t, options.pinnedVisual) })
-          })
-        : createSegmentedControl<FullModeVisualCapture>({
-            label: t("popupVisualLabel"),
-            name: "full-visual-capture",
-            value: options.visualCapture,
-            disabled: options.pending,
-            segments: VISUAL_SEGMENTS.map((segment) => ({
-              value: segment.value,
-              label: t(segment.key)
-            }))
-          })
-    );
-  }
-
-  panel.append(
-    actionButton(options.pending ? t("popupStarting") : t("popupStart"), "start", "brand", {
+  return el("section", { className: "wb-panel wb-popup__start" }, [
+    options.profileLine,
+    actionButton(options.pending ? t("popupStarting") : t("popupRecord"), "start", "brand", {
       disabled: options.pending,
       block: true,
       iconName: "play"
     })
-  );
-  return panel;
+  ]);
 }
 
 export function createLastSessionPanel(options: {
@@ -332,7 +253,7 @@ export function createLastSessionPanel(options: {
           ])
         ]
       : []),
-    createStats(session, format, { compact: true }),
+    createSessionStats(session, format, { compact: true }),
     el("div", { className: "wb-popup__export-row" }, [
       el("span", { className: "wb-popup__hint", text: options.limitsText }),
       actionButton(t("popupExport"), "export", "accent", {

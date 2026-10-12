@@ -1,13 +1,12 @@
 import type { SessionMetadata } from "@webblackbox/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { resolveUnexportedRetentionMs } from "../shared/profiles/local-data.js";
-import { createDefaultProfile } from "../shared/profiles/presets.js";
 import { LIVE_SESSION_SNAPSHOTS_KEY } from "./live-session-store.js";
 import type { SessionRuntime } from "./session-registry.js";
 import {
   createHarness,
   createRuntime,
+  HARNESS_RETENTION_MS,
   liveSnapshot,
   registerStopped,
   seedSnapshots,
@@ -70,7 +69,7 @@ describe("interrupted recordings", () => {
     vi.useFakeTimers();
     vi.setSystemTime(90_000);
     const harness = createHarness({ indexedDB: {} as IDBFactory });
-    const profileRetentionMs = resolveUnexportedRetentionMs(createDefaultProfile());
+    const profileRetentionMs = HARNESS_RETENTION_MS;
     await harness.sessionArea.set({
       [LIVE_SESSION_SNAPSHOTS_KEY]: [liveSnapshot("S-crashed", 80_000)]
     });
@@ -183,7 +182,7 @@ describe("interrupted recordings", () => {
   });
 
   it("sweeps a checkpointed recording it never managed to keep once its retention is over", async () => {
-    const retentionMs = resolveUnexportedRetentionMs(createDefaultProfile());
+    const retentionMs = HARNESS_RETENTION_MS;
     vi.useFakeTimers();
     vi.setSystemTime(80_000 + retentionMs + 1);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);

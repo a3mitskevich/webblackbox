@@ -134,7 +134,7 @@ const ruleSchema = {
     name: { type: "string" },
     profileId: {
       type: "string",
-      description: "A managed profile id or a built-in preset (builtin:qa, builtin:full-capture …)."
+      description: "A managed profile id or a built-in preset (builtin:maximum, builtin:lite …)."
     },
     priority: { type: "integer", minimum: -1000, maximum: 1000 },
     enabled: { type: "boolean" },

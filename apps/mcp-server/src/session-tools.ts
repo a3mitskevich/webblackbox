@@ -394,7 +394,8 @@ export async function summarizeSession(args: SessionSummaryArgs): Promise<{
   parallelTabs: ParallelTabsSummary;
   /**
    * What the archive holds against what was asked for, including what the export left out
-   * (`completeness.export.truncations`) and whether the recording was interrupted.
+   * (`completeness.export.truncations`), whether the recording was interrupted, and when and why
+   * it fell back from Full to Light (`completeness.captureFallback`).
    */
   completeness: CaptureCompletenessReport;
 }> {

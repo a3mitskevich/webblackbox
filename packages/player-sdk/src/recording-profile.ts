@@ -52,6 +52,24 @@ export type ProfileCancellationInfo = {
   next?: { id: string; name: string };
 };
 
+/**
+ * The recording left the Full engine (the debugger) and went on with page-side (Light) capture:
+ * a browser page refused the debugger, it could not attach, the user cancelled Chrome's debugging
+ * bar, or the debugger detached. From then on bodies, full console, screenshots and DevTools data
+ * are missing.
+ */
+export type CaptureFallbackInfo = {
+  /** When Full stopped, epoch ms (the event time when the record has none). */
+  at: number;
+  mono: number;
+  /** `restricted-page`, `attach-failed`, `canceled-by-user`, `target-closed` or `detached`. */
+  reason: string;
+  from: string;
+  to: string;
+  /** Chrome's own reason or error text. */
+  detail?: string;
+};
+
 const SUBJECT_BY_REASON: Record<string, PrivacyViolationSubject> = {
   "console-payload-disabled": "console-text",
   "console-disabled": "console",
@@ -179,6 +197,42 @@ export function readProfileCancellation(
       ...(trigger ? { trigger } : {}),
       ...(started ? { started } : {}),
       ...(next ? { next } : {})
+    };
+  }
+
+  return null;
+}
+
+/**
+ * The `meta.config.captureFallback` record (untrusted archive data, read defensively): when and
+ * why the recording left Full. Null for archives that never fell back.
+ */
+export function readCaptureFallback(
+  events: readonly WebBlackboxEvent[]
+): CaptureFallbackInfo | null {
+  for (const event of events) {
+    if (event.type !== "meta.config") {
+      continue;
+    }
+
+    const fallback = asRecord(asRecord(event.data)?.captureFallback);
+    const reason = readText(fallback?.reason);
+
+    if (!fallback || !reason) {
+      continue;
+    }
+
+    const at =
+      typeof fallback.at === "number" && Number.isFinite(fallback.at) ? fallback.at : event.t;
+    const detail = readText(fallback.detail);
+
+    return {
+      at,
+      mono: event.mono,
+      reason,
+      from: readText(fallback.from) ?? "full",
+      to: readText(fallback.to) ?? "lite",
+      ...(detail ? { detail } : {})
     };
   }
 

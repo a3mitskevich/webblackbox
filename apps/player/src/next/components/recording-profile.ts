@@ -1,4 +1,5 @@
 import {
+  readCaptureFallback,
   readExportCompleteness,
   readProfileCancellation,
   readRecordingProfiles,
@@ -8,7 +9,10 @@ import {
 
 import { formatExportNotices } from "../../lib/export-completeness-view.js";
 import type { PlayerI18n } from "../../lib/i18n.js";
-import { formatRecordingProfileBanner } from "../../lib/recording-profile-view.js";
+import {
+  formatCaptureFallbackBanner,
+  formatRecordingProfileBanner
+} from "../../lib/recording-profile-view.js";
 import type { LoadedArchive } from "../state.js";
 
 export type RecordingProfileState = {
@@ -44,8 +48,14 @@ export function exportNoticeLines(archive: LoadedArchive, i18n: PlayerI18n): str
   );
 }
 
-/** Banner lines for a downgraded, capped or cancelled recording profile (empty when fine). */
+/**
+ * Banner lines for a downgraded, capped or cancelled recording profile, or a recording that left
+ * the Full engine (empty when fine).
+ */
 export function profileBannerLines(archive: LoadedArchive, i18n: PlayerI18n): string[] {
   const { profiles, cancellation } = recordingProfileOf(archive);
-  return formatRecordingProfileBanner(profiles, cancellation, i18n);
+  return [
+    ...formatCaptureFallbackBanner(readCaptureFallback(archive.player.events), i18n),
+    ...formatRecordingProfileBanner(profiles, cancellation, i18n)
+  ];
 }

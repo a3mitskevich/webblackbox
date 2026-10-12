@@ -78,7 +78,7 @@ async function runMode(mode, origin, popup) {
   assert(typeof tabId === "number", `Fixture tab not found (${mode})`, { url });
 
   const started = await popup.evaluate(
-    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: ${JSON.stringify(mode)}, visualCapture: "none" })`
+    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: ${JSON.stringify(mode)}, visualCapture: "none"${mode === "lite" ? `, profileId: "builtin:lite"` : ""} })`
   );
   assert(started?.ok !== false, `Start was rejected (${mode})`, started);
   await waitForIndicator(client, true, mode);

@@ -89,6 +89,9 @@ type PlayerMessages = {
   profileBannerCancelUnknown: string;
   profileBannerDowngraded: string;
   profileBannerCapped: string;
+  /** A recording that left the Full engine: `{time}`, `{reason}` (from `captureFallbackReasons`). */
+  profileBannerFallback: string;
+  captureFallbackReasons: Record<string, string>;
   profileBannerUnknownProfile: string;
   summaryParallelTabs: string;
   summaryParallelTabsDetail: string;

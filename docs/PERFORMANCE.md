@@ -13,7 +13,7 @@ WebBlackbox sessions can run for long periods and produce large archives. We tra
 
 In addition, runtime capture now prefers lower page-thread overhead:
 
-- the extension has two capture engines, `lite` and `full` (`apps/extension/src/shared/mode-profile.ts`); recording profiles (Default, Lite, Full, QA, Full capture and custom ones) run on top of one of them
+- the extension has two capture engines, `lite` and `full` (`apps/extension/src/shared/mode-profile.ts`); recording profiles (the built-in Maximum and Light, and custom ones) run on top of one of them
 - extension `lite` never captures request/response bodies: the mode boundary sets the body budget to 0, and a profile that asks for bodies locks the engine to `full`
 - extension `lite` defers heavy start-of-recording DOM/storage/screenshot capture to avoid foreground-tab activation jank
 - extension `lite` keeps idle screenshots disabled by default; set a positive `screenshotIdleMs` only when screenshots are explicitly allowed

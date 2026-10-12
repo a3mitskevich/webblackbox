@@ -7,5 +7,17 @@
   },
   "extensionCommandMarkBug": {
     "message": "Create user marker"
+  },
+  "notifyExportTitle": {
+    "message": "Recording stopped — export it"
+  },
+  "notifyExportMessage": {
+    "message": "The recording is kept until you export or delete it. Click to export it now."
+  },
+  "notifyFallbackTitle": {
+    "message": "Full capture stopped"
+  },
+  "notifyFallbackMessage": {
+    "message": "Recording continues in Light: response bodies, full console, screenshots and DevTools data are no longer captured. Open the popup for details."
   }
 }

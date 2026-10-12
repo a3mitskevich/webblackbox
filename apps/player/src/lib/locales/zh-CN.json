@@ -108,6 +108,14 @@
   "profileBannerCancelUnknown": "录制提前停止：录制配置发生了变化（{reason}）。",
   "profileBannerDowngraded": "使用 {name} 而不是 {requested} 录制：{requested} 在此站点不可用，因此缺少只有 {requested} 才会录制的数据。",
   "profileBannerCapped": "组织策略限制了 {name}：{categories}。",
+  "profileBannerFallback": "完整捕获于 {time} 停止（{reason}）：录制以“轻量”模式继续，因此此后缺少响应正文、完整控制台、截图和 DevTools 数据。",
+  "captureFallbackReasons": {
+    "restricted-page": "页面不允许调试器",
+    "attach-failed": "调试器无法附加",
+    "canceled-by-user": "在 Chrome 调试提示栏上点击了“取消”",
+    "target-closed": "被调试的页面已消失",
+    "detached": "Chrome 分离了调试器"
+  },
   "profileBannerUnknownProfile": "未知配置",
   "summaryParallelTabs": "此站点的其他标签页：{count} 个",
   "summaryParallelTabsDetail": "最多同时打开 {max} 个，开始录制时 {start} 个；同源 {sameOrigin} 个，同站点 {sameSite} 个。点击查看详情。",

@@ -10,6 +10,7 @@ import type { ExtensionOutboundMessage } from "../shared/messages.js";
 import type { PipelineExportDownloadResult } from "../shared/offscreen-messages.js";
 import { DEFAULT_PERFORMANCE_BUDGET } from "../shared/performance-budget.js";
 import { createDefaultProfile } from "../shared/profiles/presets.js";
+import { createExportPassphraseStore } from "./export-passphrase.js";
 import {
   buildExportPrivacyWarning,
   createSessionExportController,
@@ -556,6 +557,78 @@ describe("exportSession", () => {
     expect(result.ok).toBe(true);
     expect(deps.stopSession).not.toHaveBeenCalled();
     expect(deps.disposeStoppedSession).not.toHaveBeenCalled();
+  });
+
+  it("remembers the passphrase of a successful export and reuses it when none is given", async () => {
+    const passphrases = createExportPassphraseStore(undefined);
+    const pipeline = createPipelineStub({
+      exportAndDownload: vi.fn(async () => createExportResult())
+    });
+    const first = createHarness(createRuntime({ pipeline }), { passphrases });
+
+    await expect(first.controller.exportSession("S-1", "  remembered-1  ")).resolves.toMatchObject({
+      ok: true
+    });
+    await expect(passphrases.get()).resolves.toBe("remembered-1");
+    expect(first.broadcasts).toContainEqual({ kind: "sw.passphrase-status", remembered: true });
+
+    const later = createHarness(createRuntime({ pipeline }), { passphrases });
+
+    await expect(later.controller.exportSession("S-1", undefined)).resolves.toMatchObject({
+      ok: true
+    });
+    expect(pipeline.exportAndDownload).toHaveBeenLastCalledWith(
+      expect.objectContaining({ passphrase: "remembered-1" })
+    );
+  });
+
+  it("does not remember the passphrase of a failed export", async () => {
+    const passphrases = createExportPassphraseStore(undefined);
+    const pipeline = createPipelineStub({
+      exportAndDownload: vi.fn(async () => {
+        throw new Error("download refused");
+      })
+    });
+    const { controller } = createHarness(createRuntime({ pipeline }), { passphrases });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(controller.exportSession("S-1", "mistyped-passphrase")).resolves.toMatchObject({
+      ok: false
+    });
+
+    await expect(passphrases.get()).resolves.toBeUndefined();
+  });
+
+  it("refuses an export without a passphrase when none is remembered", async () => {
+    const runtime = createRuntime();
+    const { controller, deps } = createHarness(runtime, {
+      passphrases: createExportPassphraseStore(undefined)
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const result = await controller.exportSession("S-1", undefined);
+
+    expect(result.ok).toBe(false);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+  });
+
+  it("clears the export prompt of a recording kept after its export", async () => {
+    const profile = createDefaultProfile();
+    profile.localData = { deleteAfterExport: false };
+    const pipeline = createPipelineStub({
+      exportAndDownload: vi.fn(async () => createExportResult())
+    });
+    const runtime = createRuntime({ pipeline, stoppedAt: 2_000 });
+    runtime.profile = {
+      ...runtime.profile,
+      selection: { profile, source: "default", extended: false }
+    };
+    const onExported = vi.fn(async () => undefined);
+    const { controller } = createHarness(runtime, { onExported });
+
+    await controller.exportSession("S-1", "passphrase-1");
+
+    expect(onExported).toHaveBeenCalledWith(runtime);
   });
 
   it("surfaces pipeline failures, audits them redacted and broadcasts the raw error", async () => {

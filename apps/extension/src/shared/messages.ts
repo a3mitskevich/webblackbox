@@ -12,6 +12,8 @@ import type {
 
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
+import type { CaptureFallback } from "./capture-fallback.js";
+
 export const PORT_NAMES = {
   content: "webblackbox:content",
   popup: "webblackbox:popup",
@@ -25,7 +27,8 @@ export type FullModeVisualCapture = "screenshots" | "recording" | "both" | "none
 export type UiStartSessionMessage = {
   kind: "ui.start";
   tabId?: number;
-  mode: CaptureMode;
+  /** Engine to start in; absent = the profile's own (`base`). A profile needing Full gets Full. */
+  mode?: CaptureMode;
   reloadPage?: boolean;
   visualCapture?: FullModeVisualCapture;
   /** Recording profile id, or `"auto"` / absent to let site rules pick one. */
@@ -67,6 +70,22 @@ export type UiResolveProfileMessage = {
   kind: "ui.resolve-profile";
   tabId?: number;
   profileId?: string;
+};
+
+/** "Later" on the export step: the recording stays listed, the prompt and the badge go. */
+export type UiDismissExportMessage = {
+  kind: "ui.dismiss-export";
+  sid: string;
+};
+
+/** Whether a passphrase is remembered for this browser session (`sw.passphrase-status`). */
+export type UiPassphraseStatusMessage = {
+  kind: "ui.passphrase-status";
+};
+
+/** Forgets the remembered export passphrase; the next export asks again. */
+export type UiForgetPassphraseMessage = {
+  kind: "ui.forget-passphrase";
 };
 
 /** Popup has shown a "recording stopped: profile changed" notice; the badge can go back. */
@@ -118,6 +137,9 @@ export type ExtensionInboundMessage =
   | UiAnnotateSessionMessage
   | UiRequestSessionListMessage
   | UiAckProfileCancelMessage
+  | UiDismissExportMessage
+  | UiPassphraseStatusMessage
+  | UiForgetPassphraseMessage
   | UiResolveProfileMessage
   | ContentEventBatchMessage
   | ContentMarkerMessage
@@ -175,12 +197,17 @@ export type SessionListItem = {
   sizeBytes?: number;
   tags?: string[];
   note?: string;
-  /** Name of the recording profile the session records with. */
+  /** Id and name of the recording profile the session records with. */
+  profileId?: string;
   profileName?: string;
   /** Set when the session was stopped because its recording profile changed. */
   profileCancel?: ProfileCancelNotice;
   /** Set when the recording ended without Stop (its service worker went away). */
   interruption?: SessionInterruption;
+  /** Set when Full stopped (or could not start) and the recording went on in Light. */
+  captureFallback?: CaptureFallback;
+  /** Stopped and not exported: the popup shows its export step until it is exported or put off. */
+  exportPrompt?: true;
 };
 
 /** Anchor of the profiles section of `options.html`; the popup links to it. */
@@ -201,6 +228,12 @@ export type ProfileCancelNotice = {
 export type SessionListMessage = {
   kind: "sw.session-list";
   sessions: SessionListItem[];
+};
+
+export type PassphraseStatusMessage = {
+  kind: "sw.passphrase-status";
+  /** An export passphrase is remembered until the browser closes. */
+  remembered: boolean;
 };
 
 export type ExportStatusMessage = {
@@ -265,4 +298,5 @@ export type ExtensionOutboundMessage =
   | SessionListMessage
   | ExportStatusMessage
   | PipelineStatusMessage
+  | PassphraseStatusMessage
   | ProfilePreviewResponse;

@@ -11,8 +11,8 @@ The pipeline:
    titles and archive names do not hint at the cause (a test enforces it).
 2. **Tester reports**: per scenario, a short report in Russian and English, symptom only.
 3. **Recording** (`src/record.ts`): drives Chrome with the built extension over CDP (the profile
-   e2e harness of `apps/extension`), records each scenario with the **Default profile (Lite)**
-   and with **Full capture**, and exports encrypted archives into `evals/archives/` (git-ignored).
+   e2e harness of `apps/extension`), records each scenario with **Maximum** (the default profile,
+   Full engine) and with **Light**, and exports encrypted archives into `evals/archives/` (git-ignored).
 4. **Rubric** (`src/rubric.ts`): per scenario, the real root cause, its key evidence, required
    facts (each a set of regexes, any one matches), bonus facts and forbidden wrong conclusions.
 5. **Evaluation** (`src/run-eval.ts`): for each archive, `claude -p` with **only** our MCP server
@@ -39,7 +39,7 @@ pnpm build                                     # extension .output/chrome-mv3/ (
 export WB_E2E_CHROME_BIN=$HOME/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome
 timeout 1800 pnpm --filter @webblackbox/evals record
 #   --scenario case-03 --scenario search-race   only these (id or case id)
-#   --profile default | full-capture            only this profile
+#   --profile maximum | light                   only this profile
 #   --passphrase …                               default "webblackbox-bug-zoo-eval" (WB_EVAL_PASSPHRASE)
 
 # 2. Evaluate (needs the `claude` CLI, logged in)
@@ -74,6 +74,11 @@ archive took 15–90 s and 40–200k tokens (mostly cached input), about $0.10�
 cost a few dollars. `--max-budget-usd` caps each run. Results differ between models and between
 runs of the same model: compare reports made with the same model, and re-run a scenario that
 flips before reading much into it. The report header records the model.
+
+The `2026-10-12-baseline` report predates the Maximum and Light profiles: it compares the old
+`default` (Lite) and `full-capture` setups, so its totals do not line up with later runs. Clear
+`evals/archives/` (or pick profiles with `--profile`) before re-recording, or the manifest keeps
+the old archives next to the new ones.
 
 ## Adding a scenario
 

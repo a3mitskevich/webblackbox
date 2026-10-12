@@ -27,5 +27,7 @@
   "unitLabelMilliseconds": "ms",
   "unitLabelMinutes": "min",
   "unitLabelPercent": "%",
-  "localDataRestartNotice": "Unexported recordings are cleared when the browser restarts."
+  "localDataRestartNotice": "Unexported recordings are cleared when the browser restarts.",
+  "profileNameMaximum": "Maximum",
+  "profileNameLight": "Light"
 }

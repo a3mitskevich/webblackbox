@@ -184,13 +184,13 @@ async function recordScenario(
   }
 }
 
-/** The Default profile as the only profile, no site rules: what a fresh install records. */
+/** No user profiles and no site rules, Maximum by default: what a fresh install records. */
 async function resetProfiles(popup: CdpClient): Promise<void> {
   await popup.evaluate(`
     chrome.storage.local.set({
       "webblackbox.profiles": {
         schemaVersion: 2,
-        defaultProfileId: "default",
+        defaultProfileId: "builtin:maximum",
         profiles: [],
         rules: [],
         extendedCaptureHosts: []
@@ -224,7 +224,7 @@ async function startRecording(
     tabId,
     mode: profile.mode,
     ...(profile.profileId ? { profileId: profile.profileId } : {}),
-    ...(profile.mode === "full" ? { visualCapture: profile.visualCapture ?? "none" } : {})
+    ...(profile.visualCapture ? { visualCapture: profile.visualCapture } : {})
   };
   const indicator = JSON.stringify(`REC ${profile.mode}`);
   await popup.evaluate(`chrome.runtime.sendMessage(${JSON.stringify(message)})`);

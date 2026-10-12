@@ -229,20 +229,23 @@ export function applyProfileFormValues(
 
 /**
  * The form always shows the effective local data settings. A profile that never set them keeps
- * the block absent (the defaults) until the form departs from the defaults.
+ * the block absent (the defaults) until the form departs from the defaults. An empty retention
+ * keeps unexported recordings until they are exported or deleted.
  */
 function localDataFromFormValues(
   profile: RecordingProfile,
   values: ProfileFormValues
 ): ProfileLocalDataSettings | undefined {
-  const next: ProfileLocalDataSettings = {
-    deleteAfterExport: values.deleteAfterExport,
-    unexportedRetentionMinutes:
-      parseOptionalInt(
+  const retentionMinutes = values.unexportedRetentionMinutes.trim()
+    ? (parseOptionalInt(
         values.unexportedRetentionMinutes,
         MIN_UNEXPORTED_RETENTION_MINUTES,
         MAX_UNEXPORTED_RETENTION_MINUTES
-      ) ?? resolveLocalDataSettings(profile).unexportedRetentionMinutes
+      ) ?? resolveLocalDataSettings(profile).unexportedRetentionMinutes)
+    : undefined;
+  const next: ProfileLocalDataSettings = {
+    deleteAfterExport: values.deleteAfterExport,
+    ...(retentionMinutes !== undefined ? { unexportedRetentionMinutes: retentionMinutes } : {})
   };
 
   return profile.localData || !isDefaultLocalDataSettings(next) ? next : undefined;

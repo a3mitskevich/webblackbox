@@ -9,6 +9,8 @@ import {
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
+import { readCaptureFallback, type CaptureFallbackInfo } from "./recording-profile.js";
+
 /** The waterfall fields the completeness report reads. */
 export type CompletenessNetworkEntry = {
   reqId: string;
@@ -43,6 +45,11 @@ export type CompletenessInput = {
   realtime: readonly CompletenessRealtimeEntry[];
   /** The archive manifest: what the export kept and whether the recording was interrupted. */
   manifest?: Pick<ExportManifest, "completeness" | "stats">;
+  /**
+   * The archive's Full → Light fallback, read from all its events (a range may leave the
+   * `meta.config` that records it out); read from `events` when absent.
+   */
+  captureFallback?: CaptureFallbackInfo | null;
 };
 
 /** What the export kept of the stored recording, and how the recording ended. */
@@ -97,6 +104,11 @@ export type MimeCompleteness = {
 export type CaptureCompletenessReport = {
   durationMs: number;
   export: ExportCompleteness;
+  /**
+   * When and why the recording left the Full engine and went on in Light; everything Full-only
+   * (bodies, full console, screenshots, DevTools data) is missing after `at`. Null otherwise.
+   */
+  captureFallback: CaptureFallbackInfo | null;
   /** The archive's capture policy asked for request and response bodies (`body-allowlist`). */
   bodiesRequested: boolean;
   network: {
@@ -179,6 +191,8 @@ export function buildCaptureCompletenessReport(
   return {
     durationMs: Math.max(0, endMono - startMono),
     export: readExportCompleteness(input.manifest, events.length),
+    captureFallback:
+      input.captureFallback !== undefined ? input.captureFallback : readCaptureFallback(events),
     bodiesRequested: readNetworkPolicy(events) === "body-allowlist",
     network: {
       requests: input.waterfall.length,
@@ -238,8 +252,20 @@ export function formatCaptureCompletenessReport(report: CaptureCompletenessRepor
     `Perf: ${report.perf.vitals} vitals, ${report.perf.longTasks} long tasks, ` +
       `${report.perf.traces} traces`,
     ...formatExport(report.export),
+    ...formatCaptureFallback(report.captureFallback),
     ...missingLines
   ];
+}
+
+/** One line on a Full → Light fallback; none when the recording stayed in its engine. */
+function formatCaptureFallback(fallback: CaptureFallbackInfo | null): string[] {
+  return fallback
+    ? [
+        `Engine: ${fallback.from} → ${fallback.to} at ${isoTime(fallback.at)} (${fallback.reason}` +
+          (fallback.detail && fallback.detail !== fallback.reason ? `: ${fallback.detail}` : "") +
+          "); bodies, full console, screenshots and DevTools data are missing after that"
+      ]
+    : [];
 }
 
 /** Export lines: what the archive kept, what it left out and why, and an interruption. */
@@ -270,7 +296,10 @@ function formatExport(report: ExportCompleteness): string[] {
 }
 
 function isoTime(ms: number): string {
-  return Number.isFinite(ms) ? new Date(ms).toISOString() : String(ms);
+  const date = new Date(ms);
+
+  // Archive times are untrusted: a finite value outside the Date range must not throw.
+  return Number.isNaN(date.getTime()) ? String(ms) : date.toISOString();
 }
 
 /**

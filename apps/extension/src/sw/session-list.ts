@@ -55,8 +55,11 @@ function toSessionListItem(
     sizeBytes: runtime.capturedSizeBytes,
     tags: [...runtime.tags],
     note: runtime.note,
+    profileId: runtime.profile.selection.profile.id,
     profileName: runtime.profile.selection.profile.name,
     ...(runtime.interruption ? { interruption: { ...runtime.interruption } } : {}),
+    ...(runtime.captureFallback ? { captureFallback: { ...runtime.captureFallback } } : {}),
+    ...(runtime.stoppedAt && runtime.exportPrompt ? { exportPrompt: true } : {}),
     ...(runtime.profile.cancellation && !runtime.profile.cancellationAcknowledged
       ? { profileCancel: toProfileCancelNotice(runtime.profile.cancellation) }
       : {})

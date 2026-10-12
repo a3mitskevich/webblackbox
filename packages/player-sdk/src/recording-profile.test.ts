@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   describePrivacyViolation,
+  readCaptureFallback,
   readProfileCancellation,
   readRecordingProfiles
 } from "./recording-profile.js";
@@ -165,5 +166,53 @@ describe("readProfileCancellation", () => {
         event("meta.config", { profileCancel: { reason: "rule-changed", started: "junk" } })
       ])
     ).toEqual({ t: 1, mono: 1, reason: "rule-changed" });
+  });
+});
+
+describe("readCaptureFallback", () => {
+  it("reads when and why the recording left Full", () => {
+    const events = [
+      event(
+        "meta.config",
+        { mode: "full", profile: { id: "builtin:maximum", name: "Maximum" } },
+        1
+      ),
+      event(
+        "meta.config",
+        {
+          mode: "lite",
+          profile: { id: "builtin:maximum", name: "Maximum" },
+          captureFallback: {
+            at: 1_700_000_000_000,
+            reason: "canceled-by-user",
+            from: "full",
+            to: "lite",
+            detail: "canceled_by_user"
+          }
+        },
+        7
+      )
+    ];
+
+    expect(readCaptureFallback(events)).toEqual({
+      at: 1_700_000_000_000,
+      mono: 7,
+      reason: "canceled-by-user",
+      from: "full",
+      to: "lite",
+      detail: "canceled_by_user"
+    });
+    // The fallback keeps the profile: one profile period.
+    expect(readRecordingProfiles(events)).toHaveLength(1);
+  });
+
+  it("returns null without a fallback and tolerates junk", () => {
+    expect(readCaptureFallback([event("meta.config", { profile: { id: "a" } })])).toBeNull();
+    expect(
+      readCaptureFallback([event("meta.config", { captureFallback: { reason: 3 } })])
+    ).toBeNull();
+    expect(
+      readCaptureFallback([event("meta.config", { captureFallback: { reason: "detached" } }, 4)])
+    ).toEqual({ at: 4, mono: 4, reason: "detached", from: "full", to: "lite" });
   });
 });

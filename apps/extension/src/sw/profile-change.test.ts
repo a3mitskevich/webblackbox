@@ -9,13 +9,13 @@ import {
   DEFAULT_PROFILE_ID,
   PROFILES_SCHEMA_VERSION,
   PROFILES_STORAGE_KEY,
-  type ProfileRule
+  type ProfileRule,
+  type RecordingProfile
 } from "../shared/profiles/model.js";
 import {
   BUILT_IN_PROFILE_IDS,
-  createDefaultProfile,
-  duplicateProfile,
-  findBuiltInProfile
+  createBaseProfile,
+  createDefaultProfile
 } from "../shared/profiles/presets.js";
 import {
   AUTO_PROFILE_ID,
@@ -100,20 +100,30 @@ function reverseKeys<T>(value: T): T {
   return value;
 }
 
-function qaCopy() {
-  const qa = findBuiltInProfile(BUILT_IN_PROFILE_IDS.qa);
+/** A user profile with the settings of the QA preset of earlier versions. */
+function qaCopy(): RecordingProfile {
+  const base = createBaseProfile({ id: "mine", name: "Mine", base: "full" });
 
-  if (!qa) {
-    throw new Error("missing QA preset");
-  }
-
-  return duplicateProfile(qa, { id: "mine" });
+  return {
+    ...base,
+    categories: {
+      ...base.categories,
+      actions: "allow" as const,
+      console: "allow" as const,
+      network: "body-allowlist" as const,
+      screenshots: "allow" as const,
+      cdp: "safe-subset" as const,
+      tabsContext: "allow" as const
+    },
+    network: { ...base.network, bodyMimeAllowlist: ["application/json"], bodyMaxBytes: 262_144 },
+    sourceMaps: { mode: "embed" as const }
+  };
 }
 
 const qaRule = {
   id: "shop-qa",
   name: "Shop",
-  profileId: BUILT_IN_PROFILE_IDS.qa,
+  profileId: BUILT_IN_PROFILE_IDS.maximum,
   priority: 10,
   enabled: true,
   match: { hosts: ["shop.example.com"] }
@@ -276,7 +286,7 @@ describe("detectProfileChange", () => {
   });
 
   it("reports an enterprise policy change that caps the running profile", () => {
-    const selection = select(state(), BUILT_IN_PROFILE_IDS.fullCapture);
+    const selection = select(state(), BUILT_IN_PROFILE_IDS.maximum);
     const started = snapshot(selection);
     const next = snapshot(
       selection,
@@ -306,8 +316,8 @@ describe("buildProfileCancellation / toProfileCancelNotice", () => {
       trigger: "navigation",
       at: 1_700_000_000_000,
       started: {
-        id: BUILT_IN_PROFILE_IDS.qa,
-        name: "QA",
+        id: BUILT_IN_PROFILE_IDS.maximum,
+        name: "Maximum",
         source: "rule",
         ruleId: "shop-qa",
         ruleName: "Shop",
@@ -318,7 +328,7 @@ describe("buildProfileCancellation / toProfileCancelNotice", () => {
     expect(toProfileCancelNotice(cancellation)).toEqual({
       reason: "rule-changed",
       at: 1_700_000_000_000,
-      startedName: "QA",
+      startedName: "Maximum",
       nextName: "Default"
     });
   });
@@ -345,7 +355,7 @@ describe("buildProfileCancellation / toProfileCancelNotice", () => {
 describe("shouldDeferProfileCheck", () => {
   const rule = (match: ProfileRule["match"], enabled = true): ProfileRule => ({
     id: "rule",
-    profileId: "builtin:qa",
+    profileId: BUILT_IN_PROFILE_IDS.maximum,
     priority: 1,
     enabled,
     match
@@ -419,10 +429,10 @@ describe("toSessionProfileRequest", () => {
 
     expect(
       toSessionProfileRequest(
-        BUILT_IN_PROFILE_IDS.qa,
-        select(profilesState, BUILT_IN_PROFILE_IDS.qa)
+        BUILT_IN_PROFILE_IDS.maximum,
+        select(profilesState, BUILT_IN_PROFILE_IDS.maximum)
       )
-    ).toBe(BUILT_IN_PROFILE_IDS.qa);
+    ).toBe(BUILT_IN_PROFILE_IDS.maximum);
     // A stale popup choice: the profile was deleted, the rules picked the profile instead.
     expect(toSessionProfileRequest("user-deleted", select(profilesState, "user-deleted"))).toBe(
       AUTO_PROFILE_ID

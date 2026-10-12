@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SessionListItem } from "../shared/messages.js";
 import {
-  chooseRadio,
   FakePort,
   flushPopup,
   flushPopupWithFakeTimers,
@@ -71,18 +70,17 @@ describe("popup export", () => {
       "≤ 256 MB · last 45 min"
     );
 
-    chooseRadio("capture-mode", "full");
-    await flushPopup();
-    chooseRadio("full-visual-capture", "recording");
     await submitExport(" export-secret ");
 
+    // A Full recording keeps its screenshots and tab video (the service worker keeps what it
+    // recorded); the limits come from Options.
     expect(port.postMessage).toHaveBeenCalledWith({
       kind: "ui.export",
       sid: "sid-1",
       passphrase: " export-secret ",
       saveAs: false,
       policy: {
-        includeScreenshots: false,
+        includeScreenshots: true,
         includeScreenRecordings: true,
         maxArchiveBytes: 256 * 1024 * 1024,
         recentWindowMs: 45 * 60 * 1000
@@ -278,6 +276,25 @@ describe("popup export", () => {
 
     passphraseInput.value = "long-enough";
     passphraseInput.dispatchEvent(new Event("input", { bubbles: true }));
+    const confirmInput = document.querySelector<HTMLInputElement>("#wb-passphrase-confirm");
+
+    if (!confirmInput) {
+      throw new Error("missing passphrase confirmation");
+    }
+
+    // It is remembered for later exports: a typo in the repeat stops the export.
+    confirmInput.value = "long-enuogh";
+    confirmInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
+    await flushPopup();
+
+    expect(port.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "ui.export" })
+    );
+    expect(confirmInput.validationMessage).toContain("differ");
+
+    confirmInput.value = "long-enough";
+    confirmInput.dispatchEvent(new Event("input", { bubbles: true }));
     document.querySelector<HTMLButtonElement>("[data-passphrase-submit]")?.click();
     await flushPopup();
 
@@ -321,9 +338,9 @@ describe("popup export", () => {
 
     getButton("export").click();
     await flushPopup();
-    const input = document.querySelector<HTMLInputElement>("#wb-passphrase-input");
-
-    if (input) {
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      "#wb-passphrase-input, #wb-passphrase-confirm"
+    )) {
       input.value = "double-secret";
     }
 
@@ -337,22 +354,47 @@ describe("popup export", () => {
     expect(document.querySelectorAll(".wb-confirm-overlay")).toHaveLength(0);
   });
 
-  it("exports no visual artifacts when none is selected", async () => {
+  it.each([
+    ["a Lite recording", stoppedSession("sid-lite", "lite"), false],
+    [
+      "a recording that fell back from Full to Light",
+      {
+        ...stoppedSession("sid-fallback", "lite"),
+        captureFallback: {
+          at: Date.now(),
+          reason: "canceled-by-user" as const,
+          from: "full" as const,
+          to: "lite" as const
+        }
+      },
+      true
+    ],
+    [
+      "a browser page recorded in Light from the start",
+      {
+        ...stoppedSession("sid-restricted", "lite"),
+        captureFallback: {
+          at: Date.now(),
+          reason: "restricted-page" as const,
+          from: "full" as const,
+          to: "lite" as const
+        }
+      },
+      false
+    ]
+  ])("exports the visuals of %s only when it ran in Full", async (_label, session, visuals) => {
     const port = new FakePort();
     installChromeStub(port);
 
-    await openWithSession(port, stoppedSession("sid-none-export"));
-    chooseRadio("capture-mode", "full");
-    await flushPopup();
-    chooseRadio("full-visual-capture", "none");
-    await submitExport("none-export-secret");
+    await openWithSession(port, session);
+    await submitExport("visuals-secret");
 
     expect(port.postMessage).toHaveBeenCalledWith({
       kind: "ui.export",
-      sid: "sid-none-export",
-      passphrase: "none-export-secret",
+      sid: session.sid,
+      passphrase: "visuals-secret",
       saveAs: false,
-      policy: { includeScreenshots: false, includeScreenRecordings: false, ...DEFAULT_POLICY }
+      policy: { includeScreenshots: visuals, includeScreenRecordings: visuals, ...DEFAULT_POLICY }
     });
   });
 

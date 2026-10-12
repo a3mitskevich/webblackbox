@@ -12,6 +12,8 @@ export type PortRegistry = {
   addPort: (port: PortLike) => void;
   removePort: (port: PortLike) => void;
   hasPort: (port: PortLike) => boolean;
+  /** A port of this name (e.g. the popup's) is connected. */
+  hasPortNamed: (name: string) => boolean;
   getOffscreenPort: () => PortLike | null;
   /** Binds the offscreen document's port: pipeline traffic is measured on it. */
   setOffscreenPort: (port: PortLike) => void;
@@ -88,6 +90,7 @@ export function createPortRegistry(deps: PortRegistryDeps): PortRegistry {
       connectedPorts.delete(port);
     },
     hasPort: (port) => connectedPorts.has(port),
+    hasPortNamed: (name) => [...connectedPorts].some((port) => port.name === name),
     getOffscreenPort: () => offscreenPort,
     setOffscreenPort: (port) => {
       offscreenPort = port;

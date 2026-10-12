@@ -14,7 +14,7 @@
   "sessionsFallbackTab": "标签页 {tabId}",
   "sessionsDeletePrompt": "删除会话 {sid}？这会移除本地归档数据。",
   "sessionsExportDialogTitle": "导出会话",
-  "sessionsExportDialogBody": "归档始终加密（AES-GCM）。请输入至少 8 个字符的口令，打开归档时需要它。",
+  "sessionsExportDialogBody": "归档始终加密（AES-GCM）。请输入至少 8 个字符的口令，打开归档时需要它。口令会保留到浏览器关闭。",
   "sessionsConfirmDeleteTitle": "确认删除",
   "sessionsTitle": "会话",
   "sessionsSearchLabel": "搜索会话",
@@ -46,5 +46,9 @@
   "sessionsActionOpenPlayer": "导出并在播放器中打开",
   "sessionsOpenPlayerHint": "先将归档导出到下载目录，然后打开播放器。把下载的 .webblackbox 文件拖入播放器即可；不会上传任何内容。",
   "sessionsActionNotes": "标签与备注",
-  "sessionsNoMatches": "没有符合筛选条件的会话。"
+  "sessionsNoMatches": "没有符合筛选条件的会话。",
+  "sessionsStatusFallback": "已降为轻量",
+  "sessionsFallbackHint": "完整捕获已停止（调试器被拒绝、取消或分离）；录制以“轻量”模式继续。归档记录了时间和原因。",
+  "sessionsStatusNotExported": "未导出",
+  "sessionsNotExportedHint": "保存在此设备上，直到你导出或删除它（直到浏览器关闭）。"
 }

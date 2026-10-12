@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
-// E2E: the Full capture preset, chosen explicitly on a host without any site rule, records content
-// as captured (no masking, no host restriction). Planted fake secrets (console text, storage
-// value, URL token, Authorization header, request and response bodies, password field, WebSocket
-// payload) and the raw DOM must be present in the decrypted archive. After the tab moves to
-// another host the explicit choice still applies: the recording keeps going and records the second
-// set raw too. The archive itself is always encrypted: none of the secrets, nor the site, appear
-// in its raw bytes, and an export without a passphrase is refused.
+// E2E: a fresh install records with Maximum, the default profile: Record (no profile, no engine
+// chosen) starts it in Full on a host without any site rule and records content as captured (no
+// masking, no host restriction). Planted fake secrets (console text, storage value, URL token,
+// Authorization header, request and response bodies, password field, WebSocket payload) and the
+// raw DOM must be present in the decrypted archive. After the tab moves to another host Maximum
+// still applies: the recording keeps going and records the second set raw too. The archive itself
+// is always encrypted: none of the secrets, nor the site, appear in its raw bytes, and an export
+// without a passphrase is refused.
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -21,12 +22,12 @@ const root = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
 const harness = createProfileE2eHarness({
-  name: "profile-full-capture",
+  name: "profile-maximum",
   defaultPort: "9232"
 });
-const passphrase = "webblackbox-full-capture-e2e";
+const passphrase = "webblackbox-maximum-e2e";
 
-/** Secrets planted under Full capture: each must be in the archive as captured. */
+/** Secrets planted under Maximum: each must be in the archive as captured. */
 const RAW_SECRETS = {
   console: "FC-CONSOLE-SECRET-1",
   storage: "FC-STORAGE-SECRET-1",
@@ -58,11 +59,11 @@ const OTHER_HOST_SECRETS = {
 const DOM_MARKER = "FC-DOM-MARKER-1";
 /** Rows the scenario adds over a few seconds: later DOM snapshots must follow them. */
 const DOM_CHANGE_ROWS = 10;
-const FULL_CAPTURE_ID = "builtin:full-capture";
+const MAXIMUM_ID = "builtin:maximum";
 
 main().catch(async (error) => {
   console.error(
-    "Profile full capture E2E failed:",
+    "Profile Maximum E2E failed:",
     error instanceof Error ? error.message : String(error)
   );
   await harness.cleanup();
@@ -77,17 +78,11 @@ async function main() {
   const pageUrl = `http://127.0.0.1:${appPort}/fc/`;
   const { page, popup, swExceptions } = await harness.launch(pageUrl);
 
-  await popup.evaluate(`
-    chrome.storage.local.set({
-      "webblackbox.profiles": {
-        schemaVersion: 2,
-        defaultProfileId: "default",
-        profiles: [],
-        rules: [],
-        extendedCaptureHosts: []
-      }
-    }).then(() => true)
-  `);
+  // A fresh install: no profiles store at all.
+  const stored = await popup.evaluate(
+    `chrome.storage.local.get("webblackbox.profiles").then((values) => values["webblackbox.profiles"] ?? null)`
+  );
+  assert(stored === null, "A fresh install already has a profiles store", stored);
 
   const tabId = await popup.evaluate(`
     chrome.tabs.query({}).then((tabs) =>
@@ -97,17 +92,19 @@ async function main() {
   assert(typeof tabId === "number", "Demo page tab not found", { tabId });
 
   const preview = await popup.evaluate(
-    `chrome.runtime.sendMessage({ kind: "ui.resolve-profile", tabId: ${tabId}, profileId: ${JSON.stringify(FULL_CAPTURE_ID)} })`
+    `chrome.runtime.sendMessage({ kind: "ui.resolve-profile", tabId: ${tabId} })`
   );
   assert(
-    preview?.selection?.id === FULL_CAPTURE_ID && preview.selection.source === "explicit",
-    "Full capture is not used as chosen on a host without rules",
+    preview?.selection?.id === MAXIMUM_ID &&
+      preview.selection.source === "default" &&
+      preview.selection.visual === "both" &&
+      preview.catalog.map((entry) => entry.id).join() === `${MAXIMUM_ID},builtin:lite`,
+    "Maximum is not the default of a fresh install, or other built-in profiles remain",
     preview
   );
 
-  await popup.evaluate(
-    `chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId}, mode: "full", visualCapture: "none", profileId: ${JSON.stringify(FULL_CAPTURE_ID)} })`
-  );
+  // As the popup's Record button sends it: the profile decides the engine and visuals.
+  await popup.evaluate(`chrome.runtime.sendMessage({ kind: "ui.start", tabId: ${tabId} })`);
   await waitFor(
     () =>
       page.evaluate(
@@ -191,28 +188,27 @@ async function main() {
       })
   );
   const recorded = `${JSON.stringify(events)}\n${blobTexts.join("\n")}`;
-  const fullCaptureConfig = events.find(
-    (event) => event.type === "meta.config" && event.data?.profile?.id === FULL_CAPTURE_ID
+  const maximumConfig = events.find(
+    (event) => event.type === "meta.config" && event.data?.profile?.id === MAXIMUM_ID
   );
   const otherConfig = events.find(
     (event) =>
       event.type === "meta.config" &&
-      (event.data?.profile?.id !== FULL_CAPTURE_ID || event.data?.profileCancel)
+      (event.data?.profile?.id !== MAXIMUM_ID || event.data?.profileCancel)
   );
   const recordedDom = await recordedDomTexts(player, playerSdk);
   const wsFrames = events.filter((event) => event.type === "network.ws.frame");
 
-  assert(fullCaptureConfig, "meta.config does not record the Full capture profile");
+  assert(maximumConfig, "meta.config does not record the Maximum profile");
   assert(
-    fullCaptureConfig.data.profile.source === "explicit" &&
-      !fullCaptureConfig.data.profile.downgradedFrom,
-    "Full capture was not recorded as chosen",
-    fullCaptureConfig.data.profile
+    maximumConfig.data.profile.source === "default" && !maximumConfig.data.profile.downgradedFrom,
+    "Maximum was not recorded as the default profile",
+    maximumConfig.data.profile
   );
   assert(!otherConfig, "The recording changed or cancelled its profile", {
     config: otherConfig?.data
   });
-  assert(recordedDom.texts.length > 0, "Full capture did not record the raw DOM", {
+  assert(recordedDom.texts.length > 0, "Maximum did not record the raw DOM", {
     types: [...new Set(events.map((event) => event.type))]
   });
   assert(
@@ -220,7 +216,7 @@ async function main() {
     "The recorded DOM misses the page markup",
     { html: recordedDom.htmlSnapshots, rrweb: recordedDom.rrwebSnapshots }
   );
-  assert(wsFrames.length > 0, "Full capture did not record WebSocket frames", {
+  assert(wsFrames.length > 0, "Maximum did not record WebSocket frames", {
     types: [...new Set(events.map((event) => event.type))]
   });
   assert(player.archive.manifest.protocolVersion === 2, "Archive is not in the encrypted format", {
@@ -228,7 +224,7 @@ async function main() {
   });
 
   for (const [kind, secret] of Object.entries(RAW_SECRETS)) {
-    assert(recorded.includes(secret), `Full capture did not record the ${kind} secret raw`, {
+    assert(recorded.includes(secret), `Maximum did not record the ${kind} secret raw`, {
       secret,
       types: [...new Set(events.map((event) => event.type))]
     });
@@ -238,7 +234,7 @@ async function main() {
   for (const [kind, secret] of Object.entries(OTHER_HOST_SECRETS)) {
     assert(
       recorded.includes(secret),
-      `Full capture did not record the ${kind} secret on the other host`,
+      `Maximum did not record the ${kind} secret on the other host`,
       {
         secret
       }
@@ -259,7 +255,7 @@ async function main() {
   for (const secrets of [RAW_SECRETS, OTHER_HOST_SECRETS]) {
     assert(
       cookieEntries.some((entry) => entry.name === "fc_cookie" && entry.value === secrets.cookie),
-      "Full capture did not record the page cookie value",
+      "Maximum did not record the page cookie value",
       { cookieEntries }
     );
     assert(
@@ -269,7 +265,7 @@ async function main() {
           entry.value === secrets.httpOnlyCookie &&
           entry.httpOnly === true
       ),
-      "Full capture did not record the HttpOnly cookie value",
+      "Maximum did not record the HttpOnly cookie value",
       { cookieEntries }
     );
   }
@@ -277,7 +273,7 @@ async function main() {
   for (const secrets of [RAW_SECRETS, OTHER_HOST_SECRETS]) {
     assert(
       idbRecords.some((record) => record.value?.includes(secrets.indexedDb)),
-      "Full capture did not record the IndexedDB record",
+      "Maximum did not record the IndexedDB record",
       { idbRecords }
     );
   }
@@ -292,7 +288,7 @@ async function main() {
   const lastRow = `DOM-CHANGE-ROW-${DOM_CHANGE_ROWS - 1}`;
   assert(
     recordedDom.rrwebMutations > 0 || (mutationBatches.length > 0 && changeSnapshots.length > 0),
-    "Full capture did not record the DOM changes",
+    "Maximum did not record the DOM changes",
     {
       rrwebMutations: recordedDom.rrwebMutations,
       mutationBatches: mutationBatches.length,
@@ -308,7 +304,7 @@ async function main() {
   assert(swExceptions.length === 0, "Service worker threw", swExceptions);
 
   console.log(`Archive: ${archivePath} (${bytes.byteLength} bytes)`);
-  console.log(`Profile: ${JSON.stringify(fullCaptureConfig.data.profile)}`);
+  console.log(`Profile: ${JSON.stringify(maximumConfig.data.profile)}`);
   console.log(`Raw secrets found: ${Object.keys(RAW_SECRETS).join(", ")} (both hosts)`);
   console.log(
     `rrweb: ${recordedDom.rrwebSnapshots} full snapshots, ${recordedDom.rrwebMutations} mutations; ` +
@@ -317,7 +313,7 @@ async function main() {
   );
   console.log(`Cookie values: ${cookieEntries.length}; IndexedDB records: ${idbRecords.length}`);
   console.log(`Chrome log: ${harness.chromeLogPath}`);
-  console.log("Profile full capture E2E passed.");
+  console.log("Profile Maximum E2E passed.");
 
   await harness.cleanup();
 }
@@ -343,8 +339,8 @@ async function runScenario(page, secrets) {
 
 function startDemoServer() {
   const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>Full capture demo</title></head>
-<body><h1>Full capture demo</h1><p>${DOM_MARKER}</p><input name="password" type="password">
+<html><head><meta charset="utf-8"><title>Maximum demo</title></head>
+<body><h1>Maximum demo</h1><p>${DOM_MARKER}</p><input name="password" type="password">
 <ul id="rows"></ul>
 <script>
   const echoOverWebSocket = (text) =>
