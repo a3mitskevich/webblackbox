@@ -58,9 +58,13 @@ const DEFAULT_CATEGORIES: CaptureCategories = completeCaptureCategories(
   DEFAULT_CAPTURE_POLICY.categories
 );
 
-/** Ceiling of what a non-extended profile may capture: today's Full mode, visuals included. */
+/**
+ * Ceiling of what a non-extended profile may capture: today's Full mode, visuals and the page DOM
+ * (masked by the profile's rules) included.
+ */
 export const STANDARD_CAPTURE_CEILING: CaptureCategories = {
   ...DEFAULT_CATEGORIES,
+  dom: "allow",
   screenshots: "allow",
   screenRecordings: "allow",
   cdp: "safe-subset"
@@ -115,7 +119,9 @@ const LITE_PRESET = createBaseProfile({
 const FULL_PRESET = createBaseProfile({
   id: BUILT_IN_PROFILE_IDS.full,
   name: "Full",
-  description: "CDP network, navigation and screenshots. No bodies, console text or input values.",
+  description:
+    "CDP network, navigation, screenshots and the page DOM (masked). No bodies, console text " +
+    "or input values.",
   base: "full"
 });
 
@@ -123,8 +129,8 @@ const QA_PRESET = createBaseProfile({
   id: BUILT_IN_PROFILE_IDS.qa,
   name: "QA",
   description:
-    "Console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots, and paths " +
-    "and titles of other tabs of the site.",
+    "Console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots, the page DOM " +
+    "(masked), and paths and titles of other tabs of the site.",
   base: "full",
   categories: {
     ...DEFAULT_CATEGORIES,

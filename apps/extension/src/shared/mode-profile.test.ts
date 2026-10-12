@@ -74,6 +74,32 @@ describe("mode-profile", () => {
     expect(resolveModeBaseConfig("lite").sampling.bodyCaptureMaxBytes).toBe(0);
   });
 
+  it("records the page DOM in full mode at the default DOM level", () => {
+    const full = applyModeProductBoundary("full", DEFAULT_RECORDER_CONFIG);
+    const lite = applyModeProductBoundary("lite", DEFAULT_RECORDER_CONFIG);
+
+    expect(DEFAULT_RECORDER_CONFIG.capturePolicy?.categories.dom).toBe("masked");
+    expect(full.capturePolicy?.categories.dom).toBe("allow");
+    // Lite keeps the masked level, and the default policy itself is untouched.
+    expect(lite.capturePolicy?.categories.dom).toBe("masked");
+    expect(DEFAULT_RECORDER_CONFIG.capturePolicy?.categories.dom).toBe("masked");
+  });
+
+  it.each(["off", "wireframe", "allow"] as const)(
+    "keeps a profile's DOM level %s in full mode",
+    (dom) => {
+      const next = applyModeProductBoundary("full", {
+        ...DEFAULT_RECORDER_CONFIG,
+        capturePolicy: {
+          ...DEFAULT_RECORDER_CONFIG.capturePolicy!,
+          categories: { ...DEFAULT_RECORDER_CONFIG.capturePolicy!.categories, dom }
+        }
+      });
+
+      expect(next.capturePolicy?.categories.dom).toBe(dom);
+    }
+  );
+
   it.each(["lite", "full"] as const)(
     "keeps the %s base config's ring buffer and perf freeze triggers off once the boundary applies",
     (mode) => {

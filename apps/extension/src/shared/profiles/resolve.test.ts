@@ -151,7 +151,7 @@ describe("buildProfileRecorderConfig — presets", () => {
     }
   });
 
-  it("QA records console text, 256 KiB JSON bodies, screenshots and other tabs' paths, but not the raw DOM", () => {
+  it("QA records console text, 256 KiB JSON bodies, screenshots, the page DOM and other tabs' paths", () => {
     const config = buildProfileRecorderConfig({
       mode: "full",
       profile: preset(BUILT_IN_PROFILE_IDS.qa),
@@ -161,6 +161,8 @@ describe("buildProfileRecorderConfig — presets", () => {
     expect(config.capturePolicy?.categories).toEqual({
       ...DEFAULT_CAPTURE_POLICY.categories,
       actions: "allow",
+      // Full mode records the page DOM at the default level, masked by the profile's rules.
+      dom: "allow",
       console: "allow",
       network: "body-allowlist",
       screenshots: "allow",
@@ -391,6 +393,14 @@ describe("isExtendedCaptureProfile", () => {
       })
     ).toBe(true);
     expect(isExtendedCaptureProfile({ ...copy, unmaskSelectors: [".x"] })).toBe(true);
+  });
+
+  it("does not flag a profile for recording the page DOM, which Full mode records by default", () => {
+    const copy = duplicateProfile(preset(BUILT_IN_PROFILE_IDS.full), { id: "dom" });
+
+    expect(
+      isExtendedCaptureProfile({ ...copy, categories: { ...copy.categories, dom: "allow" } })
+    ).toBe(false);
   });
 });
 
