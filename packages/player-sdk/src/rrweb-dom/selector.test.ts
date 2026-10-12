@@ -34,6 +34,8 @@ describe("querySelectorAll", () => {
     expect(select('[data-state="closed"]')).toEqual([14]);
     expect(select("[data-state=open i]")).toEqual([12]);
     expect(select("[class~=list]")).toEqual([11]);
+    expect(select('[class~=""]')).toEqual([]);
+    expect(select('[class~="list primary"]')).toEqual([]);
     expect(select('[href^="https://x.test"]')).toEqual([15]);
     expect(select('[href$="b=1"]')).toEqual([15]);
     expect(select("[href*=test]")).toEqual([15]);
@@ -50,7 +52,16 @@ describe("querySelectorAll", () => {
   });
 
   it("rejects what it cannot match instead of guessing", () => {
-    for (const selector of ["li:first-child", "a + b", "[unclosed", "", "a,,b", "li 'x'", "#"]) {
+    for (const selector of [
+      "li:first-child",
+      "a + b",
+      "[unclosed",
+      "",
+      "a,,b",
+      "li 'x'",
+      "#",
+      "ul >"
+    ]) {
       expect(() => parseSelector(selector), selector).toThrow(UnsupportedSelectorError);
     }
 

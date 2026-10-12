@@ -72,7 +72,9 @@ export function installPageDomRecorder(factory: DomRecorderFactory = createRrweb
   };
 
   const start = (command: Extract<DomRecorderCommand, { command: "start" }>): void => {
-    if (session === command.session) {
+    // A repeated start (the content script resends it on `ready`) keeps the running recorder. A
+    // stopped one is started again: a new content script (extension reload) can reuse the number.
+    if (session === command.session && recorder !== null) {
       post({ signal: "started", session });
       return;
     }

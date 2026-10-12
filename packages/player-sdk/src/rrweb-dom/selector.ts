@@ -120,6 +120,10 @@ function parseComplex(source: string): Complex {
     index += rest[0].length;
   }
 
+  if (combinator === ">") {
+    throw new UnsupportedSelectorError('A selector cannot end with ">".');
+  }
+
   if (parts.length === 0) {
     throw new UnsupportedSelectorError("Empty selector.");
   }
@@ -165,7 +169,7 @@ function matchesAttribute(node: ReadonlyDomNode, test: AttributeTest): boolean {
     case "=":
       return value === expected;
     case "~=":
-      return value.split(/\s+/).includes(expected);
+      return expected !== "" && !/\s/.test(expected) && value.split(/\s+/).includes(expected);
     case "^=":
       return expected !== "" && value.startsWith(expected);
     case "$=":

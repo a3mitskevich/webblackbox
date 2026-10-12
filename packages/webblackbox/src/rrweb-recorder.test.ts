@@ -275,6 +275,24 @@ describe("createRrwebDomRecorder", () => {
     expect(JSON.stringify(events)).toContain("/late.png");
   });
 
+  it("drops the value of an element rrweb no longer resolves, and keeps its other attributes", () => {
+    const mask = createRrwebEventMask(policyWith({ dom: "allow" }), () => null);
+    const masked = mask({
+      type: 3,
+      timestamp: 1,
+      data: {
+        source: 0,
+        texts: [],
+        removes: [],
+        adds: [],
+        attributes: [{ id: 9, attributes: { value: "gone-field-secret", title: "kept" } }]
+      }
+    });
+
+    expect(JSON.stringify(masked)).not.toContain("gone-field-secret");
+    expect(JSON.stringify(masked)).toContain("kept");
+  });
+
   it("batches incremental events and stamps each batch with its first event's time", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     renderFixture();

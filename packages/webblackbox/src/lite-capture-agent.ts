@@ -329,9 +329,16 @@ export class LiteCaptureAgent {
       return;
     }
 
-    // The DOM recorder's last events must reach the buffer while it still records.
-    await this.domRecorder.drain();
+    try {
+      await this.completeStopScreenshot();
+    } finally {
+      // Last, after the screenshot wait: the DOM recorder's events up to now must reach the buffer
+      // while it still records (its final batch after Stop would find no recorder to take it).
+      await this.domRecorder.drain();
+    }
+  }
 
+  private async completeStopScreenshot(): Promise<void> {
     try {
       await this.screenshotInFlightPromise;
     } catch {

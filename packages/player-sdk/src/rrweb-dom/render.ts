@@ -34,6 +34,10 @@ export const DOM_RENDER_DEFAULT_MAX_BYTES = 24_000;
 export const DOM_RENDER_DEFAULT_TEXT_CHARS = 160;
 const ATTRIBUTE_MAX_CHARS = 120;
 const OMITTED_IDS_MAX = 40;
+/** An id or a class name in an element label (outline lines, paths). */
+const LABEL_PART_MAX_CHARS = 60;
+/** Recursion bound of the renderers, whatever depth a caller asks for. */
+const RENDER_MAX_DEPTH = 256;
 const VOID_ELEMENTS = new Set([
   "area",
   "base",
@@ -89,6 +93,14 @@ function escapeHtmlText(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * Page text inside our own `<!-- … -->` summaries: escaped so a `-->` in a title or a cell cannot
+ * close the comment and smuggle markup into the output.
+ */
+function escapeCommentText(text: string): string {
+  return escapeHtmlText(text);
+}
+
 function escapeAttribute(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
@@ -99,12 +111,14 @@ export function elementLabel(node: ReadonlyDomNode): string {
     return node.kind === "document" ? "#document" : `#${node.kind}`;
   }
 
-  const id = node.attributes.id ? `#${node.attributes.id}` : "";
+  const id = node.attributes.id
+    ? `#${truncateText(collapseWhitespace(node.attributes.id), LABEL_PART_MAX_CHARS)}`
+    : "";
   const classes = (node.attributes.class ?? "")
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 3)
-    .map((name) => `.${name}`)
+    .map((name) => `.${truncateText(name, LABEL_PART_MAX_CHARS)}`)
     .join("");
   return `${node.tagName}${id}${classes}`;
 }
@@ -216,7 +230,7 @@ function headSummary(tree: DomTree, head: ReadonlyDomNode): string {
       (child.tagName === "link" && /stylesheet/i.test(child.attributes.rel ?? ""))
   ).length;
   const titleText = title ? textContentOf(tree, title.id, 120) : "";
-  return `${children.length} elements${titleText ? `, title "${titleText}"` : ""}, ${stylesheets} stylesheets`;
+  return `${children.length} elements${titleText ? `, title "${escapeCommentText(titleText)}"` : ""}, ${stylesheets} stylesheets`;
 }
 
 function renderHtmlNode(context: RenderContext, id: number, level: number): boolean {
@@ -238,7 +252,7 @@ function renderHtmlNode(context: RenderContext, id: number, level: number): bool
     case "comment":
       return true;
     case "doctype":
-      return write(context, `<!DOCTYPE ${node.text}>`);
+      return write(context, `<!DOCTYPE ${escapeHtmlText(node.text)}>`);
     case "document":
       return node.children.every((child) => renderHtmlNode(context, child, level));
     case "element":
@@ -281,7 +295,7 @@ function renderHtmlNode(context: RenderContext, id: number, level: number): bool
     omit(context, node.id);
     complete = write(
       context,
-      `<!-- ${elements} child elements${text ? `, text "${text}"` : ""}; nodeId=${node.id} -->`
+      `<!-- ${elements} child elements${text ? `, text "${escapeCommentText(text)}"` : ""}; nodeId=${node.id} -->`
     );
   } else {
     for (const child of node.children) {
@@ -333,7 +347,9 @@ function renderOutlineNode(context: RenderContext, id: number, level: number): b
       ? textContentOf(tree, node.id, context.maxTextChars)
       : truncateText(collapseWhitespace(ownText).trim(), context.maxTextChars);
   const state = [
-    node.value !== undefined ? ` value="${truncateText(node.value, ATTRIBUTE_MAX_CHARS)}"` : "",
+    node.value !== undefined
+      ? ` value="${truncateText(collapseWhitespace(node.value), ATTRIBUTE_MAX_CHARS)}"`
+      : "",
     node.checked !== undefined ? ` checked=${node.checked}` : ""
   ].join("");
   const cut = level >= context.depth && children.length > 0;
@@ -376,7 +392,7 @@ export function renderDomSubtree(
   const context: RenderContext = {
     tree,
     format: options.format ?? "html",
-    depth: Math.max(0, options.depth ?? DOM_RENDER_DEFAULT_DEPTH),
+    depth: Math.min(RENDER_MAX_DEPTH, Math.max(0, options.depth ?? DOM_RENDER_DEFAULT_DEPTH)),
     maxBytes: Math.max(256, options.maxBytes ?? DOM_RENDER_DEFAULT_MAX_BYTES),
     maxTextChars: Math.max(16, options.maxTextChars ?? DOM_RENDER_DEFAULT_TEXT_CHARS),
     collapseHead: options.collapseHead ?? true,

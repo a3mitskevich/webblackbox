@@ -134,16 +134,57 @@ function redactAttributeValue(name: string, value: unknown, rules: RedactionRule
   }
 
   if (SRCSET_ATTRIBUTES.has(name)) {
-    return value
-      .split(",")
-      .map((candidate) => {
-        const [url = "", ...descriptor] = candidate.trim().split(/\s+/);
-        return [recordUrl(url, rules), ...descriptor].join(" ");
-      })
+    return parseSrcset(value)
+      .map(({ url, descriptor }) =>
+        [recordUrl(url, rules), ...(descriptor ? [descriptor] : [])].join(" ")
+      )
       .join(", ");
   }
 
   return value;
+}
+
+/**
+ * The candidates of a `srcset`, split as HTML does: a URL runs to the next whitespace (commas
+ * inside it, as in `w_100,h_100` image transforms, are part of it; trailing ones end the
+ * candidate), its descriptors to the next comma.
+ */
+function parseSrcset(value: string): Array<{ url: string; descriptor: string }> {
+  const candidates: Array<{ url: string; descriptor: string }> = [];
+  let index = 0;
+
+  while (index < value.length) {
+    while (index < value.length && /[\s,]/.test(value[index]!)) {
+      index += 1;
+    }
+
+    const start = index;
+
+    while (index < value.length && !/\s/.test(value[index]!)) {
+      index += 1;
+    }
+
+    const token = value.slice(start, index);
+
+    if (!token) {
+      break;
+    }
+
+    if (token.endsWith(",")) {
+      candidates.push({ url: token.replace(/,+$/, ""), descriptor: "" });
+      continue;
+    }
+
+    const descriptorStart = index;
+
+    while (index < value.length && value[index] !== ",") {
+      index += 1;
+    }
+
+    candidates.push({ url: token, descriptor: value.slice(descriptorStart, index).trim() });
+  }
+
+  return candidates;
 }
 
 function asRecord(value: unknown): Attributes | null {

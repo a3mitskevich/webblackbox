@@ -42,6 +42,10 @@ const MAX_DIFF_ITEMS = 200;
 /** After an action's trigger, `dom_diff` looks this far ahead unless the action span ends later. */
 const DEFAULT_ACTION_WINDOW_MS = 2_000;
 const MAX_WINDOW_MS = 600_000;
+/** The renderer's smallest budget per root: selector matches beyond `maxBytes / this` are cut. */
+const MIN_ROOT_BYTES = 256;
+/** Recorder gaps listed by `dom_diff` (the count stays exact). */
+const MAX_DIFF_GAPS = 20;
 
 const maxBytesField = z
   .number()
@@ -145,7 +149,10 @@ export const domDiffInput = {
     .min(1)
     .max(MAX_WINDOW_MS)
     .optional()
-    .describe(`Time after an action's or event's trigger (default ${DEFAULT_ACTION_WINDOW_MS}).`),
+    .describe(
+      `Time after an action's or event's trigger (default ${DEFAULT_ACTION_WINDOW_MS}, or to the ` +
+        "end of the action if that is later)."
+    ),
   maxItems: z
     .number()
     .int()
@@ -174,6 +181,8 @@ type Recording = {
   gap: { status: string; reason: string | null; sinceMono: number } | null;
   eventsApplied: number;
   skippedChanges: number;
+  /** The replay stopped at its event budget before the moment asked for: the DOM is older. */
+  replayTruncated?: true;
 };
 
 /** Why there is no DOM at a moment, for the agent to act on. */
@@ -196,8 +205,20 @@ function describeRecording(state: RrwebDomState): Recording {
     viewport: state.viewport ?? null,
     gap: describeGap(state.gap),
     eventsApplied: state.eventsApplied,
-    skippedChanges: state.skippedChanges
+    skippedChanges: state.skippedChanges,
+    ...(state.truncated ? { replayTruncated: true as const } : {})
   };
+}
+
+/** Rejects parameters that would otherwise be silently ignored by the one that wins. */
+function rejectConflicts(given: Record<string, unknown>, groups: readonly string[][]): void {
+  for (const group of groups) {
+    const present = group.filter((name) => given[name] !== undefined);
+
+    if (present.length > 1) {
+      throw new Error(`Give only one of ${present.join(", ")}.`);
+    }
+  }
 }
 
 function unavailable(replay: RrwebDomReplay, mono: number): Unavailable {
@@ -243,6 +264,10 @@ function resolveMono(
 
 /** `dom_at` on an open archive. */
 export function domAtFromPlayer(player: WebBlackboxPlayer, args: DomAtArgs) {
+  rejectConflicts(args, [
+    ["mono", "eventId"],
+    ["selector", "nodeId"]
+  ]);
   const events = player.events;
   const at = resolveMono(events, args.mono, args.eventId);
   const replay = RrwebDomReplay.fromEvents(events);
@@ -266,14 +291,21 @@ export function domAtFromPlayer(player: WebBlackboxPlayer, args: DomAtArgs) {
   }
 
   let roots = [rootId];
-  let matches: { selector: string; total: number; nodeIds: number[] } | null = null;
+  let matches: {
+    selector: string;
+    total: number;
+    totalIsLowerBound: boolean;
+    shown: number;
+    nodeIds: number[];
+  } | null = null;
 
   if (args.selector !== undefined) {
     const limit = MAX_MATCHES * 4;
     let found: number[];
 
     try {
-      found = querySelectorAll(tree, rootId, args.selector, limit);
+      // One past the limit tells "exactly the limit" from "more than listed".
+      found = querySelectorAll(tree, rootId, args.selector, limit + 1);
     } catch (error) {
       if (error instanceof UnsupportedSelectorError) {
         throw new Error(`Unsupported selector: ${error.message}`);
@@ -282,12 +314,23 @@ export function domAtFromPlayer(player: WebBlackboxPlayer, args: DomAtArgs) {
       throw error;
     }
 
-    const shown = found.slice(0, clamp(args.maxMatches, DEFAULT_MATCHES, 1, MAX_MATCHES));
-    matches = { selector: args.selector, total: found.length, nodeIds: found.slice(0, limit) };
+    // Each rendered match needs the renderer's minimum budget: fewer matches fit a small one.
+    const fitting = Math.max(1, Math.floor(maxBytes / MIN_ROOT_BYTES));
+    const shown = found.slice(
+      0,
+      Math.min(clamp(args.maxMatches, DEFAULT_MATCHES, 1, MAX_MATCHES), fitting)
+    );
+    matches = {
+      selector: args.selector,
+      total: Math.min(found.length, limit),
+      totalIsLowerBound: found.length > limit,
+      shown: shown.length,
+      nodeIds: found.slice(0, limit)
+    };
     roots = shown;
   }
 
-  const share = Math.max(MIN_MAX_BYTES / 4, Math.floor(maxBytes / Math.max(1, roots.length)));
+  const share = Math.floor(maxBytes / Math.max(1, roots.length));
   const rendered = roots.map((id) => ({
     nodeId: id,
     path: elementPath(tree, id),
@@ -435,6 +478,18 @@ function targetOfEvent(
 
 /** `element_context` on an open archive. */
 export function elementContextFromPlayer(player: WebBlackboxPlayer, args: ElementContextArgs) {
+  // eventId is the moment of a nodeId, or the target itself: never both with actionId.
+  rejectConflicts(args, [
+    ["nodeId", "actionId"],
+    ["actionId", "eventId"],
+    ["actionId", "mono"],
+    ["eventId", "mono"]
+  ]);
+
+  if (args.mono !== undefined && args.nodeId === undefined) {
+    throw new Error("mono is the moment of a nodeId: give nodeId too, or use eventId / actionId.");
+  }
+
   const events = player.events;
   const replay = RrwebDomReplay.fromEvents(events);
   let target: Target;
@@ -501,8 +556,17 @@ export function elementContextFromPlayer(player: WebBlackboxPlayer, args: Elemen
   };
 }
 
-/** Halves the rows until the JSON fits; counts stay exact. */
-function fitDiff(diff: RrwebDomDiffResult, maxBytes: number): RrwebDomDiffResult {
+const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), "utf8");
+
+/**
+ * Halves the rows until the whole result (`wrap` adds the fields around the diff) fits in UTF-8
+ * bytes, down to counts only; counts stay exact.
+ */
+function fitDiff(
+  diff: RrwebDomDiffResult,
+  maxBytes: number,
+  wrap: (diff: RrwebDomDiffResult) => unknown
+): RrwebDomDiffResult {
   let current = diff;
   let rows = Math.max(
     diff.added.length,
@@ -512,7 +576,7 @@ function fitDiff(diff: RrwebDomDiffResult, maxBytes: number): RrwebDomDiffResult
     diff.values.length
   );
 
-  while (rows > 1 && JSON.stringify(current).length > maxBytes) {
+  while (rows > 0 && jsonBytes(wrap(current)) > maxBytes) {
     rows = Math.floor(rows / 2);
     current = {
       ...diff,
@@ -530,6 +594,13 @@ function fitDiff(diff: RrwebDomDiffResult, maxBytes: number): RrwebDomDiffResult
 
 /** `dom_diff` on an open archive. */
 export function domDiffFromPlayer(player: WebBlackboxPlayer, args: DomDiffArgs) {
+  rejectConflicts(args, [
+    ["actionId", "eventId"],
+    ["actionId", "fromMono"],
+    ["actionId", "toMono"],
+    ["eventId", "fromMono"],
+    ["eventId", "toMono"]
+  ]);
   const events = player.events;
   const replay = RrwebDomReplay.fromEvents(events);
   const windowMs = clamp(args.windowMs, DEFAULT_ACTION_WINDOW_MS, 1, MAX_WINDOW_MS);
@@ -548,7 +619,11 @@ export function domDiffFromPlayer(player: WebBlackboxPlayer, args: DomDiffArgs) 
         : player.buildDerived().actionSpans.find((entry) => entry.actId === args.actionId);
     // Just before the trigger: its own effects belong to "after".
     from = trigger.mono - 1;
-    to = Math.max(trigger.mono + windowMs, span?.endMono ?? Number.NEGATIVE_INFINITY);
+    // An explicit window is taken as asked; the default one reaches the end of the action.
+    to =
+      args.windowMs !== undefined
+        ? trigger.mono + windowMs
+        : Math.max(trigger.mono + windowMs, span?.endMono ?? Number.NEGATIVE_INFINITY);
     around = { actionId: args.actionId ?? null, eventId: trigger.id };
   } else if (args.fromMono !== undefined && args.toMono !== undefined) {
     from = Math.min(args.fromMono, args.toMono);
@@ -578,8 +653,7 @@ export function domDiffFromPlayer(player: WebBlackboxPlayer, args: DomDiffArgs) 
     .filter((entry) => entry.mono > from && entry.mono <= to && entry.state.status !== "resumed")
     .map((entry) => describeGap(entry));
   const maxBytes = clamp(args.maxBytes, DEFAULT_MAX_BYTES, MIN_MAX_BYTES, MAX_MAX_BYTES);
-
-  return {
+  const wrap = (fitted: RrwebDomDiffResult) => ({
     available: true as const,
     from,
     to,
@@ -587,15 +661,18 @@ export function domDiffFromPlayer(player: WebBlackboxPlayer, args: DomDiffArgs) 
     ...(fromClamped ? { fromNote: "Started at the first full snapshot of the DOM log." } : {}),
     ...(gaps.length > 0
       ? {
-          gaps,
+          gaps: gaps.slice(0, MAX_DIFF_GAPS),
+          ...(gaps.length > MAX_DIFF_GAPS ? { gapsTotal: gaps.length } : {}),
           gapNote:
             "The DOM recorder paused in this window: changes inside a gap are missing; the next " +
             "full snapshot shows their result."
         }
       : {}),
-    ...fitDiff(diff, maxBytes),
+    ...fitted,
     hint: "nodeIds of 'added' and the changes are from `to`, of 'removed' from `from` (dom_at with that mono)."
-  };
+  });
+
+  return wrap(fitDiff(diff, maxBytes, wrap));
 }
 
 export const domAtTool = defineArchiveTool({

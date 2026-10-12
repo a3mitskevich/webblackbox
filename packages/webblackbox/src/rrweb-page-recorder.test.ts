@@ -116,6 +116,31 @@ describe("page-world rrweb recorder", () => {
     agent.dispose();
   });
 
+  it("starts again under a session number a new content script reuses after a stop", async () => {
+    const command = (detail: Record<string, unknown>) =>
+      window.dispatchEvent(new CustomEvent(DOM_RECORDER_COMMAND_EVENT, { detail }));
+    const start = { command: "start", session: 7, policy: DEFAULT_CAPTURE_POLICY, mode: "lite" };
+
+    command(start);
+    await settle();
+    command({ command: "stop", session: 7 });
+    await settle();
+    const before = posted.length;
+    command(start);
+    await settle();
+    command({ command: "flush", token: 1 });
+    await settle();
+
+    const snapshots = posted
+      .slice(before)
+      .filter((message) => message.signal === "batch" && message.session === 7)
+      .flatMap((message) => (message.payload as RrwebEventBatchPayload).events)
+      .filter((event) => event.type === 2);
+    expect(snapshots).toHaveLength(1);
+    command({ command: "stop", session: 7 });
+    await settle();
+  });
+
   it("drops batches a page forges without the nonce", async () => {
     const emitted: RawRecorderEvent[] = [];
     const agent = new LiteCaptureAgent({

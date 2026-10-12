@@ -1,4 +1,3 @@
-import { RRWEB_RAW_TYPE } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 import type { LiteCaptureAgent } from "webblackbox/lite-capture-agent";
 import { capturesPageStorageInFullMode } from "webblackbox/capture-scope";
@@ -9,6 +8,7 @@ import { clampBodyCaptureMaxBytes } from "../shared/body-capture-limits.js";
 import { getChromeApi, type ChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { PORT_NAMES, type ExtensionOutboundMessage } from "../shared/messages.js";
 import { readContentAgent, type ContentAgentApi } from "./content-agent-api.js";
+import { createDomCheckpointLatch } from "./dom-checkpoint-latch.js";
 import { CONTENT_EVENT_FLUSH_CHUNK, resolveContentEventFlushDelay } from "./flush-policy.js";
 import { claimContentScriptSlot } from "./script-guard.js";
 
@@ -25,6 +25,7 @@ let recordingStatusVersion = 0;
 let pendingEvents: RawRecorderEvent[] = [];
 let pendingEventFlushTimer = 0;
 let pendingEventFlushDelayMs = Number.POSITIVE_INFINITY;
+const domCheckpointLatch = createDomCheckpointLatch(() => captureAgent?.requestDomCheckpoint());
 
 const PORT_RECONNECT_INITIAL_MS = 250;
 const PORT_RECONNECT_MAX_MS = 5_000;
@@ -81,6 +82,7 @@ function cleanup(): void {
   stopPortReconnect();
   stopPendingEventFlush();
   pendingEvents = [];
+  domCheckpointLatch.reset();
   captureAgent?.dispose();
   captureAgent = null;
   captureAgentPromise = null;
@@ -182,12 +184,7 @@ function trimPendingEvents(): void {
     return;
   }
 
-  const dropped = pendingEvents.splice(0, pendingEvents.length - PENDING_EVENT_MAX);
-
-  // A lost rrweb batch breaks DOM replay until the next full snapshot: take one now.
-  if (dropped.some((event) => event.rawType === RRWEB_RAW_TYPE)) {
-    captureAgent?.requestDomCheckpoint();
-  }
+  domCheckpointLatch.noteDropped(pendingEvents.splice(0, pendingEvents.length - PENDING_EVENT_MAX));
 }
 
 function flushPendingEventsChunk(): boolean {
@@ -209,6 +206,10 @@ function flushPendingEventsChunk(): boolean {
     contentPort = null;
     schedulePortReconnect();
     return false;
+  }
+
+  if (pendingEvents.length === 0) {
+    domCheckpointLatch.queueDrained();
   }
 
   return true;
@@ -343,6 +344,7 @@ async function handleSwMessage(message: ExtensionOutboundMessage): Promise<void>
       recordingActive = false;
       stopPendingEventFlush();
       pendingEvents = [];
+      domCheckpointLatch.reset();
       disconnectContentPort();
     }
 

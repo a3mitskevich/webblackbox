@@ -116,6 +116,16 @@ describe("dom_at", () => {
     expect(deeper.roots[0]?.nodeId).toBe(root.omittedNodeIds[0]);
   });
 
+  it("keeps many selector matches within the byte budget and says how many it found", async () => {
+    const result = await domAt({ path: heavyPath, selector: "*", maxMatches: 50, maxBytes: 1_000 });
+
+    if (!result.available) throw new Error("unavailable");
+    const bytes = result.roots.reduce((sum, root) => sum + root.bytes, 0);
+    expect(bytes).toBeLessThanOrEqual(1_000);
+    expect(result.roots.length).toBe(3);
+    expect(result.matches).toMatchObject({ total: 200, totalIsLowerBound: true, shown: 3 });
+  });
+
   it("reports a recorder gap at the moment asked for", async () => {
     const paused = heavy.find(
       (event) => (event.data as { recorder?: { status?: string } }).recorder?.status === "paused"
@@ -138,6 +148,9 @@ describe("dom_at", () => {
       /Unsupported selector/
     );
     await expect(domAt({ path: realisticPath, nodeId: 999_999 })).rejects.toThrow(/not in the DOM/);
+    await expect(domAt({ path: realisticPath, mono: 1, eventId: firstClick().id })).rejects.toThrow(
+      /only one of mono, eventId/
+    );
     await expect(domAt({ path: realisticPath, eventId: "nope" })).rejects.toThrow(/not found/);
   });
 });
@@ -185,6 +198,12 @@ describe("element_context", () => {
     await expect(elementContext({ path: heavyPath, actionId: "A-nope" })).rejects.toThrow(
       /not found/
     );
+    await expect(elementContext({ path: heavyPath, nodeId: 1, actionId: "A-1" })).rejects.toThrow(
+      /only one of nodeId, actionId/
+    );
+    await expect(elementContext({ path: heavyPath, actionId: "A-1", mono: 5 })).rejects.toThrow(
+      /only one of actionId, mono/
+    );
   });
 });
 
@@ -227,10 +246,14 @@ describe("dom_diff", () => {
 
     if (!result.available) throw new Error("unavailable");
     expect(result.fromNote).toMatch(/first full snapshot/);
-    expect(JSON.stringify(result).length).toBeLessThan(3_000);
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(1_000);
+    expect(result.truncated).toBe(true);
     await expect(domDiff({ path: realisticPath, fromMono: 1 })).rejects.toThrow(
       /fromMono and toMono/
     );
+    await expect(
+      domDiff({ path: realisticPath, eventId: firstClick().id, fromMono: 1, toMono: 2 })
+    ).rejects.toThrow(/only one of eventId, fromMono/);
   });
 });
 

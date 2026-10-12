@@ -156,4 +156,34 @@ describe("applyStyleChanges", () => {
       })
     ).toBe("color: blue; padding: 1px; width: 2px !important");
   });
+
+  it("keeps semicolons inside url() and strings, and the case of custom properties", () => {
+    expect(
+      applyStyleChanges('background: url(data:image/png;base64,AAA); content: ";"; --Brand: red', {
+        color: "blue"
+      })
+    ).toBe('background: url(data:image/png;base64,AAA); content: ";"; --Brand: red; color: blue');
+  });
+});
+
+describe("DomTree hardening", () => {
+  it("drops attribute names and replaces tag names that could break the rendered markup", () => {
+    const tree = DomTree.fromSnapshot(
+      documentNode([
+        el(10, 'div><b wb-id="1"', { 'x><b wb-id="2"': "a", title: "ok" }, [text(11, "t")])
+      ])
+    );
+
+    expect(html(tree, 10)).toBe('<wb-invalid-tag title="ok">t</wb-invalid-tag>');
+  });
+
+  it("removes a parent with more children than a spread call can take", () => {
+    const children = Array.from({ length: 150_000 }, (_, index) => el(100 + index, "i", {}));
+    const tree = DomTree.fromSnapshot(documentNode([el(10, "div", {}, children)]));
+
+    tree.applyMutation({ removes: [{ parentId: 7, id: 10 }], adds: [], texts: [], attributes: [] });
+
+    expect(tree.has(10)).toBe(false);
+    expect(tree.has(100)).toBe(false);
+  });
 });

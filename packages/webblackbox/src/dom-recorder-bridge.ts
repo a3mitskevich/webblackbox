@@ -134,7 +134,12 @@ const DEFAULT_RUNTIME: PageWorldDomRecorderRuntime = {
   clearTimeout: (timer) => window.clearTimeout(timer)
 };
 
-let nextSession = 1;
+/**
+ * Session numbers start at a random point: the page recorder outlives a content script (extension
+ * reload or update), and a new one counting from 1 would otherwise address the old recordings.
+ */
+const SESSION_BASE_RANGE = 2 ** 30;
+let nextSession = 1 + Math.floor(Math.random() * SESSION_BASE_RANGE);
 let nextFlushToken = 1;
 
 /**

@@ -84,6 +84,41 @@ describe("redactRrwebEventBatch", () => {
     expect(inlineImage!.attributes.src).toBe("data:image/png;base64,AAAA");
   });
 
+  it("keeps commas inside srcset URLs", () => {
+    const redacted = redactRrwebEventBatch(
+      batch([
+        {
+          type: 3,
+          timestamp: 1,
+          data: {
+            source: 0,
+            texts: [],
+            removes: [],
+            adds: [],
+            attributes: [
+              {
+                id: 4,
+                attributes: {
+                  srcset:
+                    "https://img.test/w_100,h_100/a.jpg?session=s 1x,https://img.test/b.jpg,  " +
+                    "https://img.test/c.jpg 3x"
+                }
+              }
+            ]
+          }
+        }
+      ]),
+      RULES
+    );
+    const change = (redacted.events[0]!.data as { attributes: Array<{ attributes: object }> })
+      .attributes[0]!.attributes as Record<string, string>;
+
+    expect(change.srcset).toBe(
+      "https://img.test/w_100,h_100/a.jpg?session=[REDACTED] 1x, https://img.test/b.jpg, " +
+        "https://img.test/c.jpg 3x"
+    );
+  });
+
   it("records URLs in meta events, added nodes and attribute mutations", () => {
     const redacted = redactRrwebEventBatch(
       batch([

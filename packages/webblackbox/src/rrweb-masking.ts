@@ -196,10 +196,11 @@ function maskAttributes(
         return [];
       }
 
+      // An element rrweb no longer resolves (tag unknown) may be a field: its value fails closed.
       if (
         key === "value" &&
-        ((masksHiddenFields(context) && isHiddenInput(tag, readAttribute)) ||
-          (context.masksFieldValues && VALUE_ATTRIBUTE_TAGS.has(tag)))
+        ((masksHiddenFields(context) && (tag === "" || isHiddenInput(tag, readAttribute))) ||
+          (context.masksFieldValues && (tag === "" || VALUE_ATTRIBUTE_TAGS.has(tag))))
       ) {
         return [];
       }

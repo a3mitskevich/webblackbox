@@ -69,13 +69,68 @@ function attributeString(value: unknown): string | null {
   return value === true ? "" : null;
 }
 
+/**
+ * Tag and attribute names as HTML can write them: the renderer prints names raw, so a name that
+ * could close a tag or start another one (forged or broken data) is dropped.
+ */
+const MARKUP_NAME_PATTERN = /^[^\s"'<>/=]+$/;
+/** Placeholder tag of an element whose recorded tag name is not a valid name. */
+const INVALID_TAG_NAME = "wb-invalid-tag";
+
+function readTagName(value: unknown): string {
+  return typeof value === "string" && MARKUP_NAME_PATTERN.test(value)
+    ? value.toLowerCase()
+    : INVALID_TAG_NAME;
+}
+
 function readAttributes(value: unknown): Record<string, string> {
   const record = value !== null && typeof value === "object" ? value : {};
   const entries = Object.entries(record).flatMap(([name, raw]): Array<[string, string]> => {
     const text = attributeString(raw);
-    return text === null ? [] : [[name.toLowerCase(), text]];
+    return text === null || !MARKUP_NAME_PATTERN.test(name) ? [] : [[name.toLowerCase(), text]];
   });
   return Object.fromEntries(entries);
+}
+
+/**
+ * The declarations of a style attribute, split on the semicolons between declarations: a `;`
+ * inside quotes or parentheses (`url(data:image/png;base64,…)`, `content: ";"`) belongs to a value.
+ */
+function splitDeclarations(style: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+
+  for (let index = 0; index < style.length; index += 1) {
+    const char = style[index]!;
+
+    if (quote) {
+      if (char === "\\") {
+        index += 1;
+      } else if (char === quote) {
+        quote = null;
+      }
+    } else if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === "(") {
+      depth += 1;
+    } else if (char === ")") {
+      depth = Math.max(0, depth - 1);
+    } else if (char === ";" && depth === 0) {
+      parts.push(style.slice(start, index));
+      start = index + 1;
+    }
+  }
+
+  parts.push(style.slice(start));
+  return parts;
+}
+
+/** A property name as CSS compares it: custom properties (`--Foo`) are case-sensitive. */
+function propertyName(name: string): string {
+  const trimmed = name.trim();
+  return trimmed.startsWith("--") ? trimmed : trimmed.toLowerCase();
 }
 
 /**
@@ -85,16 +140,16 @@ function readAttributes(value: unknown): Record<string, string> {
 export function applyStyleChanges(current: string, changes: Record<string, unknown>): string {
   const declarations = new Map<string, string>();
 
-  for (const part of current.split(";")) {
+  for (const part of splitDeclarations(current)) {
     const colon = part.indexOf(":");
 
     if (colon > 0) {
-      declarations.set(part.slice(0, colon).trim().toLowerCase(), part.slice(colon + 1).trim());
+      declarations.set(propertyName(part.slice(0, colon)), part.slice(colon + 1).trim());
     }
   }
 
   for (const [property, change] of Object.entries(changes)) {
-    const name = property.trim().toLowerCase();
+    const name = propertyName(property);
 
     if (change === false || change === null) {
       declarations.delete(name);
@@ -348,7 +403,7 @@ export class DomTree {
     const entry: DomNode = {
       id: node.id,
       kind,
-      tagName: isElement && typeof node.tagName === "string" ? node.tagName.toLowerCase() : "",
+      tagName: isElement ? readTagName(node.tagName) : "",
       attributes: isElement ? readAttributes(node.attributes) : {},
       text:
         kind === "doctype"
@@ -401,7 +456,11 @@ export class DomTree {
 
       if (current) {
         this.nodes.delete(current.id);
-        stack.push(...current.children);
+
+        // Not spread into push: a parent with ~100k children would overflow the call stack.
+        for (const child of current.children) {
+          stack.push(child);
+        }
       }
     }
 
