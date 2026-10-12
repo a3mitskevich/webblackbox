@@ -97,6 +97,30 @@ describe("content script scope", () => {
     expect(Object.keys(scoped)).toEqual(["$"]);
   });
 
+  it("runs the bundle in strict mode, so a stray assignment cannot create a page global", () => {
+    const sloppyAssignment = "leaked = 1;";
+
+    const bare = {};
+    runInNewContext(sloppyAssignment, bare);
+    expect(bare).toHaveProperty("leaked", 1);
+
+    const scoped = {};
+    expect(() => runInNewContext(wrapInScriptScope(sloppyAssignment), scoped)).toThrow(
+      /leaked is not defined/
+    );
+    expect(scoped).not.toHaveProperty("leaked");
+  });
+
+  it("keeps the bundle's first line on the wrapper's second line", () => {
+    const code = "var a = 1;\nvar b = 2;";
+    const lines = wrapInScriptScope(code).split("\n");
+
+    expect(lines[0]).toContain('"use strict";');
+    expect(lines.slice(1, 3)).toEqual(["var a = 1;", "var b = 2;"]);
+    // A bundle wrapped without strict mode (before it was added) no longer passes the build check.
+    expect(isWrappedInScriptScope(`(() => {\n${code}\n})();\n`)).toBe(false);
+  });
+
   it("wraps content.js and injected.js only and moves their source maps with them", () => {
     const plugin = contentScriptScopePlugin();
     const map = { version: 3, sources: ["a.ts"], names: [], mappings: "AAAA;AACA" };
