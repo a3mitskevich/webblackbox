@@ -20,6 +20,10 @@ const MAX_QUERY_CHARS = 200;
 const SCOPE_NOTE =
   "Snapshots cover the viewport of the top document (same-origin frames inlined): a node missing " +
   "from a snapshot may be scrolled out of view rather than gone from the page.";
+/** Says why a disappearance can be uncertain. */
+const PRESENCE_NOTE =
+  `${SCOPE_NOTE} A snapshot marked truncated was cut at the capture budget, so a match missing ` +
+  "from it may lie past the cut; in masked snapshots blocked content and masked values cannot match.";
 
 const archiveInput = {
   path: z.string().min(1).describe("Path to a .webblackbox or .zip archive."),
@@ -39,7 +43,10 @@ export const pageStateAtInput = {
     .min(1)
     .max(256)
     .optional()
-    .describe("The page state after this action (ref.act)."),
+    .describe(
+      "The page state after this action: its ref.act, or a derived:<eventId> id from the action " +
+        "timeline."
+    ),
   mono: z.number().finite().optional().describe("The page state at this monotonic time (ms)."),
   t: z.number().finite().optional().describe("The page state at this wall-clock time (epoch ms)."),
   maxChars: z
@@ -48,7 +55,10 @@ export const pageStateAtInput = {
     .min(MIN_MAX_CHARS)
     .max(MAX_MAX_CHARS)
     .optional()
-    .describe(`Budget for all returned trees together (default ${DEFAULT_MAX_CHARS}).`)
+    .describe(
+      `Budget in characters for the tree text of all returned snapshots together (default ` +
+        `${DEFAULT_MAX_CHARS}); the other fields and JSON escaping come on top.`
+    )
 };
 
 export type PageStateAtArgs = {
@@ -209,7 +219,7 @@ export async function findOnPageInArchive(args: FindOnPageArgs): Promise<FindOnP
     presentAtEnd: result.presentAtEnd,
     spans: result.spans.slice(0, limit),
     spansOmitted: Math.max(0, result.spans.length - limit),
-    note: SCOPE_NOTE
+    note: PRESENCE_NOTE
   };
 }
 

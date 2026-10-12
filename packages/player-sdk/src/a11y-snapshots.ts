@@ -106,8 +106,23 @@ function resolveAnchor(
   }
 
   if (anchor.actionId !== undefined) {
-    const start = events.find((candidate) => candidate.ref?.act === anchor.actionId);
-    return start ? { ...describeEvent(start), actionId: anchor.actionId } : null;
+    // The action timeline names actions without `ref.act` after their first event.
+    const derivedFrom = anchor.actionId.startsWith(DERIVED_ACTION_PREFIX)
+      ? anchor.actionId.slice(DERIVED_ACTION_PREFIX.length)
+      : undefined;
+    const start = events.find((candidate) =>
+      derivedFrom !== undefined
+        ? candidate.id === derivedFrom
+        : candidate.ref?.act === anchor.actionId
+    );
+
+    if (!start) {
+      return null;
+    }
+
+    return derivedFrom !== undefined
+      ? describeEvent(start)
+      : { ...describeEvent(start), actionId: anchor.actionId };
   }
 
   if (anchor.mono !== undefined && Number.isFinite(anchor.mono)) {
@@ -121,6 +136,8 @@ function resolveAnchor(
 
   return null;
 }
+
+const DERIVED_ACTION_PREFIX = "derived:";
 
 function describeEvent(event: WebBlackboxEvent): ResolvedPageStateAnchor {
   return {
@@ -192,6 +209,13 @@ export type PageSnapshotRef = {
   eventId: string;
   t: number;
   mono: number;
+  /**
+   * The capture cut this snapshot at its budget: a match missing from it may lie past the cut, so
+   * a `disappeared` on a cut snapshot is uncertain.
+   */
+  truncated?: true;
+  /** How the snapshot was masked: text matches cannot be seen in masked names or values. */
+  masking: A11ySnapshotEntry["masking"];
 };
 
 /** One stretch of time the query matched in consecutive snapshots. */
@@ -290,5 +314,11 @@ function describeLine(line: ParsedA11yTreeLine): string {
 }
 
 function toRef(entry: A11ySnapshotEntry): PageSnapshotRef {
-  return { eventId: entry.eventId, t: entry.t, mono: entry.mono };
+  return {
+    eventId: entry.eventId,
+    t: entry.t,
+    mono: entry.mono,
+    ...(entry.truncated ? { truncated: true as const } : {}),
+    masking: entry.masking
+  };
 }

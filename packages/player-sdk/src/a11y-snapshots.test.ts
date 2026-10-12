@@ -93,6 +93,14 @@ describe("findPageStateAt", () => {
     expect(state?.before?.eventId).toBe("E-1");
   });
 
+  it("resolves a derived action id from the action timeline by its first event", () => {
+    const state = findPageStateAt(EVENTS, { actionId: "derived:E-5" });
+
+    expect(state?.anchor).toMatchObject({ eventId: "E-5", mono: 2_500 });
+    expect(state?.linked?.eventId).toBe("E-6");
+    expect(findPageStateAt(EVENTS, { actionId: "derived:nope" })).toBeNull();
+  });
+
   it("resolves monotonic and wall-clock times", () => {
     expect(findPageStateAt(EVENTS, { mono: 3_000 })?.before?.eventId).toBe("E-6");
     expect(findPageStateAt(EVENTS, { t: 1_700_000_000_000 + 3_000 })?.after?.eventId).toBe("E-7");
@@ -115,9 +123,9 @@ describe("findOnPage", () => {
       presentAtEnd: false,
       spans: [
         {
-          appeared: { eventId: "E-6", t: 1_700_000_002_800, mono: 2_800 },
-          lastSeen: { eventId: "E-6", t: 1_700_000_002_800, mono: 2_800 },
-          disappeared: { eventId: "E-7", t: 1_700_000_004_000, mono: 4_000 },
+          appeared: { eventId: "E-6", t: 1_700_000_002_800, mono: 2_800, masking: "masked" },
+          lastSeen: { eventId: "E-6", t: 1_700_000_002_800, mono: 2_800, masking: "masked" },
+          disappeared: { eventId: "E-7", t: 1_700_000_004_000, mono: 4_000, masking: "masked" },
           sample: ['alert: "Card declined"']
         }
       ]
@@ -137,6 +145,22 @@ describe("findOnPage", () => {
     ).toMatchObject({
       snapshotsScanned: 1,
       presentAtEnd: true
+    });
+  });
+
+  it("marks a disappearance on a snapshot the capture cut as uncertain", () => {
+    const cut = listA11ySnapshots([
+      event("C-1", "dom.a11y.snapshot", 100, snapshot(DECLINED, { kind: "error" })),
+      event("C-2", "dom.a11y.snapshot", 200, {
+        ...snapshot(FORM, { kind: "action" }),
+        truncated: true,
+        omittedNodes: 40
+      })
+    ]);
+
+    expect(findOnPage(cut, { text: "declined" }).spans[0]?.disappeared).toMatchObject({
+      eventId: "C-2",
+      truncated: true
     });
   });
 
