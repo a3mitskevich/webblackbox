@@ -17,7 +17,7 @@ import { createServer } from "node:http";
 export const REALISTIC_PAGE_PATH = "/app/";
 export const REALISTIC_HUB_PATH = "/hubs/lobby";
 export const REALISTIC_DEFAULT_DURATION_MS = 32_000;
-/** Bundle sizes: one far over a 1 MiB body limit (too large), one cut at it, one kept whole. */
+/** Bundle sizes: two over a 1 MiB body limit (kept cut at it), one kept whole. */
 export const REALISTIC_BUNDLES = [
   { name: "vendor-charts.js", bytes: 2_600_000 },
   { name: "vendor-ui.js", bytes: 1_300_000 },

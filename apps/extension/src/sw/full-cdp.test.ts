@@ -742,6 +742,83 @@ describe("full-mode body capture", () => {
     expect(runtime.requestMeta.size).toBe(0);
   });
 
+  it("streams the start of a response the browser would not keep and records it truncated", async () => {
+    const harness = createDepsHarness({
+      rule: { ...TEXT_RULE, maxBytes: 4096 },
+      router: {
+        sendResult: (method) =>
+          method === "Network.streamResourceContent"
+            ? { bufferedData: Buffer.from("hello").toString("base64") }
+            : {}
+      }
+    });
+    const runtime = createRuntime(harness.controller, { config: fullBodyConfig() });
+    await harness.controller.attachCdp(runtime);
+
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Network.requestWillBeSent",
+      params: { requestId: "big", request: { url: "https://example.test/big", method: "GET" } }
+    });
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Network.responseReceived",
+      params: {
+        requestId: "big",
+        type: "Fetch",
+        response: {
+          url: "https://example.test/big",
+          mimeType: "text/plain",
+          status: 200,
+          headers: { "Content-Length": "30000000" },
+          encodedDataLength: 100
+        }
+      }
+    });
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Network.dataReceived",
+      params: { requestId: "big", dataLength: 5, encodedDataLength: 5 }
+    });
+    await vi.waitFor(() => {
+      expect(harness.routerKit.sent.map(({ method }) => method)).toContain(
+        "Network.streamResourceContent"
+      );
+    });
+    await Promise.resolve();
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Network.dataReceived",
+      params: {
+        requestId: "big",
+        dataLength: 29_999_995,
+        data: Buffer.from("x".repeat(8_000)).toString("base64")
+      }
+    });
+    harness.routerKit.emit({
+      tabId: TAB_ID,
+      method: "Network.loadingFinished",
+      params: { requestId: "big", encodedDataLength: 30_000_100 }
+    });
+
+    await vi.waitFor(() => {
+      expect(cdpEventsOf(harness).some((event) => event.rawType === "cdp.network.body")).toBe(true);
+    });
+
+    expect(
+      cdpEventsOf(harness).find((event) => event.rawType === "cdp.network.body")
+    ).toMatchObject({
+      payload: { reqId: "big", size: 30_000_000, sampledSize: 4096, truncated: true }
+    });
+    expect(harness.routerKit.sent.map(({ method }) => method)).not.toContain(
+      "Network.getResponseBody"
+    );
+    // The chunks (and their bytes) never reach the recorder.
+    expect(cdpEventsOf(harness).some((event) => event.rawType === "Network.dataReceived")).toBe(
+      false
+    );
+  });
+
   it("records a skip when the browser no longer holds the body", async () => {
     const harness = createDepsHarness({
       router: {

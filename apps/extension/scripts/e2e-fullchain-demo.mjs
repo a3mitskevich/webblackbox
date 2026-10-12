@@ -2641,9 +2641,9 @@ function checkDuplicatedContentTypeBody(archive) {
 }
 
 /**
- * What the realistic site must leave in a Full-capture archive. Bodies: none lost silently, the
- * 2.6 MB bundle recorded as too large, no reads lost to load, SVG kept as text, `data:` URLs not
- * counted. Requests the server held from page load: started before the capture (recorded as
+ * What the realistic site must leave in a Full-capture archive. Bodies: none lost silently, both
+ * bundles over the 1 MiB limit kept cut at it (the browser keeps them whole, so they are read and
+ * cut), none too large, no reads lost to load, SVG kept as text, `data:` URLs not counted. Requests the server held from page load: started before the capture (recorded as
  * such), or, when Start reloads the page, inside it with their bodies. Traffic: at least what the
  * page reports it sent, every WebSocket frame whole, perf and console signals present.
  */
@@ -2660,11 +2660,12 @@ function realisticCompletenessExpectations(scenario, { reloadAfterStart = false 
     // string, JSON, JSON with Content-Type sent twice, untyped Blob, typed Blob, ArrayBuffer,
     // URLSearchParams, PUT, XHR, beacon.
     minRequestBodies: 10,
+    minCutResponseBodies: 2,
     minSkipReasons: {
-      "too-large": 1,
       "started-before-capture": reloadAfterStart ? 0 : held
     },
     maxSkipReasons: {
+      "too-large": 0,
       backlog: 0,
       "session-limit": 0,
       "not-retained": 0,
