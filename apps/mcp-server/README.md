@@ -107,10 +107,49 @@ node dist/cli.js --version
 | `compare_sessions`           | Compare two archives (event/action/error/network/perf/storage deltas + endpoint-level regressions)                                                       |
 | `symbolicate_stack`          | Map minified stack traces (error events, one event, or a pasted stack) to original sources using maps embedded in the archive plus an optional `mapsDir` |
 
+### Drill-down tools
+
+The agent works from summary to detail. `session_summary` says what went wrong; `timeline` shows a time window as
+compact rows; `action_detail`, `request_detail` and `frame_at` open one item in full. Every row and result carries
+the ids the next tool takes (`eventId`, `requestId`, `actionId`), and times are `mono` milliseconds throughout.
+
+| Tool             | Description                                                                                                                                                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `timeline`       | Chronological rows for a window (`monoStart`/`monoEnd`, or `aroundEventId`/`aroundMono` ± `windowMs`): actions, network (one row per request), console, errors, navigation, storage, DOM, screenshots, sockets. `kinds` filter, `countsByKind` |
+| `action_detail`  | One user action: trigger, the full target as recorded (tag, id, classes, role, text, test id, rect, frame, selector candidates, raw JSON), modifiers, DOM reaction, and the requests / errors / console / DOM changes / navigations it caused  |
+| `request_detail` | One request: status, timing phases, headers, decoded request and response bodies (JSON pretty-printed), initiator, redirects, linked action, and WebSocket/SSE messages (paged)                                                                |
+| `frame_at`       | What the page looked like at `mono` / `eventId` / `actionId` (+ `offsetMs`): the nearest screenshot, or the tab video frame, as an MCP image block with its exact time, distance and the neighbouring screenshots                              |
+
+**Size budgets.** Results are small by default and always say when they left something out:
+
+- `timeline` pages with `limit` (default 50) and a `maxBytes` budget (default 32 KB); `truncated` and `nextCursor`
+  continue. Pointer noise (moves, hovers, scrolls) is hidden unless `kinds` includes `pointer`.
+- `action_detail` caps every linked list at `limit` (default 10) and then halves the largest lists until the result
+  fits `maxBytes` (default 24 KB); each list keeps its `total`, and `truncatedLists` names what was cut.
+- `request_detail` returns `maxBodyBytes` of each body (default 16 KB) with `"N of M bytes"`; header values stop at
+  2 KB; socket messages page with `frameLimit` / `frameCursor`, `maxFrameBytes` each. `capturedPrefixOnly` marks a
+  body the recorder itself cut at the profile limit, and `missingReason` says why a body is absent.
+- `frame_at` returns at most `maxBytes` of image (default 1 MB). `includeImage: false` returns only the metadata.
+
+**Images and video frames.** Node has no WebCodecs and an image library would be a heavy native dependency, so
+`frame_at` uses an `ffmpeg` binary when one is available and never requires it:
+
+- Without ffmpeg: the nearest screenshot, as recorded. One over `maxBytes` is withheld with the reason.
+- With ffmpeg (on `PATH`, or `WEBBLACKBOX_MCP_FFMPEG=/path/to/ffmpeg`): `source: "auto"` takes a screenshot within
+  250 ms, otherwise decodes the tab video at that time (JPEG, `maxWidth` default 1280 px); oversized or
+  `maxWidth`-capped screenshots are re-encoded smaller. Video times map session time onto the segment start, so
+  expect a frame or two of skew.
+- `WEBBLACKBOX_MCP_FFMPEG=off` disables decoding. ffmpeg runs with a forced demuxer, the `file` protocol only and a
+  30 s timeout, on a temp copy that is deleted afterwards.
+
+New tools register through one list: a module under `src/tools/` defines the tool with `defineArchiveTool` (its own
+arguments only; `path`, `passphrase`, the `--allow-dir` check and the untrusted-data framing come from the registry)
+and adds one entry to `ARCHIVE_TOOLS` in `src/tools/index.ts`.
+
 ## Notes
 
 - Archive paths are resolved from the current working directory if relative.
-- Archive content is untrusted: every archive tool result is preceded by a text block marking the JSON payload as data, not instructions, and the server publishes the same rule in its MCP `instructions`.
+- Archive content is untrusted: every archive tool result is preceded by a text block marking the JSON payload as data, not instructions, each image by its own notice, and the server publishes the same rule (and the drill-down workflow) in its MCP `instructions`.
 - Encrypted archives require `passphrase`. Archive formats 1 and 2 are read through `@webblackbox/player-sdk`, with its load caps for untrusted archives.
 - `query_events` defaults to payload-hidden output (`includeData=false`) to avoid huge responses.
 - `symbolicate_stack` reads only `.map` files under `mapsDir` (symbolic links are skipped) and never fetches URLs recorded in the archive.
