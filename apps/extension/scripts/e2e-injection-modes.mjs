@@ -15,14 +15,10 @@
 // how many frames run content.js.
 
 import { createServer } from "node:http";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e2e-harness.mjs";
 
-const root = dirname(fileURLToPath(import.meta.url));
-const appRoot = resolve(root, "..");
-const harness = createProfileE2eHarness({ name: "injection", appRoot, defaultPort: "9237" });
+const harness = createProfileE2eHarness({ name: "injection", defaultPort: "9237" });
 const benchMode = process.env.WB_E2E_INJECTION_BENCH === "1";
 const benchTabs = readPositiveInteger(process.env.WB_E2E_INJECTION_BENCH_TABS, 50);
 const SCRIPT_ID = "webblackbox-content";

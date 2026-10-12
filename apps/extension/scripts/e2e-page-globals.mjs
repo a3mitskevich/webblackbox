@@ -11,14 +11,10 @@
 // handle, so the check itself defines nothing in the page.
 
 import { createServer } from "node:http";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e2e-harness.mjs";
 
-const root = dirname(fileURLToPath(import.meta.url));
-const appRoot = resolve(root, "..");
-const harness = createProfileE2eHarness({ name: "page-globals", appRoot, defaultPort: "9241" });
+const harness = createProfileE2eHarness({ name: "page-globals", defaultPort: "9241" });
 const MODES = ["lite", "full"];
 const SETTLE_MS = 1_500;
 const SNAPSHOT_GROUP = "wb-page-globals";

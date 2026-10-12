@@ -49,12 +49,13 @@ import {
   waitForIndicatorText,
   waitForPopupRuntimeReady
 } from "./lib/extension-ui.mjs";
+import { DEFAULT_EXTENSION_DIR, EXTENSION_FILES } from "./lib/extension-paths.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(root, "..");
 const workspaceRoot = resolve(extensionRoot, "..", "..");
 
-const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? resolve(extensionRoot, "build");
+const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? DEFAULT_EXTENSION_DIR;
 const playerSdkEntry = resolve(workspaceRoot, "packages/player-sdk/dist/index.js");
 const remotePort = Number(process.env.WB_E2E_REMOTE_PORT ?? "9235");
 const headless = (process.env.WB_E2E_HEADLESS ?? "1") !== "0";
@@ -152,7 +153,7 @@ async function main() {
 
   const controlTarget = await openTarget(
     state.baseUrl,
-    `chrome-extension://${extensionId}/popup.html`
+    `chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`
   );
   state.openedTargetIds.push(controlTarget.id);
   const control = await connectClient(controlTarget.webSocketDebuggerUrl);

@@ -4,14 +4,17 @@
  * this file directly: keep it free of imports and TypeScript-only syntax other than types).
  */
 export const EXTENSION_FILES = {
-  /** Content script: registered at runtime or injected on Start (`entrypoints/content.ts`). */
-  contentScript: "content.js",
+  /**
+   * Content script, registered at runtime or injected on Start (`entrypoints/content-script.ts`).
+   * An unlisted script, not a WXT content script: see `wxt.config.ts`.
+   */
+  contentScript: "content-script.js",
   /** Page hooks, run in the page's MAIN world (`entrypoints/injected.ts`). */
   injectedHooks: "injected.js",
   /** Capture agent, injected into a recording frame's isolated world on request. */
   contentAgent: "content-agent.js",
-  /** Service worker. */
-  serviceWorker: "sw.js",
+  /** Service worker (`entrypoints/background.ts`). */
+  serviceWorker: "background.js",
   offscreenPage: "offscreen.html",
   popupPage: "popup.html",
   optionsPage: "options.html",

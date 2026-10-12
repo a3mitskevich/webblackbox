@@ -7,6 +7,7 @@ import {
   normalizeContentInjectionMode,
   planContentScriptRegistration
 } from "./content-injection.js";
+import { EXTENSION_FILES } from "./extension-files.js";
 
 describe("content injection mode", () => {
   it("keeps today's behaviour by default and for unknown stored values", () => {
@@ -24,7 +25,7 @@ describe("content injection mode", () => {
     expect(createContentScriptRegistration()).toEqual({
       id: CONTENT_SCRIPT_ID,
       matches: ["<all_urls>"],
-      js: ["content.js"],
+      js: [EXTENSION_FILES.contentScript],
       allFrames: true,
       runAt: "document_start",
       persistAcrossSessions: true

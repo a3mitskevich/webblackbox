@@ -17,7 +17,7 @@ import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e
 const root = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(root, "..");
 const repoRoot = resolve(appRoot, "..", "..");
-const harness = createProfileE2eHarness({ name: "tabs-context", appRoot, defaultPort: "9237" });
+const harness = createProfileE2eHarness({ name: "tabs-context", defaultPort: "9237" });
 const passphrase = "webblackbox-tabs-e2e-passphrase";
 
 const FOREIGN_MARKER = "foreign-site-marker-5b7e";

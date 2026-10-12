@@ -4,16 +4,17 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "build/**"]
+      "outputs": ["dist/**", "build/**", ".output/**"]
     },
-    // Packaging rebuilds into the same build/ (WXT empties it) as `build`: never run the two at once.
-    "package:chrome": {
+    // `wxt zip` rebuilds into the same .output/chrome-mv3/ (WXT empties it) as `build`: never run
+    // the two at once.
+    "zip": {
       "dependsOn": ["^build", "build"],
-      "outputs": ["build/**", "dist/**"]
+      "outputs": [".output/**"]
     },
     // The player build ships the packaged extension (build/extension/): package it first.
     "@webblackbox/player#build": {
-      "dependsOn": ["^build", "@webblackbox/extension#package:chrome"],
+      "dependsOn": ["^build", "@webblackbox/extension#zip"],
       "outputs": ["build/**"]
     },
     "dev": {

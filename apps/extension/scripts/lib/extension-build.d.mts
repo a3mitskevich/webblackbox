@@ -1,24 +1,26 @@
 import type { UserManifest } from "wxt";
 
-export type BuildTarget = { profile: string; release: boolean };
+export type ExtensionProfile = "dev" | "store-safe";
 
-export declare const appRoot: string;
+export declare const EXTENSION_MANIFEST_PROFILES: readonly ExtensionProfile[];
 
-export declare const buildDir: string;
+export declare const CLASSIC_SCRIPT_FILES: readonly string[];
 
-export declare const CLASSIC_SCRIPT_CHUNKS: readonly string[];
+export declare function profileForMode(mode: string): ExtensionProfile;
 
-export declare function assertDisposableOutputDir(outputDir: string): Promise<void>;
+export declare function createManifestFields(options?: {
+  profile?: string;
+  command?: string;
+}): UserManifest;
 
-export declare function readBuildTarget(env: Record<string, string | undefined>): BuildTarget;
-
-export declare function createManifestFields(target?: Partial<BuildTarget>): UserManifest;
-
-export declare function normalizeWxtManifest(manifest: object, target: Partial<BuildTarget>): void;
-
-export declare function isStrictScopedScript(code: string): boolean;
+export declare function validateExtensionManifest(
+  manifest: Record<string, unknown>,
+  options?: { profile?: string }
+): string[];
 
 export declare function assertExtensionBuild(
   outputDir: string,
-  options?: Partial<BuildTarget> & { version?: string }
+  options?: { profile?: string }
 ): Promise<Record<string, unknown>>;
+
+export declare function isStrictScopedScript(code: string): boolean;

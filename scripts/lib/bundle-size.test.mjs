@@ -6,6 +6,7 @@ import {
   evaluateDelta,
   findSizeIncreaseNote,
   formatPercent,
+  matchesBundleFilePattern,
   parseBaselineReport,
   parseBudgetConfig,
   parseSizeIncreaseNotes
@@ -14,9 +15,9 @@ import {
 const POLICY = {
   maxGrowthPercent: 8,
   minGrowthBytes: 2048,
-  entries: ["apps/extension/build/sw.js"]
+  entries: ["apps/extension/.output/chrome-mv3/background.js"]
 };
-const SW = "apps/extension/build/sw.js";
+const SW = "apps/extension/.output/chrome-mv3/background.js";
 
 describe("parseBudgetConfig", () => {
   it("accepts absolute budgets and a delta policy", () => {
@@ -77,7 +78,7 @@ describe("size-increase notes", () => {
       [
         "feat(extension): offscreen bridge",
         "",
-        "size-increase: sw.js typed offscreen protocol",
+        "size-increase: background.js typed offscreen protocol",
         "Size-Increase: apps/player/build/main.js: React shell",
         "  size-increase: *   everything got bigger",
         "size-increase: no-reason-given",
@@ -86,14 +87,14 @@ describe("size-increase notes", () => {
     );
 
     assert.deepEqual(notes, [
-      { target: "sw.js", reason: "typed offscreen protocol" },
+      { target: "background.js", reason: "typed offscreen protocol" },
       { target: "apps/player/build/main.js", reason: "React shell" },
       { target: "*", reason: "everything got bigger" }
     ]);
   });
 
   it("matches a note by full path, by file name or by `*`", () => {
-    const byName = [{ target: "sw.js", reason: "r" }];
+    const byName = [{ target: "background.js", reason: "r" }];
     const byPath = [{ target: SW, reason: "r" }];
     const all = [{ target: "*", reason: "r" }];
     const other = [{ target: "offscreen.js", reason: "r" }];
@@ -171,12 +172,12 @@ describe("evaluateDelta", () => {
     assert.equal(result.status, "failed");
     assert.equal(result.growthBytes, 8_001);
     assert.equal(result.limitBytes, 8_000);
-    assert.match(result.message ?? "", /size-increase: sw\.js <reason>/);
+    assert.match(result.message ?? "", /size-increase: background\.js <reason>/);
   });
 
   it("accepts growth explained by a note", () => {
     const result = evaluateDelta(POLICY, { ...base, bytes: 150_000 }, base, [
-      { target: "sw.js", reason: "typed offscreen protocol" }
+      { target: "background.js", reason: "typed offscreen protocol" }
     ]);
 
     assert.equal(result.status, "explained");
@@ -189,5 +190,14 @@ describe("formatPercent", () => {
     assert.equal(formatPercent(8, 100), "+8.0%");
     assert.equal(formatPercent(-25, 100), "-25.0%");
     assert.equal(formatPercent(5, 0), "n/a");
+  });
+});
+
+describe("matchesBundleFilePattern", () => {
+  it("matches hashed bundle names by a `*` pattern and exact names otherwise", () => {
+    assert.equal(matchesBundleFilePattern("*.js", "popup-DUnU54h2.js"), true);
+    assert.equal(matchesBundleFilePattern("*.js", "popup-DUnU54h2.js.map"), false);
+    assert.equal(matchesBundleFilePattern("background.js", "background.js"), true);
+    assert.equal(matchesBundleFilePattern("background.js", "backgroundXjs"), false);
   });
 });

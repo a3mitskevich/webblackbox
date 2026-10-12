@@ -39,7 +39,7 @@ export default {
         ctx.assert(
           !state.missing,
           "The built player has no bundled extension (the build warned about it): run " +
-            "`pnpm --filter @webblackbox/extension package:chrome` first, then rebuild the player",
+            "`pnpm --filter @webblackbox/extension zip` first, then rebuild the player",
           state
         );
         ctx.assert(state.status === 200, "The extension download link did not resolve", state);

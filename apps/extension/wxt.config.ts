@@ -1,28 +1,19 @@
 import type { PluginOption } from "vite";
-import { defineConfig, type EntrypointGroup } from "wxt";
+import { defineConfig } from "wxt";
 
 import {
   assertExtensionBuild,
   createManifestFields,
-  normalizeWxtManifest,
-  readBuildTarget
+  profileForMode
 } from "./scripts/lib/extension-build.mjs";
 import { mergedLocalesPlugin } from "./scripts/lib/locale-fragments.mjs";
 import { createManagedStorageSchema, MANAGED_SCHEMA_FILE } from "./scripts/lib/managed-schema.mjs";
 
 /**
- * Output names WXT cannot derive from the entrypoint name: WXT names the service worker
- * `background.js`, and an entrypoint named `content` is always a manifest content script.
- */
-const ENTRY_FILE_NAMES: Readonly<Record<string, string>> = {
-  background: "sw.js",
-  "content-script": "content.js"
-};
-
-/**
- * WXT adds unimport's Vite plugin even with `imports: false`, and unimport still guesses imports
- * for free identifiers: it added `wxt/utils/storage` to the pipeline bundle for a `storage`
- * constructor parameter. The sources import everything explicitly.
+ * Auto-imports stay off. WXT 0.21.4 keeps unimport's Vite transform even with `imports: false`,
+ * and unimport's regex detection takes a parameter named `storage` for a free variable: it adds
+ * `import { storage } from "wxt/utils/storage"` to our modules (bundling @wxt-dev/storage into the
+ * service worker and pages) and to the workspace packages' `dist/` (which fails the build).
  */
 function withoutAutoImports(plugins: PluginOption[] = []): PluginOption[] {
   return plugins
@@ -30,69 +21,35 @@ function withoutAutoImports(plugins: PluginOption[] = []): PluginOption[] {
     .map((plugin) => (Array.isArray(plugin) ? withoutAutoImports(plugin) : plugin));
 }
 
-// `scripts/build-extension.mjs` passes the profile and release flag through the environment, so a
-// plain `wxt build` is the default development build.
-const target = readBuildTarget(process.env);
-
+// WXT defaults throughout: `entrypoints/` at the project root, output in `.output/chrome-mv3/`
+// (`.output/chrome-mv3-store-safe/` for `--mode store-safe`), `wxt zip` for packaging. The
+// deviations below each keep recording from suffering; the PR that introduced WXT lists why.
 export default defineConfig({
-  entrypointsDir: "entrypoints",
-  // Same unpacked layout as before WXT: e2e, bundle budgets, the Player bundler and packaging
-  // read `build/` directly.
-  outDir: "build",
-  outDirTemplate: "",
-  // Explicit imports only: WXT would otherwise scan the sources for auto-imports.
   imports: false,
-  webExt: { disabled: true },
-  manifest: createManifestFields(target),
+  manifest: ({ mode, command }) => createManifestFields({ profile: profileForMode(mode), command }),
   vite: () => ({
+    // The UI dictionaries merged from per-feature fragments: the pages switch language at runtime,
+    // which `chrome.i18n` (and WXT's i18n module on top of it) cannot.
     plugins: [mergedLocalesPlugin()],
-    build: {
-      target: "es2022",
-      // `injected.js` and `content-agent.js` are parsed on every navigation of every recorded frame.
-      minify: true,
-      sourcemap: true,
-      modulePreload: false
-    }
+    // `pnpm bundle:size` reads the source maps to keep zod and other heavy sources out of the
+    // scripts every recorded frame parses.
+    build: { sourcemap: true }
   }),
+  zip: {
+    // Source maps are for the size gate, not for testers installing the extension.
+    exclude: ["**/*.map"]
+  },
   hooks: {
-    // WXT builds the service worker and the four pages in one Vite build with shared `chunks/`.
-    // One build per entry keeps every context in its own self-contained file, as before.
-    "entrypoints:grouped": (_wxt, groups) => {
-      const singleEntryGroups = groups.flatMap((group): EntrypointGroup[] =>
-        Array.isArray(group) ? group.map((entry) => [entry]) : [group]
-      );
-      groups.splice(0, groups.length, ...singleEntryGroups);
-    },
     "vite:build:extendConfig": (entrypoints, config) => {
       config.plugins = withoutAutoImports(config.plugins);
-
-      const [entrypoint] = entrypoints;
-
-      if (entrypoints.length !== 1 || !entrypoint) {
-        return;
-      }
-
       const output = config.build?.rollupOptions?.output;
 
-      if (!output || Array.isArray(output)) {
-        throw new Error(`Unexpected WXT output options for ${entrypoint.name}.`);
-      }
-
-      const fileName = ENTRY_FILE_NAMES[entrypoint.name];
-
-      if (fileName) {
-        output.entryFileNames = fileName;
-      }
-
-      if (entrypoint.type === "unlisted-script") {
-        // Classic scripts (`content.js`, `injected.js`): strict mode inside the IIFE, so an
-        // assignment to an undeclared name throws instead of creating a global of the page.
-        output.intro = '"use strict";';
-      }
-
-      if (entrypoint.type === "background" || entrypoint.inputPath.endsWith(".html")) {
-        output.entryFileNames = fileName ?? "[name].js";
-        output.inlineDynamicImports = true;
+      // Scripts injected into pages (WXT's anonymous IIFE) run in strict mode: an assignment to an
+      // undeclared name throws instead of creating a global of the page (#48, #50).
+      if (entrypoints.every((entry) => entry.type === "unlisted-script") && output) {
+        for (const options of Array.isArray(output) ? output : [output]) {
+          options.intro = '"use strict";';
+        }
       }
     },
     "build:publicAssets": (_wxt, files) => {
@@ -101,12 +58,9 @@ export default defineConfig({
         contents: `${JSON.stringify(createManagedStorageSchema(), null, 2)}\n`
       });
     },
-    "build:manifestGenerated": (_wxt, manifest) => {
-      normalizeWxtManifest(manifest, target);
-    },
     "build:done": async (wxt) => {
       if (wxt.config.command === "build") {
-        await assertExtensionBuild(wxt.config.outDir, target);
+        await assertExtensionBuild(wxt.config.outDir, { profile: profileForMode(wxt.config.mode) });
       }
     }
   }

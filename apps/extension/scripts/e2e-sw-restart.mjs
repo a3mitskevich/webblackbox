@@ -18,6 +18,8 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { openArchive } from "./lib/archive-checks.mjs";
+import { isExtensionServiceWorkerTarget, requireExtensionId } from "./lib/devtools-targets.mjs";
+import { DEFAULT_EXTENSION_DIR, EXTENSION_FILES } from "./lib/extension-paths.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(root, "..");
@@ -29,7 +31,9 @@ const interruptedMarker = "sw-restart-e2e-interrupted";
 /** Shortest wait between the marker and the worker's stop (page clock ~ test clock). */
 const MARKER_DELIVERY_FLOOR_MS = 4_000;
 
-const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? resolve(appRoot, "build");
+const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? DEFAULT_EXTENSION_DIR;
+/** Set once the build is known; Chrome's own extensions run service workers too. */
+let expectedExtensionId = null;
 const remotePort = Number(process.env.WB_E2E_REMOTE_PORT ?? "9233");
 const headless = (process.env.WB_E2E_HEADLESS ?? "1") !== "0";
 const profileDir =
@@ -85,9 +89,9 @@ async function main() {
   );
   console.log(`Chrome: ${version.Browser}`);
 
+  expectedExtensionId = await requireExtensionId(extensionDir);
   const swTarget = await waitForServiceWorkerTarget(20_000);
-  const extensionId = /^chrome-extension:\/\/([^/]+)\//.exec(swTarget.url)?.[1];
-  assert(typeof extensionId === "string", "Failed to parse extension id", swTarget);
+  const extensionId = expectedExtensionId;
   console.log(`Extension ID: ${extensionId}`);
 
   const browserClient = await connect(version.webSocketDebuggerUrl);
@@ -97,7 +101,8 @@ async function main() {
   });
   const pageClient = await connect((await openTarget(pageUrl)).webSocketDebuggerUrl);
   const popupClient = await connect(
-    (await openTarget(`chrome-extension://${extensionId}/popup.html`)).webSocketDebuggerUrl
+    (await openTarget(`chrome-extension://${extensionId}/${EXTENSION_FILES.popupPage}`))
+      .webSocketDebuggerUrl
   );
   await sleep(1_000);
 
@@ -514,13 +519,8 @@ async function waitForServiceWorkerTarget(timeoutMs) {
     async () => {
       const targets = await fetchJson(`${baseUrl}/json/list`, 4_000);
       return Array.isArray(targets)
-        ? (targets.find(
-            (target) =>
-              target?.type === "service_worker" &&
-              typeof target?.url === "string" &&
-              target.url.startsWith("chrome-extension://") &&
-              target.url.endsWith("/sw.js")
-          ) ?? null)
+        ? (targets.find((target) => isExtensionServiceWorkerTarget(target, expectedExtensionId)) ??
+            null)
         : null;
     },
     timeoutMs,
