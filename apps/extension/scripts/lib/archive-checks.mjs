@@ -254,6 +254,14 @@ export function checkCompleteness(player, expectations) {
   return { ok: failures.length === 0, failures, report, lines: format ? format(report) : [] };
 }
 
+/** The schema's tree cap (`A11Y_SNAPSHOT_LIMITS.maxTreeChars` plus the cut marker line). */
+const A11Y_MAX_TREE_CHARS = 24_256;
+/**
+ * Page time of one snapshot: the walk stops at 40 ms; formatting and a loaded shared runner get
+ * the rest.
+ */
+const A11Y_MAX_DURATION_MS = 250;
+
 const A11Y_ERROR_EVENT_TYPES = new Set([
   "console.entry",
   "error.exception",
@@ -281,9 +289,15 @@ export function checkA11ySnapshots(player, { alertText }) {
   );
   const stop = snapshots.find((snapshot) => snapshot.data?.trigger?.kind === "stop");
   const durations = snapshots.map((snapshot) => Number(snapshot.data?.durationMs ?? 0));
+  const maxDurationMs = Math.max(0, ...durations);
+  const maxTreeChars = Math.max(
+    0,
+    ...snapshots.map((snapshot) => String(snapshot.data?.tree ?? "").length)
+  );
+  const withinBudget = maxDurationMs <= A11Y_MAX_DURATION_MS && maxTreeChars <= A11Y_MAX_TREE_CHARS;
 
   return {
-    ok: Boolean(action && error && stop),
+    ok: Boolean(action && error && stop) && withinBudget,
     snapshots: snapshots.length,
     triggers: snapshots.map(
       (snapshot) => `${snapshot.data?.trigger?.kind}:${snapshot.data?.trigger?.rawType ?? ""}`
@@ -291,11 +305,9 @@ export function checkA11ySnapshots(player, { alertText }) {
     action: action ? { id: action.id, linked: action.data.trigger.eventId } : null,
     error: error ? { id: error.id, linked: linkedType(error) } : null,
     stop: Boolean(stop),
-    maxDurationMs: Math.max(0, ...durations),
-    maxTreeChars: Math.max(
-      0,
-      ...snapshots.map((snapshot) => String(snapshot.data?.tree ?? "").length)
-    ),
+    maxDurationMs,
+    maxTreeChars,
+    withinBudget,
     droppedTriggers: snapshots.reduce(
       (sum, snapshot) => sum + Number(snapshot.data?.droppedTriggers ?? 0),
       0
