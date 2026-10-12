@@ -7,6 +7,7 @@ import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  checkA11ySnapshots,
   checkArchiveBasics,
   checkArchiveEvidence,
   checkCompleteness,
@@ -549,6 +550,11 @@ async function main() {
       });
   assert(realWorldResult.ok, "Real-world scenario failed", realWorldResult);
 
+  const a11yScenario = completenessMode
+    ? { ok: true, skipped: "completeness-mode" }
+    : await runA11ySnapshotScenario(demoClient);
+  assert(a11yScenario.ok === true, "Accessibility snapshot scenario failed", a11yScenario);
+
   const finalMarker = await requestFinalE2eMarkerCapture(demoClient, captureMode);
   assert(finalMarker?.ok === true, "Failed to request final E2E marker capture", finalMarker);
 
@@ -648,6 +654,12 @@ async function main() {
     "Exported archive is missing events, demo API requests, event types or its whole-session export record",
     archiveBasics
   );
+
+  // Both modes: a snapshot for the click (showing what it caused), one for the error, one at Stop.
+  const a11yResult = completenessMode
+    ? { ok: true, skipped: "completeness-mode" }
+    : checkA11ySnapshots(archive, { alertText: A11Y_E2E_ALERT_TEXT });
+  assert(a11yResult.ok, "Exported archive missing accessibility snapshots", a11yResult);
 
   const recordedProfile = checkRecordedProfile(archive, expectedProfileId);
   assert(
@@ -828,6 +840,7 @@ async function main() {
   console.log("Screen recording archive evidence:", JSON.stringify(screenRecordingArchiveResult));
   console.log("Source maps:", JSON.stringify(sourceMapResult));
   console.log("Screenshots:", JSON.stringify(screenshotResult));
+  console.log("Accessibility snapshots:", JSON.stringify(a11yResult));
   console.log("Response body:", JSON.stringify(responseBodyResult));
   console.log("Realistic traffic:", JSON.stringify(trafficResult));
   if (completenessResult.lines) {
@@ -840,6 +853,40 @@ async function main() {
   console.log("Fullchain E2E passed.");
 
   await cleanup();
+}
+
+const A11Y_E2E_ALERT_TEXT = "Payment declined (a11y e2e)";
+/** Longer than the action settle delay (700 ms) plus the folding window of earlier triggers. */
+const A11Y_E2E_SETTLE_MS = 3_200;
+
+/**
+ * A click that shows an alert, then a logged error: each gets an accessibility snapshot. A fixed
+ * box at the bottom left, added after the other scenario steps, so no earlier step moves.
+ */
+async function runA11ySnapshotScenario(demoClient) {
+  await sleep(A11Y_E2E_SETTLE_MS);
+  const clicked = await demoClient.evaluate(`
+    (() => {
+      const box = document.createElement('section');
+      box.setAttribute('aria-label', 'Checkout (a11y e2e)');
+      box.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483000;background:#fff;padding:8px';
+      box.innerHTML = '<button type="button">Pay now</button><p></p>';
+      document.body.append(box);
+      const button = box.querySelector('button');
+      button.addEventListener('click', () => {
+        const status = box.querySelector('p');
+        status.setAttribute('role', 'alert');
+        status.textContent = ${JSON.stringify(A11Y_E2E_ALERT_TEXT)};
+      });
+      button.click();
+      return { ok: box.querySelector('[role=alert]') !== null };
+    })()
+  `);
+  await sleep(A11Y_E2E_SETTLE_MS);
+  await demoClient.evaluate(`(() => { console.error('a11y e2e error'); return true; })()`);
+  await sleep(A11Y_E2E_SETTLE_MS);
+
+  return { ok: clicked?.ok === true };
 }
 
 /** Logs an error thrown inside the minified demo bundle (captured as a console stack). */

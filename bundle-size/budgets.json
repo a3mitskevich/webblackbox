@@ -16,10 +16,10 @@
     },
     {
       "path": "apps/extension/.output/chrome-mv3/content-agent.js",
-      "maxBytes": 260000,
-      "maxGzipBytes": 85000,
+      "maxBytes": 275000,
+      "maxGzipBytes": 90000,
       "forbidSources": ["node_modules/zod/"],
-      "note": "Lite capture agent, injected by the service worker into a frame's isolated world when that frame records; snapdom is ~161 KB of it. 138,139 B / 43,110 B gzip at introduction. 245,875 B / 78,574 B gzip after snapdom 2.0.2 -> 2.24.18 (upstream deprecates <2.22 for screenshot fidelity bugs). An IIFE since the WXT build (it was an ES module imported by content.js)."
+      "note": "Lite capture agent, injected by the service worker into a frame's isolated world when that frame records; snapdom is ~161 KB of it. 138,139 B / 43,110 B gzip at introduction. 245,875 B / 78,574 B gzip after snapdom 2.0.2 -> 2.24.18 (upstream deprecates <2.22 for screenshot fidelity bugs). An IIFE since the WXT build (it was an ES module imported by content.js). 260,766 B / 81,155 B gzip with the accessibility snapshots (task 59: page-side walker, scheduler and tree format; about 14 KB raw / 5 KB gzip of it)."
     }
   ],
   "delta": {

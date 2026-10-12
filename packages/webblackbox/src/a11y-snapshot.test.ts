@@ -1,0 +1,343 @@
+/* @vitest-environment jsdom */
+
+import { DEFAULT_CAPTURE_POLICY, type CapturePolicy } from "@webblackbox/protocol";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { captureA11ySnapshot } from "./a11y-snapshot.js";
+
+const TRIGGER = { kind: "action", rawType: "click" } as const;
+
+function policy(
+  overrides: {
+    categories?: Partial<CapturePolicy["categories"]>;
+    redaction?: Partial<CapturePolicy["redaction"]>;
+  } = {}
+): CapturePolicy {
+  return {
+    ...DEFAULT_CAPTURE_POLICY,
+    categories: { ...DEFAULT_CAPTURE_POLICY.categories, ...overrides.categories },
+    redaction: { ...DEFAULT_CAPTURE_POLICY.redaction, ...overrides.redaction }
+  };
+}
+
+function tree(capturePolicy: CapturePolicy = policy()): string {
+  return captureA11ySnapshot({ policy: capturePolicy, trigger: TRIGGER })?.tree ?? "";
+}
+
+afterEach(() => {
+  document.body.innerHTML = "";
+  document.title = "";
+  vi.restoreAllMocks();
+});
+
+describe("captureA11ySnapshot", () => {
+  it("writes roles, names, states and text of a form", () => {
+    document.title = "Checkout";
+    document.body.innerHTML = `
+      <header><nav><a href="/">Home</a> <a href="/docs" aria-current="page">Docs</a></nav></header>
+      <main>
+        <h1>Checkout</h1>
+        <form aria-label="Payment">
+          <label for="email">Email</label>
+          <input id="email" type="email" required aria-invalid="true" value="me@example.test">
+          <label><input type="checkbox" checked> Remember me</label>
+          <select aria-label="Country"><option>France</option><option selected>Spain</option></select>
+          <button type="submit" disabled>Pay <span>now</span></button>
+        </form>
+        <div role="alert">Card declined</div>
+        <p>Total: <strong>42 €</strong></p>
+        <div><span>loose text</span></div>
+      </main>`;
+
+    const snapshot = captureA11ySnapshot({ policy: policy(), trigger: TRIGGER });
+
+    expect(snapshot?.tree).toBe(
+      [
+        "- banner:",
+        "  - navigation:",
+        '    - link "Home"',
+        '    - link "Docs" [current=page]',
+        "- main:",
+        '  - heading "Checkout" [level=1]',
+        '  - form "Payment":',
+        '    - text: "Email"',
+        '    - textbox "Email" [required] [invalid]',
+        '    - checkbox "Remember me" [checked]',
+        '    - text: "Remember me"',
+        // The picked option is an input value: kept only with `inputs: allow`.
+        '    - combobox "Country"',
+        '    - button "Pay now" [disabled]',
+        '  - alert: "Card declined"',
+        '  - paragraph: "Total: 42 €"',
+        '  - text: "loose text"'
+      ].join("\n")
+    );
+    expect(snapshot).toMatchObject({
+      trigger: TRIGGER,
+      title: "Checkout",
+      scope: "viewport",
+      truncated: false,
+      omittedNodes: 0,
+      masking: "masked"
+    });
+    expect(snapshot?.nodeCount).toBe(16);
+  });
+
+  it("records field values only where the inputs policy allows them", () => {
+    document.body.innerHTML = `
+      <input aria-label="Name" value="Ada">
+      <input aria-label="Password" type="password" value="hunter2">`;
+
+    // The default blocked selectors cover password fields.
+    expect(tree()).toBe('- textbox "Name"\n- textbox [masked]');
+    expect(tree(policy({ categories: { inputs: "allow" } }))).toBe(
+      '- textbox "Name": "Ada"\n- textbox [masked]'
+    );
+    // Without that selector a password value is still never recorded while masking is on.
+    expect(
+      tree(policy({ categories: { inputs: "allow" }, redaction: { blockedSelectors: [] } }))
+    ).toBe('- textbox "Name": "Ada"\n- textbox "Password"');
+    // Masking off (Full capture, which keeps no blocked selectors): every value as typed.
+    expect(
+      tree(
+        policy({
+          categories: { inputs: "allow" },
+          redaction: { contentRedaction: false, blockedSelectors: [] }
+        })
+      )
+    ).toBe('- textbox "Name": "Ada"\n- textbox "Password": "hunter2"');
+    // Blocked selectors a profile keeps still apply with masking off, as in the DOM snapshot.
+    expect(
+      tree(policy({ categories: { inputs: "allow" }, redaction: { contentRedaction: false } }))
+    ).toBe('- textbox "Name": "Ada"\n- textbox [masked]');
+  });
+
+  it("masks blocked selectors: no name, text or children", () => {
+    document.body.innerHTML = `
+      <div class="secret"><button>Reveal 4111 1111 1111 1111</button></div>
+      <section data-sensitive aria-label="Account"><p>IBAN DE00</p></section>
+      <button>Visible</button>`;
+
+    expect(tree()).toBe('- generic [masked]\n- region [masked]\n- button "Visible"');
+    expect(
+      tree(policy({ redaction: { contentRedaction: false, blockedSelectors: [] } }))
+    ).toContain('- button "Reveal 4111 1111 1111 1111"');
+  });
+
+  it("keeps blocked content out of names, labels, captions and values", () => {
+    document.body.innerHTML = `
+      <span id="who" class="secret">Ada Lovelace</span>
+      <button aria-labelledby="who">x</button>
+      <button>Pay <span class="secret">4111 1111</span></button>
+      <label>Card <b class="secret">holder Ada</b><input></label>
+      <fieldset><legend>Owner <i class="secret">Ada</i></legend></fieldset>
+      <div contenteditable="true">Draft <span class="secret">salary 90k</span></div>`;
+    const masked = tree(policy({ categories: { inputs: "allow" } }));
+
+    expect(masked).not.toMatch(/Ada|4111|salary/);
+    expect(masked).toContain('- button "Pay"');
+    expect(masked).toContain('- textbox "Card"');
+    expect(masked).toContain('- group "Owner"');
+  });
+
+  it("masks blocked selectors inside open shadow roots and same-origin frames", () => {
+    document.body.innerHTML = `<div id="host"></div><iframe title="Widget"></iframe>`;
+    document.getElementById("host")!.attachShadow({ mode: "open" }).innerHTML =
+      `<p class="secret">Shadow secret</p>`;
+    document.querySelector("iframe")!.contentDocument!.body.innerHTML =
+      `<p class="secret">Frame secret</p><button>Inside</button>`;
+
+    const text = tree();
+
+    expect(text).not.toMatch(/Shadow secret|Frame secret/);
+    expect(text).toContain("- paragraph [masked]");
+    expect(text).toContain('- button "Inside"');
+  });
+
+  it("drops widget values under wireframe and masks them otherwise", () => {
+    document.body.innerHTML = `
+      <div role="slider" aria-valuetext="Balance 900 ORD-12345"></div>
+      <input type="range" aria-label="Volume" value="30">`;
+
+    expect(tree(policy({ categories: { dom: "wireframe" } }))).toBe("- slider\n- slider");
+    expect(
+      tree(policy({ redaction: { valuePatterns: [{ pattern: "ORD-\\d+", targets: ["dom"] }] } }))
+    ).toBe('- slider: "Balance 900 [REDACTED]"\n- slider "Volume"');
+    expect(tree(policy({ categories: { inputs: "allow" } }))).toContain('- slider "Volume": "30"');
+  });
+
+  it("strips URL queries and secret-naming JSON from text like the DOM snapshot", () => {
+    document.body.innerHTML = `
+      <a href="/cb">https://a.test/cb?code=SECRETQ&amp;state=1</a>
+      <pre>{"auth":{"password":"hunter2"}}</pre>`;
+    const text = tree();
+
+    expect(text).toContain('- link "https://a.test/cb"');
+    expect(text).not.toMatch(/SECRETQ|hunter2/);
+  });
+
+  it("masks the whole page when a blocked selector matches its body or html", () => {
+    document.body.innerHTML = `<h1>Payroll</h1><iframe title="Inner"></iframe>`;
+    document.querySelector("iframe")!.contentDocument!.body.className = "secret";
+
+    expect(tree(policy({ redaction: { blockedSelectors: ["body"] } }))).toBe("- generic [masked]");
+    expect(tree()).toBe('- heading "Payroll" [level=1]\n- iframe "Inner":\n  - generic [masked]');
+  });
+
+  it("keeps the picked options of a list box only with inputs: allow", () => {
+    document.body.innerHTML = `<select multiple aria-label="Plans"><option selected>Gold</option><option>Basic</option></select>`;
+
+    expect(tree()).not.toContain("[selected]");
+    expect(tree(policy({ categories: { inputs: "allow" } }))).toContain(
+      '- option "Gold" [selected]'
+    );
+  });
+
+  it("records no page text while designMode makes the page an editor", () => {
+    document.body.innerHTML = `<p>Dear Ada</p>`;
+    document.designMode = "on";
+
+    try {
+      const snapshot = captureA11ySnapshot({ policy: policy(), trigger: TRIGGER });
+
+      expect(snapshot?.masking).toBe("wireframe");
+      expect(snapshot?.tree).toBe("- paragraph");
+    } finally {
+      document.designMode = "off";
+    }
+  });
+
+  it("fails closed to wireframe when a blocked selector is invalid", () => {
+    document.body.innerHTML = `<h2>Secret plans</h2><button>Go</button>`;
+    const snapshot = captureA11ySnapshot({
+      policy: policy({ redaction: { blockedSelectors: ["[[invalid"] } }),
+      trigger: TRIGGER
+    });
+
+    expect(snapshot?.masking).toBe("wireframe");
+    expect(snapshot?.tree).toBe("- heading [level=2]\n- button");
+  });
+
+  it("keeps roles and states only under dom: wireframe", () => {
+    document.title = "Inbox (3)";
+    document.body.innerHTML = `<p>Hello Ada</p><button aria-pressed="true">Bold</button>`;
+    const snapshot = captureA11ySnapshot({
+      policy: policy({ categories: { dom: "wireframe" } }),
+      trigger: TRIGGER
+    });
+
+    expect(snapshot?.tree).toBe("- paragraph\n- button [pressed]");
+    expect(snapshot?.title).toBeUndefined();
+  });
+
+  it("applies the DOM value patterns and masks credentials in text", () => {
+    document.body.innerHTML = `<p>Order ORD-12345 for jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl</p>`;
+    const text = tree(
+      policy({ redaction: { valuePatterns: [{ pattern: "ORD-\\d+", targets: ["dom"] }] } })
+    );
+
+    expect(text).not.toContain("ORD-12345");
+    expect(text).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+  });
+
+  it("skips hidden content, scripts and the recording indicator", () => {
+    document.body.innerHTML = `
+      <p hidden>hidden</p><p aria-hidden="true">aria hidden</p>
+      <p style="display:none">display none</p><script>var x = 1</script>
+      <div data-webblackbox-indicator="true">REC</div><p>shown</p>`;
+
+    expect(tree()).toBe('- paragraph: "shown"');
+  });
+
+  it("leaves out what lies wholly outside the viewport", () => {
+    document.body.innerHTML = `<p id="above">above the fold</p><p id="below">below the fold</p>`;
+    const below = document.getElementById("below")!;
+    vi.spyOn(below, "getBoundingClientRect").mockReturnValue(
+      DOMRect.fromRect({ x: 0, y: window.innerHeight + 400, width: 300, height: 20 })
+    );
+
+    expect(tree()).toBe('- paragraph: "above the fold"');
+  });
+
+  it("reports expanded, selected, mixed and focus states", () => {
+    document.body.innerHTML = `
+      <details open><summary>More</summary><p>Body</p></details>
+      <div role="tab" aria-selected="true">Tab A</div>
+      <input type="checkbox" aria-label="All" id="all">
+      <button id="focus">Focus me</button>`;
+    (document.getElementById("all") as HTMLInputElement).indeterminate = true;
+    document.getElementById("focus")!.focus();
+
+    expect(tree()).toBe(
+      [
+        '- group "More":',
+        '  - button "More" [expanded]',
+        '  - paragraph: "Body"',
+        '- tab "Tab A" [selected]',
+        '- checkbox "All" [checked=mixed]',
+        '- button "Focus me" [focused]'
+      ].join("\n")
+    );
+  });
+
+  it("stops at the time budget with an explicit cut", () => {
+    document.body.innerHTML = Array.from({ length: 200 }, (_, index) => `<p>row ${index}</p>`).join(
+      ""
+    );
+    let clock = 0;
+    const snapshot = captureA11ySnapshot({
+      policy: policy(),
+      trigger: TRIGGER,
+      now: () => (clock += 10),
+      maxWalkMs: 40
+    });
+
+    expect(snapshot?.truncated).toBe(true);
+    expect(snapshot?.omittedNodes).toBeGreaterThan(0);
+    expect(snapshot?.tree).toMatch(/# cut: \d+ more nodes \(time budget, elements not examined\)$/);
+  });
+
+  it("bounds a huge page by the node budget", () => {
+    document.body.innerHTML = Array.from(
+      { length: 450 },
+      (_, index) => `<div><a href="#r${index}">open ${index}</a><button>Act ${index}</button></div>`
+    ).join("");
+    const snapshot = captureA11ySnapshot({
+      policy: policy(),
+      trigger: TRIGGER,
+      maxWalkMs: 60_000
+    });
+
+    expect(snapshot?.nodeCount).toBe(800);
+    expect(snapshot?.omittedNodes).toBe(100);
+    expect(snapshot?.tree.length).toBeLessThanOrEqual(24_064);
+  });
+
+  it("reports markup nested past the depth bound as cut instead of overflowing the stack", () => {
+    let html = "<button>Deep</button>";
+
+    // Just past the bound: jsdom is slow on deep markup; `e2e:a11y:heavy` checks 5k levels in Chrome.
+    for (let index = 0; index < 300; index += 1) {
+      html = `<div>${html}</div>`;
+    }
+
+    document.body.innerHTML = `<h1>Top</h1>${html}`;
+    const snapshot = captureA11ySnapshot({ policy: policy(), trigger: TRIGGER, maxWalkMs: 60_000 });
+
+    expect(snapshot?.tree).toMatch(
+      /^- heading "Top" \[level=1\]\n# cut: 1 more nodes \(depth budget\)$/
+    );
+    expect(snapshot?.truncated).toBe(true);
+  });
+
+  it("inlines same-origin frames under their iframe node", () => {
+    document.body.innerHTML = `<iframe title="Widget"></iframe>`;
+    const frame = document.querySelector("iframe")!;
+    frame.contentDocument!.body.innerHTML = `<button>Inside</button>`;
+
+    const snapshot = captureA11ySnapshot({ policy: policy(), trigger: TRIGGER });
+
+    expect(snapshot?.tree).toBe('- iframe "Widget":\n  - button "Inside"');
+    expect(snapshot?.frames).toBe(1);
+  });
+});

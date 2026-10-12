@@ -73,6 +73,7 @@ export const WEBBLACKBOX_EVENT_TYPES = [
   "dom.snapshot",
   "dom.diff",
   "dom.rrweb.event", // rrweb-compatible incremental events (currently emitted as lite mutation summaries)
+  "dom.a11y.snapshot", // accessibility tree text of the viewport at a key moment (action, error, navigation, stop)
   "screen.screenshot",
   "screen.recording.start",
   "screen.recording.chunk",

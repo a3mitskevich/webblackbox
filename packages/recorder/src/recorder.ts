@@ -1,9 +1,11 @@
 import {
+  A11Y_SNAPSHOT_MASKING_LEVELS,
   DEFAULT_CAPTURE_POLICY,
   EventIdFactory,
   isContentRedactionEnabled,
   stripUnreadablePointerDetail,
   type BodySkipReason,
+  type A11ySnapshotMasking,
   type CapturePolicy,
   type FreezeReason,
   type PrivacyClassification,
@@ -13,6 +15,7 @@ import {
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
+import { A11yTriggerLinker } from "./a11y-snapshot.js";
 import { ActionSpanTracker } from "./action-span.js";
 import { BrowserInternalNetworkFilter } from "./browser-internal-network.js";
 import { applyErrorTextPolicy } from "./error-text-policy.js";
@@ -50,6 +53,8 @@ export class WebBlackboxRecorder {
   private readonly ringBuffer: EventRingBuffer | null;
 
   private readonly actionSpanTracker: ActionSpanTracker;
+
+  private readonly a11yTriggerLinker = new A11yTriggerLinker();
 
   private freezePolicy: FreezePolicy;
 
@@ -176,7 +181,7 @@ export class WebBlackboxRecorder {
       data: violation ?? redactedPayload
     };
 
-    const actionLinkedEvent = this.actionSpanTracker.assign(event);
+    const actionLinkedEvent = this.a11yTriggerLinker.link(this.actionSpanTracker.assign(event));
     const pluginEvent = this.applyEventPlugins(actionLinkedEvent);
 
     if (!pluginEvent) {
@@ -288,6 +293,13 @@ function redactEventPayload(
   rules: Parameters<typeof redactPayload>[1],
   hashKey: Uint8Array
 ): unknown {
+  if (eventType === "dom.a11y.snapshot") {
+    // Masked where it is taken (the profile's DOM rules), and its text passed the value patterns
+    // in the normalizer; the key/value heuristics would hash the whole tree for one "Password"
+    // label on the page.
+    return payload;
+  }
+
   const redacted = redactPayload(payload, rules, { hashKey });
 
   return eventType === "user.keydown"
@@ -352,6 +364,25 @@ function evaluateCapturePolicy(
   return createPrivacyViolation(eventType, privacy, reason, policy.mode);
 }
 
+/**
+ * The page reports how it masked a snapshot; a stale or foreign page script must not record names
+ * or text the profile keeps out (`dom: wireframe`, content masking on).
+ */
+function isA11yMaskingAllowed(payload: unknown, policy: CapturePolicy): boolean {
+  const masking = (payload as { masking?: A11ySnapshotMasking } | null)?.masking;
+  const required: A11ySnapshotMasking =
+    policy.categories.dom === "wireframe"
+      ? "wireframe"
+      : isContentRedactionEnabled(policy.redaction)
+        ? "masked"
+        : "none";
+
+  return (
+    masking !== undefined &&
+    A11Y_SNAPSHOT_MASKING_LEVELS.indexOf(masking) >= A11Y_SNAPSHOT_MASKING_LEVELS.indexOf(required)
+  );
+}
+
 function createPrivacyViolation(
   eventType: WebBlackboxEventType,
   privacy: PrivacyClassification,
@@ -397,6 +428,10 @@ function findPolicyViolationReason(
 
   if (eventType.startsWith("dom.") && policy.categories.dom === "off") {
     return "dom-disabled";
+  }
+
+  if (eventType === "dom.a11y.snapshot" && !isA11yMaskingAllowed(payload, policy)) {
+    return "dom-a11y-masking-weaker-than-policy";
   }
 
   if (eventType === "user.input") {
@@ -508,6 +543,7 @@ function classifySensitivity(
   if (
     eventType === "user.input" ||
     eventType === "dom.snapshot" ||
+    eventType === "dom.a11y.snapshot" ||
     eventType === "network.body" ||
     eventType === "screen.screenshot" ||
     eventType.startsWith("screen.recording.") ||

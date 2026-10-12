@@ -16,6 +16,7 @@ import {
   WEBBLACKBOX_EVENT_TYPES,
   WEBBLACKBOX_PROTOCOL_VERSION
 } from "./constants.js";
+import { domA11ySnapshotDataSchema } from "./a11y-schemas.js";
 import { compileValuePattern } from "./redaction-rules.js";
 import { scriptSourceMapDataSchema } from "./script-schemas.js";
 import {
@@ -742,6 +743,7 @@ const specializedDataSchemas = {
   "screen.recording.end": screenRecordingEndDataSchema,
   "screen.recording.error": screenRecordingErrorDataSchema,
   "dom.snapshot": domSnapshotDataSchema,
+  "dom.a11y.snapshot": domA11ySnapshotDataSchema,
   "storage.cookie.snapshot": storageSnapshotDataSchema,
   "storage.local.snapshot": storageSnapshotDataSchema,
   "storage.idb.snapshot": storageSnapshotDataSchema,

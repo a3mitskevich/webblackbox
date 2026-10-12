@@ -4,6 +4,7 @@ import {
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
+import { A11Y_SNAPSHOT_RAW_TYPE, normalizeA11ySnapshotPayload } from "./a11y-snapshot.js";
 import { CdpCacheTracker, normalizeCdpNetworkPayload } from "./cdp-network.js";
 import { normalizeCdpExceptionPayload } from "./cdp-runtime.js";
 import {
@@ -149,6 +150,11 @@ export class DefaultEventNormalizer implements EventNormalizer {
           eventType: "network.failed",
           payload: normalizeContentNetworkFailedPayload(asRecord(input.payload))
         };
+      }
+
+      if (input.rawType === A11Y_SNAPSHOT_RAW_TYPE) {
+        const payload = normalizeA11ySnapshotPayload(input.payload);
+        return payload ? { eventType: "dom.a11y.snapshot", payload } : null;
       }
 
       if (input.rawType === "networkBody") {
