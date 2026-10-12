@@ -13,6 +13,7 @@ import {
   type WebBlackboxEventType
 } from "@webblackbox/protocol";
 
+import { A11yTriggerLinker } from "./a11y-snapshot.js";
 import { ActionSpanTracker } from "./action-span.js";
 import { BrowserInternalNetworkFilter } from "./browser-internal-network.js";
 import { applyErrorTextPolicy } from "./error-text-policy.js";
@@ -50,6 +51,8 @@ export class WebBlackboxRecorder {
   private readonly ringBuffer: EventRingBuffer | null;
 
   private readonly actionSpanTracker: ActionSpanTracker;
+
+  private readonly a11yTriggerLinker = new A11yTriggerLinker();
 
   private freezePolicy: FreezePolicy;
 
@@ -176,7 +179,7 @@ export class WebBlackboxRecorder {
       data: violation ?? redactedPayload
     };
 
-    const actionLinkedEvent = this.actionSpanTracker.assign(event);
+    const actionLinkedEvent = this.a11yTriggerLinker.link(this.actionSpanTracker.assign(event));
     const pluginEvent = this.applyEventPlugins(actionLinkedEvent);
 
     if (!pluginEvent) {
@@ -288,6 +291,13 @@ function redactEventPayload(
   rules: Parameters<typeof redactPayload>[1],
   hashKey: Uint8Array
 ): unknown {
+  if (eventType === "dom.a11y.snapshot") {
+    // Masked where it is taken (the profile's DOM rules), and its text passed the value patterns
+    // in the normalizer; the key/value heuristics would hash the whole tree for one "Password"
+    // label on the page.
+    return payload;
+  }
+
   const redacted = redactPayload(payload, rules, { hashKey });
 
   return eventType === "user.keydown"
@@ -508,6 +518,7 @@ function classifySensitivity(
   if (
     eventType === "user.input" ||
     eventType === "dom.snapshot" ||
+    eventType === "dom.a11y.snapshot" ||
     eventType === "network.body" ||
     eventType === "screen.screenshot" ||
     eventType.startsWith("screen.recording.") ||
