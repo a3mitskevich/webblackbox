@@ -14,6 +14,12 @@ export default {
           ctx.testId("extension-guide"),
           "The extension guide did not open"
         );
+        // The download section loads the bundle facts asynchronously and shows a "checking" line
+        // until then.
+        await ctx.waitForSelector(
+          `${ctx.testId("extension-download-link")}, ${ctx.testId("extension-download-missing")}`,
+          "The extension download facts did not load"
+        );
 
         const state = await ctx.evaluate(`(async () => {
           const q = (id) => document.querySelector('[data-testid="' + id + '"]');
