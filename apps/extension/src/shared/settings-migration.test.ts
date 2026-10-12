@@ -10,8 +10,17 @@ import { describe, expect, it, vi } from "vitest";
 import { applyFullModeVisualCapture, resolveModeBaseConfig } from "./mode-profile.js";
 import { PERFORMANCE_BUDGET_STORAGE_KEY } from "./performance-budget.js";
 import { resolveStartEngine } from "./profiles/engine.js";
-import { DEFAULT_PROFILE_ID, PROFILES_STORAGE_KEY } from "./profiles/model.js";
-import { createDefaultProfile, duplicateProfile } from "./profiles/presets.js";
+import {
+  DEFAULT_PROFILE_ID,
+  PROFILES_STORAGE_KEY,
+  type RecordingProfilesStore
+} from "./profiles/model.js";
+import { CUSTOMISED_DEFAULT_PROFILE_NAME } from "./profiles/preset-migration.js";
+import {
+  BUILT_IN_PROFILE_IDS,
+  createDefaultProfile,
+  duplicateProfile
+} from "./profiles/presets.js";
 import { buildProfileRecorderConfig, selectRecordingProfile } from "./profiles/resolve.js";
 import { createDefaultProfilesStore, resolveProfilesState } from "./profiles/storage.js";
 import { resolveModeRecorderConfig } from "./recorder-config.js";
@@ -196,15 +205,26 @@ describe("planSettingsMigration on real v1 shapes", () => {
     expect(fromHarness?.basePolicy?.captureContext).toBe("synthetic");
   });
 
-  it("keeps a Lite start in Lite for a Default migrated from the options page", () => {
+  it("keeps a customised Default as a Lite-capable user profile and records with Maximum", () => {
     const migrated = migrate({ [LEGACY_OPTIONS_STORAGE_KEY]: OPTIONS_PAGE_SAVE });
-    const selection = selectRecordingProfile({
-      state: resolveProfilesState({ rawProfilesStore: migrated[PROFILES_STORAGE_KEY] }),
-      page: { url: "https://shop.example.com/" }
-    });
+    const state = resolveProfilesState({ rawProfilesStore: migrated[PROFILES_STORAGE_KEY] });
+    const selection = selectRecordingProfile({ state, page: { url: "https://shop.example.com/" } });
+    const kept = storedDefaultProfile(migrated);
 
-    expect(selection?.profile.id).toBe(DEFAULT_PROFILE_ID);
-    expect(selection && resolveStartEngine("lite", selection.profile)).toBe("lite");
+    expect(selection?.profile.id).toBe(BUILT_IN_PROFILE_IDS.maximum);
+    expect(kept?.name).toBe(CUSTOMISED_DEFAULT_PROFILE_NAME);
+    expect(kept && resolveStartEngine("lite", kept)).toBe("lite");
+  });
+
+  it("drops a Default migrated from v1 options that changed nothing", () => {
+    const migrated = migrate({
+      [LEGACY_OPTIONS_STORAGE_KEY]: { optionsVersion: 1, capturePolicy: DEFAULT_CAPTURE_POLICY }
+    });
+    const store = migrated[PROFILES_STORAGE_KEY] as { defaultProfileId: string; profiles: [] };
+
+    expect(store.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
+    expect(store.profiles).toEqual([]);
+    expect(planSettingsMigration(migrated)).toBeNull();
   });
 
   it("writes no budget when v1 had none: the defaults apply, as before", () => {
@@ -216,7 +236,11 @@ describe("planSettingsMigration on real v1 shapes", () => {
 
 describe("planSettingsMigration with stored profiles", () => {
   const mine = duplicateProfile(createDefaultProfile(), { id: "mine", name: "Mine" });
-  const savedStore = { ...createDefaultProfilesStore(), profiles: [createDefaultProfile(), mine] };
+  const savedStore = {
+    ...createDefaultProfilesStore(),
+    defaultProfileId: "mine",
+    profiles: [mine]
+  };
 
   it("keeps a valid profiles store: it already drove recording", () => {
     const migrated = migrate({
@@ -249,6 +273,133 @@ describe("planSettingsMigration with stored profiles", () => {
     });
 
     expect(migrated[PERFORMANCE_BUDGET_STORAGE_KEY]).toEqual(budget);
+  });
+});
+
+describe("planSettingsMigration to the built-in presets (version 2)", () => {
+  const mine = duplicateProfile(createDefaultProfile(), { id: "mine", name: "Mine" });
+  const customised = {
+    ...createDefaultProfile(),
+    sampling: { scrollHz: 7 }
+  };
+  const ruleTo = (id: string, profileId: string) => ({
+    id,
+    profileId,
+    priority: 1,
+    enabled: true,
+    match: { hosts: [`${id}.example.com`] }
+  });
+  const v1Store = (partial: Record<string, unknown>) => ({
+    schemaVersion: 2,
+    defaultProfileId: DEFAULT_PROFILE_ID,
+    profiles: [createDefaultProfile()],
+    rules: [],
+    extendedCaptureHosts: [],
+    ...partial
+  });
+  const migrateV1 = (store: Record<string, unknown>) =>
+    migrate({ [SETTINGS_VERSION_STORAGE_KEY]: 1, [PROFILES_STORAGE_KEY]: store });
+
+  it("points the default and rules of removed presets at Maximum", () => {
+    const migrated = migrateV1(
+      v1Store({
+        defaultProfileId: "builtin:qa",
+        profiles: [mine],
+        rules: [
+          ruleTo("full", "builtin:full"),
+          ruleTo("qa", "builtin:qa"),
+          ruleTo("capture", "builtin:full-capture"),
+          ruleTo("lite", BUILT_IN_PROFILE_IDS.lite),
+          ruleTo("mine", "mine")
+        ]
+      })
+    );
+    const store = migrated[PROFILES_STORAGE_KEY] as RecordingProfilesStore;
+
+    expect(migrated[SETTINGS_VERSION_STORAGE_KEY]).toBe(SETTINGS_VERSION);
+    expect(store.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
+    expect(store.rules.map((rule) => [rule.id, rule.profileId])).toEqual([
+      ["full", BUILT_IN_PROFILE_IDS.maximum],
+      ["qa", BUILT_IN_PROFILE_IDS.maximum],
+      ["capture", BUILT_IN_PROFILE_IDS.maximum],
+      ["lite", BUILT_IN_PROFILE_IDS.lite],
+      ["mine", "mine"]
+    ]);
+    expect(store.profiles).toEqual([mine]);
+  });
+
+  it("drops an untouched Default and points its rules at Maximum", () => {
+    const migrated = migrateV1(v1Store({ rules: [ruleTo("default", DEFAULT_PROFILE_ID)] }));
+    const store = migrated[PROFILES_STORAGE_KEY] as RecordingProfilesStore;
+
+    expect(store.profiles).toEqual([]);
+    expect(store.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
+    expect(store.rules[0]?.profileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
+  });
+
+  it("keeps a customised Default as a user profile and makes Maximum the default", () => {
+    const migrated = migrateV1(
+      v1Store({ profiles: [customised], rules: [ruleTo("default", DEFAULT_PROFILE_ID)] })
+    );
+    const store = migrated[PROFILES_STORAGE_KEY] as RecordingProfilesStore;
+
+    expect(store.profiles).toEqual([{ ...customised, name: CUSTOMISED_DEFAULT_PROFILE_NAME }]);
+    expect(store.defaultProfileId).toBe(BUILT_IN_PROFILE_IDS.maximum);
+    expect(store.rules[0]?.profileId).toBe(DEFAULT_PROFILE_ID);
+  });
+
+  it("keeps a user profile chosen as the default", () => {
+    const migrated = migrateV1(
+      v1Store({ defaultProfileId: "mine", profiles: [createDefaultProfile(), mine] })
+    );
+    const store = migrated[PROFILES_STORAGE_KEY] as RecordingProfilesStore;
+
+    expect(store.defaultProfileId).toBe("mine");
+    expect(store.profiles).toEqual([mine]);
+  });
+
+  it("lists deleted recommended profiles with the new ids only", () => {
+    const migrated = migrateV1(
+      v1Store({
+        removedRecommendedProfileIds: [DEFAULT_PROFILE_ID, "builtin:qa", BUILT_IN_PROFILE_IDS.lite]
+      })
+    );
+    const store = migrated[PROFILES_STORAGE_KEY] as RecordingProfilesStore;
+
+    expect(store.removedRecommendedProfileIds).toEqual([BUILT_IN_PROFILE_IDS.lite]);
+  });
+
+  it("keeps a store with rows the reader dropped aside before rewriting it", () => {
+    const raw = v1Store({
+      profiles: [createDefaultProfile(), { ...mine, categories: { console: "everything" } }]
+    });
+    const migrated = migrateV1(raw);
+
+    expect(migrated[REJECTED_PROFILES_STORAGE_KEY]).toEqual(raw);
+    expect((migrated[PROFILES_STORAGE_KEY] as RecordingProfilesStore).profiles).toEqual([]);
+  });
+
+  it("leaves a store without old presets untouched and only marks the version", () => {
+    const store = { ...createDefaultProfilesStore(), defaultProfileId: "mine", profiles: [mine] };
+
+    expect(
+      planSettingsMigration({ [SETTINGS_VERSION_STORAGE_KEY]: 1, [PROFILES_STORAGE_KEY]: store })
+    ).toEqual({ set: { [SETTINGS_VERSION_STORAGE_KEY]: SETTINGS_VERSION }, remove: [] });
+  });
+
+  it("is idempotent and does nothing at version 2", () => {
+    const migrated = migrateV1(
+      v1Store({ defaultProfileId: "builtin:full", profiles: [customised] })
+    );
+
+    expect(SETTINGS_VERSION).toBe(2);
+    expect(planSettingsMigration(migrated)).toBeNull();
+    expect(
+      planSettingsMigration({
+        [SETTINGS_VERSION_STORAGE_KEY]: 2,
+        [PROFILES_STORAGE_KEY]: v1Store({ defaultProfileId: "builtin:qa" })
+      })
+    ).toBeNull();
   });
 });
 

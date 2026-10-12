@@ -14,10 +14,11 @@ import {
 } from "./transfer.js";
 
 const STAGE_PROFILE = duplicateProfile(createDefaultProfile(), { id: "stage", name: "Stage" });
+const TEAM_PROFILE = duplicateProfile(createDefaultProfile(), { id: "team", name: "Team" });
 const STAGE_RULE = {
   id: "stage-rule",
   name: "Stage hosts",
-  profileId: BUILT_IN_PROFILE_IDS.qa,
+  profileId: BUILT_IN_PROFILE_IDS.maximum,
   priority: 10,
   enabled: true,
   match: { hosts: ["*.stage.example.com"] }
@@ -26,8 +27,8 @@ const STAGE_RULE = {
 function store(partial: Partial<RecordingProfilesStore> = {}): RecordingProfilesStore {
   return {
     schemaVersion: PROFILES_SCHEMA_VERSION,
-    defaultProfileId: DEFAULT_PROFILE_ID,
-    profiles: [createDefaultProfile()],
+    defaultProfileId: BUILT_IN_PROFILE_IDS.maximum,
+    profiles: [STAGE_PROFILE],
     rules: [],
     extendedCaptureHosts: [],
     ...partial
@@ -48,7 +49,7 @@ describe("createProfilesExportFile", () => {
       format: PROFILES_EXPORT_FORMAT,
       exportedAt: "2026-10-03T00:00:00.000Z",
       schemaVersion: 2,
-      defaultProfileId: DEFAULT_PROFILE_ID
+      defaultProfileId: BUILT_IN_PROFILE_IDS.maximum
     });
   });
 });
@@ -56,7 +57,7 @@ describe("createProfilesExportFile", () => {
 describe("previewProfilesImport", () => {
   it("round-trips an export without changes", () => {
     const current = store({
-      profiles: [createDefaultProfile(), STAGE_PROFILE],
+      profiles: [TEAM_PROFILE, STAGE_PROFILE],
       rules: [STAGE_RULE]
     });
     const preview = previewProfilesImport(
@@ -71,14 +72,14 @@ describe("previewProfilesImport", () => {
 
   it("reports added, removed and changed profiles and rules", () => {
     const current = store({
-      profiles: [createDefaultProfile(), { ...STAGE_PROFILE, name: "Old stage" }],
+      profiles: [TEAM_PROFILE, { ...STAGE_PROFILE, name: "Old stage" }],
       rules: [{ ...STAGE_RULE, id: "gone", name: "Gone" }],
       extendedCaptureHosts: ["old.test"]
     });
     const incoming = exported({
       defaultProfileId: "stage",
       profiles: [
-        createDefaultProfile(),
+        TEAM_PROFILE,
         STAGE_PROFILE,
         duplicateProfile(STAGE_PROFILE, { id: "new", name: "New" })
       ],
@@ -105,7 +106,10 @@ describe("previewProfilesImport", () => {
       changed: [],
       unchanged: 0
     });
-    expect(preview.diff.defaultProfileId).toEqual({ from: DEFAULT_PROFILE_ID, to: "stage" });
+    expect(preview.diff.defaultProfileId).toEqual({
+      from: BUILT_IN_PROFILE_IDS.maximum,
+      to: "stage"
+    });
     expect(preview.diff.extendedCaptureHosts).toEqual({
       added: ["localhost:*"],
       removed: ["old.test"]
@@ -147,7 +151,7 @@ describe("previewProfilesImport", () => {
     const emptied = store({
       defaultProfileId: "ghost",
       profiles: [],
-      removedRecommendedProfileIds: [DEFAULT_PROFILE_ID]
+      removedRecommendedProfileIds: [BUILT_IN_PROFILE_IDS.maximum, BUILT_IN_PROFILE_IDS.lite]
     });
     const emptyRoundTrip = previewProfilesImport(
       JSON.stringify(createProfilesExportFile(emptied)),
@@ -157,19 +161,36 @@ describe("previewProfilesImport", () => {
     expect(emptyRoundTrip.ok && emptyRoundTrip.next).toEqual(emptied);
   });
 
-  it("carries deleted recommended profiles and reports restoring or deleting them", () => {
-    const withoutQa = store({ removedRecommendedProfileIds: [BUILT_IN_PROFILE_IDS.qa] });
-    const file = createProfilesExportFile(withoutQa);
-    const roundTrip = previewProfilesImport(JSON.stringify(file), withoutQa);
+  it("moves an export of an earlier version to the built-in Maximum and Light", () => {
+    const legacy = exported({
+      defaultProfileId: DEFAULT_PROFILE_ID,
+      profiles: [createDefaultProfile(), STAGE_PROFILE],
+      rules: [{ ...STAGE_RULE, profileId: "builtin:qa" }],
+      removedRecommendedProfileIds: ["builtin:full", BUILT_IN_PROFILE_IDS.lite]
+    });
+    const preview = previewProfilesImport(legacy, store());
 
-    expect(file.removedRecommendedProfileIds).toEqual([BUILT_IN_PROFILE_IDS.qa]);
-    expect(roundTrip.ok && roundTrip.next).toEqual(withoutQa);
+    expect(preview.ok && preview.next).toEqual(
+      store({
+        rules: [{ ...STAGE_RULE, profileId: BUILT_IN_PROFILE_IDS.maximum }],
+        removedRecommendedProfileIds: [BUILT_IN_PROFILE_IDS.lite]
+      })
+    );
+  });
+
+  it("carries deleted recommended profiles and reports restoring or deleting them", () => {
+    const withoutLight = store({ removedRecommendedProfileIds: [BUILT_IN_PROFILE_IDS.lite] });
+    const file = createProfilesExportFile(withoutLight);
+    const roundTrip = previewProfilesImport(JSON.stringify(file), withoutLight);
+
+    expect(file.removedRecommendedProfileIds).toEqual([BUILT_IN_PROFILE_IDS.lite]);
+    expect(roundTrip.ok && roundTrip.next).toEqual(withoutLight);
     expect(roundTrip.ok && roundTrip.diff.hasChanges).toBe(false);
 
     const deleting = previewProfilesImport(JSON.stringify(file), store());
     expect(deleting.ok && deleting.diff.removedRecommendedProfileIds).toEqual({
       from: [],
-      to: [BUILT_IN_PROFILE_IDS.qa]
+      to: [BUILT_IN_PROFILE_IDS.lite]
     });
     expect(deleting.ok && deleting.diff.hasChanges).toBe(true);
     expect("removedRecommendedProfileIds" in createProfilesExportFile(store())).toBe(false);

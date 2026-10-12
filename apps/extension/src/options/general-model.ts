@@ -29,6 +29,11 @@ import { MAX_BODY_CAPTURE_BYTES } from "../shared/body-capture-limits.js";
 export type GeneralDraft = {
   /** Shows and edits the Default profile's sampling, freeze-on-error and redaction lists. */
   recorderConfig: RecorderConfig;
+  /**
+   * The stored profiles hold an editable Default profile (installs from before Maximum): only
+   * then do the recorder fields show. Read from storage, never edited by the form.
+   */
+  hasDefaultProfile: boolean;
   /** Stored under its own key (`webblackbox.performanceBudget`). */
   performanceBudget: PerformanceBudgetConfig;
   archive: ExportPolicyPrefs;
@@ -460,6 +465,7 @@ export function normalizeOptionsConfig(config: RecorderConfig): RecorderConfig {
 export function createDefaultGeneralDraft(): GeneralDraft {
   return {
     recorderConfig: normalizeOptionsConfig(structuredClone(DEFAULT_RECORDER_CONFIG)),
+    hasDefaultProfile: false,
     performanceBudget: { ...DEFAULT_PERFORMANCE_BUDGET },
     archive: { ...DEFAULT_EXPORT_POLICY_PREFS },
     injection: DEFAULT_CONTENT_INJECTION_MODE,

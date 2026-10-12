@@ -61,5 +61,7 @@
   "optionsPlayerUrlHint": "贵组织的播放器。“会话”页面中的“导出并在播放器中打开”会在导出后打开它；留空则隐藏该操作。只会打开页面，归档仍保存在本机。",
   "optionsPlayerUrlPlaceholder": "https://player.example.com/",
   "optionsPlayerUrlManaged": "由组织策略设置。",
-  "optionsErrorPlayerUrl": "请输入 https:// 地址（http:// 仅限 localhost 或 127.0.0.1）。"
+  "optionsErrorPlayerUrl": "请输入 https:// 地址（http:// 仅限 localhost 或 127.0.0.1）。",
+  "optionsProfileFieldsNotice": "遮罩、指针、采样和事件设置属于录制配置。内置配置（“最大”和“轻量”）不可编辑：请在“录制配置”中复制一个并修改副本。",
+  "optionsOpenProfiles": "打开录制配置"
 }

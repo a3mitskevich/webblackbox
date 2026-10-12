@@ -120,7 +120,7 @@
   "optionsProfileGroupBodies": "Тела запросов и указатель",
   "optionsProfileGroupLocalData": "Локальные данные",
   "optionsProfileDeleteAfterExport": "Удалять локальную запись после успешного экспорта",
-  "optionsProfileUnexportedRetention": "Хранить неэкспортированные записи, минут (1–1440)",
+  "optionsProfileUnexportedRetention": "Удалять неэкспортированные записи через, минут (1–1440)",
   "optionsProfileUnmaskHint": "Остаются читаемыми даже среди скрытых элементов; поля паролей — никогда.",
   "optionsProfileBodyMimeHint": "Пусто — стандартный список транспорта.",
   "optionsInheritHint": "Пусто — значение транспорта по умолчанию.",
@@ -130,5 +130,6 @@
   "optionsProfilesExportHint": "Скачать профили и правила в JSON.",
   "optionsProfilesImportHint": "Перед применением вы увидите список изменений.",
   "optionsProfilesImportChoose": "Выбрать файл…",
-  "optionsProfilesImportPreview": "Предпросмотр импорта"
+  "optionsProfilesImportPreview": "Предпросмотр импорта",
+  "optionsProfileUnexportedRetentionKeep": "Пусто: хранить до экспорта или удаления"
 }

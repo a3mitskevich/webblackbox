@@ -36,7 +36,8 @@ const FORM: ProfileFormValues = {
   mousemoveHz: "",
   visual: "screenshots",
   deleteAfterExport: true,
-  unexportedRetentionMinutes: "10",
+  // Empty: unexported recordings are kept until exported or deleted (the default).
+  unexportedRetentionMinutes: "",
   sourceMaps: "embed",
   sourceMapMaxBytes: "1048576"
 };
@@ -129,7 +130,7 @@ describe("profile form model", () => {
       ruleFromFormValues({
         id: "rule-1",
         name: "",
-        profileId: BUILT_IN_PROFILE_IDS.qa,
+        profileId: BUILT_IN_PROFILE_IDS.maximum,
         priority: "5000",
         enabled: true,
         hosts: "*.stage.test\nlocalhost:*",
@@ -143,7 +144,7 @@ describe("profile form model", () => {
       })
     ).toEqual({
       id: "rule-1",
-      profileId: BUILT_IN_PROFILE_IDS.qa,
+      profileId: BUILT_IN_PROFILE_IDS.maximum,
       priority: 1000,
       enabled: true,
       match: {
@@ -186,15 +187,17 @@ describe("profile form model", () => {
 
     expect(applyProfileFormValues(base, FORM)).not.toHaveProperty("localData");
     expect(applyProfileFormValues(base, { ...FORM, deleteAfterExport: false }).localData).toEqual({
-      deleteAfterExport: false,
-      unexportedRetentionMinutes: 10
+      deleteAfterExport: false
     });
+    expect(
+      applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "10" }).localData
+    ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 10 });
     expect(
       applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "5000" }).localData
     ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 1440 });
   });
 
-  it("keeps an explicit local data block, and its retention when the field is cleared", () => {
+  it("keeps an explicit local data block; a cleared retention keeps recordings until exported", () => {
     const base = {
       ...createDefaultProfile(),
       localData: { deleteAfterExport: true, unexportedRetentionMinutes: 5 }
@@ -202,7 +205,13 @@ describe("profile form model", () => {
 
     expect(
       applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "" }).localData
-    ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 5 });
+    ).toEqual({ deleteAfterExport: true });
+    expect(
+      applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "  " }).localData
+    ).toEqual({ deleteAfterExport: true });
+    expect(
+      applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "7" }).localData
+    ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 7 });
     expect(
       applyProfileFormValues(base, { ...FORM, unexportedRetentionMinutes: "0" }).localData
     ).toEqual({ deleteAfterExport: true, unexportedRetentionMinutes: 1 });

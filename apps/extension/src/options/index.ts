@@ -26,7 +26,11 @@ import {
   normalizeStartReloadOffer,
   START_RELOAD_OFFER_STORAGE_KEY
 } from "../shared/start-reload-offer.js";
-import { PROFILES_STORAGE_KEY, type RecordingProfilesStore } from "../shared/profiles/model.js";
+import {
+  DEFAULT_PROFILE_ID,
+  PROFILES_STORAGE_KEY,
+  type RecordingProfilesStore
+} from "../shared/profiles/model.js";
 import {
   applyDefaultProfileToGeneralForm,
   applyGeneralFormToDefaultProfile,
@@ -486,13 +490,12 @@ async function loadGeneralDraft(): Promise<GeneralDraft> {
     PLAYER_URL_STORAGE_KEY
   ]);
   const defaults = createDefaultGeneralDraft();
+  const store = loadStoredProfiles(values?.[PROFILES_STORAGE_KEY]);
 
   return {
     ...defaults,
-    recorderConfig: applyDefaultProfileToGeneralForm(
-      defaults.recorderConfig,
-      loadStoredProfiles(values?.[PROFILES_STORAGE_KEY])
-    ),
+    recorderConfig: applyDefaultProfileToGeneralForm(defaults.recorderConfig, store),
+    hasDefaultProfile: store.profiles.some((profile) => profile.id === DEFAULT_PROFILE_ID),
     performanceBudget: normalizePerformanceBudget(values?.[PERFORMANCE_BUDGET_STORAGE_KEY]),
     archive: loadExportPolicyPrefs(),
     injection: normalizeContentInjectionMode(values?.[CONTENT_INJECTION_STORAGE_KEY]),

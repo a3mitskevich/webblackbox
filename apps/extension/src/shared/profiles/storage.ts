@@ -24,10 +24,12 @@ import {
   type RecordingProfilesStore
 } from "./model.js";
 import { DEFAULT_LOCAL_DATA_SETTINGS } from "./local-data.js";
+import { isRemovedBuiltInProfileId } from "./preset-migration.js";
 import {
   BUILT_IN_PROFILES,
   createBaseProfile,
   createDefaultProfile,
+  DEFAULT_BUILT_IN_PROFILE_ID,
   isRecommendedProfileId,
   RECOMMENDED_PROFILE_IDS
 } from "./presets.js";
@@ -69,24 +71,25 @@ export const EMPTY_MANAGED_PROFILES: ManagedProfilesPolicy = {
 };
 
 /**
- * Turns the v1 `webblackbox.options` record into the v2 store with a single "Default" profile.
- * The profile keeps every v1 knob that changed recording (sampling, redaction, freeze-on-error,
- * site body policies, capture policy) so recording stays identical. Only the one-time settings
- * migration reads v1 options.
+ * Turns the v1 `webblackbox.options` record into a v2 store with a single "Default" profile, as
+ * the v1 era had it. The profile keeps every v1 knob that changed recording (sampling, redaction,
+ * freeze-on-error, site body policies, capture policy). Only the one-time settings migration reads
+ * v1 options; its next step moves the store to the built-in presets.
  */
 export function migrateLegacyOptionsToProfiles(legacyOptions: unknown): RecordingProfilesStore {
   return {
     ...createDefaultProfilesStore(),
+    defaultProfileId: DEFAULT_PROFILE_ID,
     profiles: [profileFromOptionsRecord(legacyOptions)]
   };
 }
 
-/** The store a browser without saved profiles records with: the Default profile alone. */
+/** The store a browser without saved profiles records with: the built-in presets, Maximum first. */
 export function createDefaultProfilesStore(): RecordingProfilesStore {
   return {
     schemaVersion: PROFILES_SCHEMA_VERSION,
-    defaultProfileId: DEFAULT_PROFILE_ID,
-    profiles: [createDefaultProfile()],
+    defaultProfileId: DEFAULT_BUILT_IN_PROFILE_ID,
+    profiles: [],
     rules: [],
     extendedCaptureHosts: []
   };
@@ -214,7 +217,7 @@ export function parseProfilesStore(raw: unknown): ParsedProfilesStore | null {
     store: {
       schemaVersion: PROFILES_SCHEMA_VERSION,
       defaultProfileId,
-      profiles: ensureDefaultProfile(profiles, removed),
+      profiles,
       rules,
       extendedCaptureHosts: [...envelope.data.extendedCaptureHosts],
       ...withRemovedRecommendedIds(removed)
@@ -231,8 +234,8 @@ export function listStoreProfiles(store: RecordingProfilesStore): RecordingProfi
 }
 
 /**
- * Deletes any profile except enterprise-managed ones. Default and the presets are remembered as
- * removed so "Restore recommended profiles" can bring them back. Rules that point at the profile
+ * Deletes any profile except enterprise-managed ones. The presets are remembered as removed so
+ * "Restore recommended profiles" can bring them back. Rules that point at the profile
  * are kept: the rule engine skips them and the editor flags them until the profile exists again.
  * When the deleted profile was the default, the first remaining profile becomes the default.
  */
@@ -262,26 +265,22 @@ export function removeProfileFromStore(
 }
 
 /**
- * Brings back every deleted recommended profile; Default comes back with today's defaults and
- * becomes the default again when the previous default no longer exists.
+ * Brings back every deleted preset; Maximum becomes the default again when the previous default no
+ * longer exists.
  */
 export function restoreRecommendedProfiles(store: RecordingProfilesStore): RecordingProfilesStore {
-  const restored: RecordingProfilesStore = {
-    ...withoutRemovedRecommendedIds(store),
-    profiles: ensureDefaultProfile(store.profiles, [])
-  };
+  const restored = withoutRemovedRecommendedIds(store);
   // Enterprise profiles are not in the store; the profiles state resolves a missing one.
   const hasDefault =
     isManagedProfileId(restored.defaultProfileId) ||
     listStoreProfiles(restored).some((profile) => profile.id === restored.defaultProfileId);
 
-  return hasDefault ? restored : { ...restored, defaultProfileId: DEFAULT_PROFILE_ID };
+  return hasDefault ? restored : { ...restored, defaultProfileId: DEFAULT_BUILT_IN_PROFILE_ID };
 }
 
 /**
  * Resolves the effective profiles state from raw storage values. Never throws: without a store,
- * or with a corrupt one (reported as `corrupt-store`), the Default profile records with today's
- * defaults.
+ * or with a corrupt one (reported as `corrupt-store`), Maximum records.
  */
 export function resolveProfilesState(input: {
   rawProfilesStore: unknown;
@@ -306,8 +305,8 @@ export function resolveProfilesState(input: {
     issues.push({ kind: "missing-default-profile", id: store.defaultProfileId });
   }
 
-  const fallbackDefaultId = catalogIds.has(DEFAULT_PROFILE_ID)
-    ? DEFAULT_PROFILE_ID
+  const fallbackDefaultId = catalogIds.has(DEFAULT_BUILT_IN_PROFILE_ID)
+    ? DEFAULT_BUILT_IN_PROFILE_ID
     : (catalog[0]?.id ?? store.defaultProfileId);
 
   return {
@@ -342,7 +341,7 @@ export function parseManagedProfilesPolicy(value: unknown): ManagedProfilesPolic
   ).map((rule) => ({
     ...rule,
     id: toManagedId(rule.id),
-    profileId: isReadOnlyProfileId(rule.profileId) ? rule.profileId : toManagedId(rule.profileId)
+    profileId: toManagedRuleProfileId(rule.profileId)
   }));
 
   return { profiles, rules, issues };
@@ -403,7 +402,7 @@ export function serializeProfilesStore(store: RecordingProfilesStore): Recording
   const serialized: RecordingProfilesStore = {
     schemaVersion: PROFILES_SCHEMA_VERSION,
     defaultProfileId: store.defaultProfileId,
-    profiles: ensureDefaultProfile(profiles, removed),
+    profiles,
     rules,
     extendedCaptureHosts: [...store.extendedCaptureHosts],
     ...withRemovedRecommendedIds(removed)
@@ -498,17 +497,6 @@ function parseRules(entries: readonly unknown[], issues: ProfilesStoreIssue[]): 
   return output;
 }
 
-/** Stores always carry the Default profile unless the user deleted it. */
-function ensureDefaultProfile(
-  profiles: RecordingProfile[],
-  removed: readonly string[]
-): RecordingProfile[] {
-  return removed.includes(DEFAULT_PROFILE_ID) ||
-    profiles.some((profile) => profile.id === DEFAULT_PROFILE_ID)
-    ? profiles
-    : [createDefaultProfile(), ...profiles];
-}
-
 /** Known recommended ids only, once each, in catalog order. */
 function normalizeRemovedRecommendedIds(ids: readonly string[] | undefined): string[] {
   const wanted = new Set(ids ?? []);
@@ -596,6 +584,15 @@ function pickValidSitePolicies(value: unknown): SiteCapturePolicy[] {
     const parsed = siteCapturePolicySchema.safeParse(entry);
     return parsed.success ? [parsed.data] : [];
   });
+}
+
+/** A managed rule's profile: built-ins as they are (removed presets mean Maximum), else managed. */
+function toManagedRuleProfileId(profileId: string): string {
+  if (isRemovedBuiltInProfileId(profileId)) {
+    return DEFAULT_BUILT_IN_PROFILE_ID;
+  }
+
+  return isReadOnlyProfileId(profileId) ? profileId : toManagedId(profileId);
 }
 
 function toManagedId(id: string): string {

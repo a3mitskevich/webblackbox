@@ -22,16 +22,14 @@ function preset(id: string) {
 }
 
 describe("requiresFullEngine", () => {
-  it("holds for the QA and Full capture presets only", () => {
-    expect(requiresFullEngine(preset(BUILT_IN_PROFILE_IDS.qa))).toBe(true);
-    expect(requiresFullEngine(preset(BUILT_IN_PROFILE_IDS.fullCapture))).toBe(true);
-    expect(requiresFullEngine(preset(BUILT_IN_PROFILE_IDS.full))).toBe(false);
+  it("holds for Maximum, not for Light", () => {
+    expect(requiresFullEngine(preset(BUILT_IN_PROFILE_IDS.maximum))).toBe(true);
     expect(requiresFullEngine(preset(BUILT_IN_PROFILE_IDS.lite))).toBe(false);
     expect(requiresFullEngine(createDefaultProfile())).toBe(false);
   });
 
   it("follows what a duplicated preset captures, not its id", () => {
-    const copy = duplicateProfile(preset(BUILT_IN_PROFILE_IDS.fullCapture), { id: "user-copy" });
+    const copy = duplicateProfile(preset(BUILT_IN_PROFILE_IDS.maximum), { id: "user-copy" });
 
     expect(requiresFullEngine(copy)).toBe(true);
     expect(
@@ -74,11 +72,11 @@ describe("requiresFullEngine", () => {
 });
 
 describe("resolveStartEngine", () => {
-  const fullCapture = preset(BUILT_IN_PROFILE_IDS.fullCapture);
+  const maximum = preset(BUILT_IN_PROFILE_IDS.maximum);
 
   it("upgrades a Lite start for a profile that needs Full", () => {
-    expect(resolveStartEngine("lite", fullCapture)).toBe("full");
-    expect(resolveStartEngine("full", fullCapture)).toBe("full");
+    expect(resolveStartEngine("lite", maximum)).toBe("full");
+    expect(resolveStartEngine("full", maximum)).toBe("full");
   });
 
   it("keeps the requested engine for a profile that works in both", () => {
@@ -100,7 +98,7 @@ describe("resolveStartEngine", () => {
   });
 
   it("starts a Default whose categories need Full in Full, like any other profile", () => {
-    const raised = { ...createDefaultProfile(), categories: fullCapture.categories };
+    const raised = { ...createDefaultProfile(), categories: maximum.categories };
 
     expect(resolveStartEngine("lite", raised)).toBe("full");
   });

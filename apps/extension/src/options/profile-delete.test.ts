@@ -17,13 +17,7 @@ import { mountProfilesEditor } from "./profiles-editor.js";
 const t = (key: ExtensionMessageKey, vars?: Record<string, string | number>): string =>
   translateExtensionMessage("en", key, vars);
 
-const RECOMMENDED_IDS = [
-  "default",
-  BUILT_IN_PROFILE_IDS.lite,
-  BUILT_IN_PROFILE_IDS.full,
-  BUILT_IN_PROFILE_IDS.qa,
-  BUILT_IN_PROFILE_IDS.fullCapture
-];
+const RECOMMENDED_IDS = [BUILT_IN_PROFILE_IDS.maximum, BUILT_IN_PROFILE_IDS.lite];
 
 const rule = (id: string, profileId: string, name?: string): ProfileRule => ({
   id,
@@ -38,7 +32,7 @@ function createStorage(store: Record<string, unknown> = {}, managed?: Record<str
   const data: Record<string, unknown> = {
     [PROFILES_STORAGE_KEY]: {
       schemaVersion: 2,
-      defaultProfileId: "default",
+      defaultProfileId: BUILT_IN_PROFILE_IDS.maximum,
       profiles: [],
       rules: [],
       extendedCaptureHosts: [],
@@ -131,21 +125,23 @@ describe("profile deletion and restore", () => {
   });
 
   it("asks before every delete and names the rules that use the profile", async () => {
+    const unused = duplicateProfile(createDefaultProfile(), { id: "unused", name: "Unused" });
     const { container } = await mount(
       createStorage({
+        profiles: [unused],
         rules: [
-          rule("stage", "default", "Stage"),
-          rule("shop", "default"),
+          rule("stage", BUILT_IN_PROFILE_IDS.maximum, "Stage"),
+          rule("shop", BUILT_IN_PROFILE_IDS.maximum),
           rule("lite", BUILT_IN_PROFILE_IDS.lite, "Lite site")
         ]
       })
     );
 
-    deleteButton(container, "default").click();
+    deleteButton(container, BUILT_IN_PROFILE_IDS.maximum).click();
     await flush();
 
     expect(dialog()?.querySelector(".wb-confirm-title")?.textContent).toBe(
-      t("optionsProfileDeleteTitle", { name: "Default" })
+      t("optionsProfileDeleteTitle", { name: "Maximum" })
     );
     expect(dialog()?.querySelector(".wb-confirm-body")?.textContent).toBe(
       t("optionsProfileDeleteRules", { count: 2 })
@@ -154,16 +150,17 @@ describe("profile deletion and restore", () => {
     expect(dialogTexts("[data-confirm-item]")).toEqual(["Stage", "shop"]);
     expect(dialogTexts("[data-confirm-note]")).toEqual([
       t("optionsProfileDeleteRestorable"),
-      t("optionsProfileDeleteNewDefault", { name: "Lite" })
+      // The first profile left, own profiles first.
+      t("optionsProfileDeleteNewDefault", { name: "Unused" })
     ]);
 
     document.querySelector<HTMLElement>("[data-confirm-cancel]")?.click();
     await flush();
 
-    expect(profileIds(container)).toContain("default");
+    expect(profileIds(container)).toContain(BUILT_IN_PROFILE_IDS.maximum);
 
-    // No rule uses Full: it still asks, and says so.
-    deleteButton(container, BUILT_IN_PROFILE_IDS.full).click();
+    // No rule uses the profile: it still asks, and says so.
+    deleteButton(container, "unused").click();
     await flush();
 
     expect(dialog()?.querySelector(".wb-confirm-body")?.textContent).toBe(
@@ -174,7 +171,7 @@ describe("profile deletion and restore", () => {
     document.querySelector<HTMLElement>("[data-confirm-accept]")?.click();
     await flush();
 
-    expect(profileIds(container)).not.toContain(BUILT_IN_PROFILE_IDS.full);
+    expect(profileIds(container)).not.toContain("unused");
   });
 
   it("warns that an own profile cannot be restored once saved", async () => {
@@ -190,13 +187,13 @@ describe("profile deletion and restore", () => {
   it("keeps the last profile: Delete is disabled and says why", async () => {
     const { container } = await mount(
       createStorage({
-        defaultProfileId: BUILT_IN_PROFILE_IDS.fullCapture,
+        defaultProfileId: BUILT_IN_PROFILE_IDS.maximum,
         removedRecommendedProfileIds: RECOMMENDED_IDS.filter(
-          (id) => id !== BUILT_IN_PROFILE_IDS.fullCapture
+          (id) => id !== BUILT_IN_PROFILE_IDS.maximum
         )
       })
     );
-    const lastDelete = deleteButton(container, BUILT_IN_PROFILE_IDS.fullCapture);
+    const lastDelete = deleteButton(container, BUILT_IN_PROFILE_IDS.maximum);
     const hintId = lastDelete.getAttribute("aria-describedby") ?? "";
 
     expect(lastDelete.disabled).toBe(true);
@@ -208,7 +205,7 @@ describe("profile deletion and restore", () => {
     await flush();
 
     expect(dialog()).toBeNull();
-    expect(profileIds(container)).toEqual([BUILT_IN_PROFILE_IDS.fullCapture]);
+    expect(profileIds(container)).toEqual([BUILT_IN_PROFILE_IDS.maximum]);
   });
 
   it("deletes down to one profile and then disables the last Delete", async () => {
@@ -218,8 +215,8 @@ describe("profile deletion and restore", () => {
       await deleteProfile(container, id);
     }
 
-    expect(profileIds(container)).toEqual([BUILT_IN_PROFILE_IDS.fullCapture]);
-    expect(deleteButton(container, BUILT_IN_PROFILE_IDS.fullCapture).disabled).toBe(true);
+    expect(profileIds(container)).toEqual([BUILT_IN_PROFILE_IDS.lite]);
+    expect(deleteButton(container, BUILT_IN_PROFILE_IDS.lite).disabled).toBe(true);
     expect(container.querySelector("[data-profiles-last]")?.textContent).toBe(
       t("optionsProfileDeleteLast")
     );
@@ -255,7 +252,7 @@ describe("profile deletion and restore", () => {
       t("optionsProfilesRestoreNothing")
     );
 
-    await deleteProfile(container, BUILT_IN_PROFILE_IDS.qa);
+    await deleteProfile(container, BUILT_IN_PROFILE_IDS.lite);
 
     expect(restoreButton(container).disabled).toBe(false);
     expect(container.querySelector("[data-profiles-restore-hint]")?.textContent).toBe(
@@ -272,7 +269,7 @@ describe("profile deletion and restore", () => {
   it("marks Profiles unsaved when a preset that is not the default is deleted, and clean after Restore", async () => {
     const { container, handle } = await mount(createStorage());
 
-    await deleteProfile(container, BUILT_IN_PROFILE_IDS.qa);
+    await deleteProfile(container, BUILT_IN_PROFILE_IDS.lite);
 
     expect(handle.changedSections()).toEqual({ profiles: true, rules: false });
 
@@ -298,7 +295,7 @@ describe("profile deletion and restore", () => {
 
     name.value = "Mine edited";
     name.dispatchEvent(new Event("input", { bubbles: true }));
-    await deleteProfile(container, BUILT_IN_PROFILE_IDS.full);
+    await deleteProfile(container, BUILT_IN_PROFILE_IDS.lite);
 
     expect(container.querySelector("[data-profile-form='mine']")).not.toBeNull();
     expect(container.querySelector<HTMLInputElement>("#pf-name")?.value).toBe("Mine edited");

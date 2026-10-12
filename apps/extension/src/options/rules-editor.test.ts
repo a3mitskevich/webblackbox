@@ -7,6 +7,7 @@ import { translateExtensionMessage, type ExtensionMessageKey } from "../shared/i
 import { PROFILES_STORAGE_KEY, type ProfileRule } from "../shared/profiles/model.js";
 import {
   BUILT_IN_PROFILE_IDS,
+  createDefaultProfile,
   duplicateProfile,
   findBuiltInProfile
 } from "../shared/profiles/presets.js";
@@ -25,7 +26,8 @@ const rule = (id: string, priority: number, hosts: string[] = []): ProfileRule =
   match: hosts.length > 0 ? { hosts } : {}
 });
 
-function storageWith(rules: ProfileRule[], profiles: unknown[] = []) {
+/** By default a Default profile kept from an earlier version, which the rules point at. */
+function storageWith(rules: ProfileRule[], profiles: unknown[] = [createDefaultProfile()]) {
   const data: Record<string, unknown> = {
     [PROFILES_STORAGE_KEY]: {
       schemaVersion: 2,
@@ -50,7 +52,7 @@ function storageWith(rules: ProfileRule[], profiles: unknown[] = []) {
   return { data, chromeApi };
 }
 
-async function mount(rules: ProfileRule[], profiles: unknown[] = []) {
+async function mount(rules: ProfileRule[], profiles: unknown[] = [createDefaultProfile()]) {
   const storage = storageWith(rules, profiles);
   const container = document.createElement("div");
   const onChange = vi.fn();
@@ -163,13 +165,16 @@ describe("rules editor", () => {
   });
 
   it("explains which profile a URL gets and why", async () => {
-    const qaRule = { ...rule("stage", 10, ["*.stage.test"]), profileId: BUILT_IN_PROFILE_IDS.qa };
+    const qaRule = {
+      ...rule("stage", 10, ["*.stage.test"]),
+      profileId: BUILT_IN_PROFILE_IDS.maximum
+    };
     const { container } = await mount([qaRule]);
     const result = () => container.querySelector("[data-rule-test-result]")?.textContent ?? "";
 
     typeInto(container, "[name='testUrl']", "https://app.stage.test/cart");
 
-    expect(result()).toContain("QA");
+    expect(result()).toContain("Maximum");
     expect(result()).toContain("STAGE");
     expect(result()).toContain("*.stage.test");
 
@@ -185,7 +190,7 @@ describe("rules editor", () => {
   it("tests a URL as an incognito window and names incognito conditions", async () => {
     const incognitoRule: ProfileRule = {
       ...rule("private", 10),
-      profileId: BUILT_IN_PROFILE_IDS.full,
+      profileId: BUILT_IN_PROFILE_IDS.lite,
       match: { incognito: true }
     };
     const { container } = await mount([incognitoRule]);
@@ -209,13 +214,13 @@ describe("rules editor", () => {
   });
 
   it("asks before deleting a profile that site rules use", async () => {
-    const qa = findBuiltInProfile(BUILT_IN_PROFILE_IDS.qa);
+    const maximum = findBuiltInProfile(BUILT_IN_PROFILE_IDS.maximum);
 
-    if (!qa) {
-      throw new Error("missing QA preset");
+    if (!maximum) {
+      throw new Error("missing Maximum preset");
     }
 
-    const mine = duplicateProfile(qa, { id: "mine", name: "Mine" });
+    const mine = duplicateProfile(maximum, { id: "mine", name: "Mine" });
     const { container, handle } = await mount([{ ...rule("a", 10), profileId: "mine" }], [mine]);
     const deleteButton = () =>
       container.querySelector<HTMLElement>(
@@ -246,7 +251,7 @@ describe("rules editor", () => {
 
   it("marks rules to deleted profiles as skipped and offers Restore for recommended ones", async () => {
     const { container } = await mount([
-      { ...rule("a", 10), profileId: BUILT_IN_PROFILE_IDS.qa },
+      { ...rule("a", 10), profileId: BUILT_IN_PROFILE_IDS.lite },
       { ...rule("b", 5), profileId: "gone" },
       rule("c", 1)
     ]);
@@ -257,7 +262,7 @@ describe("rules editor", () => {
 
     container
       .querySelector<HTMLElement>(
-        `[data-profile-id='${BUILT_IN_PROFILE_IDS.qa}'] [data-action='profile-delete']`
+        `[data-profile-id='${BUILT_IN_PROFILE_IDS.lite}'] [data-action='profile-delete']`
       )
       ?.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -275,7 +280,7 @@ describe("rules editor", () => {
     );
     // A deleted preset is named and comes back with Restore; a deleted own profile does not.
     expect(row("a").querySelector(".wb-rule__arrow")?.textContent).toBe(
-      `→ ${t("optionsRuleProfileMissing", { id: "QA" })}`
+      `→ ${t("optionsRuleProfileMissing", { id: "Light" })}`
     );
     expect(row("a").querySelector("[data-rule-missing]")?.textContent).toBe(
       t("optionsRuleProfileMissingHint")

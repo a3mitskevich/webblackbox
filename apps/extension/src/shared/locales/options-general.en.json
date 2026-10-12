@@ -61,5 +61,7 @@
   "optionsPlayerUrlHint": "Your organization's Player. “Export and open in Player” on the Sessions page opens it after the export; leave empty to hide that action. Only the page is opened: the archive stays on this computer.",
   "optionsPlayerUrlPlaceholder": "https://player.example.com/",
   "optionsPlayerUrlManaged": "Set by your organization's policy.",
-  "optionsErrorPlayerUrl": "Enter an https:// address (http:// only for localhost or 127.0.0.1)."
+  "optionsErrorPlayerUrl": "Enter an https:// address (http:// only for localhost or 127.0.0.1).",
+  "optionsProfileFieldsNotice": "Masking, pointer, sampling and incident settings belong to a recording profile. The built-in profiles (Maximum and Light) cannot be edited: duplicate one under Profiles and change the copy.",
+  "optionsOpenProfiles": "Open profiles"
 }

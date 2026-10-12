@@ -7,6 +7,7 @@ import {
   type RecordingProfile,
   type RecordingProfilesStore
 } from "./model.js";
+import { migrateStoreToBuiltInPresets } from "./preset-migration.js";
 import { describeIssues, parseProfilesStore } from "./storage.js";
 
 export const PROFILES_EXPORT_FORMAT = "webblackbox-recording-profiles";
@@ -110,7 +111,10 @@ export function previewProfilesImport(
     return { ok: false, error: describeIssues(parsed.issues) };
   }
 
-  return { ok: true, next: parsed.store, diff: diffProfilesStores(current, parsed.store) };
+  // An export of an earlier version still names the removed presets (and the old Default).
+  const next = migrateStoreToBuiltInPresets(parsed.store);
+
+  return { ok: true, next, diff: diffProfilesStores(current, next) };
 }
 
 export function diffProfilesStores(
