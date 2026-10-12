@@ -72,7 +72,8 @@ function renderFixture(): void {
     <input id="name" value="Alice" />
     <input id="pin" name="pin" value="1234" />
     <input id="pass" type="password" value="hunter2" />
-    <button id="go">Go</button>`;
+    <button id="go">Go</button>
+    <div data-webblackbox-indicator="true" id="indicator">WebBlackbox REC lite</div>`;
 }
 
 function startRecorder(policy: CapturePolicy) {
@@ -111,7 +112,10 @@ describe("buildRrwebRecordOptions", () => {
     const options = buildRrwebRecordOptions(policyWith({ dom: "allow" }));
 
     expect(options?.blockSelector).toBe(
-      joinSelectors(DEFAULT_CAPTURE_POLICY.redaction.blockedSelectors)
+      joinSelectors([
+        "[data-webblackbox-indicator]",
+        ...DEFAULT_CAPTURE_POLICY.redaction.blockedSelectors
+      ])
     );
     expect(options?.maskTextSelector).toBeUndefined();
     expect(options).toMatchObject({
@@ -163,6 +167,7 @@ describe("createRrwebDomRecorder", () => {
     // Never-captured fields (PIN, password) stay masked whatever the inputs level says.
     expect(findNode(root, byId("pin"))?.attributes?.value).toBe("****");
     expect(JSON.stringify(root)).not.toContain("hunter2");
+    expect(JSON.stringify(root)).not.toContain("WebBlackbox REC");
   });
 
   it("masks every text and value under the default profile", () => {

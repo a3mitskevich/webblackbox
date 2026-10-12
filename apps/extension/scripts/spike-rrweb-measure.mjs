@@ -15,7 +15,8 @@
 //
 // WB_SPIKE_SITE=heavy|realistic, WB_E2E_MODE=lite|full, WB_SPIKE_PROFILE=default|dom-allow|
 // full-capture, WB_SPIKE_DURATION_MS, WB_SPIKE_CLICK_EVERY_MS, WB_SPIKE_OUT (JSON),
-// WB_SPIKE_SCREENSHOT (PNG of the Player). Wrap it in `timeout`.
+// WB_SPIKE_SCREENSHOT (PNG of the Player), WB_SPIKE_RELOAD_AFTER_START=1 (resources load inside
+// the recording, so their bodies can reach the archive). Wrap it in `timeout`.
 
 import { createReadStream } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
@@ -87,6 +88,18 @@ async function main() {
       "Recording indicator did not appear"
     );
     server.releaseHeld?.();
+
+    // Resources load inside the recording only after a reload (their bodies reach the archive).
+    if (process.env.WB_SPIKE_RELOAD_AFTER_START === "1") {
+      await page.send("Page.reload");
+      await sleep(1_000);
+      await waitFor(
+        () => page.evaluate(`document.readyState === "complete" || null`),
+        30_000,
+        "Page did not reload"
+      );
+      await installLongTaskObserver(page);
+    }
   }
 
   await sleep(1_500);
@@ -386,6 +399,10 @@ function describes(target, expected) {
   return target.tag === expected.tag && (target.cls ?? null) === (expected.cls || null);
 }
 
+/**
+ * Click k of the script against the k-th recorded click (the order is the same; timestamps are
+ * not comparable: the page handles a click late while it is busy re-rendering).
+ */
 function checkClicks(player, clicks) {
   const events = player.query();
   const rrwebEvents = events
@@ -396,56 +413,35 @@ function checkClicks(player, clicks) {
   const rrwebClicks = rrwebEvents.filter(
     (event) => event.type === 3 && event.data?.source === 2 && event.data?.type === 2
   );
-  const ourClicks = events.filter((event) => event.type === "user.click");
-  const nearest = (list, at, timeOf) =>
-    list.reduce(
-      (best, item) =>
-        Math.abs(timeOf(item) - at) < Math.abs((best ? timeOf(best) : Infinity) - at) ? item : best,
-      null
-    );
+  const ourClicks = events
+    .filter((event) => event.type === "user.click")
+    .sort((left, right) => left.t - right.t);
   let rrwebHits = 0;
   let ourHits = 0;
-  const samples = [];
 
-  for (const click of clicks) {
-    const rrweb = nearest(rrwebClicks, click.at, (event) => event.timestamp);
-    const rrwebTarget = rrweb ? nodes.get(rrweb.data.id) : null;
-    const rrwebOk = Boolean(
-      rrwebTarget && Math.abs(rrweb.timestamp - click.at) < 2_000 && describes(rrwebTarget, click)
-    );
-    const ours = nearest(ourClicks, click.at, (event) => event.t);
+  clicks.forEach((click, index) => {
+    const rrwebTarget = rrwebClicks[index] ? nodes.get(rrwebClicks[index].data.id) : null;
     // Our target names are hashed under masking profiles: match the tag and the recorded box.
-    const ourTarget = ours?.data?.target;
+    const ourTarget = ourClicks[index]?.data?.target;
     const box = ourTarget?.rect;
-    const ourOk = Boolean(
-      ours &&
-      Math.abs(ours.t - click.at) < 2_000 &&
+    rrwebHits += rrwebTarget && describes(rrwebTarget, click) ? 1 : 0;
+    ourHits +=
       String(ourTarget?.tag ?? "").toLowerCase() === click.tag &&
       box &&
       click.x >= box.x &&
       click.x <= box.x + box.w &&
       click.y >= box.y &&
       click.y <= box.y + box.h
-    );
-    rrwebHits += rrwebOk ? 1 : 0;
-    ourHits += ourOk ? 1 : 0;
-
-    if (samples.length < 3) {
-      samples.push({
-        expected: click,
-        rrwebTarget,
-        ourTarget: ours?.data?.target ?? ours?.data ?? null
-      });
-    }
-  }
+        ? 1
+        : 0;
+  });
 
   return {
     scripted: clicks.length,
     rrwebClicks: rrwebClicks.length,
     rrwebExactTarget: rrwebHits,
     ourClicks: ourClicks.length,
-    ourTargetMatchesBox: ourHits,
-    samples
+    ourTargetMatchesBox: ourHits
   };
 }
 

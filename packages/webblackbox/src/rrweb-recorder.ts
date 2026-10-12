@@ -43,6 +43,9 @@ const WIREFRAME_BLOCKED_SELECTORS = [
   "embed"
 ];
 
+/** Our own recording indicator never belongs to the recorded page (the raw DOM drops it too). */
+const OWN_UI_SELECTOR = "[data-webblackbox-indicator]";
+
 const maskAll = (text: string): string => text.replace(/\S/g, "*");
 
 /**
@@ -99,6 +102,7 @@ export function buildRrwebRecordOptions(policy: CapturePolicy): RrwebPolicyOptio
   }
 
   const blockedSelectors = [
+    OWN_UI_SELECTOR,
     ...policy.redaction.blockedSelectors,
     ...(dom === "wireframe" ? WIREFRAME_BLOCKED_SELECTORS : [])
   ];
@@ -114,7 +118,7 @@ export function buildRrwebRecordOptions(policy: CapturePolicy): RrwebPolicyOptio
   );
 
   return {
-    ...(blockSelector ? { blockSelector } : {}),
+    blockSelector,
     ...(masksAllText || hasDomPatterns ? { maskTextSelector: "*" } : {}),
     maskTextFn: masksAllText ? maskAll : (text) => maskValuePatterns(text, policy.redaction, "dom"),
     maskAllInputs: true,
