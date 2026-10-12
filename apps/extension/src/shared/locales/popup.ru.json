@@ -76,6 +76,8 @@
   "popupStart": "Начать запись",
   "popupStarting": "Запуск…",
   "popupLastSessionTitle": "Последняя запись",
-  "popupArchiveLimits": "≤ {size} МБ · последние {minutes} мин",
+  "popupArchiveWhole": "Вся сессия",
+  "popupArchiveMaxSize": "≤ {size} МБ",
+  "popupArchiveRecent": "последние {minutes} мин",
   "popupVisualShots": "Снимки"
 }

@@ -30,8 +30,9 @@ export type PipelineExportOptions = {
   passphrase?: string;
   includeScreenshots?: boolean;
   includeScreenRecordings?: boolean;
-  maxArchiveBytes?: number;
-  recentWindowMs?: number;
+  /** `null` or absent: no limit, the whole session is exported. */
+  maxArchiveBytes?: number | null;
+  recentWindowMs?: number | null;
 };
 
 type RequestOf<TOp extends string, TFields = object> = { op: TOp; sid: string } & TFields;
@@ -335,8 +336,8 @@ function parsePipelineRequestFields(
         passphrase: asOptionalString(row.passphrase),
         includeScreenshots: asOptionalBoolean(row.includeScreenshots),
         includeScreenRecordings: asOptionalBoolean(row.includeScreenRecordings),
-        maxArchiveBytes: asFiniteNumber(row.maxArchiveBytes) ?? undefined,
-        recentWindowMs: asFiniteNumber(row.recentWindowMs) ?? undefined
+        maxArchiveBytes: asOptionalLimit(row.maxArchiveBytes),
+        recentWindowMs: asOptionalLimit(row.recentWindowMs)
       };
     case "close":
       return { op, sid, purge: row.purge === true };
@@ -636,6 +637,11 @@ function parseScreenRecordingStopResult(raw: unknown): ScreenRecordingStopResult
     height: asPositiveNumber(row.height),
     reason: asOptionalString(row.reason)
   };
+}
+
+/** An export limit: `null` (none) passes through, a finite number is kept, the rest is absent. */
+function asOptionalLimit(value: unknown): number | null | undefined {
+  return value === null ? null : (asFiniteNumber(value) ?? undefined);
 }
 
 function isSessionMetadata(value: unknown): value is SessionMetadata {

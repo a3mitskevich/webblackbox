@@ -126,8 +126,9 @@ const exportPassphrase = process.env.WB_E2E_EXPORT_PASSPHRASE ?? "webblackbox-e2
 const e2eExportPolicy = {
   includeScreenshots: captureScreenshotsInFullMode,
   includeScreenRecordings: recordScreenInFullMode,
-  maxArchiveBytes: 100 * 1024 * 1024,
-  recentWindowMs: 20 * 60 * 1000
+  // The extension's default: the whole session, no size limit and no recent window.
+  maxArchiveBytes: null,
+  recentWindowMs: null
 };
 const realWorldScenario = process.env.WB_E2E_REALWORLD_SCENARIO ?? "";
 const REAL_WORLD_MARK_PATH = "/api/realworld-mark/";
@@ -631,7 +632,7 @@ async function main() {
   });
   assert(
     archiveBasics.ok,
-    "Exported archive is missing events, demo API requests or event types",
+    "Exported archive is missing events, demo API requests, event types or its whole-session export record",
     archiveBasics
   );
 

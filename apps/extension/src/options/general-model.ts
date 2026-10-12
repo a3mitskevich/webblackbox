@@ -367,6 +367,7 @@ export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
     unit: "MB",
     min: ARCHIVE_SIZE_MB_LIMITS.min,
     max: ARCHIVE_SIZE_MB_LIMITS.max,
+    zeroDisables: true,
     get: (draft) => draft.archive.maxArchiveMb,
     set: (draft, value) => withArchive(draft, { maxArchiveMb: value })
   },
@@ -380,6 +381,7 @@ export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
     unit: "min",
     min: RECENT_WINDOW_MINUTES_LIMITS.min,
     max: RECENT_WINDOW_MINUTES_LIMITS.max,
+    zeroDisables: true,
     get: (draft) => draft.archive.recentMinutes,
     set: (draft, value) => withArchive(draft, { recentMinutes: value })
   },

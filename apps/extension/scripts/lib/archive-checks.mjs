@@ -27,20 +27,39 @@ export async function openArchive({ archivePath, passphrase, playerSdkEntry }) {
   return player;
 }
 
-/** The archive has events, network rows (one matching `urlIncludes`) and every listed type. */
+/** Export truncations a default (whole-session) export must never record. */
+const UNEXPECTED_TRUNCATIONS = new Set(["recent-window", "size-limit", "chunk-unreadable"]);
+
+/**
+ * The archive has events, network rows (one matching `urlIncludes`) and every listed type, and
+ * records what its export kept: the whole session (only visuals the export did not ask for may
+ * be left out).
+ */
 export function checkArchiveBasics(player, { requiredEventTypes = [], urlIncludes } = {}) {
   const events = player.query({});
   const waterfall = player.getNetworkWaterfall();
   const types = new Set(events.map((event) => event.type));
   const missingEventTypes = requiredEventTypes.filter((type) => !types.has(type));
   const hasUrl = urlIncludes ? waterfall.some((entry) => entry.url.includes(urlIncludes)) : true;
+  const completeness = player.archive.manifest.completeness ?? null;
+  const unexpectedTruncations = (completeness?.truncations ?? []).filter((row) =>
+    UNEXPECTED_TRUNCATIONS.has(row.reason)
+  );
 
   return {
-    ok: events.length > 0 && waterfall.length > 0 && missingEventTypes.length === 0 && hasUrl,
+    ok:
+      events.length > 0 &&
+      waterfall.length > 0 &&
+      missingEventTypes.length === 0 &&
+      hasUrl &&
+      completeness !== null &&
+      unexpectedTruncations.length === 0,
     eventCount: events.length,
     waterfallCount: waterfall.length,
     missingEventTypes,
-    hasUrl
+    hasUrl,
+    completeness,
+    unexpectedTruncations
   };
 }
 

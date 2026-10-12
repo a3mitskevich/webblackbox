@@ -27,8 +27,9 @@ const EXPORT_PRIVACY_WARNING = {
   ]
 };
 const DEFAULT_POLICY = {
-  maxArchiveBytes: 100 * 1024 * 1024,
-  recentWindowMs: 20 * 60 * 1000
+  // The whole session: no size limit, no recent window.
+  maxArchiveBytes: null,
+  recentWindowMs: null
 };
 
 async function openWithSession(
@@ -86,6 +87,38 @@ describe("popup export", () => {
         recentWindowMs: 45 * 60 * 1000
       }
     });
+  });
+
+  it("exports the whole session when no limit is set", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await openWithSession(port, stoppedSession("sid-whole", "lite"));
+
+    expect(document.querySelector(".wb-popup__last")?.textContent).toContain("Whole session");
+
+    await submitExport("whole-session-secret");
+
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "ui.export",
+        policy: expect.objectContaining({ maxArchiveBytes: null, recentWindowMs: null })
+      })
+    );
+  });
+
+  it("shows only the limits that are set", async () => {
+    localStorage.setItem(
+      EXPORT_POLICY_STORAGE_KEY,
+      JSON.stringify({ version: 2, maxArchiveMb: 0, recentMinutes: 30 })
+    );
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await openWithSession(port, stoppedSession("sid-window", "lite"));
+
+    expect(document.querySelector(".wb-popup__last")?.textContent).toContain("last 30 min");
+    expect(document.querySelector(".wb-popup__last")?.textContent).not.toContain("MB");
   });
 
   it("accepts archive limits stored as text by the previous popup", async () => {

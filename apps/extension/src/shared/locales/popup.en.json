@@ -76,6 +76,8 @@
   "popupStart": "Start recording",
   "popupStarting": "Starting…",
   "popupLastSessionTitle": "Last session",
-  "popupArchiveLimits": "≤ {size} MB · last {minutes} min",
+  "popupArchiveWhole": "Whole session",
+  "popupArchiveMaxSize": "≤ {size} MB",
+  "popupArchiveRecent": "last {minutes} min",
   "popupVisualShots": "Shots"
 }

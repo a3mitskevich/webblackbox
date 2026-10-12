@@ -76,6 +76,8 @@
   "popupStart": "开始录制",
   "popupStarting": "正在启动…",
   "popupLastSessionTitle": "上次会话",
-  "popupArchiveLimits": "≤ {size} MB · 最近 {minutes} 分钟",
+  "popupArchiveWhole": "整个会话",
+  "popupArchiveMaxSize": "≤ {size} MB",
+  "popupArchiveRecent": "最近 {minutes} 分钟",
   "popupVisualShots": "截图"
 }

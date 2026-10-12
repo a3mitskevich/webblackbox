@@ -217,6 +217,14 @@ describe("resolveExportPolicy", () => {
     ).toEqual(DEFAULT_EXPORT_POLICY);
   });
 
+  it("exports the whole session unless a limit is set", () => {
+    expect(DEFAULT_EXPORT_POLICY).toMatchObject({ maxArchiveBytes: null, recentWindowMs: null });
+    expect(resolveExportPolicy({ maxArchiveBytes: null, recentWindowMs: 0 })).toMatchObject({
+      maxArchiveBytes: null,
+      recentWindowMs: null
+    });
+  });
+
   it("keeps explicit booleans and clamps the bounded numbers", () => {
     expect(
       resolveExportPolicy({
