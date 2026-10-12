@@ -140,7 +140,8 @@ action, at most 1.5 s, with the `recordedActionId` the recorder gave them), and 
 **Images and video frames.** Node has no WebCodecs and an image library would be a heavy native dependency, so
 `frame_at` uses an `ffmpeg` binary when one is available and never requires it:
 
-- Without ffmpeg: the nearest screenshot, as recorded. One over `maxBytes` is withheld with the reason.
+- Without ffmpeg: the nearest screenshot, as recorded (`maxWidth` is then ignored, with a note). One over
+  `maxBytes` is withheld with the reason. The same applies when ffmpeg fails on an image.
 - With ffmpeg (on `PATH`, or `WEBBLACKBOX_MCP_FFMPEG=/path/to/ffmpeg`): `source: "auto"` takes a screenshot within
   250 ms, otherwise decodes the tab video at that time (JPEG, `maxWidth` default 1280 px); oversized or
   `maxWidth`-capped screenshots are re-encoded smaller. Video times map session time onto the segment start, so

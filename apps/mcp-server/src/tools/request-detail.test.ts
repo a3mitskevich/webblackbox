@@ -68,7 +68,8 @@ beforeAll(async () => {
       },
       { ref: { req: "R-4" } }
     ),
-    request("P-10", "R-5", 3_300, "https://shop.example/api/upload", "x".repeat(2_000))
+    request("P-10", "R-5", 3_300, "https://shop.example/api/upload", "x".repeat(2_000)),
+    request("P-11", "R-6", 3_400, `data:image/png;base64,${"A".repeat(20_000)}`)
   ];
   player = await WebBlackboxPlayer.open(
     await buildArchiveBytes([...events, ...extra], [...blobs, PNG_BLOB, CUT_BLOB])
@@ -130,6 +131,15 @@ describe("request_detail", () => {
     expect((pay.data.responseHeaders as Record<string, string>)["x-long"]).toMatch(
       /… \(2048 of 5000 bytes\)$/
     );
+  });
+
+  it("cuts a huge URL such as a data: URL, saying 'N of M bytes'", async () => {
+    const inline = await buildRequestDetail(player, "a", { requestId: "R-6", bodies: "none" });
+    const url = (inline.data.request as { url: string }).url;
+
+    expect(url.startsWith("data:image/png;base64,AAAA")).toBe(true);
+    expect(url).toMatch(/… \(4096 of 20022 bytes\)$/);
+    expect(url.length).toBeLessThan(4_200);
   });
 
   it("flags a body the capture kept only a prefix of", async () => {

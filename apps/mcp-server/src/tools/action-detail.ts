@@ -359,7 +359,9 @@ function describeDomEvent(event: WebBlackboxEvent, offsetMs: number): Record<str
     type: event.type,
     offsetMs,
     count: asNumber(data?.count) ?? null,
-    summary: summary?.text ?? null
+    summary: summary?.text ?? null,
+    /** `"600 of 2400 bytes"` when the summary JSON was cut, otherwise null. */
+    summaryNote: summary?.note ?? null
   };
 }
 

@@ -24,6 +24,8 @@ const DEFAULT_MAX_FRAME_BYTES = 1_000;
 const MAX_MAX_FRAME_BYTES = 65_536;
 const FRAMES_PAGE_MAX_BYTES = 256_000;
 const HEADER_VALUE_MAX_BYTES = 2_048;
+/** A `data:` URL can carry a whole file; the request is still identified by its first bytes. */
+const URL_MAX_BYTES = 4_096;
 const INITIATOR_FRAME_LIMIT = 10;
 const EVENT_LIMIT = 20;
 const REALTIME_MESSAGE_TYPES = new Set(["network.ws.frame", "network.sse.message"]);
@@ -163,7 +165,7 @@ function describeEntry(entry: NetworkWaterfallEntry): Record<string, unknown> {
   return {
     requestId: entry.reqId,
     method: entry.method,
-    url: entry.url,
+    url: capValue(entry.url, URL_MAX_BYTES),
     status: entry.status ?? null,
     statusText: entry.statusText ?? null,
     mimeType: entry.mimeType ?? null,
@@ -183,21 +185,27 @@ function describeRedirect(event: WebBlackboxEvent): Record<string, unknown> {
   const data = asRecord(event.data);
   const response = asRecord(data?.redirectResponse) ?? asRecord(data?.response);
 
+  const url = asString(data?.url) ?? asString(asRecord(data?.request)?.url);
+  const location = asString(data?.redirectUrl) ?? asString(data?.location);
+
   return {
     eventId: event.id,
     mono: event.mono,
-    url: asString(data?.url) ?? asString(asRecord(data?.request)?.url) ?? null,
+    url: url === undefined ? null : capValue(url, URL_MAX_BYTES),
     status: asNumber(data?.status) ?? asNumber(response?.status) ?? null,
-    location: asString(data?.redirectUrl) ?? asString(data?.location) ?? null
+    location: location === undefined ? null : capValue(location, URL_MAX_BYTES)
   };
+}
+
+/** The value, or its first `maxBytes` followed by `… (N of M bytes)`. */
+function capValue(value: string, maxBytes: number): string {
+  const cut = cutText(value, maxBytes);
+  return cut.truncated ? `${cut.text}… (${cut.note})` : value;
 }
 
 function capHeaders(headers: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(headers).map(([name, value]) => {
-      const cut = cutText(value, HEADER_VALUE_MAX_BYTES);
-      return [name, cut.truncated ? `${cut.text}… (${cut.note})` : value];
-    })
+    Object.entries(headers).map(([name, value]) => [name, capValue(value, HEADER_VALUE_MAX_BYTES)])
   );
 }
 
@@ -275,6 +283,7 @@ async function pageFrames(
   args: RequestDetailArgs
 ): Promise<Record<string, unknown>> {
   const maxFrameBytes = args.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
+  const url = realtime.find((frame) => frame.url)?.url;
   const page = paginate(realtime, {
     cursor: args.frameCursor,
     limit: args.frameLimit ?? DEFAULT_FRAME_LIMIT,
@@ -286,7 +295,7 @@ async function pageFrames(
 
   return {
     protocol: realtime[0]?.protocol ?? null,
-    url: realtime.find((frame) => frame.url)?.url ?? null,
+    url: url ? capValue(url, URL_MAX_BYTES) : null,
     total: page.total,
     offset: page.offset,
     truncated: page.truncated,

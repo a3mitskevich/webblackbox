@@ -12,7 +12,12 @@ import {
   type ResolvedAnchor,
   type ScreenshotRef
 } from "./archive-lookup.js";
-import type { DecodedImage, FrameDecoderProvider, FrameDecoderStatus } from "./frame-decoder.js";
+import type {
+  DecodedImage,
+  FrameDecoder,
+  FrameDecoderProvider,
+  FrameDecoderStatus
+} from "./frame-decoder.js";
 import { defineArchiveTool, type ArchiveToolOutput } from "./registry.js";
 import { round2 } from "./values.js";
 
@@ -195,7 +200,7 @@ export async function renderFrameAt(
         decoder: decoderStatus.decoder?.name ?? null,
         decoderNote: decoderStatus.note
       },
-      notes: choice.notes
+      notes: fitted?.note ? [...choice.notes, fitted.note] : choice.notes
     },
     images
   };
@@ -346,6 +351,8 @@ type FittedImage = {
   image: DecodedImage | null;
   scaledToWidth: number | null;
   withheldReason: string | null;
+  /** Why the image is sent at its recorded size although a smaller one was asked for. */
+  note: string | null;
 };
 
 /** Keeps the image within `maxBytes` (and `maxWidth` when asked), re-encoding with ffmpeg. */
@@ -353,36 +360,65 @@ async function fitImage(choice: FrameChoice, options: FitOptions): Promise<Fitte
   const image = choice.image;
 
   if (!image) {
-    return { image: null, scaledToWidth: null, withheldReason: null };
+    return { image: null, scaledToWidth: null, withheldReason: null, note: null };
   }
 
+  const fits = image.bytes.byteLength <= options.maxBytes;
   const alreadyScaled = choice.decodedWidth !== null;
   const wantsWidth = !alreadyScaled && options.maxWidth !== undefined;
 
-  if (image.bytes.byteLength <= options.maxBytes && !wantsWidth) {
-    return { image, scaledToWidth: choice.decodedWidth, withheldReason: null };
+  if (fits && !wantsWidth) {
+    return { image, scaledToWidth: choice.decodedWidth, withheldReason: null, note: null };
   }
 
+  // A recorded image that fits the byte budget is still sent when it cannot be scaled to maxWidth.
+  const unscaled = (reason: string): FittedImage =>
+    fits
+      ? {
+          image,
+          scaledToWidth: choice.decodedWidth,
+          withheldReason: null,
+          note: `Sent at the recorded size, not scaled to maxWidth: ${reason}`
+        }
+      : {
+          image: null,
+          scaledToWidth: null,
+          withheldReason:
+            `The image is ${image.bytes.byteLength} bytes, over maxBytes ${options.maxBytes}, ` +
+            `and cannot be downscaled: ${reason}`,
+          note: null
+        };
   const decoder = options.decoderStatus.decoder;
 
   if (!decoder) {
-    return {
-      image: null,
-      scaledToWidth: null,
-      withheldReason:
-        `The image is ${image.bytes.byteLength} bytes, over maxBytes ${options.maxBytes}, and ` +
-        `cannot be downscaled: ${options.decoderStatus.note}`
-    };
+    return unscaled(options.decoderStatus.note);
   }
 
-  const startWidth = options.maxWidth ?? DEFAULT_SCALE_WIDTH;
-  let width = alreadyScaled ? Math.floor(startWidth * SHRINK_FACTOR) : startWidth;
+  try {
+    return await shrinkImage(decoder, image, {
+      maxBytes: options.maxBytes,
+      startWidth: options.maxWidth ?? DEFAULT_SCALE_WIDTH,
+      alreadyScaled
+    });
+  } catch (error) {
+    return unscaled(`${decoder.name} failed: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+async function shrinkImage(
+  decoder: FrameDecoder,
+  image: DecodedImage,
+  options: { maxBytes: number; startWidth: number; alreadyScaled: boolean }
+): Promise<FittedImage> {
+  let width = options.alreadyScaled
+    ? Math.floor(options.startWidth * SHRINK_FACTOR)
+    : options.startWidth;
 
   for (let attempt = 0; attempt < MAX_SHRINK_ATTEMPTS; attempt += 1) {
     const scaled = await decoder.scaleImage(image.bytes, image.mimeType, width);
 
     if (scaled.bytes.byteLength <= options.maxBytes) {
-      return { image: scaled, scaledToWidth: width, withheldReason: null };
+      return { image: scaled, scaledToWidth: width, withheldReason: null, note: null };
     }
 
     width = Math.max(MIN_WIDTH, Math.floor(width * SHRINK_FACTOR));
@@ -391,7 +427,8 @@ async function fitImage(choice: FrameChoice, options: FitOptions): Promise<Fitte
   return {
     image: null,
     scaledToWidth: null,
-    withheldReason: `The image stays over maxBytes ${options.maxBytes} even when downscaled.`
+    withheldReason: `The image stays over maxBytes ${options.maxBytes} even when downscaled.`,
+    note: null
   };
 }
 

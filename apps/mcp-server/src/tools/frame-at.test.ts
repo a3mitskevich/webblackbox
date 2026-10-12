@@ -141,6 +141,51 @@ describe("frame_at", () => {
     );
   });
 
+  it("sends a screenshot that fits maxBytes as recorded when maxWidth cannot be applied", async () => {
+    const result = await renderFrameAt(checkout, "a", { mono: 100, maxWidth: 320 }, NO_DECODER);
+
+    expect(result.images).toHaveLength(1);
+    expect(result.data.image).toMatchObject({
+      included: true,
+      scaledToWidth: null,
+      withheldReason: null
+    });
+    expect(result.data.notes).toContainEqual(
+      expect.stringMatching(/recorded size, not scaled to maxWidth: no decoder/)
+    );
+  });
+
+  it("falls back when the decoder fails instead of failing the call", async () => {
+    const failing: FrameDecoderProvider = async () => ({
+      decoder: {
+        name: "broken",
+        extractVideoFrame: async () => {
+          throw new Error("unused");
+        },
+        scaleImage: async () => {
+          throw new Error("corrupt input");
+        }
+      },
+      note: "broken"
+    });
+    const fitting = await renderFrameAt(checkout, "a", { mono: 100, maxWidth: 320 }, failing);
+    const oversized = await renderFrameAt(
+      await singleScreenshotPlayer(fixtureBlob(new Uint8Array(30_000).fill(7), "webp")),
+      "a",
+      { mono: 10, maxBytes: 20_000 },
+      failing
+    );
+
+    expect(fitting.images).toHaveLength(1);
+    expect(fitting.data.notes).toContainEqual(
+      expect.stringMatching(/broken failed: corrupt input/)
+    );
+    expect(oversized.images).toEqual([]);
+    expect((oversized.data.image as { withheldReason: string }).withheldReason).toMatch(
+      /over maxBytes 20000.*broken failed: corrupt input/
+    );
+  });
+
   it("downscales an oversized or width-capped screenshot through the decoder", async () => {
     const calls: DecoderCall[] = [];
     const player = await singleScreenshotPlayer(

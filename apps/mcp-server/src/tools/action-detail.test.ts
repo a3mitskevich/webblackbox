@@ -53,7 +53,10 @@ describe("action_detail", () => {
       items: [{ eventId: "E-12", kind: "exception" }]
     });
     expect(data.console).toMatchObject({ total: 1, items: [{ eventId: "E-11", level: "error" }] });
-    expect(data.dom).toMatchObject({ total: 1, items: [{ eventId: "E-13", count: 3 }] });
+    expect(data.dom).toMatchObject({
+      total: 1,
+      items: [{ eventId: "E-13", count: 3, summaryNote: null }]
+    });
     expect(data.screenshots).toEqual({
       before: { eventId: "E-3", mono: 100, deltaMs: -900, reason: "navigation" },
       after: { eventId: "E-14", mono: 1_300, deltaMs: 300, reason: "action" }
@@ -86,7 +89,14 @@ describe("action_detail", () => {
           { target: { tag: "DIV" } },
           { ref: { act: "B-1" } }
         ),
-        ...errors
+        ...errors,
+        fixtureEvent(
+          "D-1",
+          "dom.mutation.batch",
+          1_100,
+          { count: 1, summary: { added: "n".repeat(2_000) } },
+          { ref: { act: "B-1" } }
+        )
       ])
     );
     const limited = buildActionDetail(busy, "a", { actionId: "B-1", limit: 5 }).data;
@@ -100,6 +110,9 @@ describe("action_detail", () => {
     expect(budgetedErrors.items.length).toBeLessThan(60);
     expect(budgeted.data.truncatedLists).toContain("errors");
     expect(jsonBytes(budgeted.data)).toBeLessThanOrEqual(6_500);
+    expect((limited.dom as CappedList<unknown>).items[0]).toEqual(
+      expect.objectContaining({ summaryNote: "600 of 2012 bytes" })
+    );
   });
 
   it("adds requests and errors of the action's time window the recorder did not link to it", async () => {
