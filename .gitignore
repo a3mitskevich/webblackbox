@@ -151,3 +151,7 @@ build
 
 # Extension UI dictionaries merged from per-feature fragments at build/test/typecheck
 apps/extension/src/shared/locales/generated/
+
+# Bug zoo evaluation: recorded archives and raw agent transcripts stay local
+evals/archives/
+evals/runs/
