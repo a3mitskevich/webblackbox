@@ -120,6 +120,27 @@ describe("dom.a11y.snapshot in the recorder", () => {
     expect(event?.type).toBe("privacy.violation");
   });
 
+  it("is a policy violation when the page masked less than the profile requires", () => {
+    const wireframe = ingest(
+      recorder({ categories: { dom: "wireframe" } }),
+      "a11ySnapshot",
+      snapshot({ masking: "masked" }),
+      1_000
+    );
+    const unmasked = ingest(recorder(), "a11ySnapshot", snapshot({ masking: "none" }), 1_000);
+    const stricter = ingest(
+      recorder({ redaction: { contentRedaction: false } }),
+      "a11ySnapshot",
+      snapshot({ masking: "wireframe", tree: "- main" }),
+      1_000
+    );
+
+    expect(wireframe?.type).toBe("privacy.violation");
+    expect(JSON.stringify(wireframe?.data)).not.toContain("Sign in");
+    expect(unmasked?.type).toBe("privacy.violation");
+    expect(stricter?.type).toBe("dom.a11y.snapshot");
+  });
+
   it("links the snapshot to the click that triggered it and to its action", () => {
     const target = recorder();
     const click = ingest(target, "click", { x: 1, y: 2 }, 1_000);

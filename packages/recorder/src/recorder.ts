@@ -1,9 +1,11 @@
 import {
+  A11Y_SNAPSHOT_MASKING_LEVELS,
   DEFAULT_CAPTURE_POLICY,
   EventIdFactory,
   isContentRedactionEnabled,
   stripUnreadablePointerDetail,
   type BodySkipReason,
+  type A11ySnapshotMasking,
   type CapturePolicy,
   type FreezeReason,
   type PrivacyClassification,
@@ -362,6 +364,25 @@ function evaluateCapturePolicy(
   return createPrivacyViolation(eventType, privacy, reason, policy.mode);
 }
 
+/**
+ * The page reports how it masked a snapshot; a stale or foreign page script must not record names
+ * or text the profile keeps out (`dom: wireframe`, content masking on).
+ */
+function isA11yMaskingAllowed(payload: unknown, policy: CapturePolicy): boolean {
+  const masking = (payload as { masking?: A11ySnapshotMasking } | null)?.masking;
+  const required: A11ySnapshotMasking =
+    policy.categories.dom === "wireframe"
+      ? "wireframe"
+      : isContentRedactionEnabled(policy.redaction)
+        ? "masked"
+        : "none";
+
+  return (
+    masking !== undefined &&
+    A11Y_SNAPSHOT_MASKING_LEVELS.indexOf(masking) >= A11Y_SNAPSHOT_MASKING_LEVELS.indexOf(required)
+  );
+}
+
 function createPrivacyViolation(
   eventType: WebBlackboxEventType,
   privacy: PrivacyClassification,
@@ -407,6 +428,10 @@ function findPolicyViolationReason(
 
   if (eventType.startsWith("dom.") && policy.categories.dom === "off") {
     return "dom-disabled";
+  }
+
+  if (eventType === "dom.a11y.snapshot" && !isA11yMaskingAllowed(payload, policy)) {
+    return "dom-a11y-masking-weaker-than-policy";
   }
 
   if (eventType === "user.input") {
