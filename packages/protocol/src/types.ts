@@ -298,6 +298,20 @@ export type SessionMetadata = {
   url: string;
   title?: string;
   tags: string[];
+  /** Set when the recording did not end with Stop (its service worker went away mid-recording). */
+  interruption?: SessionInterruption;
+};
+
+/** Why a recording ended without Stop. */
+export type SessionInterruptionReason = "service-worker-restart";
+
+/** A recording that ended without Stop: kept and exportable, with what is known about the end. */
+export type SessionInterruption = {
+  reason: SessionInterruptionReason;
+  /** When the extension noticed (the next service worker start), epoch ms. */
+  detectedAt: number;
+  /** The last moment the recording was known to be running, epoch ms. */
+  lastSeenAt?: number;
 };
 
 export type ChunkTimeIndexEntry = {
@@ -433,6 +447,8 @@ export type ExportManifest = {
   chunkCodec: ChunkCodec;
   redactionProfile: RedactionProfile;
   stats: ExportStats;
+  /** Absent in archives written before exports recorded what they left out. */
+  completeness?: ArchiveCompleteness;
   encryption?: ExportEncryption;
 };
 
@@ -442,11 +458,50 @@ export type ArchiveEnvelopeManifest = {
   encryption: ExportEncryption;
 };
 
+/** What an export keeps; `null` limits mean none: the whole session is exported. */
 export type ExportPolicy = {
   includeScreenshots: boolean;
   includeScreenRecordings: boolean;
-  maxArchiveBytes: number;
-  recentWindowMs: number;
+  maxArchiveBytes: number | null;
+  recentWindowMs: number | null;
+};
+
+/** Why an export left recorded data out of the archive. */
+export type ArchiveTruncationReason =
+  /** Older than the export's recent window. */
+  | "recent-window"
+  /** The oldest data, dropped to fit the export's size limit. */
+  | "size-limit"
+  | "screenshots-excluded"
+  | "screen-recordings-excluded"
+  /** A stored chunk that could not be read back. */
+  | "chunk-unreadable";
+
+/** Recorded data an export left out, for one reason. */
+export type ArchiveTruncation = {
+  reason: ArchiveTruncationReason;
+  /** Events left out (for unread chunks, the count stored with the chunk). */
+  events: number;
+  /** Stored chunks left out entirely. */
+  chunks: number;
+  /** Wall-clock range of what was left out, epoch ms. */
+  fromT?: number;
+  toT?: number;
+  /** The limit that applied: the window in ms or the size limit in bytes. */
+  limit?: number;
+};
+
+/**
+ * What the export kept of what was recorded, written into the (encrypted) full manifest so the
+ * completeness report can tell a whole recording from a cut or interrupted one.
+ */
+export type ArchiveCompleteness = {
+  /** Events and chunks stored for the session when it was exported. */
+  storedEvents: number;
+  storedChunks: number;
+  /** Empty when the archive holds everything that was stored. */
+  truncations: ArchiveTruncation[];
+  interruption?: SessionInterruption;
 };
 
 export type NetworkBodyCaptureRule = {

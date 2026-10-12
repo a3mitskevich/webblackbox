@@ -7,6 +7,7 @@ import {
   assertArchiveKdfIterations,
   createSessionId,
   DEFAULT_CAPTURE_POLICY,
+  DEFAULT_EXPORT_POLICY,
   DEFAULT_RECORDER_CONFIG,
   EventIdFactory,
   capturePolicySchema,
@@ -117,6 +118,56 @@ describe("protocol", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it("parses the export completeness of a cut, interrupted recording", () => {
+    const manifest = {
+      protocolVersion: 2,
+      createdAt: "2026-02-13T00:00:00.000Z",
+      mode: "lite",
+      site: { origin: "https://example.com" },
+      chunkCodec: "gzip",
+      redactionProfile: DEFAULT_RECORDER_CONFIG.redaction,
+      stats: { eventCount: 10, chunkCount: 1, blobCount: 0, durationMs: 1 }
+    };
+    const completeness = {
+      storedEvents: 40,
+      storedChunks: 4,
+      truncations: [
+        {
+          reason: "recent-window",
+          events: 30,
+          chunks: 3,
+          fromT: 1_000,
+          toT: 2_000,
+          limit: 60_000
+        }
+      ],
+      interruption: {
+        reason: "service-worker-restart",
+        detectedAt: 5_000,
+        lastSeenAt: 4_000
+      }
+    };
+
+    expect(exportManifestSchema.safeParse({ ...manifest, completeness }).error).toBeUndefined();
+    expect(
+      exportManifestSchema.safeParse({
+        ...manifest,
+        completeness: { ...completeness, truncations: [{ reason: "lost", events: 1, chunks: 0 }] }
+      }).success
+    ).toBe(false);
+    expect(
+      exportManifestSchema.safeParse({
+        ...manifest,
+        completeness: { ...completeness, interruption: { reason: "crash", detectedAt: 1 } }
+      }).success
+    ).toBe(false);
+  });
+
+  it("exports the whole session by default", () => {
+    expect(DEFAULT_EXPORT_POLICY.maxArchiveBytes).toBeNull();
+    expect(DEFAULT_EXPORT_POLICY.recentWindowMs).toBeNull();
   });
 
   it("bounds manifest KDF iteration counts", () => {
