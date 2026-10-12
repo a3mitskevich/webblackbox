@@ -1,12 +1,18 @@
 import {
   DEFAULT_CAPTURE_POLICY,
   DEFAULT_POINTER_CAPTURE_OPTIONS,
+  RRWEB_RAW_TYPE,
   type CapturePolicy,
   type PointerCaptureOptions
 } from "@webblackbox/protocol";
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
-import type { LiteCaptureAgentOptions, LiteCaptureSampling, LiteCaptureState } from "./types.js";
+import type {
+  DomRecorder,
+  LiteCaptureAgentOptions,
+  LiteCaptureSampling,
+  LiteCaptureState
+} from "./types.js";
 import {
   DEFAULT_SAMPLING,
   monotonicTime,
@@ -186,6 +192,8 @@ export class LiteCaptureAgent {
   private readonly stopWatchingPasswordReveals: () => void;
   private pendingQuietRecoverySummary = false;
   private stopScriptSourceMapScanner: (() => void) | null = null;
+  private domRecorder: DomRecorder | null = null;
+  private domRecorderPolicy: CapturePolicy | null = null;
 
   /** Creates and installs capture hooks for the current page context. */
   public constructor(private readonly options: LiteCaptureAgentOptions) {
@@ -226,6 +234,8 @@ export class LiteCaptureAgent {
 
     if (!state.active && wasRecording) {
       this.pointerCapture.flushPending();
+      // While still recording: its last batch must reach the buffer.
+      this.stopDomRecorder();
     }
 
     this.recordingActive = state.active;
@@ -257,6 +267,7 @@ export class LiteCaptureAgent {
       }
 
       this.ensureIndicator(this.sid, this.mode);
+      this.syncDomRecorder();
       this.startMutationAndSnapshots();
       return;
     }
@@ -303,6 +314,7 @@ export class LiteCaptureAgent {
   /** Flushes the current buffered raw events immediately. */
   public flush(): void {
     this.inputCapture.flushPendingScrollEvent();
+    this.domRecorder?.flush();
     this.eventBuffer.drainBufferedEvents();
   }
 
@@ -336,6 +348,7 @@ export class LiteCaptureAgent {
     this.disposed = true;
     this.syncScriptSourceMapScanner(false);
     this.stopWatchingPasswordReveals();
+    this.stopDomRecorder();
     this.stopMutationAndSnapshots();
     this.removeIndicator();
 
@@ -666,7 +679,44 @@ export class LiteCaptureAgent {
     this.scheduleDomChangeSnapshot();
   }
 
+  /**
+   * Runs the host's DOM recorder (rrweb) in the top frame while the profile records any DOM, and
+   * restarts it when the policy changes (a new full snapshot under the new masking).
+   */
+  private syncDomRecorder(): void {
+    const factory = this.options.domRecorder;
+    const shouldRecord =
+      factory !== undefined && this.isTopLevelFrame && this.capturePolicy.categories.dom !== "off";
+
+    if (this.domRecorder && (!shouldRecord || this.domRecorderPolicy !== this.capturePolicy)) {
+      this.stopDomRecorder();
+    }
+
+    if (!shouldRecord || this.domRecorder) {
+      return;
+    }
+
+    this.domRecorderPolicy = this.capturePolicy;
+    this.domRecorder = factory({
+      policy: this.capturePolicy,
+      mode: this.mode === "full" ? "full" : "lite",
+      emit: (payload, mono) => this.queueEvent(RRWEB_RAW_TYPE, payload, mono)
+    });
+  }
+
+  private stopDomRecorder(): void {
+    const recorder = this.domRecorder;
+    this.domRecorder = null;
+    this.domRecorderPolicy = null;
+    recorder?.stop();
+  }
+
   private emitRrwebMutationSummary(summary: MutationBatchSummary): void {
+    // The rrweb log already has every change; its summary would only mix two schemas.
+    if (this.domRecorder) {
+      return;
+    }
+
     this.queueEvent("rrweb", buildRrwebMutationPayload(summary, this.capturePolicy.redaction));
   }
 

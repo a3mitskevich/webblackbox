@@ -10,6 +10,7 @@ export const EVENT_BUFFER_SOFT_LIMIT = 420;
 export const EVENT_BUFFER_HARD_LIMIT = 1_200;
 const PERF_LOG_FLAG = "__WEBBLACKBOX_PERF__";
 
+// rrweb batches (`rrwebRecord`) are not here: replay cannot skip a lost full snapshot or mutation.
 const LOW_PRIORITY_RAW_TYPES = new Set([
   "mousemove",
   "wheel",

@@ -4,6 +4,7 @@ import type {
   PointerCaptureOptions,
   HashesManifest,
   RecorderConfig,
+  RrwebEventBatchPayload,
   SessionMetadata
 } from "@webblackbox/protocol";
 import type { PipelineStorage } from "@webblackbox/pipeline";
@@ -51,7 +52,31 @@ export type LiteCaptureAgentOptions = {
   showIndicator?: boolean;
   /** Overrides frame-role detection for tests or custom embedding. */
   frameScope?: "auto" | "top" | "child";
+  /**
+   * Records the DOM as an event log (spike: rrweb, `webblackbox/rrweb-recorder`). While it runs
+   * the agent stops emitting its own `rrweb-lite/v1` mutation summaries.
+   */
+  domRecorder?: DomRecorderFactory;
 };
+
+/** What a DOM recorder gets from the capture agent when a recording starts. */
+export type DomRecorderContext = {
+  policy: CapturePolicy;
+  mode: SessionMetadata["mode"];
+  /** Queues one batch; `mono` is the page monotonic time of its first event. */
+  emit: (payload: RrwebEventBatchPayload, mono: number) => void;
+};
+
+/** A running DOM recorder. */
+export type DomRecorder = {
+  /** Emits the events buffered so far. */
+  flush: () => void;
+  /** Stops recording and emits what is buffered. */
+  stop: () => void;
+};
+
+/** Starts a DOM recorder for a recording; null when it cannot record under the policy. */
+export type DomRecorderFactory = (context: DomRecorderContext) => DomRecorder | null;
 
 /**
  * Byte limits for payload materialization in lite mode.
@@ -113,6 +138,8 @@ export type WebBlackboxLiteSdkOptions = {
   plugins?: RecorderPlugin[];
   useDefaultPlugins?: boolean;
   recorderHooks?: RecorderHooks;
+  /** Records the DOM as an rrweb event log (spike): `createRrwebDomRecorder` from `webblackbox/rrweb-recorder`. */
+  domRecorder?: DomRecorderFactory;
 };
 
 /**

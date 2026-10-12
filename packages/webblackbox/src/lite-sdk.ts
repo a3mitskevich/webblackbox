@@ -118,7 +118,8 @@ export class WebBlackboxLiteSdk {
       emitBatch: (events) => {
         this.ingestRawEvents(events);
       },
-      showIndicator: options.showIndicator
+      showIndicator: options.showIndicator,
+      domRecorder: options.domRecorder
     });
 
     if (options.injectHooks !== false) {
