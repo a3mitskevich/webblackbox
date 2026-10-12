@@ -3,7 +3,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 const pipelineMock = vi.hoisted(() => ({
-  instances: [] as Array<{ putBlob: Mock<(mime: string, bytes: Uint8Array) => Promise<string>> }>
+  instances: [] as Array<{
+    putBlob: Mock<(mime: string, bytes: Uint8Array) => Promise<string>>;
+    flush: Mock<() => Promise<void>>;
+  }>
 }));
 
 vi.mock("@webblackbox/pipeline", () => ({
@@ -11,6 +14,7 @@ vi.mock("@webblackbox/pipeline", () => ({
   FlightRecorderPipeline: class {
     readonly start = vi.fn(async () => undefined);
     readonly close = vi.fn(async () => undefined);
+    readonly flush = vi.fn(async () => undefined);
     readonly putBlob = vi.fn(
       async (_mime: string, bytes: Uint8Array) => `hash-${bytes.byteLength}`
     );
@@ -56,14 +60,22 @@ class FakePort {
     }
   };
 
+  private readonly disconnectHandlers = new Set<() => void>();
+
   readonly onDisconnect = {
-    addListener: (): void => {
-      void 0;
+    addListener: (handler: () => void): void => {
+      this.disconnectHandlers.add(handler);
     },
-    removeListener: (): void => {
-      void 0;
+    removeListener: (handler: () => void): void => {
+      this.disconnectHandlers.delete(handler);
     }
   };
+
+  disconnect(): void {
+    for (const handler of this.disconnectHandlers) {
+      handler();
+    }
+  }
 
   emit(message: unknown): void {
     for (const handler of this.messageHandlers) {
@@ -111,13 +123,22 @@ const SID = "S-test";
 let port: FakePort;
 let videoTrack: FakeVideoTrack;
 let requestCounter = 0;
+type RuntimeMessageHandler = (
+  message: unknown,
+  sender: { tab?: unknown },
+  sendResponse: (response: unknown) => void
+) => boolean | void;
+let runtimeMessageHandler: RuntimeMessageHandler | null = null;
 
 function installChromeStub(): void {
+  runtimeMessageHandler = null;
   Reflect.set(globalThis, "chrome", {
     runtime: {
       connect: vi.fn(() => port),
       onMessage: {
-        addListener: vi.fn()
+        addListener: vi.fn((handler: RuntimeMessageHandler) => {
+          runtimeMessageHandler = handler;
+        })
       }
     }
   });
@@ -428,5 +449,69 @@ describe("offscreen tab video chunks", () => {
     const responseAt = kinds.lastIndexOf("offscreen.pipeline-response");
     expect(chunkAt).toBeGreaterThanOrEqual(0);
     expect(chunkAt).toBeLessThan(responseAt);
+  });
+});
+
+describe("offscreen pipelines outlive their worker", () => {
+  beforeEach(async () => {
+    port = new FakePort();
+    pipelineMock.instances.length = 0;
+    installChromeStub();
+    installMediaStubs();
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.resetModules();
+    await import("./index.js");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(globalThis, "chrome");
+    Reflect.deleteProperty(navigator, "mediaDevices");
+  });
+
+  it("writes every pipeline's tail when the worker's port goes away", async () => {
+    await startSession();
+
+    port.disconnect();
+
+    await vi.waitFor(() => {
+      expect(pipelineMock.instances[0]?.flush).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("answers a restarted worker's flush request once the pipelines are written", async () => {
+    await startSession();
+    let resolveFlush: () => void = () => undefined;
+    pipelineMock.instances[0]?.flush.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFlush = resolve;
+        })
+    );
+    const sendResponse = vi.fn();
+
+    const keepsChannelOpen = runtimeMessageHandler?.(
+      { kind: "sw.offscreen-flush" },
+      {},
+      sendResponse
+    );
+
+    expect(keepsChannelOpen).toBe(true);
+    await vi.waitFor(() => {
+      expect(pipelineMock.instances[0]?.flush).toHaveBeenCalledTimes(1);
+    });
+    expect(sendResponse).not.toHaveBeenCalled();
+
+    resolveFlush();
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+    });
+    // A page (tab) cannot ask for it.
+    expect(runtimeMessageHandler?.({ kind: "sw.offscreen-flush" }, { tab: {} }, vi.fn())).toBe(
+      undefined
+    );
   });
 });

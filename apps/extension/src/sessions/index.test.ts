@@ -121,6 +121,35 @@ describe("sessions page rendering", () => {
     expect(document.getElementById("pwned")).toBeNull();
   });
 
+  it("marks a recording interrupted by an extension restart", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await importSessionsModule();
+
+    port.emit({
+      kind: "sw.session-list",
+      sessions: [
+        {
+          sid: "sid-interrupted",
+          tabId: 7,
+          mode: "full",
+          startedAt: Date.now() - 60_000,
+          stoppedAt: Date.now() - 1_000,
+          active: false,
+          interruption: { reason: "service-worker-restart", detectedAt: Date.now() }
+        },
+        { sid: "sid-stopped", tabId: 8, mode: "lite", startedAt: Date.now(), active: false }
+      ]
+    });
+    await flushSessions();
+
+    const badges = document.querySelectorAll<HTMLElement>("[data-interrupted]");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]?.textContent).toBe("INTERRUPTED");
+    expect(badges[0]?.title).toMatch(/Ended without Stop when the extension restarted/);
+  });
+
   it("exports only with a passphrase of at least 8 characters", async () => {
     const port = new FakePort();
     installChromeStub(port);

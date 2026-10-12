@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { SessionListItem } from "../shared/messages.js";
 import {
   chooseRadio,
   FakePort,
@@ -34,7 +35,7 @@ const DEFAULT_POLICY = {
 
 async function openWithSession(
   port: FakePort,
-  session: ReturnType<typeof stoppedSession>,
+  session: ReturnType<typeof stoppedSession> & Partial<SessionListItem>,
   importModule = importPopupModule,
   flush = flushPopup
 ): Promise<void> {
@@ -105,6 +106,21 @@ describe("popup export", () => {
         policy: expect.objectContaining({ maxArchiveBytes: null, recentWindowMs: null })
       })
     );
+  });
+
+  it("marks an interrupted last session and still offers its export", async () => {
+    const port = new FakePort();
+    installChromeStub(port);
+
+    await openWithSession(port, {
+      ...stoppedSession("sid-interrupted", "lite"),
+      stoppedAt: Date.now() - 1_000,
+      interruption: { reason: "service-worker-restart", detectedAt: Date.now() }
+    });
+
+    const notice = document.querySelector<HTMLElement>(".wb-popup__last [data-interrupted]");
+    expect(notice?.textContent).toMatch(/^Interrupted Ended without Stop/);
+    expect(getButton("export").disabled).toBe(false);
   });
 
   it("shows only the limits that are set", async () => {

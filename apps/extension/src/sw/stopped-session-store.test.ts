@@ -210,3 +210,26 @@ describe("retention", () => {
     await expect(clearRetentionAlarm(undefined, "S-1")).resolves.toBeUndefined();
   });
 });
+
+describe("interrupted snapshots", () => {
+  it("keeps the interruption of a stopped snapshot and drops an invalid one", () => {
+    const interruption = {
+      reason: "service-worker-restart" as const,
+      detectedAt: 3_000,
+      lastSeenAt: 2_000
+    };
+    const parsed = parseStoppedSessionSnapshots(
+      JSON.parse(
+        JSON.stringify([
+          snapshot("S-interrupted", { interruption }),
+          { ...snapshot("S-bad"), interruption: { reason: "crash", detectedAt: 1 } }
+        ])
+      )
+    );
+
+    expect(parsed.map((row) => [row.sid, row.interruption])).toEqual([
+      ["S-interrupted", interruption],
+      ["S-bad", undefined]
+    ]);
+  });
+});

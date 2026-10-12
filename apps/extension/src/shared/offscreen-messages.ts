@@ -19,6 +19,11 @@ import { parseStorageKeyMessage, type StorageKeyMessage } from "./at-rest.js";
  * the offscreen document, which only reports chunk metadata.
  */
 export const OFFSCREEN_CONNECT_REQUEST_KIND = "sw.offscreen-connect";
+/**
+ * Asks an offscreen document a restarted worker found to persist every pipeline's unwritten tail
+ * before it is closed: the recordings it held are kept as interrupted ones.
+ */
+export const OFFSCREEN_FLUSH_REQUEST_KIND = "sw.offscreen-flush";
 export const PIPELINE_REQUEST_KIND = "sw.pipeline-request";
 export const PIPELINE_RESPONSE_KIND = "offscreen.pipeline-response";
 /** Prefix of the error for a session whose pipeline this offscreen document does not hold. */

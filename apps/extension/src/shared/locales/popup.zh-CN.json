@@ -76,6 +76,8 @@
   "popupStart": "开始录制",
   "popupStarting": "正在启动…",
   "popupLastSessionTitle": "上次会话",
+  "popupInterruptedBadge": "已中断",
+  "popupInterruptedHint": "扩展重启时录制未经停止就结束了。此前保存的内容已保留，可以导出。",
   "popupArchiveWhole": "整个会话",
   "popupArchiveMaxSize": "≤ {size} MB",
   "popupArchiveRecent": "最近 {minutes} 分钟",

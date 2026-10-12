@@ -3,6 +3,8 @@
   "sessionsSubtitle": "Записи хранятся на этом компьютере. Экспортируйте запись, чтобы поделиться ею или открыть её в Player.",
   "sessionsEmpty": "Записей пока нет.",
   "sessionsStatusLive": "ИДЁТ",
+  "sessionsStatusInterrupted": "ПРЕРВАНА",
+  "sessionsInterruptedHint": "Запись закончилась без «Стоп» при перезапуске расширения. Сохранённое до этого осталось, его можно экспортировать.",
   "sessionsActionExport": "Экспорт",
   "sessionsActionStop": "Остановить",
   "sessionsActionDelete": "Удалить",

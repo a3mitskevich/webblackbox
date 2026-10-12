@@ -76,6 +76,8 @@
   "popupStart": "Начать запись",
   "popupStarting": "Запуск…",
   "popupLastSessionTitle": "Последняя запись",
+  "popupInterruptedBadge": "Прервана",
+  "popupInterruptedHint": "Запись закончилась без «Стоп» при перезапуске расширения. Сохранённое до этого осталось, его можно экспортировать.",
   "popupArchiveWhole": "Вся сессия",
   "popupArchiveMaxSize": "≤ {size} МБ",
   "popupArchiveRecent": "последние {minutes} мин",

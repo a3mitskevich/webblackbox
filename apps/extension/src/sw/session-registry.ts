@@ -2,6 +2,7 @@ import type { CdpRouter } from "@webblackbox/cdp-router";
 import {
   DEFAULT_RECORDER_CONFIG,
   type CaptureMode,
+  type SessionInterruption,
   type WebBlackboxEvent
 } from "@webblackbox/protocol";
 import { WebBlackboxRecorder, type createDefaultRecorderPlugins } from "@webblackbox/recorder";
@@ -56,6 +57,8 @@ export type SessionRuntime = {
   config: typeof DEFAULT_RECORDER_CONFIG;
   startedAt: number;
   stoppedAt?: number;
+  /** A recording an earlier worker left running: it ended without Stop. */
+  interruption?: SessionInterruption;
   /** Set once Stop received the page's last events; later page snapshots are dropped. */
   stopDrained?: boolean;
   /** Secret shared with the injected page hooks and the content script of this session. */
@@ -217,6 +220,7 @@ export type SessionRuntimeInit = {
   config: typeof DEFAULT_RECORDER_CONFIG;
   startedAt: number;
   stoppedAt?: number;
+  interruption?: SessionInterruption;
   pipeline: SessionPipelineClient;
   recorderPlugins: ReturnType<typeof createDefaultRecorderPlugins>;
   performanceBudget: PerformanceBudgetConfig;
@@ -255,6 +259,7 @@ export function createSessionRuntime(
     config: init.config,
     startedAt: init.startedAt,
     stoppedAt: init.stoppedAt,
+    ...(init.interruption ? { interruption: { ...init.interruption } } : {}),
     injectedBridgeNonce: createInjectedBridgeNonce(),
     recorder: new WebBlackboxRecorder(
       {

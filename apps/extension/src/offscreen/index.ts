@@ -8,6 +8,7 @@ import { createExtensionI18n } from "../shared/i18n.js";
 import { PORT_NAMES } from "../shared/messages.js";
 import {
   OFFSCREEN_CONNECT_REQUEST_KIND,
+  OFFSCREEN_FLUSH_REQUEST_KIND,
   parsePipelineRequest,
   parseSwToOffscreenMessage,
   PIPELINE_RESPONSE_KIND,
@@ -94,7 +95,16 @@ let reconnectAttempts = 0;
 console.info("[WebBlackbox] offscreen pipeline initialized");
 
 chromeApi?.runtime?.onMessage.addListener((message, sender, sendResponse) => {
-  if (!isOffscreenConnectRequest(message) || sender.tab) {
+  if (sender.tab) {
+    return;
+  }
+
+  if (isRequestOfKind(message, OFFSCREEN_FLUSH_REQUEST_KIND)) {
+    void flushAllPipelines().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
+  if (!isRequestOfKind(message, OFFSCREEN_CONNECT_REQUEST_KIND)) {
     return;
   }
 
@@ -126,6 +136,9 @@ function connectToServiceWorker(): void {
 
     port = null;
     stopServiceWorkerKeepalive();
+    // The worker may be gone for good: what the pipelines hold in memory is written now, so a
+    // recording it left running keeps its last events as an interrupted one.
+    void flushAllPipelines();
     scheduleReconnectWhileBusy();
   });
 
@@ -161,11 +174,20 @@ function clearReconnectTimer(): void {
   }
 }
 
-function isOffscreenConnectRequest(message: unknown): boolean {
+function isRequestOfKind(message: unknown, kind: string): boolean {
   return (
-    message !== null &&
-    typeof message === "object" &&
-    (message as { kind?: unknown }).kind === OFFSCREEN_CONNECT_REQUEST_KIND
+    message !== null && typeof message === "object" && (message as { kind?: unknown }).kind === kind
+  );
+}
+
+/** Writes every pipeline's unflushed tail to the encrypted store; failures are only logged. */
+async function flushAllPipelines(): Promise<void> {
+  await Promise.all(
+    [...pipelines.values()].map((pipeline) =>
+      pipeline.flush().catch((error: unknown) => {
+        console.warn("[WebBlackbox] failed to flush a recording pipeline", error);
+      })
+    )
   );
 }
 
