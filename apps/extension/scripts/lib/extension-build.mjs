@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
@@ -115,6 +115,44 @@ export function readBuildTarget(env) {
     profile: normalizeManifestProfile(env.WB_EXTENSION_PROFILE || "dev"),
     release: env.WB_EXTENSION_RELEASE === "1"
   };
+}
+
+/**
+ * WXT empties its output directory before every build (`rm -r`). Refuses a directory that would
+ * take more than a previous build with it: the app itself or one of its parents, or (other than
+ * `build/`) a non-empty directory without a `manifest.json`.
+ *
+ * @param {string} outputDir absolute path
+ */
+export async function assertDisposableOutputDir(outputDir) {
+  const appFromOutput = relative(outputDir, appRoot);
+
+  if (
+    appFromOutput === "" ||
+    (appFromOutput.split(sep)[0] !== ".." && !isAbsolute(appFromOutput))
+  ) {
+    throw new Error(
+      `Refusing to build into ${outputDir}: WXT empties it first and it contains ${appRoot}.`
+    );
+  }
+
+  if (outputDir === buildDir) {
+    return;
+  }
+
+  const entries = await readdir(outputDir).catch((error) => {
+    if (error?.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  });
+
+  if (entries.length > 0 && !entries.includes("manifest.json")) {
+    throw new Error(
+      `Refusing to build into ${outputDir}: WXT empties it first and it is not an extension build. Pass an empty or new directory.`
+    );
+  }
 }
 
 /**

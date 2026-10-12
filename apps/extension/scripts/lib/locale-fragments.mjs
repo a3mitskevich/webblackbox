@@ -154,7 +154,7 @@ function readTextOrNull(path) {
 }
 
 /**
- * tsup plugin: merges the fragments before every build, including each watch-mode rebuild.
+ * Vite plugin (WXT build): merges the fragments when a build starts.
  *
  * @returns {{ name: string, buildStart(): void }}
  */

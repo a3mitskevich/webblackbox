@@ -8,6 +8,8 @@ export declare const buildDir: string;
 
 export declare const CLASSIC_SCRIPT_CHUNKS: readonly string[];
 
+export declare function assertDisposableOutputDir(outputDir: string): Promise<void>;
+
 export declare function readBuildTarget(env: Record<string, string | undefined>): BuildTarget;
 
 export declare function createManifestFields(target?: Partial<BuildTarget>): UserManifest;

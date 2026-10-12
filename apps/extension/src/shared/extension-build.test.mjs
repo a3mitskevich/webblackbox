@@ -8,7 +8,10 @@ import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
 import {
+  appRoot,
+  assertDisposableOutputDir,
   assertExtensionBuild,
+  buildDir,
   createChromeArchive,
   createExtensionManifest,
   createManifestFields,
@@ -123,6 +126,33 @@ describe("content script scope", () => {
       await expect(assertExtensionBuild(root, { version: "1.2.3" })).rejects.toThrow(
         /injected\.js/
       );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("build output directory", () => {
+  it("refuses the app or one of its parents, which WXT would empty", async () => {
+    for (const dir of [appRoot, resolve(appRoot, ".."), resolve(appRoot, "..", "..")]) {
+      await expect(assertDisposableOutputDir(dir)).rejects.toThrow(/contains/);
+    }
+
+    await expect(assertDisposableOutputDir(buildDir)).resolves.toBeUndefined();
+  });
+
+  it("accepts a new, empty or previous build directory only", async () => {
+    const root = await mkdtemp(resolve(tmpdir(), "webblackbox-extension-out-test-"));
+
+    try {
+      await expect(assertDisposableOutputDir(resolve(root, "new"))).resolves.toBeUndefined();
+      await expect(assertDisposableOutputDir(root)).resolves.toBeUndefined();
+
+      await writeFile(resolve(root, "notes.txt"), "keep me\n");
+      await expect(assertDisposableOutputDir(root)).rejects.toThrow(/not an extension build/);
+
+      await writeFile(resolve(root, "manifest.json"), "{}\n");
+      await expect(assertDisposableOutputDir(root)).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
