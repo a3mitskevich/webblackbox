@@ -43,7 +43,7 @@ export const A11Y_SNAPSHOT_LIMITS = {
   /** Page time one snapshot may take before the walk stops (the snapshot is marked cut). */
   maxWalkMs: 40,
   /** Snapshots per rolling minute; triggers beyond it are counted, not captured. */
-  maxPerMinute: 20,
+  maxPerMinute: 30,
   /** Longest URL or title kept on a snapshot. */
   maxUrlChars: 2_048
 } as const;

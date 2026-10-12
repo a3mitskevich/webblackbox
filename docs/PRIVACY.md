@@ -37,7 +37,7 @@ What the extension records is decided by the recording profile in effect. The `D
 
 ## Accessibility Snapshots
 
-At key moments (after a click, a form submit or Enter, an error, a new page or route change, a marker, and at Stop) the page's capture agent writes a `dom.a11y.snapshot`: the roles, accessible names, states and visible text of what intersects the viewport of the top document (same-origin frames included), as compact text. They are bounded (800 nodes, 24 000 characters, 40 ms of page time; a cut is marked) and capped at 20 per minute.
+At key moments (after a click, a form submit or Enter, an error, a new page or route change, a marker, and at Stop) the page's capture agent writes a `dom.a11y.snapshot`: the roles, accessible names, states and visible text of what intersects the viewport of the top document (same-origin frames included), as compact text. They are bounded (800 nodes, 24 000 characters, 40 ms of page time; a cut is marked) and capped at 30 per minute.
 
 - Every profile that records the DOM records them (`dom` other than `off`), in both engines.
 - `masked` and `allow`: names and text go through the profile's DOM rules: elements matching a blocked selector keep only their role (`[masked]`), `dom` value patterns and, with the built-in heuristics, credential masking apply. Field values are written only where the inputs policy allows them (password, one-time-code and card fields never while masking is on). An invalid blocked selector fails closed to the `wireframe` level.
