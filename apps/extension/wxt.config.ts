@@ -99,6 +99,12 @@ export default defineConfig({
         output.entryFileNames = fileName;
       }
 
+      if (entrypoint.type === "unlisted-script") {
+        // Classic scripts (`content.js`, `injected.js`): strict mode inside the IIFE, so an
+        // assignment to an undeclared name throws instead of creating a global of the page.
+        output.intro = '"use strict";';
+      }
+
       if (entrypoint.type === "background" || entrypoint.inputPath.endsWith(".html")) {
         output.entryFileNames = fileName ?? "[name].js";
         output.inlineDynamicImports = true;

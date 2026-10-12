@@ -15,7 +15,7 @@ import {
   createChromeArchive,
   createExtensionManifest,
   createManifestFields,
-  declaresTopLevelBindings,
+  isStrictScopedScript,
   normalizeWxtManifest,
   readBuildTarget,
   validateExtensionManifest
@@ -58,8 +58,8 @@ describe("managed storage schema", () => {
   });
 });
 
-/** How WXT bundles an unlisted script: an anonymous IIFE. */
-const asWxtIife = (code) => `(function(){${code}})();\n`;
+/** How the build emits an unlisted script: WXT's anonymous IIFE, strict mode inside it. */
+const asWxtIife = (code) => `(function(){"use strict";${code}})();\n`;
 
 describe("content script scope", () => {
   // A content script with a guard, as bundled: top-level `var` state, then the guard check.
@@ -101,18 +101,36 @@ describe("content script scope", () => {
     expect(Object.keys(scoped)).toEqual(["$"]);
   });
 
-  it("tells a scoped bundle from one that declares top-level bindings", () => {
+  it("runs the bundle in strict mode, so a stray assignment cannot create a page global", () => {
+    const sloppyAssignment = "leaked = 1;";
+
+    const bare = {};
+    runInNewContext(sloppyAssignment, bare);
+    expect(bare).toHaveProperty("leaked", 1);
+
+    const scoped = {};
+    expect(() => runInNewContext(asWxtIife(sloppyAssignment), scoped)).toThrow(
+      /leaked is not defined/
+    );
+    expect(scoped).not.toHaveProperty("leaked");
+  });
+
+  it("accepts only one anonymous strict-mode IIFE", () => {
     const map = "//# sourceMappingURL=content.js.map";
 
-    expect(declaresTopLevelBindings(`${asWxtIife("var a=1;")}${map}`)).toBe(false);
-    expect(declaresTopLevelBindings(`"use strict";${asWxtIife("var a=1;")}`)).toBe(false);
-    expect(declaresTopLevelBindings(`(() => { var a = 1; })();`)).toBe(false);
-    expect(declaresTopLevelBindings(`var a=1;${map}`)).toBe(true);
-    expect(declaresTopLevelBindings("function N() {}")).toBe(true);
-    expect(declaresTopLevelBindings("class G {}")).toBe(true);
-    // A named IIFE (WXT's `globalName`) declares its name in the page.
-    expect(declaresTopLevelBindings(`var injected=${asWxtIife("")}`)).toBe(true);
-    expect(declaresTopLevelBindings("export {};")).toBe(true);
+    expect(isStrictScopedScript(`${asWxtIife("var a=1;")}${map}`)).toBe(true);
+    expect(isStrictScopedScript(`(() => { "use strict"; var a = 1; })();`)).toBe(true);
+    // Scoped, but sloppy: a bundle built without the directive (before #50).
+    expect(isStrictScopedScript(`(function(){var a=1;})();`)).toBe(false);
+    // Strict, but the directive is not the body's first statement.
+    expect(isStrictScopedScript(`(function(){var a=1;"use strict";})();`)).toBe(false);
+    expect(isStrictScopedScript(`var a=1;${map}`)).toBe(false);
+    expect(isStrictScopedScript("function N() {}")).toBe(false);
+    expect(isStrictScopedScript("class G {}")).toBe(false);
+    // Rolldown's `output.strict`: a named IIFE declares its name in the page.
+    expect(isStrictScopedScript(`"use strict";var injected=${asWxtIife("")}`)).toBe(false);
+    expect(isStrictScopedScript(`${asWxtIife("")}${asWxtIife("")}`)).toBe(false);
+    expect(isStrictScopedScript("export {};")).toBe(false);
   });
 
   it("fails the build check when a classic script leaks top-level bindings", async () => {

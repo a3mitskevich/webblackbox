@@ -359,33 +359,50 @@ function assertManifestMatches(manifest, expected) {
 }
 
 /**
- * Whether a classic script declares anything at its top level. Without its own scope every
- * top-level `var`, `function` and `class` of a bundle becomes a global of the world it runs in:
+ * Whether a classic script is one anonymous function call whose body starts in strict mode, so
+ * it declares nothing in the world it runs in. Without its own scope every top-level `var`,
+ * `function` and `class` of a bundle becomes a global of that world:
  * - in the isolated world a second run of the same file (the registered copy plus one injected on
  *   Start or after a navigation) re-initializes the running copy's state before the script's own
  *   guard can stop it;
  * - in the page's MAIN world the minified names (`$`, `N`, `_t`…) overwrite the page's own globals,
  *   e.g. jQuery's `$` (#48).
- * WXT bundles unlisted scripts as an anonymous IIFE, a single expression statement.
+ * Strict mode closes the remaining way in: an assignment to an undeclared name throws instead of
+ * creating a global. WXT bundles unlisted scripts as an anonymous IIFE; `wxt.config.ts` puts the
+ * directive inside it (Rolldown's `output.strict` would also name the IIFE: `var injected=`).
  *
  * @param {string} code
  * @returns {boolean}
  */
-export function declaresTopLevelBindings(code) {
-  return parseAst(code).body.some((node) => node.type !== "ExpressionStatement");
+export function isStrictScopedScript(code) {
+  const statements = parseAst(code).body;
+  const [statement] = statements;
+
+  if (statements.length !== 1 || statement?.type !== "ExpressionStatement") {
+    return false;
+  }
+
+  const call = statement.expression;
+  const callee = call.type === "CallExpression" ? call.callee : null;
+  const isFunction =
+    callee?.type === "FunctionExpression" || callee?.type === "ArrowFunctionExpression";
+
+  return isFunction && callee.body?.body?.[0]?.directive === "use strict";
 }
 
 async function assertClassicScriptsScoped(outputDir) {
   const unscoped = [];
 
   for (const file of CLASSIC_SCRIPT_CHUNKS) {
-    if (declaresTopLevelBindings(await readFile(resolve(outputDir, file), "utf8"))) {
+    if (!isStrictScopedScript(await readFile(resolve(outputDir, file), "utf8"))) {
       unscoped.push(file);
     }
   }
 
   if (unscoped.length > 0) {
-    throw new Error(`Classic scripts must not declare top-level bindings: ${unscoped.join(", ")}`);
+    throw new Error(
+      `Classic scripts must be one anonymous strict-mode IIFE (wxt.config.ts): ${unscoped.join(", ")}`
+    );
   }
 }
 

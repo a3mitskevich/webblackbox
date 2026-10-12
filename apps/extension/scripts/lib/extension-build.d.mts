@@ -16,7 +16,7 @@ export declare function createManifestFields(target?: Partial<BuildTarget>): Use
 
 export declare function normalizeWxtManifest(manifest: object, target: Partial<BuildTarget>): void;
 
-export declare function declaresTopLevelBindings(code: string): boolean;
+export declare function isStrictScopedScript(code: string): boolean;
 
 export declare function assertExtensionBuild(
   outputDir: string,

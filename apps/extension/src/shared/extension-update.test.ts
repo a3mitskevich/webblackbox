@@ -5,6 +5,7 @@ import {
   EXTENSION_UPDATE_DISMISSED_STORAGE_KEY,
   EXTENSION_UPDATE_STORAGE_KEY,
   isNewerVersion,
+  isSameVersion,
   loadExtensionUpdateNotice,
   normalizeExtensionUpdateState,
   parseChromeVersion,
@@ -68,6 +69,19 @@ describe("Chrome version strings", () => {
     ["0.8.0", "dev", false]
   ])("isNewerVersion(%j, %j) = %j", (candidate, installed, expected) => {
     expect(isNewerVersion(candidate, installed)).toBe(expected);
+  });
+
+  it.each([
+    ["1.2", "1.2.0", true],
+    ["1.2.0.0", "1.2", true],
+    ["0.8.0", "0.8.0", true],
+    ["0.8.0", "0.8.1", false],
+    ["0.10", "0.1.0", false],
+    ["0.8.0", "08.0", false],
+    ["0.8.0", undefined, false],
+    [42, "42", false]
+  ])("isSameVersion(%j, %j) = %j", (left, right, expected) => {
+    expect(isSameVersion(left, right)).toBe(expected);
   });
 });
 
@@ -158,6 +172,15 @@ describe("stored state and the notice", () => {
     expect(
       resolveExtensionUpdateNotice({ ...STATE, latestVersion: "0.9.0" }, "0.8.0", "0.7.0")
     ).not.toBeNull();
+  });
+
+  it("matches the dismissed version numerically, not as a string", () => {
+    expect(resolveExtensionUpdateNotice({ ...STATE, latestVersion: "0.8" }, "0.8.0", "0.7.0")).toBe(
+      null
+    );
+    expect(resolveExtensionUpdateNotice(STATE, "0.8", "0.7.0")).toBeNull();
+    expect(resolveExtensionUpdateNotice(STATE, "0.8.0.1", "0.7.0")).not.toBeNull();
+    expect(resolveExtensionUpdateNotice(STATE, 0.8, "0.7.0")).not.toBeNull();
   });
 
   it("hides the notice once the installed version caught up", () => {
