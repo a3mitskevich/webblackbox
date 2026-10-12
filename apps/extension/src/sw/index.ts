@@ -42,6 +42,7 @@ import { isProfileSettingsChange } from "./profile-change.js";
 import { createProfileReevaluation } from "./profile-reevaluation.js";
 import { createRecordedTabWatch } from "./recorded-tab-watch.js";
 import { createSessionAnnotations } from "./session-annotations.js";
+import { createA11ySnapshotRequester } from "./a11y-snapshot-requests.js";
 import { createSessionCommands } from "./session-commands.js";
 import { createSessionListView, toSessionMetadata } from "./session-list.js";
 import { createSessionQueue } from "./session-queue.js";
@@ -314,7 +315,16 @@ const sessionExport = createSessionExportController({
     portRegistry.broadcast(message);
   }
 });
+const a11ySnapshotRequests = createA11ySnapshotRequester({
+  sendToTab: (tabId, message) =>
+    chromeApi?.tabs?.sendMessage
+      ? chromeApi.tabs.sendMessage(tabId, message)
+      : Promise.reject(new Error("tabs.sendMessage is unavailable")),
+  now: () => Date.now()
+});
+
 const sessionCommands = createSessionCommands({
+  a11ySnapshotRequests,
   sessionRegistry,
   annotations,
   stopDrain,
