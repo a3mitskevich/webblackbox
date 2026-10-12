@@ -72,6 +72,18 @@ const sdk = new WebBlackboxLiteSdk({
 });
 ```
 
+- **DOM** — whenever `dom` is not `"off"`, the page is recorded with [rrweb](https://github.com/rrweb-io/rrweb)
+  2.x: a full snapshot, then every change, field input and click with node ids (`dom.rrweb.event`, schema
+  `rrweb/v2`), masked by the profile (`dom` / `inputs` levels, blocked selectors and, while content masking is on,
+  the same attribute, URL and secret rules as the raw DOM snapshot). Recording must never slow the page: pages over
+  20,000 nodes are left to the agent's own snapshots and summaries, and rrweb pauses (a gap marked on the batch)
+  when its main-thread time or one change set is over budget, then resumes with a fresh full snapshot
+  (`rrweb-pressure.ts`). `domRecorder: false` keeps the agent's own DOM capture only:
+
+```ts
+const sdk = new WebBlackboxLiteSdk({ domRecorder: false });
+```
+
 ## What's Included
 
 | Export                            | Description                                                                               |
@@ -94,7 +106,9 @@ import type { WebBlackboxLiteSdkOptions } from "webblackbox/types";
 ```
 
 `webblackbox/capture-scope` and `webblackbox/input-value-policy` hold helpers the extension shares
-with the capture agent.
+with the capture agent. `webblackbox/rrweb-recorder` is the rrweb DOM recorder (`createRrwebDomRecorder`);
+`webblackbox/rrweb-page-recorder` and `webblackbox/dom-recorder-bridge` run it in a page's MAIN world for the
+extension and drive it from the content script.
 
 ## Optional IndexedDB Cache Encryption
 
