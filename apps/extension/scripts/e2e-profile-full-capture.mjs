@@ -14,6 +14,7 @@ import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { recordedDomTexts } from "./lib/archive-dom.mjs";
 import { assert, createProfileE2eHarness, sleep, waitFor } from "./lib/profile-e2e-harness.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -70,7 +71,7 @@ main().catch(async (error) => {
 });
 
 async function main() {
-  const { WebBlackboxPlayer } = await import(
+  const playerSdk = await import(
     pathToFileURL(resolve(repoRoot, "packages/player-sdk/dist/index.js")).href
   );
   const appPort = await startDemoServer();
@@ -180,7 +181,7 @@ async function main() {
   const archivePath = await harness.waitForDownload();
   const bytes = new Uint8Array(await readFile(archivePath));
   const rawArchive = new TextDecoder("latin1").decode(bytes);
-  const player = await WebBlackboxPlayer.open(bytes, { passphrase });
+  const player = await playerSdk.WebBlackboxPlayer.open(bytes, { passphrase });
   const events = player.query();
   const blobTexts = await Promise.all(
     events
@@ -199,9 +200,7 @@ async function main() {
       event.type === "meta.config" &&
       (event.data?.profile?.id !== FULL_CAPTURE_ID || event.data?.profileCancel)
   );
-  const rawDomSnapshots = events.filter(
-    (event) => event.type === "dom.snapshot" && event.data?.source === "html"
-  );
+  const recordedDom = await recordedDomTexts(player, playerSdk);
   const wsFrames = events.filter((event) => event.type === "network.ws.frame");
 
   assert(fullCaptureConfig, "meta.config does not record the Full capture profile");
@@ -214,10 +213,14 @@ async function main() {
   assert(!otherConfig, "The recording changed or cancelled its profile", {
     config: otherConfig?.data
   });
-  assert(rawDomSnapshots.length > 0, "Full capture did not record the raw DOM", {
+  assert(recordedDom.texts.length > 0, "Full capture did not record the raw DOM", {
     types: [...new Set(events.map((event) => event.type))]
   });
-  assert(recorded.includes(DOM_MARKER), "The raw DOM snapshot misses the page markup");
+  assert(
+    recordedDom.texts.some((text) => text.includes(DOM_MARKER)),
+    "The recorded DOM misses the page markup",
+    { html: recordedDom.htmlSnapshots, rrweb: recordedDom.rrwebSnapshots }
+  );
   assert(wsFrames.length > 0, "Full capture did not record WebSocket frames", {
     types: [...new Set(events.map((event) => event.type))]
   });
@@ -280,15 +283,27 @@ async function main() {
     );
   }
 
-  // DOM changes: summaries and snapshots taken because the page changed, the last one current.
+  // DOM changes: rrweb's change log (or, where rrweb cannot run, the agent's summaries and the
+  // snapshots taken because the page changed); the rebuilt page shows the last change.
+  const rawDomSnapshots = events.filter(
+    (event) => event.type === "dom.snapshot" && event.data?.source === "html"
+  );
   const changeSnapshots = rawDomSnapshots.filter((event) => event.data?.reason === "mutation");
   const mutationBatches = events.filter((event) => event.type === "dom.mutation.batch");
   const lastRow = `DOM-CHANGE-ROW-${DOM_CHANGE_ROWS - 1}`;
-  assert(mutationBatches.length > 0, "Full capture did not record DOM mutations");
-  assert(changeSnapshots.length > 0, "Full capture took no DOM snapshot after the page changed", {
-    reasons: rawDomSnapshots.map((event) => event.data?.reason)
-  });
-  assert(recorded.includes(lastRow), "No DOM snapshot shows the page after its last change");
+  assert(
+    recordedDom.rrwebMutations > 0 || (mutationBatches.length > 0 && changeSnapshots.length > 0),
+    "Full capture did not record the DOM changes",
+    {
+      rrwebMutations: recordedDom.rrwebMutations,
+      mutationBatches: mutationBatches.length,
+      reasons: rawDomSnapshots.map((event) => event.data?.reason)
+    }
+  );
+  assert(
+    recordedDom.texts.some((text) => text.includes(lastRow)),
+    "No recorded DOM shows the page after its last change"
+  );
 
   assert(!rawArchive.includes("127.0.0.1"), "The site appears in the archive's plaintext");
   assert(swExceptions.length === 0, "Service worker threw", swExceptions);
@@ -297,7 +312,8 @@ async function main() {
   console.log(`Profile: ${JSON.stringify(fullCaptureConfig.data.profile)}`);
   console.log(`Raw secrets found: ${Object.keys(RAW_SECRETS).join(", ")} (both hosts)`);
   console.log(
-    `Raw DOM snapshots: ${rawDomSnapshots.length} (${changeSnapshots.length} after changes); ` +
+    `rrweb: ${recordedDom.rrwebSnapshots} full snapshots, ${recordedDom.rrwebMutations} mutations; ` +
+      `raw DOM snapshots: ${rawDomSnapshots.length} (${changeSnapshots.length} after changes); ` +
       `mutation batches: ${mutationBatches.length}; WebSocket frames: ${wsFrames.length}`
   );
   console.log(`Cookie values: ${cookieEntries.length}; IndexedDB records: ${idbRecords.length}`);
