@@ -97,6 +97,8 @@
   "bodyNone": "Без тела.",
   "cutBadge": "Обрезано на {size}",
   "cutNote": "Сохранены только первые {size} тела.",
+  "cutBadgeOf": "Обрезано на {kept} из {total}",
+  "cutNoteOf": "Сохранены только первые {kept} тела размером {total}.",
   "requestBodyCut": "Тело запроса обрезано по лимиту профиля.",
   "bodyLoading": "Загружаю тело…",
   "bodyLoadFailed": "Не удалось прочитать тело: {error}",

@@ -20,6 +20,7 @@ import { useFeatureSlice } from "../slice.js";
 import {
   requestBodyAvailability,
   responseBodyAvailability,
+  responseBodyCutSizes,
   skipReasonText,
   type BodyAvailability
 } from "./availability.js";
@@ -237,14 +238,18 @@ export function ResponseTab({ entry }: { entry: NetworkWaterfallEntry }) {
     );
   }
 
-  const keptSize = i18n.formatByteSize(entry.responseBodySize ?? 0);
+  const cut = responseBodyCutSizes(entry);
+  const kept = i18n.formatByteSize(cut.keptBytes);
+  const total = cut.totalBytes === undefined ? undefined : i18n.formatByteSize(cut.totalBytes);
 
   return (
     <div className="ndtab ndtab-fill" data-testid="response-tab">
       {availability.truncated ? (
         <p className="nnotice warn" data-testid="response-body-cut">
-          <span className="ncut">{t("cutBadge", { size: keptSize })}</span>{" "}
-          {t("cutNote", { size: keptSize })}
+          <span className="ncut">
+            {total ? t("cutBadgeOf", { kept, total }) : t("cutBadge", { size: kept })}
+          </span>{" "}
+          {total ? t("cutNoteOf", { kept, total }) : t("cutNote", { size: kept })}
         </p>
       ) : null}
       {blob === null || blob.status === "loading" ? (

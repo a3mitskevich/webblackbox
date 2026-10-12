@@ -18,7 +18,7 @@ By default, WebBlackbox records metadata needed to debug a session:
 - storage counts, not values or key names
 - privacy provenance and scanner results
 
-By default, WebBlackbox does not collect raw input values, DOM text, storage values, cookies, raw headers, request bodies, or response bodies. Screenshots are off in the Lite engine; the Full engine takes them unless the popup's visual capture is set to none.
+By default, WebBlackbox does not collect raw input values, storage values, cookies, raw headers, request bodies, or response bodies. Screenshots are off in the Lite engine; the Full engine takes them unless the popup's visual capture is set to none. The Lite engine records no DOM text; the Full engine records the page DOM (snapshots and changes) at the default `dom` level, masked by the profile's rules: blocked selectors are left out, content masking applies to the text and attributes, and field values are never written unless the profile records input values.
 
 Nothing is recorded until the user presses Start in a tab: no profile or site rule starts a recording.
 
@@ -26,11 +26,11 @@ Nothing is recorded until the user presses Start in a tab: no profile or site ru
 
 What the extension records is decided by the recording profile in effect. The `Default` profile keeps the defaults above unchanged; read-only presets raise them:
 
-- `Lite` / `Full`: the defaults above on each transport (Full adds CDP screenshots).
+- `Lite` / `Full`: the defaults above on each transport (Full adds CDP screenshots and the masked page DOM).
 - `QA`: console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots, paths and titles of other tabs of the site, embedded source maps. Content masking stays on (QA debugs real sites with the default rules).
 - `Full capture`: everything above plus input values and keys, storage values, cookie values (HttpOnly included), IndexedDB records, the raw DOM (the page HTML), all textual bodies up to 1 MiB, optional tab video and 60 Hz pointer sampling, **recorded raw**: content masking is off and no blocked selectors are kept.
 - Source maps: in the Full engine a profile records each script's source map reference unless it turns source maps off; `QA` and `Full capture` also embed the maps in the archive. To embed a map the extension fetches it itself, sending cookies only when the map is on the script's own origin.
-- The other presets do not record the raw DOM; a duplicated profile can set `dom` to `allow`.
+- In the Full engine the page DOM is recorded at the default `dom` level (`masked`) the same way as at `allow`, through the masking rules of the profile; `wireframe` and `off` keep it out. The Lite engine records the DOM only at `allow`.
 - Any profile can be deleted, the `Default` profile and the presets included; "Restore recommended profiles" in Options brings back the deleted ones. Recording needs at least one profile: with none left, the popup asks for one and links to Options → Profiles. Profiles from the enterprise policy (`managed:*`) cannot be deleted by the user. Site rules that point at a deleted profile are kept, flagged in Options, and skipped until the profile exists again.
 
 ## Parallel Tabs

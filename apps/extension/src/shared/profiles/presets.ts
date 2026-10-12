@@ -4,6 +4,7 @@ import {
   type RedactionProfile
 } from "@webblackbox/protocol";
 
+import { FULL_MODE_BODY_CAPTURE_MAX_BYTES } from "../body-capture-limits.js";
 import { completeCaptureCategories, type CaptureCategories } from "./categories.js";
 import { FULL_CAPTURE_LOCAL_DATA_SETTINGS } from "./local-data.js";
 import {
@@ -21,7 +22,8 @@ export const BUILT_IN_PROFILE_IDS = {
 } as const;
 
 const QA_BODY_MAX_BYTES = 256 * 1024;
-const FULL_CAPTURE_BODY_MAX_BYTES = 1024 * 1024;
+// The Full mode default: a profile that turns bodies on without a limit gets the same.
+const FULL_CAPTURE_BODY_MAX_BYTES = FULL_MODE_BODY_CAPTURE_MAX_BYTES;
 const FULL_CAPTURE_MOUSEMOVE_HZ = 60;
 
 const QA_BODY_MIME_ALLOWLIST = [
@@ -56,9 +58,13 @@ const DEFAULT_CATEGORIES: CaptureCategories = completeCaptureCategories(
   DEFAULT_CAPTURE_POLICY.categories
 );
 
-/** Ceiling of what a non-extended profile may capture: today's Full mode, visuals included. */
+/**
+ * Ceiling of what a non-extended profile may capture: today's Full mode, visuals and the page DOM
+ * (masked by the profile's rules) included.
+ */
 export const STANDARD_CAPTURE_CEILING: CaptureCategories = {
   ...DEFAULT_CATEGORIES,
+  dom: "allow",
   screenshots: "allow",
   screenRecordings: "allow",
   cdp: "safe-subset"
@@ -113,7 +119,9 @@ const LITE_PRESET = createBaseProfile({
 const FULL_PRESET = createBaseProfile({
   id: BUILT_IN_PROFILE_IDS.full,
   name: "Full",
-  description: "CDP network, navigation and screenshots. No bodies, console text or input values.",
+  description:
+    "CDP network, navigation, screenshots and the page DOM (masked). No bodies, console text " +
+    "or input values.",
   base: "full"
 });
 
@@ -121,8 +129,8 @@ const QA_PRESET = createBaseProfile({
   id: BUILT_IN_PROFILE_IDS.qa,
   name: "QA",
   description:
-    "Console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots, and paths " +
-    "and titles of other tabs of the site.",
+    "Console text, JSON/text/form/XML/GraphQL bodies up to 256 KiB, screenshots, the page DOM " +
+    "(masked), and paths and titles of other tabs of the site.",
   base: "full",
   categories: {
     ...DEFAULT_CATEGORIES,

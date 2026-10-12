@@ -1,6 +1,7 @@
 import type { BodySkipReason, NetworkBodySkippedPayload } from "@webblackbox/protocol";
 
 import {
+  decodeBase64,
   isLikelyTextualResourceType,
   isTextualMimeType,
   normalizeMimeType,
@@ -9,6 +10,11 @@ import {
 } from "./body-capture-utils.js";
 import { isBrowserInternalUrl } from "@webblackbox/recorder";
 
+import { LargeBodyStreams, type BodyHeadStream, type StartStream } from "./full-body-stream.js";
+import {
+  CHROME_DEFAULT_RESOURCE_BUFFER_BYTES,
+  resolveNetworkEnableParams
+} from "./network-buffers.js";
 import type { RequestMetaEntry } from "./request-meta.js";
 
 /** Bodies read from CDP at the same time; more wait in the queue. */
@@ -19,8 +25,11 @@ export const FULL_BODY_FETCH_MAX_PENDING = 1_000;
 export const FULL_BODY_MAX_PER_SESSION = 20_000;
 /** Body bytes kept per session (after the per-body limit); later ones are `session-limit`. */
 export const FULL_BODY_MAX_BYTES_PER_SESSION = 512 * 1024 * 1024;
-/** A body is not read when its encoded size exceeds this many times the per-body limit. */
-export const FULL_BODY_OVERSIZE_FACTOR = 2;
+/**
+ * A body whose encoded size exceeds this many times the per-body limit is a large read: the read
+ * holds the whole body to keep its start, so large reads run one at a time.
+ */
+export const FULL_BODY_LARGE_READ_FACTOR = 2;
 
 /**
  * Responses waiting for `loadingFinished`, and requests waiting for their response; the oldest
@@ -48,6 +57,8 @@ export type FinishedResponse = {
   requestId: string;
   sessionId?: string;
   encodedDataLength?: number;
+  /** The `Content-Length` the response declared (encoded bytes), when it declared one. */
+  contentLength?: number;
   meta: RequestMetaEntry | undefined;
   /**
    * The response arrived without a `requestWillBeSent`: the request was in flight when the
@@ -56,7 +67,12 @@ export type FinishedResponse = {
   startedBeforeCapture?: boolean;
 };
 
-export type ReadBody = { body: string; base64Encoded: boolean };
+/**
+ * A body read whole through `Network.getResponseBody`, or the start of one streamed through
+ * `Network.streamResourceContent` (`totalBytes` decoded bytes in all).
+ */
+export type ReadBody =
+  { body: string; base64Encoded: boolean } | { head: Uint8Array; totalBytes: number };
 
 export type FullBodyCaptureDeps = {
   /** Whether the session's policy asks for bodies at all (full mode, `body-allowlist`). */
@@ -66,6 +82,11 @@ export type FullBodyCaptureDeps = {
     requestId: string,
     sessionId: string | undefined
   ) => Promise<CdpReadOutcome<ResponseBodyRead>>;
+  /**
+   * Starts `Network.streamResourceContent` for a response still loading. Without it, responses
+   * too large to read whole are recorded `too-large`.
+   */
+  streamResponseBody?: StartStream;
   /** Stores a read body, records `network.body` and returns the bytes kept in the archive. */
   storeBody: (
     response: FinishedResponse,
@@ -81,6 +102,9 @@ type PendingFetch = {
   response: FinishedResponse;
   rule: BodyCaptureRule;
   mimeType: string | undefined;
+  large: boolean;
+  /** Decoded bytes the response received, when counted while it loaded. */
+  receivedBytes: number | undefined;
 };
 
 type SkipDetail = Omit<NetworkBodySkippedPayload, "reqId" | "side" | "reason">;
@@ -97,11 +121,16 @@ export class FullBodyCapture {
 
   private readonly inFlight = new Set<Promise<void>>();
 
+  private largeReadInFlight = false;
+
   /** Responses seen but not finished yet, by request key (session + request id). */
   private readonly awaitingFinish = new Map<string, FinishedResponse>();
 
   /** Requests sent while capturing that have no response yet, by request key. */
   private readonly awaitingResponse = new Set<string>();
+
+  /** Responses whose body is kept, while they load; too large ones stream their start. */
+  private readonly streams: LargeBodyStreams;
 
   private storedCount = 0;
 
@@ -109,7 +138,13 @@ export class FullBodyCapture {
 
   private closed = false;
 
-  public constructor(private readonly deps: FullBodyCaptureDeps) {}
+  public constructor(private readonly deps: FullBodyCaptureDeps) {
+    this.streams = new LargeBodyStreams(
+      deps.streamResponseBody,
+      decodeBase64,
+      FULL_BODY_MAX_AWAITING_FINISH
+    );
+  }
 
   /** A request was sent (or redirected) while capturing: the browser keeps its body. */
   public onRequestWillBeSent(requestId: string, sessionId: string | undefined): void {
@@ -134,6 +169,20 @@ export class FullBodyCapture {
     this.awaitingFinish.delete(key);
     forgetOldestPast(this.awaitingFinish, FULL_BODY_MAX_AWAITING_FINISH);
     this.awaitingFinish.set(key, { ...response, startedBeforeCapture });
+
+    if (!startedBeforeCapture) {
+      this.trackBody(key, response);
+    }
+  }
+
+  /** Bytes of a response arrived; a streamed response also carries them as `data`. */
+  public onDataReceived(
+    requestId: string,
+    sessionId: string | undefined,
+    dataLength: number,
+    data: string | undefined
+  ): void {
+    this.streams.onData(requestKey({ requestId, sessionId }), dataLength, data);
   }
 
   /** The request failed or was cancelled: there is no body to keep. */
@@ -141,6 +190,7 @@ export class FullBodyCapture {
     const key = requestKey({ requestId, sessionId });
     this.awaitingFinish.delete(key);
     this.awaitingResponse.delete(key);
+    this.streams.forget(key);
   }
 
   public onLoadingFinished(finishedResponse: FinishedResponse): void {
@@ -152,6 +202,7 @@ export class FullBodyCapture {
       meta: finishedResponse.meta ?? received?.meta,
       startedBeforeCapture: finishedResponse.startedBeforeCapture ?? received?.startedBeforeCapture
     };
+    const tracked = this.streams.take(key);
     this.awaitingFinish.delete(key);
     this.awaitingResponse.delete(key);
 
@@ -173,21 +224,30 @@ export class FullBodyCapture {
       return;
     }
 
-    const rule = this.deps.resolveRule(meta.url ?? "", mimeType);
+    const rule = tracked?.rule ?? this.deps.resolveRule(meta.url ?? "", mimeType);
 
     if (!rule.enabled) {
       this.skip(response, ruleSkipReason(rule, mimeType), { mimeType });
       return;
     }
 
+    const stream = tracked?.stream;
+
+    if (stream) {
+      this.run(response, mimeType, () => this.storeStream(response, stream, rule, mimeType));
+      return;
+    }
+
+    // The browser keeps no body this large: its start could only have been streamed.
     if (
       response.encodedDataLength !== undefined &&
-      response.encodedDataLength > rule.maxBytes * FULL_BODY_OVERSIZE_FACTOR
+      response.encodedDataLength > keptBodyBytes(rule)
     ) {
       this.skip(response, "too-large", {
         mimeType,
         size: response.encodedDataLength,
-        limit: rule.maxBytes
+        limit: rule.maxBytes,
+        detail: tracked?.notStreamed ?? NOT_KEPT_DETAIL
       });
       return;
     }
@@ -202,7 +262,17 @@ export class FullBodyCapture {
       return;
     }
 
-    this.queue.push({ response, rule, mimeType });
+    // A compressed body decodes past its encoded size: the decoded bytes counted while it loaded
+    // are what the read holds.
+    const readBytes = Math.max(response.encodedDataLength ?? 0, tracked?.receivedBytes ?? 0);
+
+    this.queue.push({
+      response,
+      rule,
+      mimeType,
+      large: readBytes > rule.maxBytes * FULL_BODY_LARGE_READ_FACTOR,
+      receivedBytes: tracked?.receivedBytes
+    });
     this.pump();
   }
 
@@ -249,6 +319,7 @@ export class FullBodyCapture {
     const unfinished = [...this.awaitingFinish.values()];
     this.awaitingFinish.clear();
     this.awaitingResponse.clear();
+    this.streams.clear();
 
     if (!this.deps.isEnabled()) {
       return;
@@ -270,28 +341,124 @@ export class FullBodyCapture {
     }
   }
 
+  /**
+   * Follows a response whose body the policy keeps while it loads, so it can stream the start of
+   * one too large to read whole. Event streams never finish and are left out.
+   */
+  private trackBody(key: string, response: FinishedResponse): void {
+    const { meta } = response;
+    const mimeType = normalizeMimeType(meta?.mimeType);
+
+    if (
+      !meta ||
+      !isTextualResponse(meta, mimeType) ||
+      isOutsideBodyCapture(meta.url ?? "") ||
+      isEventStream(meta, mimeType)
+    ) {
+      return;
+    }
+
+    const rule = this.deps.resolveRule(meta.url ?? "", mimeType);
+
+    if (rule.enabled) {
+      this.streams.track(key, response, rule, keptBodyBytes(rule));
+    }
+  }
+
   private pump(): void {
     while (!this.closed && this.inFlight.size < FULL_BODY_FETCH_CONCURRENCY) {
-      const next = this.queue.shift();
+      const next = this.queue[0];
 
-      if (!next) {
+      // A large read waits for the one in flight (the queue keeps its order).
+      if (!next || (next.large && this.largeReadInFlight)) {
         return;
       }
 
-      const task = this.fetch(next)
-        .catch((error: unknown) => {
-          this.skip(next.response, "fetch-failed", {
-            mimeType: next.mimeType,
-            detail: error instanceof Error ? error.message : String(error)
-          });
-        })
-        .finally(() => {
-          this.inFlight.delete(task);
-          this.pump();
-        });
+      this.queue.shift();
 
-      this.inFlight.add(task);
+      if (next.large) {
+        this.largeReadInFlight = true;
+      }
+
+      this.run(next.response, next.mimeType, async () => {
+        try {
+          await this.fetch(next);
+        } finally {
+          if (next.large) {
+            this.largeReadInFlight = false;
+          }
+        }
+      });
     }
+  }
+
+  /** Runs a body task in the pool: drain waits for it, a thrown error is recorded. */
+  private run(
+    response: FinishedResponse,
+    mimeType: string | undefined,
+    work: () => Promise<void>
+  ): void {
+    const task = work()
+      .catch((error: unknown) => {
+        this.skip(response, "fetch-failed", {
+          mimeType,
+          detail: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .finally(() => {
+        this.inFlight.delete(task);
+        this.pump();
+      });
+
+    this.inFlight.add(task);
+  }
+
+  /** Stores the streamed start of a body, truncated at the limit, or records why it failed. */
+  private async storeStream(
+    response: FinishedResponse,
+    stream: BodyHeadStream,
+    rule: BodyCaptureRule,
+    mimeType: string | undefined
+  ): Promise<void> {
+    const outcome = await stream.result();
+
+    if (this.closed) {
+      this.skip(response, "backlog", { mimeType, detail: "recording stopped" });
+      return;
+    }
+
+    if (!outcome.ok) {
+      this.skip(response, "too-large", {
+        mimeType,
+        size: response.encodedDataLength,
+        limit: rule.maxBytes,
+        detail: `streaming its start failed: ${outcome.error}`
+      });
+      return;
+    }
+
+    if (outcome.head.byteLength === 0) {
+      this.skip(response, "unavailable", {
+        mimeType,
+        detail: "the browser streamed no body bytes"
+      });
+      return;
+    }
+
+    if (this.isSessionBudgetUsed()) {
+      this.skip(response, "session-limit", { mimeType, limit: FULL_BODY_MAX_PER_SESSION });
+      return;
+    }
+
+    const storedBytes = await this.deps.storeBody(
+      response,
+      { head: outcome.head, totalBytes: outcome.totalBytes },
+      rule,
+      mimeType
+    );
+
+    this.storedCount += 1;
+    this.storedBytes += storedBytes;
   }
 
   private async fetch(pending: PendingFetch): Promise<void> {
@@ -305,6 +472,22 @@ export class FullBodyCapture {
 
     if (!outcome.ok) {
       const reason = readFailureReason(outcome.error);
+
+      // Counted while it loaded: past what the browser keeps for one response, it was never kept.
+      if (
+        reason === "not-retained" &&
+        pending.receivedBytes !== undefined &&
+        pending.receivedBytes > keptBodyBytes(pending.rule)
+      ) {
+        this.skip(response, "too-large", {
+          mimeType,
+          size: pending.receivedBytes,
+          limit: rule.maxBytes,
+          detail: NOT_KEPT_DETAIL
+        });
+        return;
+      }
+
       this.skip(
         response,
         reason === "not-retained" && response.startedBeforeCapture
@@ -404,6 +587,20 @@ function isTextualResponse(meta: RequestMetaEntry, mimeType: string | undefined)
   }
 
   return mimeType ? isTextualMimeType(mimeType) : isLikelyTextualResourceType(meta.resourceType);
+}
+
+const NOT_KEPT_DETAIL = "larger than the browser keeps for one response";
+
+/** Bytes the browser keeps of one response (`Network.enable` per-resource buffer). */
+function keptBodyBytes(rule: BodyCaptureRule): number {
+  return (
+    resolveNetworkEnableParams(rule.maxBytes).maxResourceBufferSize ??
+    CHROME_DEFAULT_RESOURCE_BUFFER_BYTES
+  );
+}
+
+function isEventStream(meta: RequestMetaEntry, mimeType: string | undefined): boolean {
+  return mimeType === "text/event-stream" || meta.resourceType === "EventSource";
 }
 
 /** Skip reason of a failed CDP body read. */

@@ -11,6 +11,7 @@ import {
 } from "@webblackbox/protocol";
 import * as z from "zod";
 
+import { MAX_BODY_CAPTURE_BYTES } from "../body-capture-limits.js";
 import { CAPTURE_CATEGORY_LEVELS, type CaptureCategories } from "./categories.js";
 import { compileTitleRegex } from "./title-regex.js";
 
@@ -30,7 +31,7 @@ export const MAX_TITLE_REGEX_LENGTH = 300;
 export const MIN_RULE_PRIORITY = -1000;
 export const MAX_RULE_PRIORITY = 1000;
 export const MAX_MOUSEMOVE_HZ = 240;
-export const MAX_BODY_CAPTURE_BYTES = 8 * 1024 * 1024;
+export { MAX_BODY_CAPTURE_BYTES };
 /** Default and hard cap for one source map embedded at record time. */
 export const DEFAULT_SOURCE_MAP_MAX_BYTES = 8 * 1024 * 1024;
 export const MAX_SOURCE_MAP_BYTES = 32 * 1024 * 1024;
