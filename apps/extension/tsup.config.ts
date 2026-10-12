@@ -9,6 +9,8 @@ import { mergedLocalesPlugin } from "./scripts/lib/locale-fragments.mjs";
 const appRoot = dirname(fileURLToPath(import.meta.url));
 const extensionNodeModulesDir = resolve(appRoot, "node_modules");
 const workspaceNodeModulesDir = resolve(appRoot, "..", "..", "node_modules");
+// Spike (task 56): `WB_SPIKE_RRWEB=1` builds content-rrweb.js and lets the content script load it.
+const spikeRrweb = process.env.WB_SPIKE_RRWEB === "1";
 
 export default defineConfig({
   entry: {
@@ -19,7 +21,11 @@ export default defineConfig({
     popup: "src/popup/index.ts",
     options: "src/options/index.ts",
     sessions: "src/sessions/index.ts",
-    injected: "src/injected/index.ts"
+    injected: "src/injected/index.ts",
+    ...(spikeRrweb ? { "content-rrweb": "src/content/content-rrweb.ts" } : {})
+  },
+  define: {
+    __WB_SPIKE_RRWEB__: JSON.stringify(spikeRrweb)
   },
   format: ["esm"],
   target: "es2022",

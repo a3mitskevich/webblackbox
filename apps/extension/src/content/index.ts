@@ -10,6 +10,10 @@ import { CONTENT_EVENT_FLUSH_CHUNK, resolveContentEventFlushDelay } from "./flus
 import { claimContentScriptSlot } from "./script-guard.js";
 
 type ContentAgentModule = typeof import("./content-agent.js");
+type ContentRrwebModule = typeof import("./content-rrweb.js");
+
+/** Spike (task 56): builds made with `WB_SPIKE_RRWEB=1` also record the DOM with rrweb. */
+const SPIKE_RRWEB = typeof __WB_SPIKE_RRWEB__ !== "undefined" && __WB_SPIKE_RRWEB__ === true;
 
 const chromeApi = getChromeApi();
 let contentPort: PortLike | null = null;
@@ -348,12 +352,13 @@ async function ensureCaptureAgent(): Promise<LiteCaptureAgent> {
     return captureAgentPromise;
   }
 
-  captureAgentPromise = loadContentAgentModule()
-    .then(({ createContentCaptureAgent }) => {
+  captureAgentPromise = Promise.all([loadContentAgentModule(), loadDomRecorder()])
+    .then(([{ createContentCaptureAgent }, domRecorder]) => {
       const options: LiteCaptureAgentOptions = {
         emitBatch,
         onMarker: emitMarker,
-        showIndicator: true
+        showIndicator: true,
+        ...(domRecorder ? { domRecorder } : {})
       };
       const agent = createContentCaptureAgent(options);
       captureAgent = agent;
@@ -370,6 +375,19 @@ async function ensureCaptureAgent(): Promise<LiteCaptureAgent> {
 function loadContentAgentModule(): Promise<ContentAgentModule> {
   const moduleUrl = chromeApi?.runtime?.getURL?.("content-agent.js") ?? "./content-agent.js";
   return import(moduleUrl) as Promise<ContentAgentModule>;
+}
+
+/** The rrweb recorder of spike builds; a failed load records without it. */
+function loadDomRecorder(): Promise<LiteCaptureAgentOptions["domRecorder"]> {
+  if (!SPIKE_RRWEB) {
+    return Promise.resolve(undefined);
+  }
+
+  const moduleUrl = chromeApi?.runtime?.getURL?.("content-rrweb.js") ?? "./content-rrweb.js";
+  return (import(moduleUrl) as Promise<ContentRrwebModule>).then(
+    (module) => module.createRrwebDomRecorder,
+    () => undefined
+  );
 }
 
 async function emitKeyboardMarker(): Promise<void> {

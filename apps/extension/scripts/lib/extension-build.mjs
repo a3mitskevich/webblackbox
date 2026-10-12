@@ -96,6 +96,11 @@ const STORE_SAFE_PERMISSIONS = [
   "tabCapture"
 ];
 const URL_MATCHES = ["<all_urls>"];
+// Spike (task 56): `WB_SPIKE_RRWEB=1` builds also expose the lazily imported rrweb recorder.
+const SPIKE_RRWEB = process.env.WB_SPIKE_RRWEB === "1";
+const WEB_ACCESSIBLE_RESOURCES = SPIKE_RRWEB
+  ? ["content-agent.js", "content-rrweb.js", "injected.js"]
+  : ["content-agent.js", "injected.js"];
 const ARCHIVE_FIXED_DATE = new Date("1980-01-01T00:00:00.000Z");
 const ARCHIVE_EXCLUDED_FILE_NAMES = new Set([".DS_Store"]);
 
@@ -151,7 +156,7 @@ export function createExtensionManifest({ version, release = false, profile = "d
     },
     web_accessible_resources: [
       {
-        resources: ["content-agent.js", "injected.js"],
+        resources: [...WEB_ACCESSIBLE_RESOURCES],
         matches: [...URL_MATCHES]
       }
     ],
@@ -217,9 +222,11 @@ export function validateExtensionManifest(
 
   if (
     !Array.isArray(injectedResources) ||
-    injectedResources.join(",") !== "content-agent.js,injected.js"
+    injectedResources.join(",") !== WEB_ACCESSIBLE_RESOURCES.join(",")
   ) {
-    issues.push("Manifest must only expose content-agent.js and injected.js as web resources.");
+    issues.push(
+      `Manifest must only expose ${WEB_ACCESSIBLE_RESOURCES.join(", ")} as web resources.`
+    );
   }
 
   if (manifest?.storage?.managed_schema !== MANAGED_SCHEMA_FILE) {
