@@ -17,7 +17,8 @@
 // WB_RRWEB_HEAVY_ROWS sizes the heavy SPA (default 2,500 rows). WB_RRWEB_SITE=heavy|realistic, WB_E2E_MODE=lite|full, WB_RRWEB_PROFILE=default|dom-allow|
 // full-capture, WB_RRWEB_DURATION_MS, WB_RRWEB_CLICK_EVERY_MS, WB_RRWEB_OUT (JSON),
 // WB_RRWEB_SCREENSHOT (PNG of the Player), WB_RRWEB_RELOAD_AFTER_START=1 (resources load inside
-// the recording, so their bodies can reach the archive). Wrap it in `timeout`.
+// the recording, so their bodies can reach the archive), WB_RRWEB_ARCHIVE_OUT (a copy of the
+// archive, passphrase "webblackbox-rrweb-measure"). Wrap it in `timeout`.
 
 import { createReadStream } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
@@ -53,7 +54,7 @@ async function main() {
   const protocol = await import(
     pathToFileURL(resolve(repoRoot, "packages/protocol/dist/index.js")).href
   );
-  const { WebBlackboxPlayer } = await import(
+  const { RrwebDomReplay, WebBlackboxPlayer } = await import(
     pathToFileURL(resolve(repoRoot, "packages/player-sdk/dist/index.js")).href
   );
   const heavyRows = Number(process.env.WB_RRWEB_HEAVY_ROWS ?? 0) || undefined;
@@ -127,7 +128,7 @@ async function main() {
     const player = await WebBlackboxPlayer.open(archive.bytes, { passphrase });
     result.archive = { bytes: archive.bytes.byteLength, ...(await analyzeArchive(player)) };
     result.masking = await checkMasking(player);
-    result.clickAccuracy = checkClicks(player, clicks);
+    result.clickAccuracy = checkClicks(player, clicks, RrwebDomReplay);
 
     if (checkPlayer && result.archive.rrwebBatches > 0) {
       result.player = await checkInPlayer(browser, archive.path);
@@ -299,7 +300,14 @@ async function stopAndExport(popup, tabId) {
   );
   assert(exported?.ok === true, "Export failed", exported);
   const path = await harness.waitForDownload();
-  return { path, bytes: new Uint8Array(await readFile(path)) };
+  const bytes = new Uint8Array(await readFile(path));
+
+  // WB_RRWEB_ARCHIVE_OUT keeps a copy of the archive (fixtures, later analysis).
+  if (process.env.WB_RRWEB_ARCHIVE_OUT) {
+    await writeFile(process.env.WB_RRWEB_ARCHIVE_OUT, bytes);
+  }
+
+  return { path, bytes };
 }
 
 const DOM_TYPES = ["dom.snapshot", "dom.mutation.batch", "dom.rrweb.event", "dom.diff"];
@@ -377,61 +385,52 @@ async function checkMasking(player) {
 }
 
 /** Node id → { tag, id, cls } from every full snapshot and added node of the rrweb log. */
-function buildNodeIndex(rrwebEvents) {
-  const nodes = new Map();
-  const visit = (node) => {
-    if (!node || typeof node !== "object") return;
-    if (typeof node.id === "number" && node.type === 2) {
-      nodes.set(node.id, {
-        tag: String(node.tagName ?? "").toLowerCase(),
-        id: node.attributes?.id ?? null,
-        cls: node.attributes?.class ?? null
-      });
-    }
-    for (const child of node.childNodes ?? []) visit(child);
-  };
-
-  for (const event of rrwebEvents) {
-    if (event.type === 2) visit(event.data?.node);
-    if (event.type === 3 && event.data?.source === 0) {
-      for (const add of event.data.adds ?? []) visit(add.node);
-    }
-  }
-
-  return nodes;
-}
-
 function describes(target, expected) {
   if (expected.id) return target.id === expected.id;
   return target.tag === expected.tag && (target.cls ?? null) === (expected.cls || null);
 }
 
 /**
- * Click k of the script against the k-th recorded click (the order is the same; timestamps are
- * not comparable: the page handles a click late while it is busy re-rendering).
+ * Click k of the script against our k-th recorded `user.click` (always recorded; scripted and
+ * recorded times are not comparable: the page handles a click late while it is busy
+ * re-rendering), then the rrweb click recorded with it (player-sdk `RrwebDomReplay.findClick`)
+ * resolved through the rebuilt DOM. Clicks inside a pressure-mode gap have no rrweb click.
  */
-function checkClicks(player, clicks) {
+function checkClicks(player, clicks, RrwebDomReplay) {
   const events = player.query();
-  const rrwebEvents = events
-    .filter((event) => event.type === "dom.rrweb.event" && event.data?.schema === "rrweb/v2")
-    .flatMap((event) => event.data.events)
-    .sort((left, right) => left.timestamp - right.timestamp);
-  const nodes = buildNodeIndex(rrwebEvents);
-  const rrwebClicks = rrwebEvents.filter(
-    (event) => event.type === 3 && event.data?.source === 2 && event.data?.type === 2
-  );
+  const replay = RrwebDomReplay.fromEvents(events);
   const ourClicks = events
     .filter((event) => event.type === "user.click")
     .sort((left, right) => left.t - right.t);
   let rrwebHits = 0;
+  let rrwebFound = 0;
+  let inGaps = 0;
   let ourHits = 0;
 
   clicks.forEach((click, index) => {
-    const rrwebTarget = rrwebClicks[index] ? nodes.get(rrwebClicks[index].data.id) : null;
+    const ours = ourClicks[index];
+    const rrwebClick = ours
+      ? replay.findClick(ours.mono, { x: ours.data?.x ?? 0, y: ours.data?.y ?? 0 })
+      : null;
+    const node = rrwebClick ? replay.domAt(rrwebClick.mono)?.tree.get(rrwebClick.nodeId) : null;
+
+    if (rrwebClick) {
+      rrwebFound += 1;
+    } else if (ours && replay.domAt(ours.mono)?.gap) {
+      inGaps += 1;
+    }
+
+    rrwebHits +=
+      node &&
+      describes(
+        { tag: node.tagName, id: node.attributes.id ?? null, cls: node.attributes.class ?? null },
+        click
+      )
+        ? 1
+        : 0;
     // Our target names are hashed under masking profiles: match the tag and the recorded box.
-    const ourTarget = ourClicks[index]?.data?.target;
+    const ourTarget = ours?.data?.target;
     const box = ourTarget?.rect;
-    rrwebHits += rrwebTarget && describes(rrwebTarget, click) ? 1 : 0;
     ourHits +=
       String(ourTarget?.tag ?? "").toLowerCase() === click.tag &&
       box &&
@@ -445,8 +444,9 @@ function checkClicks(player, clicks) {
 
   return {
     scripted: clicks.length,
-    rrwebClicks: rrwebClicks.length,
+    rrwebClicks: rrwebFound,
     rrwebExactTarget: rrwebHits,
+    rrwebClicksInGaps: inGaps,
     ourClicks: ourClicks.length,
     ourTargetMatchesBox: ourHits
   };

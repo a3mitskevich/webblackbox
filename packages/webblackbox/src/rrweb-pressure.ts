@@ -51,8 +51,9 @@ type CostSample = { at: number; ms: number };
 
 /**
  * Changes in one mutation delivery as rrweb would record them, counted up to `limit` (then it
- * stops): records, removed nodes, and added nodes with their element descendants (rrweb records
- * each added node). Much cheaper than rrweb's serialization of the same delivery.
+ * stops): records, removed nodes, and added nodes with all their descendants (rrweb records each
+ * added node, text nodes included). A walk is much cheaper than rrweb's serialization of the same
+ * delivery.
  */
 export function countRecordChanges(records: readonly MutationRecord[], limit: number): number {
   let total = 0;
@@ -61,7 +62,7 @@ export function countRecordChanges(records: readonly MutationRecord[], limit: nu
     total += 1 + record.removedNodes.length;
 
     for (const node of Array.from(record.addedNodes)) {
-      total += 1 + (node instanceof Element ? node.getElementsByTagName("*").length : 0);
+      total += countSubtreeNodes(node, limit - total + 1);
 
       if (total > limit) {
         return total;
@@ -74,6 +75,21 @@ export function countRecordChanges(records: readonly MutationRecord[], limit: nu
   }
 
   return total;
+}
+
+/** A node and its descendants, counted up to `limit` + 1. */
+function countSubtreeNodes(node: Node, limit: number): number {
+  const walker = (node.ownerDocument ?? (node as Document)).createTreeWalker(
+    node,
+    NodeFilter.SHOW_ALL
+  );
+  let count = 1;
+
+  while (count <= limit && walker.nextNode()) {
+    count += 1;
+  }
+
+  return count;
 }
 
 /** Nodes of a document (all kinds, shadow roots excluded), counted up to `limit` + 1. */

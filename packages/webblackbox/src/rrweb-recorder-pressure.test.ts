@@ -120,9 +120,9 @@ describe("DOM counting", () => {
     await settle();
     observer.disconnect();
 
-    // one record: the removed <p>, the added <table> and its 6 element descendants
-    // (tbody, 2 tr, 3 td).
-    expect(countRecordChanges(seen, 1_000)).toBe(1 + 1 + 1 + 6);
+    // one record: the removed <p>, the added <table> and its 9 descendants
+    // (tbody, 2 tr, 3 td, 3 texts).
+    expect(countRecordChanges(seen, 1_000)).toBe(1 + 1 + 1 + 9);
     expect(countRecordChanges(seen, 2)).toBeGreaterThan(2);
   });
 });
