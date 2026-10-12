@@ -10,10 +10,18 @@ import {
   SERVER_INSTRUCTIONS,
   SERVER_NAME,
   UNTRUSTED_CONTENT_NOTICE,
+  UNTRUSTED_IMAGE_NOTICE,
   createServer,
   nowUtcIsoString,
   type CreateServerOptions
 } from "./index.js";
+import { writeArchive } from "./tools/test-archive.js";
+import { checkoutScenario, SCREENSHOT_AFTER } from "./tools/test-scenario.js";
+
+const NO_DECODER: CreateServerOptions["frameDecoder"] = async () => ({
+  decoder: null,
+  note: "no decoder"
+});
 
 async function connectClient(options: CreateServerOptions = {}): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -95,6 +103,87 @@ describe("mcp-server", () => {
     });
     expect(outsideMaps.isError).toBe(true);
     expect(readTextBlocks(outsideMaps).join("\n")).toContain("outside the allowed directories");
+
+    await client.close();
+  });
+
+  it("registers the drill-down tools as read-only archive tools", async () => {
+    const client = await connectClient({ frameDecoder: NO_DECODER });
+    const { tools } = await client.listTools();
+
+    for (const name of ["timeline", "action_detail", "request_detail", "frame_at"]) {
+      const tool = tools.find((entry) => entry.name === name);
+
+      expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
+      expect(tool?.inputSchema.required).toContain("path");
+      expect(Object.keys(tool?.inputSchema.properties ?? {})).toContain("passphrase");
+    }
+
+    expect(SERVER_INSTRUCTIONS).toMatch(/timeline.*action_detail.*request_detail.*frame_at/s);
+
+    await client.close();
+  });
+
+  it("frames drill-down JSON and images as untrusted archive content", async () => {
+    const dir = await realpath(await mkdtemp(join(tmpdir(), "wb-mcp-server-")));
+    const { events, blobs } = checkoutScenario();
+    const archive = await writeArchive(dir, events, blobs);
+    const client = await connectClient({ allowedDirs: [dir], frameDecoder: NO_DECODER });
+
+    const result = await client.callTool({
+      name: "frame_at",
+      arguments: { path: archive, actionId: "A-1", offsetMs: 300 }
+    });
+    const content = result.content as Array<
+      { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+    >;
+
+    expect(result.isError).not.toBe(true);
+    expect(content.map((block) => block.type)).toEqual(["text", "text", "text", "image"]);
+    expect(content[0]).toEqual({ type: "text", text: UNTRUSTED_CONTENT_NOTICE });
+    expect(JSON.parse((content[1] as { text: string }).text)).toMatchObject({
+      frame: { eventId: "E-14", distanceMs: 0 }
+    });
+    expect((content[2] as { text: string }).text.startsWith(UNTRUSTED_IMAGE_NOTICE)).toBe(true);
+    expect(content[3]).toEqual({
+      type: "image",
+      mimeType: "image/webp",
+      data: Buffer.from(SCREENSHOT_AFTER.bytes).toString("base64")
+    });
+
+    const timeline = await client.callTool({
+      name: "timeline",
+      arguments: { path: archive, aroundEventId: "E-12", windowMs: 15 }
+    });
+    const [notice, payload] = readTextBlocks(timeline);
+
+    expect(notice).toBe(UNTRUSTED_CONTENT_NOTICE);
+    expect(JSON.parse(payload ?? "")).toMatchObject({ total: 3 });
+
+    await client.close();
+  });
+
+  it("guards the drill-down tools with --allow-dir and reports bad arguments as errors", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "wb-mcp-server-")));
+    const allowed = join(root, "allowed");
+    await mkdir(allowed);
+    const { events, blobs } = checkoutScenario();
+    const archive = await writeArchive(allowed, events, blobs);
+    const client = await connectClient({ allowedDirs: [allowed], frameDecoder: NO_DECODER });
+
+    const outside = await client.callTool({
+      name: "request_detail",
+      arguments: { path: join(root, "other.webblackbox"), requestId: "R-1" }
+    });
+    const unknown = await client.callTool({
+      name: "action_detail",
+      arguments: { path: archive, actionId: "nope" }
+    });
+
+    expect(outside.isError).toBe(true);
+    expect(readTextBlocks(outside).join("\n")).toContain("outside the allowed directories");
+    expect(unknown.isError).toBe(true);
+    expect(readTextBlocks(unknown).join("\n")).toContain("Unknown actionId");
 
     await client.close();
   });
