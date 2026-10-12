@@ -3,8 +3,11 @@
 // Regression e2e for MV3 service-worker restarts:
 // 1. record + stop a lite session (the offscreen document stays alive),
 // 2. plant an orphaned session in the pipeline IndexedDB,
-// 3. terminate the service worker through CDP (`Target.closeTarget`),
-// 4. start a new session — it must succeed (the offscreen pipeline is reachable again),
+// 3. start another lite session and terminate the service worker through CDP
+//    (`Target.closeTarget`) while it records,
+// 4. the recording the worker left running is listed as interrupted and exports a valid
+//    archive that the built player-sdk opens: its events and its interruption are there,
+// 5. start a new session — it must succeed (the offscreen pipeline is reachable again),
 //    export it, and the orphaned IndexedDB session must have been swept.
 
 import { spawn, spawnSync } from "node:child_process";
@@ -14,8 +17,15 @@ import { createServer } from "node:http";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { openArchive } from "./lib/archive-checks.mjs";
+
 const root = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(root, "..");
+const workspaceRoot = resolve(appRoot, "../..");
+const playerSdkEntry = resolve(workspaceRoot, "packages/player-sdk/dist/index.js");
+const exportPassphrase = "webblackbox-e2e-passphrase";
+// Logged while the interrupted session records; the default policy keeps console metadata only.
+const interruptedMarker = "sw-restart-e2e-interrupted";
 
 const extensionDir = process.env.WB_E2E_EXTENSION_DIR ?? resolve(appRoot, "build");
 const remotePort = Number(process.env.WB_E2E_REMOTE_PORT ?? "9233");
@@ -25,6 +35,7 @@ const profileDir =
 const chromeLogPath = process.env.WB_E2E_LOG ?? `/tmp/webblackbox-ext-sw-restart-${Date.now()}.log`;
 const baseUrl = `http://127.0.0.1:${remotePort}`;
 const pipelineDbName = "webblackbox-flight-recorder";
+const downloadDir = process.env.WB_E2E_DOWNLOAD_DIR ?? `${profileDir}-downloads`;
 const orphanSid = `S-e2e-orphan-${Date.now()}`;
 
 const chromeCandidates = [
@@ -55,11 +66,14 @@ main().catch(async (error) => {
 
 async function main() {
   await access(resolve(extensionDir, "manifest.json"), constants.R_OK);
+  await access(playerSdkEntry, constants.R_OK);
   const chromeBinary = await resolveChromeBinary(chromeCandidates);
   const pageUrl = await startFixtureServer();
 
   await rm(profileDir, { recursive: true, force: true });
   await mkdir(profileDir, { recursive: true });
+  await rm(downloadDir, { recursive: true, force: true });
+  await mkdir(downloadDir, { recursive: true });
   startChrome(chromeBinary);
 
   const version = await waitFor(
@@ -75,6 +89,10 @@ async function main() {
   console.log(`Extension ID: ${extensionId}`);
 
   const browserClient = await connect(version.webSocketDebuggerUrl);
+  await browserClient.send("Browser.setDownloadBehavior", {
+    behavior: "allow",
+    downloadPath: downloadDir
+  });
   const pageClient = await connect((await openTarget(pageUrl)).webSocketDebuggerUrl);
   const popupClient = await connect(
     (await openTarget(`chrome-extension://${extensionId}/popup.html`)).webSocketDebuggerUrl
@@ -115,8 +133,58 @@ async function main() {
     "Failed to plant orphan session"
   );
 
+  const interrupted = await startRecording(popupClient, pageClient, pageUrl);
+  await pageClient.evaluate(
+    `(() => { console.info(${JSON.stringify(interruptedMarker)}); return true; })()`
+  );
+  // Long enough for the batch to reach the offscreen pipeline and the Start checkpoint to land.
+  await waitFor(
+    async () =>
+      (await readLiveCheckpointSids(popupClient)).includes(interrupted.sid) ? true : null,
+    10_000,
+    "The running recording was not checkpointed"
+  );
+  await sleep(1_500);
+  console.log("Interrupted session (recording at SW stop):", JSON.stringify(interrupted));
+
   await terminateServiceWorker(browserClient, swTarget.id);
   console.log("Service worker terminated.");
+
+  const listed = await waitFor(
+    async () => {
+      const sessions = await requestSessionList(popupClient);
+      const row = sessions.find((session) => session?.sid === interrupted.sid);
+      return row && row.active === false && row.interruption ? row : null;
+    },
+    20_000,
+    "The recording the worker left running is not listed as interrupted"
+  );
+  assert(
+    listed.interruption.reason === "service-worker-restart",
+    "Interrupted session lists the wrong reason",
+    listed
+  );
+  await waitFor(
+    async () => {
+      const text = await pageClient.evaluate(
+        `document.querySelector('[data-webblackbox-indicator="true"]')?.textContent ?? null`
+      );
+      return text ? null : true;
+    },
+    10_000,
+    "Recording indicator of the interrupted session did not clear"
+  );
+  console.log("Listed as interrupted:", JSON.stringify(listed.interruption));
+
+  // The worker's start-up sweep has run (UI requests wait for it): the recording's data is kept.
+  const storedBeforeExport = await listStoredSessionIds(popupClient);
+  assert(
+    storedBeforeExport.includes(interrupted.sid),
+    "The interrupted session must survive the orphan sweep",
+    { storedBeforeExport, interrupted }
+  );
+
+  await checkInterruptedArchive(popupClient, interrupted.sid);
 
   const second = await recordAndStop(popupClient, pageClient, pageUrl);
   console.log("Second session (after SW restart):", JSON.stringify(second));
@@ -144,6 +212,31 @@ async function main() {
 }
 
 async function recordAndStop(popupClient, pageClient, pageUrl) {
+  const { sid, tabId } = await startRecording(popupClient, pageClient, pageUrl);
+
+  const stop = await popupClient.evaluate(`
+    (async () => {
+      const response = await chrome.runtime.sendMessage({ kind: 'ui.stop', tabId: ${tabId} });
+      return { ok: response?.ok !== false, response };
+    })()
+  `);
+  assert(stop?.ok === true, "Failed to stop lite session", stop);
+
+  await waitFor(
+    async () => {
+      const text = await pageClient.evaluate(
+        `document.querySelector('[data-webblackbox-indicator="true"]')?.textContent ?? null`
+      );
+      return text ? null : true;
+    },
+    10_000,
+    "Recording indicator did not clear"
+  );
+
+  return { sid, tabId };
+}
+
+async function startRecording(popupClient, pageClient, pageUrl) {
   const start = await popupClient.evaluate(`
     (async () => {
       const tabs = await chrome.tabs.query({});
@@ -177,26 +270,106 @@ async function recordAndStop(popupClient, pageClient, pageUrl) {
   const sid = sessions[0]?.sid;
   assert(typeof sid === "string", "Active session was not persisted", sessions);
 
-  const stop = await popupClient.evaluate(`
+  return { sid, tabId: start.tabId };
+}
+
+/** The session list a UI page gets (it also wakes the worker). */
+async function requestSessionList(popupClient) {
+  return popupClient.evaluate(`
     (async () => {
-      const response = await chrome.runtime.sendMessage({ kind: 'ui.stop', tabId: ${start.tabId} });
-      return { ok: response?.ok !== false, response };
+      try {
+        const response = await chrome.runtime.sendMessage({ kind: 'ui.request-session-list' });
+        return Array.isArray(response?.sessions) ? response.sessions : [];
+      } catch {
+        return [];
+      }
     })()
   `);
-  assert(stop?.ok === true, "Failed to stop lite session", stop);
+}
 
-  await waitFor(
+async function readLiveCheckpointSids(popupClient) {
+  return popupClient.evaluate(`
+    (async () => {
+      const store = await chrome.storage.session.get('webblackbox.atRest.liveSessions');
+      const rows = store['webblackbox.atRest.liveSessions'];
+      return Array.isArray(rows) ? rows.map((row) => row?.sid) : [];
+    })()
+  `);
+}
+
+/** Exports the interrupted recording and opens the archive with the built player-sdk. */
+async function checkInterruptedArchive(popupClient, sid) {
+  const exportStartedAt = Date.now();
+  const exported = await exportSession(popupClient, sid);
+  assert(exported?.ok === true, "Export of the interrupted session failed", exported);
+
+  let seenDownloads = [];
+  const download = await waitFor(
     async () => {
-      const text = await pageClient.evaluate(
-        `document.querySelector('[data-webblackbox-indicator="true"]')?.textContent ?? null`
+      const rows = await popupClient.evaluate(`
+        (async () => {
+          const rows = await chrome.downloads.search({ orderBy: ['-startTime'], limit: 20 });
+          return rows.map((row) => ({
+            filename: row.filename,
+            state: row.state,
+            startTime: row.startTime
+          }));
+        })()
+      `);
+      seenDownloads = rows;
+      // Downloads made through CDP's download behavior can be named by GUID: the newest one
+      // started after the export is the archive.
+      const row = rows.find(
+        (item) =>
+          typeof item.filename === "string" &&
+          (item.filename.includes(sid) || /\.(webblackbox|zip)$/.test(item.filename)) &&
+          Date.parse(item.startTime) >= exportStartedAt - 4_000
       );
-      return text ? null : true;
+      return row?.state === "complete" ? row : null;
     },
-    10_000,
-    "Recording indicator did not clear"
-  );
+    30_000,
+    "The interrupted session's archive was not downloaded"
+  ).catch((error) => {
+    console.error(
+      "Downloads seen:",
+      JSON.stringify(seenDownloads),
+      "export:",
+      JSON.stringify(exported)
+    );
+    throw error;
+  });
+  const player = await openArchive({
+    archivePath: download.filename,
+    passphrase: exportPassphrase,
+    playerSdkEntry
+  });
+  const report = player.getCaptureCompleteness().export;
+  const types = new Set(player.events.map((event) => event.type));
+  const markerFound = types.has("meta.config") && types.has("console.entry");
 
-  return { sid, tabId: start.tabId };
+  assert(
+    report.interruption?.reason === "service-worker-restart",
+    "The interrupted session's archive does not record its interruption",
+    report
+  );
+  assert(
+    report.recorded && !report.truncations.some((row) => row.reason !== "screenshots-excluded"),
+    "The interrupted session's archive left recorded events out",
+    report
+  );
+  assert(
+    markerFound,
+    "The interrupted session's archive lacks the events recorded before the stop",
+    { types: [...types] }
+  );
+  console.log(
+    "Interrupted archive:",
+    JSON.stringify({
+      file: download.filename,
+      events: player.events.length,
+      export: { storedEvents: report.storedEvents, interruption: report.interruption }
+    })
+  );
 }
 
 async function exportSession(popupClient, sid) {
@@ -205,7 +378,7 @@ async function exportSession(popupClient, sid) {
       const response = await chrome.runtime.sendMessage({
         kind: 'ui.export',
         sid: ${JSON.stringify(sid)},
-        passphrase: 'webblackbox-e2e-passphrase'
+        passphrase: ${JSON.stringify(exportPassphrase)}
       });
       return { ok: response?.ok !== false, response };
     })()
