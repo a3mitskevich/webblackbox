@@ -60,6 +60,8 @@ const PIPELINE_WRITE_OPS: ReadonlySet<OffscreenPipelineRequestMessage["op"]> = n
 ]);
 /** Pipeline writes in progress: a final flush waits for them. */
 const pendingPipelineWrites = new Set<Promise<void>>();
+/** How long a final flush waits for writes in progress; under the worker's 3 s bound. */
+const PIPELINE_WRITES_WAIT_MS = 2_000;
 /** Final flushes run in turn, so each settles only once everything before it is written. */
 let pipelinesFlushed: Promise<void> = Promise.resolve();
 // Every pipeline writes through this AES-GCM storage once the service worker sends the key.
@@ -197,18 +199,34 @@ function isRequestOfKind(message: unknown, kind: string): boolean {
  * one still waits for that one's write, so the worker never closes the document mid-write.
  */
 function flushAllPipelines(): Promise<void> {
-  pipelinesFlushed = pipelinesFlushed.then(async () => {
-    await Promise.allSettled([...pendingPipelineWrites]);
-    await Promise.all(
-      [...pipelines.values()].map((pipeline) =>
-        pipeline.flush().catch((error: unknown) => {
-          console.warn("[WebBlackbox] failed to flush a recording pipeline", error);
-        })
-      )
-    );
-  });
+  pipelinesFlushed = pipelinesFlushed
+    .then(async () => {
+      // Bounded: a write that never settles must not hold every later flush back.
+      await settledWithin(Promise.allSettled([...pendingPipelineWrites]), PIPELINE_WRITES_WAIT_MS);
+      await Promise.all(
+        [...pipelines.values()].map((pipeline) =>
+          Promise.resolve()
+            .then(() => pipeline.flush())
+            .catch((error: unknown) => {
+              console.warn("[WebBlackbox] failed to flush a recording pipeline", error);
+            })
+        )
+      );
+    })
+    .catch((error: unknown) => {
+      console.warn("[WebBlackbox] failed to flush the recording pipelines", error);
+    });
 
   return pipelinesFlushed;
+}
+
+function settledWithin(work: Promise<unknown>, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+
+  return Promise.race([work.then(() => undefined), timeout]).finally(() => clearTimeout(timer));
 }
 
 function handleServiceWorkerMessage(raw: unknown): void {

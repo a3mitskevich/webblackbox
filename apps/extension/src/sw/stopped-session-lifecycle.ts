@@ -193,7 +193,9 @@ export function createStoppedSessionLifecycle(
       }
 
       // Kept now, or it stopped before its checkpoint was dropped.
-      await liveStore.forget(snapshot.sid);
+      await liveStore.forget(snapshot.sid).catch((error) => {
+        console.warn("[WebBlackbox] failed to drop a kept recording's checkpoint", error);
+      });
     }
 
     if (kept > 0) {
@@ -524,10 +526,13 @@ export function createStoppedSessionLifecycle(
     const records = await updateStoppedSessionRecords((current) => current);
     const now = Date.now();
     const recordsBySid = new Map(records.map((record) => [record.sid, record]));
-    // Running here, or left running by an earlier worker and not kept yet: not orphans.
+    // Running here, or left running by an earlier worker and not kept yet (within the retention
+    // a kept one would have, so a checkpoint that always fails to be kept does not pin its data).
     const liveSids = new Set([
       ...deps.sessionRegistry.bySid.keys(),
-      ...(await liveStore.list()).map((snapshot) => snapshot.sid)
+      ...(await liveStore.list())
+        .filter((snapshot) => snapshot.lastSeenAt + resolveSnapshotTtlMs(snapshot) > now)
+        .map((snapshot) => snapshot.sid)
     ]);
     const result = await deps.sweepStoredSessions((session) =>
       shouldSweepStoredSession({

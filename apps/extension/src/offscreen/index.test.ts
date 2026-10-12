@@ -544,6 +544,31 @@ describe("offscreen pipelines outlive their worker", () => {
     });
   });
 
+  it("does not let a write that never settles hold the tail back", async () => {
+    await startSession();
+    pipelineMock.instances[0]?.putBlob.mockImplementationOnce(() => new Promise<string>(() => {}));
+    port.emit({
+      kind: "sw.pipeline-request",
+      requestId: "R-stuck",
+      op: "putBlob",
+      sid: SID,
+      mime: "text/plain",
+      base64: "aGk="
+    });
+    await vi.waitFor(() => {
+      expect(pipelineMock.instances[0]?.putBlob).toHaveBeenCalledTimes(1);
+    });
+
+    port.disconnect();
+
+    await vi.waitFor(
+      () => {
+        expect(pipelineMock.instances[0]?.flush).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 4_000 }
+    );
+  });
+
   it("answers a restarted worker's flush request once the pipelines are written", async () => {
     await startSession();
     let resolveFlush: () => void = () => undefined;

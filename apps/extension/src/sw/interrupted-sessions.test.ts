@@ -182,6 +182,37 @@ describe("interrupted recordings", () => {
     expect(stored.filter(sweep).map((session) => session.sid)).toEqual(["S-orphan"]);
   });
 
+  it("sweeps a checkpointed recording it never managed to keep once its retention is over", async () => {
+    const retentionMs = resolveUnexportedRetentionMs(createDefaultProfile());
+    vi.useFakeTimers();
+    vi.setSystemTime(80_000 + retentionMs + 1);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const harness = createHarness({ indexedDB: {} as IDBFactory });
+    await harness.sessionArea.set({
+      [LIVE_SESSION_SNAPSHOTS_KEY]: [liveSnapshot("S-stuck", 80_000)]
+    });
+    const set = vi.mocked(harness.sessionArea.set);
+    const write = set.getMockImplementation();
+    set.mockImplementation(async (items: Record<string, unknown>) => {
+      if (STOPPED_SESSION_SNAPSHOTS_KEY in items) {
+        throw new Error("quota");
+      }
+
+      await write?.(items);
+    });
+
+    await harness.lifecycle.restoreStoppedSessions();
+    await harness.lifecycle.sweepStalePipelineSessions();
+
+    expect(storedLiveSnapshots(harness.sessionArea)).toHaveLength(1);
+    const sweep = harness.sweepStoredSessions.mock.calls[0]?.[0] as (
+      session: SessionMetadata
+    ) => boolean;
+    expect(
+      sweep({ sid: "S-stuck", tabId: 7, startedAt: 1_000, mode: "lite", url: "u", tags: [] })
+    ).toBe(true);
+  });
+
   it("drops the checkpoint of a recording that stopped before it was forgotten", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(90_000);
