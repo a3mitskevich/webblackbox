@@ -1,4 +1,4 @@
-import type { CdpRouter } from "@webblackbox/cdp-router";
+import type { BaselineDomainOptions, CdpRouter } from "@webblackbox/cdp-router";
 
 import { withCdpCommandTimeout } from "./cdp-command.js";
 
@@ -16,11 +16,12 @@ export async function primeChildSession(
   router: ChildSessionPrimer,
   tabId: number,
   sessionId: string,
-  timeoutMs: number
+  timeoutMs: number,
+  baseline: BaselineDomainOptions = {}
 ): Promise<boolean> {
   const outcome = await withCdpCommandTimeout(
     (async () => {
-      await router.enableBaseline(tabId, sessionId);
+      await router.enableBaseline(tabId, sessionId, baseline);
       await router.enableAutoAttach(tabId, undefined, sessionId);
       await router.send({ tabId, sessionId }, "DOMStorage.enable").catch(() => undefined);
       await router.send({ tabId, sessionId }, "Performance.enable").catch(() => undefined);

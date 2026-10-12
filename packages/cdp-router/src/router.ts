@@ -12,6 +12,22 @@ import type {
 
 const BASELINE_DOMAINS = ["Network.enable", "Runtime.enable", "Log.enable", "Page.enable"] as const;
 
+/**
+ * `Network.enable` buffer sizes. Chrome keeps response bodies for `Network.getResponseBody` in a
+ * per-session buffer (about 200 MB in total and 10 MB per resource by default) and evicts the
+ * oldest bodies past it.
+ */
+export type NetworkEnableParams = {
+  maxTotalBufferSize?: number;
+  maxResourceBufferSize?: number;
+  /** Longest request body inlined in `Network.requestWillBeSent`. */
+  maxPostDataSize?: number;
+};
+
+export type BaselineDomainOptions = {
+  network?: NetworkEnableParams;
+};
+
 const DEFAULT_AUTO_ATTACH_OPTIONS: AutoAttachOptions = {
   autoAttach: true,
   waitForDebuggerOnStart: false,
@@ -31,7 +47,7 @@ export interface CdpRouter {
     method: string,
     params?: Record<string, unknown>
   ): Promise<TResult>;
-  enableBaseline(tabId: number, sessionId?: string): Promise<void>;
+  enableBaseline(tabId: number, sessionId?: string, options?: BaselineDomainOptions): Promise<void>;
   enableAutoAttach(
     tabId: number,
     options?: Partial<AutoAttachOptions>,
@@ -100,11 +116,16 @@ export class DefaultCdpRouter implements CdpRouter {
     return this.transport.sendCommand<TResult>(target, method, params);
   }
 
-  public async enableBaseline(tabId: number, sessionId?: string): Promise<void> {
+  public async enableBaseline(
+    tabId: number,
+    sessionId?: string,
+    options: BaselineDomainOptions = {}
+  ): Promise<void> {
     const target: DebuggerRoot | DebuggerChild = sessionId ? { tabId, sessionId } : { tabId };
 
     for (const method of BASELINE_DOMAINS) {
-      await this.send(target, method);
+      const params = method === "Network.enable" ? withoutUndefined(options.network) : undefined;
+      await this.send(target, method, params);
     }
   }
 
@@ -212,6 +233,14 @@ export class DefaultCdpRouter implements CdpRouter {
       sessions?.delete(params.sessionId);
     }
   }
+}
+
+/** The defined fields, or undefined when none are: a bare `Network.enable` keeps Chrome's defaults. */
+function withoutUndefined(
+  params: NetworkEnableParams | undefined
+): Record<string, unknown> | undefined {
+  const entries = Object.entries(params ?? {}).filter(([, value]) => value !== undefined);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 export function createCdpRouter(transport: DebuggerTransport): CdpRouter {

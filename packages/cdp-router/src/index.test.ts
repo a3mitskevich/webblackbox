@@ -88,6 +88,35 @@ describe("cdp-router", () => {
     ]);
   });
 
+  it("enables the network domain with the given buffer sizes", async () => {
+    const transport = new FakeDebuggerTransport();
+    const router = createCdpRouter(transport);
+
+    await router.enableBaseline(5, "child-1", {
+      network: { maxTotalBufferSize: 400_000_000, maxResourceBufferSize: undefined }
+    });
+
+    expect(transport.commands[0]).toEqual({
+      debuggee: { tabId: 5, sessionId: "child-1" },
+      method: "Network.enable",
+      params: { maxTotalBufferSize: 400_000_000 }
+    });
+    expect(transport.commands.slice(1).map((item) => item.params)).toEqual([
+      undefined,
+      undefined,
+      undefined
+    ]);
+  });
+
+  it("keeps Chrome's network buffers when no size is given", async () => {
+    const transport = new FakeDebuggerTransport();
+    const router = createCdpRouter(transport);
+
+    await router.enableBaseline(5, undefined, { network: {} });
+
+    expect(transport.commands[0]?.params).toBeUndefined();
+  });
+
   it("enables auto attach using default flatten session settings", async () => {
     const transport = new FakeDebuggerTransport();
     const router = createCdpRouter(transport);

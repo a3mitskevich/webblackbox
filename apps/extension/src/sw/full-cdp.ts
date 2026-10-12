@@ -1,9 +1,13 @@
-import type { CdpRouter } from "@webblackbox/cdp-router";
+import type { BaselineDomainOptions, CdpRouter } from "@webblackbox/cdp-router";
 import { DEFAULT_RECORDER_CONFIG } from "@webblackbox/protocol";
 import { BODY_SKIPPED_RAW_TYPE, type RawRecorderEvent } from "@webblackbox/recorder";
 
 import { resolveSourceMapCapture, type SourceMapCapture } from "../shared/profiles/resolve.js";
-import { transformResponseBodyForCapture, type BodyCaptureRule } from "./body-capture-utils.js";
+import {
+  normalizeBodyCaptureMaxBytes,
+  transformResponseBodyForCapture,
+  type BodyCaptureRule
+} from "./body-capture-utils.js";
 import { withCdpCommandTimeout, type CdpCommandOutcome } from "./cdp-command.js";
 import { primeChildSession } from "./child-session-prime.js";
 import {
@@ -13,6 +17,7 @@ import {
   type FinishedResponse,
   type ReadBody
 } from "./full-body-capture.js";
+import { resolveNetworkEnableParams } from "./network-buffers.js";
 import {
   buildRequestMetaKey,
   deleteRequestMeta,
@@ -169,7 +174,7 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
       // Set before the domains are enabled: their first events already read bodies through it.
       runtime.cdpRouter = router;
       runtime.enabledCdpSessions.clear();
-      await router.enableBaseline(runtime.tabId);
+      await router.enableBaseline(runtime.tabId, undefined, resolveBaselineOptions(runtime));
       runtime.enabledCdpSessions.add("root");
       await router.enableAutoAttach(runtime.tabId);
       await router.send({ tabId: runtime.tabId }, "DOMStorage.enable").catch((error: unknown) => {
@@ -277,7 +282,8 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
       runtime.cdpRouter,
       runtime.tabId,
       childSessionId,
-      CHILD_SESSION_PRIME_TIMEOUT_MS
+      CHILD_SESSION_PRIME_TIMEOUT_MS,
+      resolveBaselineOptions(runtime)
     );
 
     if (!primed) {
@@ -416,6 +422,15 @@ export function createFullCdpController(deps: FullCdpDeps): FullCdpController {
       mono: monotonicTime(),
       payload
     });
+  }
+
+  /** Network buffers sized from the session's body limit, so bodies are still held when read. */
+  function resolveBaselineOptions(runtime: SessionRuntime): BaselineDomainOptions {
+    const bodyLimitBytes = isFullBodyCaptureEnabled(runtime)
+      ? normalizeBodyCaptureMaxBytes(runtime.config.sampling.bodyCaptureMaxBytes)
+      : 0;
+
+    return { network: resolveNetworkEnableParams(bodyLimitBytes) };
   }
 
   function isFullBodyCaptureEnabled(runtime: SessionRuntime): boolean {
