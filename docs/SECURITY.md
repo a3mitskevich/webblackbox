@@ -2,9 +2,9 @@
 
 ## Extension Permissions
 
-The default (`dev`) build is the one `pnpm build` and `pnpm package:chrome` produce. It requests `debugger` (CDP for the Full engine), `tabs`, `webRequest`, `webNavigation`, `tabCapture` and persistent `<all_urls>` host access. The manifest declares no static content scripts: by default the service worker registers the content script for all pages at `document_start`, and Options → Performance & sampling can switch it to injection on Start only. In both modes nothing is recorded until the user presses Start in a tab.
+The default (`dev`) build is the one `pnpm build` and `pnpm --filter @webblackbox/extension zip` produce. It requests `debugger` (CDP for the Full engine), `tabs`, `webRequest`, `webNavigation`, `tabCapture` and persistent `<all_urls>` host access. The manifest declares no static content scripts: by default the service worker registers the content script for all pages at `document_start`, and Options → Performance & sampling can switch it to injection on Start only. In both modes nothing is recorded until the user presses Start in a tab.
 
-The store-safe build (`node scripts/build-extension.mjs --profile store-safe`) uses `activeTab` and programmatic injection after a user gesture. It does not include `debugger`, `tabs`, `webRequest`, persistent `<all_urls>` host permissions, or always-on all-sites content scripts.
+The store-safe build (`pnpm --filter @webblackbox/extension build:store-safe`, the WXT mode `store-safe`) uses `activeTab` and programmatic injection after a user gesture. It does not include `debugger`, `tabs`, `webRequest`, persistent `<all_urls>` host permissions, or always-on all-sites content scripts.
 
 ## Data Flow
 

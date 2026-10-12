@@ -92,20 +92,20 @@ Watch during development (`wxt` dev server: pages reload on save, scripts rebuil
 pnpm --filter @webblackbox/extension dev
 ```
 
-Then load `apps/extension/build` in `chrome://extensions/` with `Developer mode` enabled. The extension is built with [WXT](https://wxt.dev) (`apps/extension/wxt.config.ts`): one entrypoint per extension context in `apps/extension/entrypoints/`, each a thin wrapper over its `src/` module. The manifest fields that are not derived from the entrypoints, the `dev` / `store-safe` profiles and the build checks live in `apps/extension/scripts/lib/extension-build.mjs`; there is no static manifest file. A `dev` server build adds WXT's reload command, a `localhost` host permission and the dev server to the CSP; `build` does not.
+Then load `apps/extension/.output/chrome-mv3` in `chrome://extensions/` with `Developer mode` enabled. The extension is built with [WXT](https://wxt.dev) and keeps to its defaults (`apps/extension/wxt.config.ts`): one entrypoint per extension context in `apps/extension/entrypoints/`, each calling its `src/` module's start function from `main()`; output in `apps/extension/.output/chrome-mv3/`; `wxt zip` for the package. The manifest fields that are not derived from the entrypoints, the `dev` / `store-safe` profiles (`store-safe` is a WXT mode) and the build checks live in `apps/extension/scripts/lib/extension-build.mjs`; there is no static manifest file. `wxt dev` (`pnpm dev`) adds WXT's reload command, a `localhost` host permission and the dev server to the CSP and writes `.output/chrome-mv3-dev/`; `build` does not.
 
 Useful extension commands:
 
 ```bash
-pnpm --filter @webblackbox/extension verify          # lint, typecheck, test, package:chrome
+pnpm --filter @webblackbox/extension verify          # lint, typecheck, test, zip
 pnpm --filter @webblackbox/extension e2e:check
 pnpm --filter @webblackbox/extension e2e:fullchain:lite
 pnpm --filter @webblackbox/extension e2e:fullchain:full
 pnpm --filter @webblackbox/extension e2e:perf:lite
-pnpm --filter @webblackbox/extension package:chrome  # zip in apps/extension/dist
+pnpm --filter @webblackbox/extension zip             # zip in apps/extension/.output
 ```
 
-The `e2e:*` scripts are Node scripts that drive a real Chrome over CDP against `apps/extension/build`, so build first. They need a Chrome binary: set `WB_E2E_CHROME_BIN` (the built-in fallbacks are macOS and `/usr/bin` paths). They run headless by default; `WB_E2E_HEADLESS=0` shows the window. `apps/extension/package.json` lists the rest (Full completeness, CDP tab isolation, injection modes, service worker restart, tabs context, at-rest encryption, UI screenshots, memory).
+The `e2e:*` scripts are Node scripts that drive a real Chrome over CDP against `apps/extension/.output/chrome-mv3` (`WB_E2E_EXTENSION_DIR` overrides it), so build first. They need a Chrome binary: set `WB_E2E_CHROME_BIN` (the built-in fallbacks are macOS and `/usr/bin` paths). They run headless by default; `WB_E2E_HEADLESS=0` shows the window. `apps/extension/package.json` lists the rest (Full completeness, CDP tab isolation, injection modes, service worker restart, tabs context, at-rest encryption, UI screenshots, memory).
 
 UI strings of the extension pages live in per-feature fragments,
 `apps/extension/src/shared/locales/<feature>.<locale>.json`, one per locale (`en`, `ru`, `zh-CN`).

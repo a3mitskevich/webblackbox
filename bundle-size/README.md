@@ -8,11 +8,11 @@
 Strict limits for the bundles that run inside recorded pages. These cost every tested page on every
 navigation and in every frame:
 
-| Bundle                                  | Where it runs                                    |
-| --------------------------------------- | ------------------------------------------------ |
-| `apps/extension/build/injected.js`      | MAIN world of the recorded page                  |
-| `apps/extension/build/content.js`       | Every recorded frame (isolated world)            |
-| `apps/extension/build/content-agent.js` | Imported by `content.js` in every recorded frame |
+| Bundle (in `apps/extension/.output/chrome-mv3/`) | Where it runs                                                  |
+| ------------------------------------------------ | -------------------------------------------------------------- |
+| `injected.js`                                    | MAIN world of the recorded page                                |
+| `content-script.js`                              | Every recorded frame (isolated world)                          |
+| `content-agent.js`                               | Injected into each frame that records, on that frame's request |
 
 Each entry has `maxBytes` and `maxGzipBytes`, measured on the minified build. It also has
 `forbidSources`, which lists path fragments that must not appear in the bundle's sourcemap
@@ -25,7 +25,10 @@ PR and say why in the entry's `note`. Changes here are expected to be rare and d
 ## Delta check: everything else
 
 Service worker, offscreen document, extension pages, the Player and the library `dist/` files are
-compared with the **base branch** instead of fixed numbers. Parallel PRs therefore no longer
+compared with the **base branch** instead of fixed numbers. WXT builds the service worker and the
+extension pages together, so their shared code sits in `chunks/` under content-hashed names: the
+entry `apps/extension/.output/chrome-mv3/chunks/*.js` tracks the sum of those files (a `*` in an
+entry's file name matches any characters). Parallel PRs therefore no longer
 conflict on `budgets.json`.
 
 - A tracked bundle fails when its raw size grows by more than `maxGrowthPercent` (8%) **and** more
@@ -34,10 +37,10 @@ conflict on `budgets.json`.
   PR body:
 
   ```text
-  size-increase: sw.js typed offscreen protocol and its validators
+  size-increase: background.js typed offscreen protocol and its validators
   ```
 
-  The target is the bundle's file name, its full path (`apps/extension/build/sw.js`) or `*` for
+  The target is the bundle's file name, its full path (`apps/extension/.output/chrome-mv3/background.js`) or `*` for
   all tracked bundles, followed by the reason. CI reads the PR body when the job runs. After you
   edit it, re-run the job.
 

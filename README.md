@@ -46,7 +46,7 @@ pnpm build
 
 ### Record with the Chrome extension
 
-1. Open `chrome://extensions/`, enable `Developer mode`, click `Load unpacked` and select `apps/extension/build`.
+1. Open `chrome://extensions/`, enable `Developer mode`, click `Load unpacked` and select `apps/extension/.output/chrome-mv3`.
 2. Open the tab you want to test and click the WebBlackbox toolbar icon. Pick a recording profile, or leave `Auto (site rules)` so your site rules choose one, check the `Lite` / `Full` engine and press `Start`. The popup then offers to reload the page: the recording starts first and the page reloads after it, so the page load is captured from scratch.
 3. Reproduce the issue. `Marker` (or Ctrl/Cmd + Shift + M) flags the moment.
 4. Press `Stop`, then `Export` with a passphrase of at least 8 characters. Every archive is encrypted; there is no plaintext export. The Sessions page lists, filters and bulk-exports the recordings kept in this browser.
