@@ -1,6 +1,7 @@
 import {
   readRequestConnection,
   readRequestTiming,
+  type ActionSpan,
   type NetworkWaterfallEntry,
   type RealtimeNetworkEntry,
   type WebBlackboxPlayer
@@ -8,7 +9,7 @@ import {
 import type { WebBlackboxEvent } from "@webblackbox/protocol";
 import * as z from "zod";
 
-import { findActionSpan } from "./archive-lookup.js";
+import { findActionByTime, findActionSpan } from "./archive-lookup.js";
 import { missingBody, viewBodyBytes, viewBodyText, type BodyView } from "./body-view.js";
 import { capList, cutText, paginate } from "./budget.js";
 import { defineArchiveTool, type ArchiveToolOutput } from "./registry.js";
@@ -111,6 +112,7 @@ export async function buildRequestDetail(
   const maxBodyBytes = args.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const { initiator, ...connection } = readRequestConnection(events);
   const span = entry?.actionId ? findActionSpan(player, entry.actionId) : null;
+  const spanByTime = entry ? findActionByTime(player, entry.startMono) : null;
   const wantsRequestBody = bodies === "both" || bodies === "request";
   const wantsResponseBody = bodies === "both" || bodies === "response";
 
@@ -129,14 +131,13 @@ export async function buildRequestDetail(
       requestBody: entry && wantsRequestBody ? viewRequestBody(entry, maxBodyBytes) : null,
       responseBody:
         entry && wantsResponseBody ? await viewResponseBody(player, entry, maxBodyBytes) : null,
-      linkedAction: span
-        ? {
-            actionId: span.actId,
-            triggerEventId: span.triggerEventId,
-            startMono: span.startMono,
-            offsetMs: entry ? round2(entry.startMono - span.startMono) : null
-          }
-        : null,
+      linkedAction: span && entry ? describeAction(span, entry) : null,
+      /**
+       * The action whose time window (after its trigger, before the next action, at most 1.5 s)
+       * the request started in. The recorder links by arrival order, so `linkedAction` can be the
+       * neighbouring action or missing.
+       */
+      actionByTime: spanByTime && entry ? describeAction(spanByTime, entry) : null,
       // Socket messages are paged under `frames`; the lifecycle events stay listed here.
       events: capList(
         events
@@ -146,6 +147,15 @@ export async function buildRequestDetail(
       ),
       frames: realtime.length > 0 ? await pageFrames(player, realtime, args) : null
     }
+  };
+}
+
+function describeAction(span: ActionSpan, entry: NetworkWaterfallEntry): Record<string, unknown> {
+  return {
+    actionId: span.actId,
+    triggerEventId: span.triggerEventId,
+    startMono: span.startMono,
+    offsetMs: round2(entry.startMono - span.startMono)
   };
 }
 

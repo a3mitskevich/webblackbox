@@ -120,6 +120,40 @@ export function requireActionSpan(player: WebBlackboxPlayer, actionId: string): 
   return span;
 }
 
+/** The recorder's action span: what follows a trigger by more than this is not its own effect. */
+export const ACTION_TIME_WINDOW_MS = 1_500;
+
+export type ActionTimeWindow = {
+  startMono: number;
+  /** The next action's start, or the trigger plus `ACTION_TIME_WINDOW_MS`, whichever is first. */
+  endMono: number;
+  nextActionId: string | null;
+};
+
+/**
+ * The time after an action's trigger that belongs to it. The recorder links events to actions
+ * (`ref.act`) by arrival order, which can miss a request or give it to the neighbouring action,
+ * so the drill-down tools also show what happened in this window.
+ */
+export function actionTimeWindow(player: WebBlackboxPlayer, span: ActionSpan): ActionTimeWindow {
+  const next = player
+    .buildDerived()
+    .actionSpans.find((other) => other.startMono > span.startMono && other.actId !== span.actId);
+  const capped = span.startMono + ACTION_TIME_WINDOW_MS;
+
+  return {
+    startMono: span.startMono,
+    endMono: next ? Math.min(next.startMono, capped) : capped,
+    nextActionId: next?.actId ?? null
+  };
+}
+
+/** The action whose time window holds `mono`, if any. */
+export function findActionByTime(player: WebBlackboxPlayer, mono: number): ActionSpan | null {
+  const span = player.buildDerived().actionSpans.findLast((entry) => entry.startMono <= mono);
+  return span && mono < actionTimeWindow(player, span).endMono ? span : null;
+}
+
 export type ScreenshotRef = {
   eventId: string;
   mono: number;

@@ -325,7 +325,9 @@ function summarizeEvent(event: WebBlackboxEvent, kind: TimelineKind): string {
   switch (kind) {
     case "action": {
       const phrase = describeEventPhrase(event);
-      return joinParts([phrase.verb, phrase.target ? `"${phrase.target}"` : null, phrase.detail]);
+      return phrase.verb === "other"
+        ? event.type
+        : joinParts([phrase.verb, phrase.target ? `"${phrase.target}"` : null, phrase.detail]);
     }
     case "navigation":
       return joinParts([event.type.slice("nav.".length), asString(data?.url)]);

@@ -120,6 +120,12 @@ the ids the next tool takes (`eventId`, `requestId`, `actionId`), and times are 
 | `request_detail` | One request: status, timing phases, headers, decoded request and response bodies (JSON pretty-printed), initiator, redirects, linked action, and WebSocket/SSE messages (paged)                                                                |
 | `frame_at`       | What the page looked like at `mono` / `eventId` / `actionId` (+ `offsetMs`): the nearest screenshot, or the tab video frame, as an MCP image block with its exact time, distance and the neighbouring screenshots                              |
 
+**Linking requests to actions.** The recorder links events to an action (`ref.act`) by arrival order, which in Full
+mode can miss a click's own request or give it to the neighbouring action. `action_detail` therefore lists both
+`link: "ref"` items (linked by the recorder) and `link: "time"` items (started after the trigger and before the next
+action, at most 1.5 s, with the `recordedActionId` the recorder gave them), and `request_detail` returns
+`actionByTime` next to `linkedAction`.
+
 **Size budgets.** Results are small by default and always say when they left something out:
 
 - `timeline` pages with `limit` (default 50) and a `maxBytes` budget (default 32 KB); `truncated` and `nextCursor`

@@ -98,6 +98,7 @@ describe("request_detail", () => {
       startMono: 1_000,
       offsetMs: 10
     });
+    expect(data.actionByTime).toEqual(data.linkedAction);
   });
 
   it("decodes and pretty-prints JSON bodies", async () => {

@@ -13,10 +13,12 @@ import { extractRequestId, type WebBlackboxEvent } from "@webblackbox/protocol";
 import * as z from "zod";
 
 import {
+  actionTimeWindow,
   findNearestScreenshots,
   listScreenshots,
   requireActionSpan,
-  toScreenshotPointer
+  toScreenshotPointer,
+  type ActionTimeWindow
 } from "./archive-lookup.js";
 import { capList, cutText, shrinkListsToBudget } from "./budget.js";
 import { defineArchiveTool, type ArchiveToolOutput } from "./registry.js";
@@ -32,6 +34,11 @@ const MAX_MAX_BYTES = 256_000;
 const RAW_TARGET_MAX_BYTES = 4_000;
 const DOM_SUMMARY_MAX_BYTES = 600;
 const LABEL_CHARS = 300;
+const LINKING_NOTE =
+  "link=ref: the recorder linked it to this action (ref.act). link=time: it happened after the " +
+  "trigger and before the next action (at most 1.5 s) without that link; recordedActionId shows " +
+  "the action the recorder gave it instead. The recorder links by arrival order, so a request " +
+  "can carry the neighbouring action's id: trust the timing.";
 const VALUE_CHARS = 200;
 
 export const actionDetailInput = {
@@ -88,17 +95,15 @@ export function buildActionDetail(
 ): ArchiveToolOutput {
   const limit = args.limit ?? DEFAULT_LIMIT;
   const span = requireActionSpan(player, args.actionId);
-  const eventsById = new Map(player.events.map((event) => [event.id, event]));
-  const spanEvents = span.eventIds
-    .map((eventId) => eventsById.get(eventId))
-    .filter((event): event is WebBlackboxEvent => event !== undefined)
-    .sort((left, right) => left.mono - right.mono);
-  const trigger = eventsById.get(span.triggerEventId) ?? null;
-  const requests = findActionRequests(player.getNetworkWaterfall(), span, spanEvents);
+  const window = actionTimeWindow(player, span);
+  const linked = collectLinkedEvents(player, span, window);
+  const trigger = linked.find((entry) => entry.event.id === span.triggerEventId)?.event ?? null;
+  const requests = collectRequests(player.getNetworkWaterfall(), span, linked, window);
   const siteOrigin = player.archive.manifest.site.origin;
-  const consoleRows = spanEvents
-    .map((event) => toConsoleEntry(event, { siteOrigin }))
-    .filter((entry) => entry !== null);
+  const consoleRows = linked.flatMap(({ event, link }) => {
+    const entry = toConsoleEntry(event, { siteOrigin });
+    return entry ? [{ entry, link, recordedActionId: recordedActionOf(event, span, link) }] : [];
+  });
   const shots = findNearestScreenshots(listScreenshots(player), span.startMono);
   const offsetOf = (mono: number): number => round2(mono - span.startMono);
   const data: Record<string, unknown> = {
@@ -112,20 +117,23 @@ export function buildActionDetail(
       /** Grouped by time after the trigger, not linked by the recorder (`ref.act`). */
       derived: span.actId.startsWith("derived:")
     },
+    linking: { ...window, note: LINKING_NOTE },
     trigger: trigger ? describeTrigger(trigger) : null,
     target: trigger ? describeTarget(trigger, args.includeRawTarget !== false) : null,
     reaction: trigger?.type === "user.click" ? findClickReaction(player.events, trigger) : null,
     consequences: summarizeActionConsequences({
       startMono: span.startMono,
-      endMono: span.endMono,
-      events: spanEvents,
+      endMono: Math.max(span.endMono, ...linked.map(({ event }) => event.mono)),
+      events: linked.map(({ event }) => event),
       triggerEventId: span.triggerEventId,
-      requests,
+      requests: requests.map(({ entry }) => entry),
       maxItems: CONSEQUENCE_ITEMS
     }),
     requests: capList(
-      requests.map((entry) => ({
+      requests.map(({ entry, link }) => ({
         requestId: entry.reqId,
+        link,
+        ...(link === "time" ? { recordedActionId: entry.actionId ?? null } : {}),
         method: entry.method,
         url: compactLabel(entry.url, LABEL_CHARS),
         status: entry.status ?? null,
@@ -137,9 +145,11 @@ export function buildActionDetail(
     ),
     errors: capList(
       consoleRows
-        .filter((entry) => entry.kind !== "console")
-        .map((entry) => ({
+        .filter(({ entry }) => entry.kind !== "console")
+        .map(({ entry, link, recordedActionId }) => ({
           eventId: entry.eventId,
+          link,
+          ...recordedActionId,
           kind: entry.kind,
           level: entry.level,
           offsetMs: offsetOf(entry.mono),
@@ -149,9 +159,11 @@ export function buildActionDetail(
     ),
     console: capList(
       consoleRows
-        .filter((entry) => entry.kind === "console")
-        .map((entry) => ({
+        .filter(({ entry }) => entry.kind === "console")
+        .map(({ entry, link, recordedActionId }) => ({
           eventId: entry.eventId,
+          link,
+          ...recordedActionId,
           level: entry.level,
           offsetMs: offsetOf(entry.mono),
           message: compactLabel(entry.message, LABEL_CHARS)
@@ -159,16 +171,17 @@ export function buildActionDetail(
       limit
     ),
     dom: capList(
-      spanEvents
-        .filter((event) => event.type.startsWith("dom."))
-        .map((event) => describeDomEvent(event, offsetOf(event.mono))),
+      linked
+        .filter(({ event }) => event.type.startsWith("dom."))
+        .map(({ event, link }) => ({ ...describeDomEvent(event, offsetOf(event.mono)), link })),
       limit
     ),
     navigation: capList(
-      spanEvents
-        .filter((event) => event.type.startsWith("nav."))
-        .map((event) => ({
+      linked
+        .filter(({ event }) => event.type.startsWith("nav."))
+        .map(({ event, link }) => ({
           eventId: event.id,
+          link,
           type: event.type,
           offsetMs: offsetOf(event.mono),
           url: compactLabel(asString(asRecord(event.data)?.url) ?? "", LABEL_CHARS)
@@ -179,25 +192,70 @@ export function buildActionDetail(
       before: shots.before ? toScreenshotPointer(shots.before, span.startMono) : null,
       after: shots.after ? toScreenshotPointer(shots.after, span.startMono) : null
     },
-    eventTypes: countTypes(spanEvents)
+    eventTypes: countTypes(linked.filter(({ link }) => link === "ref").map(({ event }) => event))
   };
   const truncatedLists = shrinkListsToBudget(data, args.maxBytes ?? DEFAULT_MAX_BYTES);
 
   return { data: { ...data, truncatedLists } };
 }
 
-function findActionRequests(
+type Link = "ref" | "time";
+
+type LinkedEvent = { event: WebBlackboxEvent; link: Link };
+
+/**
+ * The action's own events (`ref`: linked by the recorder, or grouped into a derived span) and the
+ * other events of its time window (`time`), in time order.
+ */
+function collectLinkedEvents(
+  player: WebBlackboxPlayer,
+  span: ActionSpan,
+  window: ActionTimeWindow
+): LinkedEvent[] {
+  const spanIds = new Set(span.eventIds);
+  const own = player.events.filter((event) => spanIds.has(event.id));
+  const nearby = player
+    .query({ range: { monoStart: window.startMono, monoEnd: window.endMono } })
+    .filter((event) => !spanIds.has(event.id) && event.mono < window.endMono);
+
+  return [
+    ...own.map((event) => ({ event, link: "ref" as const })),
+    ...nearby.map((event) => ({ event, link: "time" as const }))
+  ].sort((left, right) => left.event.mono - right.event.mono);
+}
+
+/** The action the recorder gave a time-linked event, when it gave one. */
+function recordedActionOf(
+  event: WebBlackboxEvent,
+  span: ActionSpan,
+  link: Link
+): { recordedActionId?: string | null } {
+  return link === "time" && event.ref?.act !== span.actId
+    ? { recordedActionId: event.ref?.act ?? null }
+    : {};
+}
+
+function collectRequests(
   waterfall: readonly NetworkWaterfallEntry[],
   span: ActionSpan,
-  spanEvents: readonly WebBlackboxEvent[]
-): NetworkWaterfallEntry[] {
-  const requestIds = new Set(
-    spanEvents.map((event) => extractRequestId(event)).filter((id): id is string => Boolean(id))
+  linked: readonly LinkedEvent[],
+  window: ActionTimeWindow
+): Array<{ entry: NetworkWaterfallEntry; link: Link }> {
+  const ownRequestIds = new Set(
+    linked
+      .filter(({ link }) => link === "ref")
+      .map(({ event }) => extractRequestId(event))
+      .filter((id): id is string => Boolean(id))
   );
+  const isOwn = (entry: NetworkWaterfallEntry): boolean =>
+    entry.actionId === span.actId || ownRequestIds.has(entry.reqId);
+  const startsInWindow = (entry: NetworkWaterfallEntry): boolean =>
+    entry.startMono >= window.startMono && entry.startMono < window.endMono;
 
   return waterfall
-    .filter((entry) => entry.actionId === span.actId || requestIds.has(entry.reqId))
-    .sort((left, right) => left.startMono - right.startMono);
+    .filter((entry) => isOwn(entry) || startsInWindow(entry))
+    .sort((left, right) => left.startMono - right.startMono)
+    .map((entry) => ({ entry, link: isOwn(entry) ? "ref" : "time" }));
 }
 
 function describeTrigger(event: WebBlackboxEvent): Record<string, unknown> {

@@ -102,6 +102,54 @@ describe("action_detail", () => {
     expect(jsonBytes(budgeted.data)).toBeLessThanOrEqual(6_500);
   });
 
+  it("adds requests and errors of the action's time window the recorder did not link to it", async () => {
+    // As in Full-mode archives: the click's own request carries no ref.act, and the next
+    // click's request is linked to this action by arrival order.
+    const click = (id: string, mono: number, act: string) =>
+      fixtureEvent(id, "user.click", mono, { target: { tag: "BUTTON" } }, { ref: { act } });
+    const request = (id: string, mono: number, reqId: string, act?: string) =>
+      fixtureEvent(
+        id,
+        "network.request",
+        mono,
+        { requestId: reqId, request: { method: "GET", url: `https://a/${reqId}` } },
+        { ref: { req: reqId, ...(act ? { act } : {}) } }
+      );
+    const archive = await WebBlackboxPlayer.open(
+      await buildArchiveBytes([
+        click("K-1", 1_000, "A-1"),
+        request("Q-1", 1_004, "own-but-unlinked"),
+        fixtureEvent("Q-2", "error.exception", 1_010, { message: "boom" }, { lvl: "error" }),
+        click("K-2", 1_200, "A-2"),
+        request("Q-3", 1_210, "next-click-request", "A-1"),
+        request("Q-4", 3_000, "much-later")
+      ])
+    );
+    const first = buildActionDetail(archive, "a", { actionId: "A-1" }).data;
+    const second = buildActionDetail(archive, "a", { actionId: "A-2" }).data;
+
+    expect(first.linking).toMatchObject({ startMono: 1_000, endMono: 1_200, nextActionId: "A-2" });
+    expect((first.requests as CappedList<unknown>).items).toEqual([
+      expect.objectContaining({
+        requestId: "own-but-unlinked",
+        link: "time",
+        recordedActionId: null,
+        offsetMs: 4
+      }),
+      expect.objectContaining({ requestId: "next-click-request", link: "ref", offsetMs: 210 })
+    ]);
+    expect((first.errors as CappedList<unknown>).items).toEqual([
+      expect.objectContaining({ eventId: "Q-2", link: "time", recordedActionId: null })
+    ]);
+    expect((second.requests as CappedList<unknown>).items).toEqual([
+      expect.objectContaining({
+        requestId: "next-click-request",
+        link: "time",
+        recordedActionId: "A-1"
+      })
+    ]);
+  });
+
   it("names the tool to take ids from when the action is unknown", () => {
     expect(() => buildActionDetail(player, "a", { actionId: "nope" })).toThrow(/summarize_actions/);
   });
