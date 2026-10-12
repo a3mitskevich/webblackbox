@@ -56,7 +56,6 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "jszip": "^3.10.2",
     "vite": "8.3.3",
     "wxt": "0.21.4"
   }

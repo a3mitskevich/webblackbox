@@ -1856,7 +1856,7 @@ async function switchToOnDemandInjection(control, demoClient, demoContexts, exte
     : { ok: false, reason: "content-script-before-start", frames };
 }
 
-/** Isolated-world contexts of this extension in which content.js has started. */
+/** Isolated-world contexts of this extension in which content-script.js has started. */
 async function listContentScriptContexts(pageClient, tracker, extensionId) {
   const found = [];
 

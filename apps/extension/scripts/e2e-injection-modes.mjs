@@ -2,17 +2,18 @@
 
 // E2E: when the content script runs in pages, for both injection modes.
 //
-// "always" (default): the all-sites registration injects content.js into every page and frame.
-// "on-start": no page runs content.js until Start; then the recorded tab gets it in every frame,
-// including after a reload, a navigation and in an iframe added after Start, while other tabs
-// stay clean. Presence is checked over CDP: an isolated-world execution context of the extension
-// in which the content-script guard is set. The recorded tab also embeds a cross-origin
+// "always" (default): the all-sites registration injects content-script.js into every page and
+// frame.
+// "on-start": no page runs content-script.js until Start; then the recorded tab gets it in every
+// frame, including after a reload, a navigation and in an iframe added after Start, while other
+// tabs stay clean. Presence is checked over CDP: an isolated-world execution context of the
+// extension in which the content-script guard is set. The recorded tab also embeds a cross-origin
 // (out-of-process) iframe; its CDP contexts are not visible from the page target, so it is checked
 // by the events it sends to the service worker after Start, a reload and a navigation.
 //
 // WB_E2E_INJECTION_BENCH=1 runs the idle-cost bench instead: N tabs (WB_E2E_INJECTION_BENCH_TABS,
 // default 50) of a page with one iframe, per mode, reporting what reached the service worker and
-// how many frames run content.js.
+// how many frames run content-script.js.
 
 import { createServer } from "node:http";
 
@@ -65,7 +66,11 @@ async function runScenarios(origin, extension, extensionId) {
   // Default: every new page runs the content script, iframes included.
   const always = await openTrackedPage(`${origin}/page/?tab=always`, extensionId);
   report.alwaysIdle = await always.contentScriptFrames();
-  assert(report.alwaysIdle.length === 2, "Always: page and iframe should run content.js", report);
+  assert(
+    report.alwaysIdle.length === 2,
+    "Always: page and iframe should run content-script.js",
+    report
+  );
 
   await extension.setInjectionMode("on-start");
   await extension.waitForRegistration(false);
@@ -74,7 +79,7 @@ async function runScenarios(origin, extension, extensionId) {
   const recordedUrl = `${origin}/page/?tab=recorded&xo=1`;
   const recorded = await openTrackedPage(recordedUrl, extensionId);
   report.onDemandIdle = await recorded.contentScriptFrames();
-  assert(report.onDemandIdle.length === 0, "On demand: content.js ran before Start", report);
+  assert(report.onDemandIdle.length === 0, "On demand: content-script.js ran before Start", report);
   assert(!(await recorded.hasIndicator()), "On demand: indicator before Start", report);
 
   const tabId = await extension.tabIdFor(recordedUrl);
@@ -122,7 +127,7 @@ async function runScenarios(origin, extension, extensionId) {
   report.onDemandBystander = await bystander.contentScriptFrames();
   assert(
     report.onDemandBystander.length === 0,
-    "On demand: content.js in a tab not recorded",
+    "On demand: content-script.js in a tab not recorded",
     report
   );
 
@@ -143,13 +148,13 @@ async function runScenarios(origin, extension, extensionId) {
   // After Stop nothing re-injects on navigation any more.
   await recorded.reload();
   report.onDemandAfterStop = await recorded.contentScriptFrames();
-  assert(report.onDemandAfterStop.length === 0, "On demand: content.js after Stop", report);
+  assert(report.onDemandAfterStop.length === 0, "On demand: content-script.js after Stop", report);
 
   await extension.setInjectionMode("always");
   await extension.waitForRegistration(true);
   const restored = await openTrackedPage(`${origin}/page/?tab=restored`, extensionId);
   report.alwaysRestored = await restored.contentScriptFrames();
-  assert(report.alwaysRestored.length === 2, "Always again: content.js missing", report);
+  assert(report.alwaysRestored.length === 2, "Always again: content-script.js missing", report);
 
   return summarizeFrames(report);
 }
@@ -207,11 +212,15 @@ async function runBench(origin, extension, extensionId) {
 
   const onDemand = results.find((row) => row.mode === "on-start");
   const always = results.find((row) => row.mode === "always");
-  assert(onDemand?.framesWithContentScript === 0, "On demand: content.js in idle tabs", results);
+  assert(
+    onDemand?.framesWithContentScript === 0,
+    "On demand: content-script.js in idle tabs",
+    results
+  );
   assert(onDemand?.swRuntimeMessages === 0, "On demand: idle tabs messaged the worker", results);
   assert(
     always?.framesWithContentScript === benchTabs * 2,
-    "Always: content.js missing in some frames",
+    "Always: content-script.js missing in some frames",
     results
   );
 
@@ -231,7 +240,8 @@ async function runBench(origin, extension, extensionId) {
 
 /**
  * Clicks inside the cross-origin iframe and waits until its content script delivers events: the
- * frame lives in another renderer, so only the service worker sees whether it runs content.js.
+ * frame lives in another renderer, so only the service worker sees whether it runs
+ * content-script.js.
  */
 async function expectCrossOriginFrameEvents(page, extension) {
   await extension.readSwStats(true);
@@ -413,7 +423,7 @@ async function openTrackedPage(url, extensionId, { settleMs = SETTLE_MS } = {}) 
           return frames.length >= count ? frames : null;
         },
         15_000,
-        `Expected content.js in ${count} frame(s) of ${url}`
+        `Expected content-script.js in ${count} frame(s) of ${url}`
       );
     },
     // The page hooks run as a classic script in the page; their bindings must not replace its `$`.
