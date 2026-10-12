@@ -112,6 +112,32 @@ describe("BodyHeadStream", () => {
 });
 
 describe("BodyHeadStream limits", () => {
+  it("counts chunks past the kept start without decoding them", async () => {
+    const decoded: string[] = [];
+    const countingDecode = (value: string): Uint8Array => {
+      decoded.push(value);
+      return decodeBase64(value);
+    };
+    let start: (outcome: CdpReadOutcome<StreamStartRead>) => void = () => undefined;
+    const stream = new BodyHeadStream(
+      4,
+      new Promise<CdpReadOutcome<StreamStartRead>>((resolve) => {
+        start = resolve;
+      }),
+      countingDecode
+    );
+
+    // Before the start result: early chunks stop once they cover the kept start.
+    stream.onData(4, base64("abcd"));
+    stream.onData(4, base64("efgh"));
+    start({ ok: true, value: {} });
+    await stream.started;
+    stream.onData(4, base64("ijkl"));
+
+    await expect(headText(stream)).resolves.toEqual({ text: "abcd", totalBytes: 12 });
+    expect(decoded).toEqual([base64("abcd")]);
+  });
+
   it("fails once the response passes the streaming limit", async () => {
     const { stream, start } = createStream(4);
 

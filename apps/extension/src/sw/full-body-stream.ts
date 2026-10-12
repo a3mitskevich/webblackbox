@@ -96,19 +96,25 @@ export class BodyHeadStream {
       return;
     }
 
+    const isStarting = this.state === "starting";
+
+    // Chunks past the kept start are only counted: Chrome sends every chunk of the response, and
+    // decoding them would cost the worker up to the streaming limit per response for nothing.
+    // Before the start result, never more than the kept start, whatever the buffered bytes turn
+    // out to be.
+    if ((isStarting ? this.earlyBytes : this.keptBytes) >= this.maxBytes) {
+      return;
+    }
+
     const bytes = this.decodeChunk(data);
 
     if (!bytes) {
       return;
     }
 
-    if (this.state === "starting") {
-      // Never more than the kept start, whatever the buffered bytes turn out to be.
-      if (this.earlyBytes < this.maxBytes) {
-        this.earlyChunks.push(bytes);
-        this.earlyBytes += bytes.byteLength;
-      }
-
+    if (isStarting) {
+      this.earlyChunks.push(bytes);
+      this.earlyBytes += bytes.byteLength;
       return;
     }
 

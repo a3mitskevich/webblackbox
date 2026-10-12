@@ -174,6 +174,29 @@ describe("FullBodyCapture — large responses", () => {
     expect(harness.stored).toHaveLength(3);
   });
 
+  it("counts the decoded size of a compressed body as a large read", async () => {
+    const harness = createHarness({ autoRead: false });
+
+    for (const id of ["gzip-1", "gzip-2"]) {
+      harness.capture.onRequestWillBeSent(id, undefined);
+      harness.capture.onResponseReceived(received(id));
+      harness.capture.onDataReceived(id, undefined, 3 * LIMIT, undefined);
+      // Compressed: only the decoded bytes say the read holds several times the limit.
+      harness.capture.onLoadingFinished(finished(id, {}, LIMIT));
+    }
+
+    await harness.settle();
+    expect(harness.reads).toEqual(["gzip-1"]);
+
+    harness.release("gzip-1");
+    await harness.settle();
+    expect(harness.reads).toEqual(["gzip-1", "gzip-2"]);
+
+    harness.release("gzip-2");
+    await harness.capture.drain(1_000);
+    expect(harness.stored).toHaveLength(2);
+  });
+
   it("records a body the browser dropped for its size as too-large", async () => {
     const harness = createHarness({ autoRead: false });
 

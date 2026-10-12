@@ -14,8 +14,8 @@ const BASELINE_DOMAINS = ["Network.enable", "Runtime.enable", "Log.enable", "Pag
 
 /**
  * `Network.enable` buffer sizes. Chrome keeps response bodies for `Network.getResponseBody` in a
- * per-session buffer (about 200 MB in total and 10 MB per resource by default) and evicts the
- * oldest bodies past it.
+ * per-session buffer (about 200 MB in total and 20 MB per resource by default, measured on Chrome
+ * 153) and evicts the oldest bodies past it.
  */
 export type NetworkEnableParams = {
   maxTotalBufferSize?: number;

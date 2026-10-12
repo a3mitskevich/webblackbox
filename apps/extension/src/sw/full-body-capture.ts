@@ -262,11 +262,15 @@ export class FullBodyCapture {
       return;
     }
 
+    // A compressed body decodes past its encoded size: the decoded bytes counted while it loaded
+    // are what the read holds.
+    const readBytes = Math.max(response.encodedDataLength ?? 0, tracked?.receivedBytes ?? 0);
+
     this.queue.push({
       response,
       rule,
       mimeType,
-      large: (response.encodedDataLength ?? 0) > rule.maxBytes * FULL_BODY_LARGE_READ_FACTOR,
+      large: readBytes > rule.maxBytes * FULL_BODY_LARGE_READ_FACTOR,
       receivedBytes: tracked?.receivedBytes
     });
     this.pump();
