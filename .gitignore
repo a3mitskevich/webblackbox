@@ -151,3 +151,7 @@ build
 
 # Extension UI dictionaries merged from per-feature fragments at build/test/typecheck
 apps/extension/src/shared/locales/generated/
+
+# WXT generated types and tsconfig, and its build output (apps/extension)
+.wxt/
+.output/

@@ -100,6 +100,11 @@ export type ContentReadyMessage = {
   kind: "content.ready";
 };
 
+/** A recording frame's content script asks for the capture agent (`content-agent.js`). */
+export type ContentAgentRequestMessage = {
+  kind: "content.agent-request";
+};
+
 export type ContentStopDrainedMessage = {
   kind: "content.stop-drained";
   sid: string;
@@ -117,6 +122,7 @@ export type ExtensionInboundMessage =
   | ContentEventBatchMessage
   | ContentMarkerMessage
   | ContentReadyMessage
+  | ContentAgentRequestMessage
   | ContentStopDrainedMessage;
 
 export type RecordingStatusMessage = {

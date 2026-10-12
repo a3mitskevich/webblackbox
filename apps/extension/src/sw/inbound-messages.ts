@@ -72,6 +72,7 @@ export function parseExtensionInboundMessage(raw: unknown): InboundParseResult {
       return parseUiAnnotate(row);
     case "ui.request-session-list":
     case "content.ready":
+    case "content.agent-request":
       return accept({ kind: row.kind });
     case "ui.resolve-profile":
       return parseUiResolveProfile(row);

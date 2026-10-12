@@ -6,19 +6,19 @@ import { watchPasswordFieldReveals } from "webblackbox/input-value-policy";
 import type { LiteCaptureAgentOptions } from "webblackbox/types";
 
 import { clampBodyCaptureMaxBytes } from "../shared/body-capture-limits.js";
-import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
+import { getChromeApi, type ChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { PORT_NAMES, type ExtensionOutboundMessage } from "../shared/messages.js";
+import { readContentAgent, type ContentAgentApi } from "./content-agent-api.js";
 import { CONTENT_EVENT_FLUSH_CHUNK, resolveContentEventFlushDelay } from "./flush-policy.js";
 import { claimContentScriptSlot } from "./script-guard.js";
 
-type ContentAgentModule = typeof import("./content-agent.js");
-
-const chromeApi = getChromeApi();
+let chromeApi: ChromeApi | null = null;
 let contentPort: PortLike | null = null;
 let reconnectTimer = 0;
 let reconnectAttempts = 0;
 let captureAgent: LiteCaptureAgent | null = null;
 let captureAgentPromise: Promise<LiteCaptureAgent> | null = null;
+let contentAgentRequest: Promise<ContentAgentApi> | null = null;
 
 let recordingActive = false;
 /** The session this page records for; requests of another session are ignored. */
@@ -35,16 +35,24 @@ const DEFAULT_TAB_ID = -1;
 const PORT_DEBUG_LOG_FLAG = "__WEBBLACKBOX_DEBUG_PORT__";
 const INJECTED_CAPTURE_CONFIG_EVENT = "webblackbox:injected-config";
 
-if (
-  claimContentScriptSlot(
-    globalThis as unknown as Record<string, unknown>,
-    () => typeof chromeApi?.runtime?.id === "string"
-  )
-) {
-  startContentScript();
+/**
+ * Starts the content script in this frame, unless a running copy already claimed it (the
+ * registered script plus a copy injected on Start or after a navigation).
+ */
+export function startContentScript(): void {
+  chromeApi = getChromeApi();
+
+  if (
+    claimContentScriptSlot(
+      globalThis as unknown as Record<string, unknown>,
+      () => typeof chromeApi?.runtime?.id === "string"
+    )
+  ) {
+    runContentScript();
+  }
 }
 
-function startContentScript(): void {
+function runContentScript(): void {
   // The capture agent loads only on Start; a password the page reveals before then must still be
   // known as one when a profile records input values (the registry is shared with the agent).
   // With injection on Start only, this watcher starts with the recording.
@@ -378,10 +386,37 @@ async function ensureCaptureAgent(): Promise<LiteCaptureAgent> {
   return captureAgentPromise;
 }
 
-/** The capture agent bundle also carries the UI dictionaries; the module map loads it once. */
-function loadContentAgentModule(): Promise<ContentAgentModule> {
-  const moduleUrl = chromeApi?.runtime?.getURL?.("content-agent.js") ?? "./content-agent.js";
-  return import(moduleUrl) as Promise<ContentAgentModule>;
+/**
+ * The capture agent (`content-agent.js`, with snapdom) is not parsed in a frame until it records:
+ * the service worker injects it into this frame on request, once per document.
+ */
+function loadContentAgentModule(): Promise<ContentAgentApi> {
+  const loaded = readContentAgent(globalThis);
+
+  if (loaded) {
+    return Promise.resolve(loaded);
+  }
+
+  contentAgentRequest ??= requestContentAgent().finally(() => {
+    contentAgentRequest = null;
+  });
+  return contentAgentRequest;
+}
+
+async function requestContentAgent(): Promise<ContentAgentApi> {
+  const response: unknown = await chromeApi?.runtime?.sendMessage?.({
+    kind: "content.agent-request"
+  });
+  const agent = readContentAgent(globalThis);
+
+  if (!agent) {
+    const error = (response as { error?: unknown } | undefined)?.error;
+    throw new Error(
+      `The capture agent was not injected into this frame${typeof error === "string" ? `: ${error}` : "."}`
+    );
+  }
+
+  return agent;
 }
 
 async function emitKeyboardMarker(): Promise<void> {

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,12 +9,14 @@ import { buildChromeArgs, CHROME_LAUNCH_PROFILES } from "./chrome-launcher.mjs";
 import {
   computeExtensionIdFromManifestKey,
   normalizeTargetDescriptor,
+  computeExtensionIdFromPath,
+  isExtensionServiceWorkerTarget,
   resolvePreferredExtensionId,
   summarizeTargetsForDebug
 } from "./devtools-targets.mjs";
 import { readPositiveInteger, waitFor, withTimeout } from "./e2e-utils.mjs";
 
-// Public key baked into dev builds by extension-build.mjs; Chrome assigns it this id.
+// A manifest public key (dev builds carried this one before WXT) and the id Chrome assigns it.
 const DEV_MANIFEST_KEY =
   "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2HDVz1RBsIjEKY/KUOuP3glU4SmMUtvdXXER0JV9mksg6cufsMXUwPpzj7M4aCqCPMV8NkMhRHuGEumnDx/lhc/UI1OUyGpMSP2DSozID5w1s6NY2NbBERcNe0QPwlG9DBkZHHrSXycAHBK8IOaGcsju3Dzmbxr9RI7boLVE0dchdo5bt9tyOxT6LQL1ZlQOgErRf2pSQpU/dqngQ0Wd3/rj5aZ9c04TkycJrXq1FBY4uBiUdFOjuQ6djW4UtJsudYuDaqZ5PsRErilDAbWttkQsN7w5lS7aJANEU/83nIyz8YZ56vn1P1wBqWOxJ2CsyW/lFJdKjgZor6AS5AWCRQIDAQAB";
 const DEV_EXTENSION_ID = "mnchbdadipodplbijhmmcogomfbcobkd";
@@ -333,6 +335,42 @@ describe("buildChromeArgs", () => {
 });
 
 describe("devtools target helpers", () => {
+  it("derives the id of a build without a key from its path, as Chrome does", async () => {
+    // Chrome's id for an unpacked extension loaded from this path (seen in an e2e run).
+    expect(
+      computeExtensionIdFromPath(
+        "/home/deathsmell/webblackbox/improve-52/apps/extension/.output/chrome-mv3"
+      )
+    ).toBe("bhpngcjeealemiilaiiccfmcnlgehdni");
+
+    const dir = await mkdtemp(join(tmpdir(), "wb-e2e-harness-"));
+
+    try {
+      await writeFile(join(dir, "manifest.json"), JSON.stringify({ name: "x" }));
+      await expect(resolvePreferredExtensionId(dir)).resolves.toBe(
+        computeExtensionIdFromPath(await realpath(dir))
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("matches this extension's service worker only", () => {
+    const own = {
+      type: "service_worker",
+      url: `chrome-extension://${DEV_EXTENSION_ID}/background.js`
+    };
+
+    expect(isExtensionServiceWorkerTarget(own, DEV_EXTENSION_ID)).toBe(true);
+    expect(
+      isExtensionServiceWorkerTarget(
+        { ...own, url: "chrome-extension://glbjnfimcajjenihimblfaponejbkoph/background.js" },
+        DEV_EXTENSION_ID
+      )
+    ).toBe(false);
+    expect(isExtensionServiceWorkerTarget({ ...own, type: "page" }, DEV_EXTENSION_ID)).toBe(false);
+  });
+
   it("derives the Chrome extension id from the manifest key", async () => {
     expect(computeExtensionIdFromManifestKey(DEV_MANIFEST_KEY)).toBe(DEV_EXTENSION_ID);
 

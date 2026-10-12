@@ -8,16 +8,11 @@
 // profile and keeps a Lite start in Lite, as v1 options did.
 
 import { createServer } from "node:http";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { assert, createProfileE2eHarness, waitFor } from "./lib/profile-e2e-harness.mjs";
 
-const root = dirname(fileURLToPath(import.meta.url));
-const appRoot = resolve(root, "..");
 const harness = createProfileE2eHarness({
   name: "settings-migration",
-  appRoot,
   defaultPort: "9240"
 });
 

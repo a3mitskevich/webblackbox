@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { CdpClient } from "./cdp-client.mjs";
 import { fetchJson, formatErrorMessage, waitFor } from "./e2e-utils.mjs";
+import { EXTENSION_FILES } from "./extension-paths.mjs";
 
 const DEVTOOLS_OPEN_TIMEOUT_MS = 6_000;
 const DEVTOOLS_REQUEST_TIMEOUT_MS = 4_000;
@@ -173,7 +174,18 @@ export function isLikelyExtensionId(value) {
 
 /** Chrome derives unpacked-extension ids from the SHA-256 of the manifest public key. */
 export function computeExtensionIdFromManifestKey(keyBase64) {
-  const digest = createHash("sha256").update(Buffer.from(keyBase64, "base64")).digest();
+  return toExtensionId(createHash("sha256").update(Buffer.from(keyBase64, "base64")).digest());
+}
+
+/**
+ * The id Chrome gives an unpacked extension without a manifest `key`: the SHA-256 of the absolute
+ * path it was loaded from.
+ */
+export function computeExtensionIdFromPath(absolutePath) {
+  return toExtensionId(createHash("sha256").update(absolutePath).digest());
+}
+
+function toExtensionId(digest) {
   const alphabet = "abcdefghijklmnop";
   let id = "";
 
@@ -187,8 +199,20 @@ export function computeExtensionIdFromManifestKey(keyBase64) {
 }
 
 /**
- * Expected extension id: `WB_E2E_EXTENSION_ID` when set, else derived from the build
- * manifest `key`. Returns null when it cannot be determined.
+ * Whether a DevTools target is this extension's service worker. Other extensions (Chrome's own
+ * component extensions among them) can run a service worker with the same file name.
+ */
+export function isExtensionServiceWorkerTarget(target, extensionId) {
+  return (
+    target?.type === "service_worker" &&
+    target.url === `chrome-extension://${extensionId}/${EXTENSION_FILES.serviceWorker}`
+  );
+}
+
+/**
+ * Expected extension id: `WB_E2E_EXTENSION_ID` when set, else derived from the build manifest
+ * `key`, else from the build directory's path (builds carry no key). Returns null when it cannot
+ * be determined.
  */
 export async function resolvePreferredExtensionId(extensionDir) {
   const fromEnv = process.env.WB_E2E_EXTENSION_ID?.trim();
@@ -207,14 +231,24 @@ export async function resolvePreferredExtensionId(extensionDir) {
 
   const key = typeof manifest?.key === "string" ? manifest.key.trim() : "";
 
-  if (key.length === 0) {
-    return null;
-  }
-
   try {
-    const id = computeExtensionIdFromManifestKey(key);
+    const id =
+      key.length > 0
+        ? computeExtensionIdFromManifestKey(key)
+        : computeExtensionIdFromPath(await realpath(extensionDir));
     return isLikelyExtensionId(id) ? id : null;
   } catch {
     return null;
   }
+}
+
+/** {@link resolvePreferredExtensionId}, or an error naming the directory. */
+export async function requireExtensionId(extensionDir) {
+  const id = await resolvePreferredExtensionId(extensionDir);
+
+  if (!id) {
+    throw new Error(`Cannot determine the extension id of ${extensionDir}: build it first.`);
+  }
+
+  return id;
 }
