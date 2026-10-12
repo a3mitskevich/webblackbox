@@ -42,9 +42,14 @@ export type ProfileDeletion = {
 export function describeProfileDeletion(
   store: RecordingProfilesStore,
   catalog: readonly RecordingProfile[],
-  profileId: string
+  profileId: string,
+  /** How the UI names a profile (built-ins in the UI language). */
+  displayName: (profile: RecordingProfile) => string = (profile) => profile.name
 ): ProfileDeletion {
-  const nameOf = (id: string) => catalog.find((profile) => profile.id === id)?.name;
+  const nameOf = (id: string): string | undefined => {
+    const profile = catalog.find((entry) => entry.id === id);
+    return profile ? displayName(profile) : undefined;
+  };
   const nextDefaultId = removeProfileFromStore(store, profileId).defaultProfileId;
   const nextDefaultName =
     store.defaultProfileId === profileId && nextDefaultId !== profileId

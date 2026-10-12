@@ -46,8 +46,8 @@
   "optionsScreenshotIdleHint": "0 выключает скриншоты в простое.",
   "optionsBodyCaptureHint": "Самое большое тело ответа в полном режиме.",
   "optionsFreezeOnErrorHint": "Значок ERR на иконке расширения и строка об инциденте в попапе.",
-  "optionsStartReloadOffer": "Предлагать перезагрузить страницу при начале записи",
-  "optionsStartReloadOfferHint": "Перед началом записи спрашивает, перезагрузить ли страницу, чтобы записать её загрузку. Если выключено, запись начинается без перезагрузки.",
+  "optionsStartReloadOffer": "Перезагрузка страницы при старте",
+  "optionsStartReloadOfferHint": "Перезагрузка записывает страницу с первого запроса, вместе со скриптами (для source maps).",
   "optionsLcpWarnHint": "Largest Contentful Paint медленнее этого значения.",
   "optionsRequestWarnHint": "Запросы дольше этого считаются медленными.",
   "optionsErrorRateWarnHint": "Доля неудачных запросов.",
@@ -63,5 +63,11 @@
   "optionsPlayerUrlManaged": "Задано политикой вашей организации.",
   "optionsErrorPlayerUrl": "Укажите адрес https:// (http:// — только для localhost или 127.0.0.1).",
   "optionsProfileFieldsNotice": "Маскирование, указатель, частота снимков и инциденты — настройки профиля записи. Встроенные профили («Максимум» и «Лёгкий») не редактируются: создайте копию в разделе «Профили» и меняйте её.",
-  "optionsOpenProfiles": "Открыть профили"
+  "optionsOpenProfiles": "Открыть профили",
+  "optionsStartReloadAsk": "Спрашивать, по умолчанию перезагружать",
+  "optionsStartReloadAskDescription": "Старт спрашивает; главный вариант — «Перезагрузить и записать». «Больше не спрашивать» выбирает один из вариантов ниже.",
+  "optionsStartReloadAlways": "Всегда перезагружать",
+  "optionsStartReloadAlwaysDescription": "Старт перезагружает страницу без вопроса.",
+  "optionsStartReloadNever": "Не перезагружать",
+  "optionsStartReloadNeverDescription": "Старт записывает страницу как есть; её загрузка не попадает в запись."
 }

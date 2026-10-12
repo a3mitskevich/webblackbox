@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SessionListItem } from "../shared/messages.js";
 import {
-  chooseRadio,
   FakePort,
   flushPopup,
   flushPopupWithFakeTimers,
@@ -71,18 +70,17 @@ describe("popup export", () => {
       "≤ 256 MB · last 45 min"
     );
 
-    chooseRadio("capture-mode", "full");
-    await flushPopup();
-    chooseRadio("full-visual-capture", "recording");
     await submitExport(" export-secret ");
 
+    // A Full recording keeps its screenshots and tab video (the service worker keeps what it
+    // recorded); the limits come from Options.
     expect(port.postMessage).toHaveBeenCalledWith({
       kind: "ui.export",
       sid: "sid-1",
       passphrase: " export-secret ",
       saveAs: false,
       policy: {
-        includeScreenshots: false,
+        includeScreenshots: true,
         includeScreenRecordings: true,
         maxArchiveBytes: 256 * 1024 * 1024,
         recentWindowMs: 45 * 60 * 1000
@@ -337,22 +335,47 @@ describe("popup export", () => {
     expect(document.querySelectorAll(".wb-confirm-overlay")).toHaveLength(0);
   });
 
-  it("exports no visual artifacts when none is selected", async () => {
+  it.each([
+    ["a Lite recording", stoppedSession("sid-lite", "lite"), false],
+    [
+      "a recording that fell back from Full to Light",
+      {
+        ...stoppedSession("sid-fallback", "lite"),
+        captureFallback: {
+          at: Date.now(),
+          reason: "canceled-by-user" as const,
+          from: "full" as const,
+          to: "lite" as const
+        }
+      },
+      true
+    ],
+    [
+      "a browser page recorded in Light from the start",
+      {
+        ...stoppedSession("sid-restricted", "lite"),
+        captureFallback: {
+          at: Date.now(),
+          reason: "restricted-page" as const,
+          from: "full" as const,
+          to: "lite" as const
+        }
+      },
+      false
+    ]
+  ])("exports the visuals of %s only when it ran in Full", async (_label, session, visuals) => {
     const port = new FakePort();
     installChromeStub(port);
 
-    await openWithSession(port, stoppedSession("sid-none-export"));
-    chooseRadio("capture-mode", "full");
-    await flushPopup();
-    chooseRadio("full-visual-capture", "none");
-    await submitExport("none-export-secret");
+    await openWithSession(port, session);
+    await submitExport("visuals-secret");
 
     expect(port.postMessage).toHaveBeenCalledWith({
       kind: "ui.export",
-      sid: "sid-none-export",
-      passphrase: "none-export-secret",
+      sid: session.sid,
+      passphrase: "visuals-secret",
       saveAs: false,
-      policy: { includeScreenshots: false, includeScreenRecordings: false, ...DEFAULT_POLICY }
+      policy: { includeScreenshots: visuals, includeScreenRecordings: visuals, ...DEFAULT_POLICY }
     });
   });
 

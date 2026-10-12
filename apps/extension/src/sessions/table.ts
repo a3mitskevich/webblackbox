@@ -2,6 +2,7 @@ import type { CaptureMode } from "@webblackbox/protocol";
 
 import type { ExtensionMessageKey } from "../shared/i18n.js";
 import type { SessionListItem } from "../shared/messages.js";
+import { displayProfileName } from "../shared/profiles/display-name.js";
 import { el } from "../shared/ui/dom.js";
 import { icon, type IconName } from "../shared/ui/icons.js";
 import { describeSessionPage, shortenSessionId, type SessionFilters } from "./model.js";
@@ -229,6 +230,26 @@ function createSiteCell(session: SessionListItem, t: Translate): HTMLElement {
               dataset: { interrupted: "" }
             })
           ]
+        : []),
+      ...(session.captureFallback
+        ? [
+            el("span", {
+              className: "wb-badge wb-badge--alert",
+              text: t("sessionsStatusFallback"),
+              attrs: { title: t("sessionsFallbackHint") },
+              dataset: { captureFallback: session.captureFallback.reason }
+            })
+          ]
+        : []),
+      ...(session.exportPrompt
+        ? [
+            el("span", {
+              className: "wb-badge",
+              text: t("sessionsStatusNotExported"),
+              attrs: { title: t("sessionsNotExportedHint") },
+              dataset: { notExported: "" }
+            })
+          ]
         : [])
     ]),
     el("span", { className: "wb-site__url mono", text: page.secondary }),
@@ -272,7 +293,11 @@ function createRow(session: SessionListItem, options: TableOptions): HTMLElement
       el("td", { className: "wb-table__select" }, [select]),
       cell("sessionsColumnSite", [createSiteCell(session, t)], "wb-table__site"),
       cell("sessionsColumnProfile", [
-        el("span", { text: session.profileName ?? "—" }),
+        el("span", {
+          text: session.profileName
+            ? displayProfileName({ id: session.profileId, name: session.profileName }, t)
+            : "—"
+        }),
         el("span", { className: "wb-table__sub", text: format.formatMode(session.mode) })
       ]),
       cell(

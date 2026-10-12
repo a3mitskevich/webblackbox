@@ -18,7 +18,11 @@ import {
   normalizePerformanceBudget,
   type PerformanceBudgetConfig
 } from "../shared/performance-budget.js";
-import { DEFAULT_START_RELOAD_OFFER } from "../shared/start-reload-offer.js";
+import {
+  DEFAULT_START_RELOAD_OFFER,
+  isStartReloadChoice,
+  type StartReloadChoice
+} from "../shared/start-reload-offer.js";
 import { MAX_BODY_CAPTURE_BYTES } from "../shared/body-capture-limits.js";
 
 /**
@@ -40,7 +44,7 @@ export type GeneralDraft = {
   /** Stored under its own key (`webblackbox.injection`). */
   injection: ContentInjectionMode;
   /** Stored under its own key (`webblackbox.startReloadOffer`). */
-  startReloadOffer: boolean;
+  startReloadOffer: StartReloadChoice;
   /**
    * The user's own Player URL ("" = none), stored under `webblackbox.playerUrl`. A managed value
    * is shown instead of it but never copied into the draft.
@@ -216,13 +220,31 @@ export const GENERAL_FIELDS: readonly GeneralFieldSpec[] = [
     set: (draft, value) => (isContentInjectionMode(value) ? { ...draft, injection: value } : draft)
   },
   {
-    kind: "toggle",
+    kind: "choice",
     id: "startReloadOffer",
     section: "sampling",
     label: "optionsStartReloadOffer",
     hint: "optionsStartReloadOfferHint",
+    options: [
+      {
+        value: "ask",
+        label: "optionsStartReloadAsk",
+        description: "optionsStartReloadAskDescription"
+      },
+      {
+        value: "always",
+        label: "optionsStartReloadAlways",
+        description: "optionsStartReloadAlwaysDescription"
+      },
+      {
+        value: "never",
+        label: "optionsStartReloadNever",
+        description: "optionsStartReloadNeverDescription"
+      }
+    ],
     get: (draft) => draft.startReloadOffer,
-    set: (draft, value) => ({ ...draft, startReloadOffer: value })
+    set: (draft, value) =>
+      isStartReloadChoice(value) ? { ...draft, startReloadOffer: value } : draft
   },
   redactionList("blockedSelectors", {
     label: "optionsBlockedSelectors",

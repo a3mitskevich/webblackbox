@@ -331,16 +331,16 @@ describe("options page", () => {
     expect(saveState()).toBe("Unsaved changes");
   });
 
-  it("offers the page reload on Start by default and stores the switch under its own key", async () => {
+  it("asks about the page reload on Start by default and stores the choice under its own key", async () => {
     const storage = installChromeStub();
     await importOptionsModule();
-    const toggle = query<HTMLInputElement>(
-      "[data-options-section='sampling'] input#startReloadOffer"
+    const ask = query<HTMLInputElement>(
+      "[data-options-section='sampling'] input#startReloadOffer-ask"
     );
 
-    expect(toggle.checked).toBe(true);
+    expect(ask.checked).toBe(true);
 
-    toggle.click();
+    query<HTMLInputElement>("#startReloadOffer-always").click();
 
     expect(saveState()).toBe("Unsaved changes");
     expect(query("[data-section-link='sampling']").getAttribute("data-dirty")).toBe("true");
@@ -348,10 +348,10 @@ describe("options page", () => {
     saveButton().click();
     await flush();
 
-    expect(storage.data[START_RELOAD_OFFER_KEY]).toBe(false);
+    expect(storage.data[START_RELOAD_OFFER_KEY]).toBe("always");
     // A popup preference, not a recorder setting: the profiles stay as they are.
     expect(storage.data[PROFILES_KEY]).toEqual(keptDefaultStore());
-    expect(query<HTMLInputElement>("#startReloadOffer").checked).toBe(false);
+    expect(query<HTMLInputElement>("#startReloadOffer-always").checked).toBe(true);
     expect(saveState()).toMatch(/^Saved at /);
   });
 
@@ -366,20 +366,20 @@ describe("options page", () => {
     expect(storage.data[START_RELOAD_OFFER_KEY]).toBeUndefined();
   });
 
-  it("shows a stored off switch; section reset turns it back on and Discard restores it", async () => {
+  it("shows a stored choice (an old off switch reads as never); reset asks again; Discard restores it", async () => {
     installChromeStub({ [START_RELOAD_OFFER_KEY]: false });
     await importOptionsModule();
 
-    expect(query<HTMLInputElement>("#startReloadOffer").checked).toBe(false);
+    expect(query<HTMLInputElement>("#startReloadOffer-never").checked).toBe(true);
 
     query<HTMLElement>("[data-action='section-reset'][data-section='sampling']").click();
 
-    expect(query<HTMLInputElement>("#startReloadOffer").checked).toBe(true);
+    expect(query<HTMLInputElement>("#startReloadOffer-ask").checked).toBe(true);
     expect(saveState()).toBe("Unsaved changes");
 
     cancelButton().click();
 
-    expect(query<HTMLInputElement>("#startReloadOffer").checked).toBe(false);
+    expect(query<HTMLInputElement>("#startReloadOffer-never").checked).toBe(true);
     expect(saveState()).toBe("All changes saved");
   });
 

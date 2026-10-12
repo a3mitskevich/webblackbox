@@ -9,6 +9,7 @@ import { isExtendedCaptureProfile } from "../shared/profiles/resolve.js";
 import { describeIssues, type ProfilesStoreIssue } from "../shared/profiles/storage.js";
 import type { ProfilesDiff } from "../shared/profiles/transfer.js";
 import type { RedactionSandboxKind } from "../shared/redaction-sandbox.js";
+import { displayProfileName } from "../shared/profiles/display-name.js";
 import { button, el, unsavedItemBadge } from "./dom.js";
 import { fieldGroup, selectField } from "./fields.js";
 import { categoryLabel, levelLabel } from "./profile-form.js";
@@ -91,7 +92,10 @@ export function createProfileCard(options: {
     },
     [
       el("div", { className: "wb-profile-card__head" }, [
-        el("strong", { className: "wb-profile-card__name", text: profile.name }),
+        el("strong", {
+          className: "wb-profile-card__name",
+          text: displayProfileName(profile, t)
+        }),
         el("span", {
           className: "wb-profile-card__mode",
           text: profile.base === "full" ? t("modeFull") : t("modeLite")
@@ -228,7 +232,10 @@ export function createSandboxPanel(options: {
         name: "sandboxProfile",
         label: t("optionsRuleProfile"),
         value: options.sandbox.profileId,
-        options: options.catalog.map((profile) => ({ value: profile.id, label: profile.name }))
+        options: options.catalog.map((profile) => ({
+          value: profile.id,
+          label: displayProfileName(profile, t)
+        }))
       }),
       selectField({
         id: "sandbox-kind",

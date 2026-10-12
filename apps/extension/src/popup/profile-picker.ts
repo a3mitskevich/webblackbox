@@ -1,111 +1,54 @@
-import type { CaptureMode } from "@webblackbox/protocol";
-
 import type { ExtensionMessageKey } from "../shared/i18n.js";
 import type {
   ProfileCancelNotice,
   ProfileCancelReason,
   ProfilePreviewResponse
 } from "../shared/messages.js";
+import { displayProfileName } from "../shared/profiles/display-name.js";
 import { el } from "../shared/ui/dom.js";
 import { icon } from "../shared/ui/icons.js";
 
-/** Popup choice meaning "let the site rules pick the profile". */
-export const PROFILE_CHOICE_AUTO = "auto";
-
-const PROFILE_CHOICE_STORAGE_KEY = "webblackbox.popup.profile-choice";
-const MAX_PROFILE_CHOICE_LENGTH = 100;
-
 type Translate = (key: ExtensionMessageKey, vars?: Record<string, string | number>) => string;
 
-export type ProfilePickerOptions = {
-  preview: ProfilePreviewResponse | undefined;
-  choice: string;
-  disabled: boolean;
-  t: Translate;
-  formatMode: (mode: CaptureMode) => string;
-};
-
-export function loadProfileChoice(): string {
-  try {
-    const raw = globalThis.localStorage?.getItem(PROFILE_CHOICE_STORAGE_KEY);
-    return raw && raw.length <= MAX_PROFILE_CHOICE_LENGTH ? raw : PROFILE_CHOICE_AUTO;
-  } catch {
-    return PROFILE_CHOICE_AUTO;
-  }
-}
-
-export function saveProfileChoice(value: string): void {
-  try {
-    globalThis.localStorage?.setItem(PROFILE_CHOICE_STORAGE_KEY, value);
-  } catch {
-    // ignore storage write failures
-  }
-}
-
-/** `profileId` to send with `ui.start`, or nothing for automatic selection. */
-export function toStartProfileId(choice: string): string | undefined {
-  return choice === PROFILE_CHOICE_AUTO ? undefined : choice;
-}
-
-/** Profile select plus a one-line explanation of what Start will record with. */
-export function createProfilePickerSection(options: ProfilePickerOptions): HTMLElement {
-  const { preview, t } = options;
-  const section = document.createElement("div");
-  section.className = "wb-popup__profile";
-
-  const label = document.createElement("label");
-  label.className = "wb-field-label";
-  label.htmlFor = "wb-profile-select";
-  label.textContent = t("popupProfileTitle");
-
-  const select = document.createElement("select");
-  select.id = "wb-profile-select";
-  select.className = "wb-input wb-select";
-  select.dataset.profileSelect = "";
-  select.disabled = options.disabled;
-  select.append(createOption(PROFILE_CHOICE_AUTO, t("popupProfileAuto")));
-
-  for (const entry of preview?.catalog ?? []) {
-    const suffix = entry.extended ? ` · ${t("popupProfileExtended")}` : "";
-    select.append(createOption(entry.id, `${entry.name}${suffix}`));
-  }
-
-  const knownChoice = [...select.options].some((option) => option.value === options.choice);
-  select.value = knownChoice ? options.choice : PROFILE_CHOICE_AUTO;
-
-  const hint = document.createElement("p");
-  hint.className = "wb-popup__hint wb-popup__profile-hint";
-  hint.dataset.profileHint = "";
-  hint.textContent = describeProfileSelection(options);
-
-  section.append(label, select, hint);
-  return section;
-}
-
-export function describeProfileSelection(
-  options: Pick<ProfilePickerOptions, "preview" | "t" | "formatMode">
-): string {
-  const selection = options.preview?.selection;
-
-  if (!selection) {
-    return "";
-  }
-
-  const { t } = options;
-  const headline =
-    selection.source === "rule" && selection.ruleName
-      ? t("popupProfileByRule", { name: selection.name, rule: selection.ruleName })
-      : t("popupProfileWillUse", { name: selection.name });
-  const capped = selection.enterpriseCapped?.length
-    ? [t("popupProfileEnterpriseCapped", { categories: selection.enterpriseCapped.join(", ") })]
+/**
+ * "Profile: Maximum · Change": what Record uses (picked by a site rule or the default profile),
+ * and the way to the profiles in Options. The choice itself lives there.
+ */
+export function createProfileLine(
+  preview: ProfilePreviewResponse | undefined,
+  t: Translate
+): HTMLElement {
+  const selection = preview?.selection;
+  const name = selection ? displayProfileName(selection, t) : "…";
+  const ruled =
+    selection?.source === "rule" && selection.ruleName
+      ? t("popupProfileLineRule", { rule: selection.ruleName })
+      : "";
+  const capped = selection?.enterpriseCapped?.length
+    ? [
+        el("span", {
+          className: "wb-popup__profile-capped",
+          text: t("popupProfileEnterpriseCapped", {
+            categories: selection.enterpriseCapped.join(", ")
+          })
+        })
+      ]
     : [];
 
-  // A profile that needs Full locks the engine switch: the hint says why instead of recommending.
-  const engine = selection.requiresFull
-    ? t("popupProfileFullOnly")
-    : t("popupProfileRecommends", { mode: options.formatMode(selection.base) });
-
-  return [headline, ...capped, engine].join(" ");
+  return el("p", { className: "wb-popup__profile-line", dataset: { profileLine: "" } }, [
+    el("span", { text: t("popupProfileLineLabel") }),
+    " ",
+    el("strong", { text: name, dataset: { profileName: selection?.id ?? "" } }),
+    ...(ruled ? [" ", el("span", { className: "wb-popup__hint", text: ruled })] : []),
+    " · ",
+    el("button", {
+      className: "wb-link-btn",
+      text: t("popupProfileChange"),
+      attrs: { type: "button" },
+      dataset: { action: "open-profiles" }
+    }),
+    ...capped
+  ]);
 }
 
 /** The service worker answered and no profile exists: recording needs one first. */
@@ -218,11 +161,4 @@ function createButton(label: string, action: string): HTMLButtonElement {
   button.dataset.action = action;
   button.textContent = label;
   return button;
-}
-
-function createOption(value: string, label: string): HTMLOptionElement {
-  const option = document.createElement("option");
-  option.value = value;
-  option.textContent = label;
-  return option;
 }

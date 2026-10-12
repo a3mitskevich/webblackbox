@@ -53,6 +53,8 @@ export class FakePort {
 export type ChromeStub = {
   tabsCreate: ReturnType<typeof vi.fn>;
   tabsSendMessage: ReturnType<typeof vi.fn>;
+  /** `chrome.storage.local.set`; writes land in the stub's storage. Absent without storage. */
+  storageSet?: ReturnType<typeof vi.fn>;
 };
 
 export function installChromeStub(
@@ -76,19 +78,25 @@ export function installChromeStub(
   }));
   const tabsSendMessage = options.tabsSendMessage ?? vi.fn(async () => undefined);
   const stored = options.storage;
-  const storage = stored
-    ? {
-        local: {
-          get: vi.fn(async (keys?: string | string[]) => {
-            const wanted = keys === undefined ? Object.keys(stored) : [keys].flat();
-            return Object.fromEntries(
-              wanted.filter((key) => key in stored).map((key) => [key, stored[key]])
-            );
-          }),
-          set: vi.fn(async () => undefined)
-        }
-      }
+  const storageSet = stored
+    ? vi.fn(async (items: Record<string, unknown>) => {
+        Object.assign(stored, items);
+      })
     : undefined;
+  const storage =
+    stored && storageSet
+      ? {
+          local: {
+            get: vi.fn(async (keys?: string | string[]) => {
+              const wanted = keys === undefined ? Object.keys(stored) : [keys].flat();
+              return Object.fromEntries(
+                wanted.filter((key) => key in stored).map((key) => [key, stored[key]])
+              );
+            }),
+            set: storageSet
+          }
+        }
+      : undefined;
 
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
@@ -105,7 +113,7 @@ export function installChromeStub(
     }
   });
 
-  return { tabsCreate, tabsSendMessage };
+  return { tabsCreate, tabsSendMessage, ...(storageSet ? { storageSet } : {}) };
 }
 
 export async function flushPopup(): Promise<void> {
@@ -153,11 +161,11 @@ export const getButton = (action: string): HTMLButtonElement =>
 
 export const getStatusLine = (): HTMLElement => query<HTMLElement>(".wb-popup__status");
 
-export function chooseRadio(name: string, value: string): HTMLInputElement {
-  const radio = query<HTMLInputElement>(`input[name='${name}'][value='${value}']`);
-  radio.checked = true;
-  radio.dispatchEvent(new Event("change", { bubbles: true }));
-  return radio;
+/** Messages the popup posted on its port, of one kind. */
+export function postedOfKind(port: FakePort, kind: string): unknown[] {
+  return port.postMessage.mock.calls
+    .map(([message]) => message)
+    .filter((message) => (message as { kind?: unknown }).kind === kind);
 }
 
 export function stoppedSession(sid: string, mode: "lite" | "full" = "full", tabId = 17) {

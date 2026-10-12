@@ -46,8 +46,8 @@
   "optionsScreenshotIdleHint": "0 turns idle screenshots off.",
   "optionsBodyCaptureHint": "Largest response body kept in Full mode.",
   "optionsFreezeOnErrorHint": "Shows ERR on the toolbar icon and an incident line in the popup.",
-  "optionsStartReloadOffer": "Offer to reload the page when recording starts",
-  "optionsStartReloadOfferHint": "Start asks whether to reload the page first, to record its load. When off, recording starts without a reload.",
+  "optionsStartReloadOffer": "Page reload on Start",
+  "optionsStartReloadOfferHint": "A reload records the page from its first request, with its scripts (for source maps).",
   "optionsLcpWarnHint": "Largest Contentful Paint slower than this.",
   "optionsRequestWarnHint": "Requests slower than this count as slow.",
   "optionsErrorRateWarnHint": "Share of failed requests.",
@@ -63,5 +63,11 @@
   "optionsPlayerUrlManaged": "Set by your organization's policy.",
   "optionsErrorPlayerUrl": "Enter an https:// address (http:// only for localhost or 127.0.0.1).",
   "optionsProfileFieldsNotice": "Masking, pointer, sampling and incident settings belong to a recording profile. The built-in profiles (Maximum and Light) cannot be edited: duplicate one under Profiles and change the copy.",
-  "optionsOpenProfiles": "Open profiles"
+  "optionsOpenProfiles": "Open profiles",
+  "optionsStartReloadAsk": "Ask, reload by default",
+  "optionsStartReloadAskDescription": "Start asks; \"Reload and record\" is the main choice. \"Don't ask again\" there sets one of the options below.",
+  "optionsStartReloadAlways": "Always reload",
+  "optionsStartReloadAlwaysDescription": "Start reloads the page without asking.",
+  "optionsStartReloadNever": "Never reload",
+  "optionsStartReloadNeverDescription": "Start records the page as it is; its load is not recorded."
 }

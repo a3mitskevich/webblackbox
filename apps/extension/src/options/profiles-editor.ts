@@ -19,6 +19,7 @@ import {
 } from "../shared/profiles/storage.js";
 import { previewProfilesImport, type ProfilesDiff } from "../shared/profiles/transfer.js";
 import { preserveFocus } from "../shared/ui/focus.js";
+import { displayProfileName } from "../shared/profiles/display-name.js";
 import { el, readField } from "./dom.js";
 import {
   changedItemIds,
@@ -610,7 +611,9 @@ function deleteProfile(editor: Editor, profileId: string, update: Update): void 
 
   void confirmProfileDeletion(
     deps.t,
-    describeProfileDeletion(state.draft, catalog, profileId)
+    describeProfileDeletion(state.draft, catalog, profileId, (profile) =>
+      displayProfileName(profile, deps.t)
+    )
   ).then((confirmed) => {
     if (confirmed) {
       update(() => {

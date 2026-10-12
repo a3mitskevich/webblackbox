@@ -243,15 +243,44 @@ export type DialogChoice<TValue extends string> = {
   primary?: boolean;
 };
 
-/** A dialog with several outcomes; resolves the chosen value or null when cancelled. */
-export function openChoiceDialog<TValue extends string>(options: {
+export type ChoiceDialogOptions<TValue extends string> = {
   title: string;
   body: string;
   cancelLabel: string;
   cancelAction: string;
   choices: Array<DialogChoice<TValue>>;
-}): Promise<TValue | null> {
-  return openDialog<TValue | null>(null, (finish) => {
+};
+
+/** A dialog with several outcomes; resolves the chosen value or null when cancelled. */
+export async function openChoiceDialog<TValue extends string>(
+  options: ChoiceDialogOptions<TValue>
+): Promise<TValue | null> {
+  return (await openChoiceDialogFrame(options))?.value ?? null;
+}
+
+/**
+ * A choice dialog with a "Don't ask again" checkbox: resolves the chosen value and whether the
+ * box was ticked, or null when cancelled (a cancel never remembers anything).
+ */
+export function openRememberedChoiceDialog<TValue extends string>(
+  options: ChoiceDialogOptions<TValue> & { rememberLabel: string }
+): Promise<{ value: TValue; remember: boolean } | null> {
+  return openChoiceDialogFrame(options);
+}
+
+function openChoiceDialogFrame<TValue extends string>(
+  options: ChoiceDialogOptions<TValue> & { rememberLabel?: string }
+): Promise<{ value: TValue; remember: boolean } | null> {
+  return openDialog<{ value: TValue; remember: boolean } | null>(null, (finish) => {
+    const remember = options.rememberLabel
+      ? el("input", {
+          className: "wb-checkbox",
+          attrs: { type: "checkbox", id: "wb-choice-remember", "data-choice-remember": "" }
+        })
+      : null;
+    const choose = (value: TValue): void => {
+      finish({ value, remember: remember?.checked === true });
+    };
     const cancelButton = dialogButton(options.cancelLabel, "muted", {
       action: options.cancelAction
     });
@@ -264,7 +293,7 @@ export function openChoiceDialog<TValue extends string>(options: {
       );
       element.addEventListener("click", (event) => {
         event.preventDefault();
-        finish(choice.value);
+        choose(choice.value);
       });
       return { choice, element };
     });
@@ -273,6 +302,15 @@ export function openChoiceDialog<TValue extends string>(options: {
       { className: "wb-confirm-card", attrs: { "aria-labelledby": "wb-choice-title" } },
       [
         ...dialogHeading("wb-choice-title", options.title, options.body),
+        ...(remember && options.rememberLabel
+          ? [
+              el(
+                "label",
+                { className: "wb-confirm-remember", attrs: { for: "wb-choice-remember" } },
+                [remember, el("span", { text: options.rememberLabel })]
+              )
+            ]
+          : []),
         el("div", { className: "wb-confirm-actions" }, [
           cancelButton,
           ...buttons.map((entry) => entry.element)
@@ -286,7 +324,7 @@ export function openChoiceDialog<TValue extends string>(options: {
       event.preventDefault();
 
       if (primary) {
-        finish(primary.choice.value);
+        choose(primary.choice.value);
       }
     });
 

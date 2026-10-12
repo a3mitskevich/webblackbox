@@ -27,5 +27,7 @@
   "unitLabelMilliseconds": "мс",
   "unitLabelMinutes": "мин",
   "unitLabelPercent": "%",
-  "localDataRestartNotice": "Неэкспортированные записи удаляются при перезапуске браузера."
+  "localDataRestartNotice": "Неэкспортированные записи удаляются при перезапуске браузера.",
+  "profileNameMaximum": "Максимум",
+  "profileNameLight": "Лёгкий"
 }
