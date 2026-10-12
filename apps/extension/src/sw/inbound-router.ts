@@ -1,17 +1,18 @@
 import type { RawRecorderEvent } from "@webblackbox/recorder";
 
 import type { PortLike, RuntimeMessageSender } from "../shared/chrome-api.js";
-import {
-  PORT_NAMES,
-  type ExtensionInboundMessage,
-  type FullModeVisualCapture
-} from "../shared/messages.js";
+import { PORT_NAMES, type ExtensionInboundMessage } from "../shared/messages.js";
 import type { SwPipelineStatusMessage } from "../shared/offscreen-messages.js";
 import type { ScreenRecordingController } from "./artifacts-screen-recording.js";
 import { isOffscreenDocumentPort } from "./at-rest-key.js";
 import type { ChromeApi } from "../shared/chrome-api.js";
 import type { SessionExportController } from "./export-session.js";
 import { toScriptScanStatus } from "./full-cdp.js";
+import {
+  createRejectedMessageLog,
+  parseExtensionInboundMessage,
+  type RejectedMessageDetails
+} from "./inbound-messages.js";
 import {
   OFFSCREEN_DISCONNECTED_ERROR,
   type OffscreenClient,
@@ -108,6 +109,10 @@ export type InboundRouter = {
  */
 export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
   const { sessionRegistry, portRegistry, stopDrain } = deps;
+  const logRejectedMessage = createRejectedMessageLog({
+    now: deps.monotonicTime,
+    warn: (message, details) => console.warn(message, details)
+  });
 
   function handlePortConnect(port: PortLike): void {
     if (
@@ -162,13 +167,15 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
         return;
       }
 
-      const message = parseInboundMessage(rawMessage);
+      const message = acceptInboundMessage(rawMessage, senderContext, {
+        port: port.name,
+        tabId: port.sender?.tab?.id,
+        frameId: port.sender?.frameId
+      });
 
-      if (!message || !isInboundKindAllowed(message.kind, senderContext)) {
-        return;
+      if (message) {
+        dispatchInboundMessage(message, port);
       }
-
-      dispatchInboundMessage(message, port);
     };
 
     const onDisconnect = () => {
@@ -198,9 +205,12 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
     sender: RuntimeMessageSender,
     sendResponse: (response: unknown) => void
   ): boolean {
-    const message = parseInboundMessage(rawMessage);
+    const message = acceptInboundMessage(rawMessage, resolveMessageSenderContext(sender), {
+      tabId: sender.tab?.id,
+      frameId: sender.frameId
+    });
 
-    if (!message || !isInboundKindAllowed(message.kind, resolveMessageSenderContext(sender))) {
+    if (!message) {
       return false;
     }
 
@@ -220,6 +230,45 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
       });
 
     return true;
+  }
+
+  /**
+   * The message when its shape is valid and its sender may send that kind. Anything else is
+   * dropped here, before any handler runs, with a rate-limited warning.
+   */
+  function acceptInboundMessage(
+    rawMessage: unknown,
+    senderContext: InboundSenderContext,
+    origin: Pick<RejectedMessageDetails, "port" | "tabId" | "frameId">
+  ): ExtensionInboundMessage | null {
+    const parsed = parseExtensionInboundMessage(rawMessage);
+
+    if (!parsed.ok) {
+      logRejectedMessage({ kind: parsed.kind, reason: parsed.reason, ...origin });
+      return null;
+    }
+
+    const { message, droppedEvents } = parsed;
+
+    if (!isInboundKindAllowed(message.kind, senderContext)) {
+      logRejectedMessage({
+        kind: message.kind,
+        reason: `not allowed from ${senderContext}`,
+        ...origin
+      });
+      return null;
+    }
+
+    if (droppedEvents > 0) {
+      logRejectedMessage({
+        kind: message.kind,
+        reason: "malformed events",
+        droppedEvents,
+        ...origin
+      });
+    }
+
+    return message;
   }
 
   function dispatchInboundMessage(
@@ -257,9 +306,12 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
       // load.
       await startWithOptionalReload(tabId, message.reloadPage === true, {
         start: () =>
+          // `visualCapture` is kept for a Lite request too: when the profile needs the Full
+          // engine the start runs in Full, and an explicit choice (e.g. "none") must hold there.
+          // A Lite session ignores it.
           deps.sessionCommands.startSession(tabId, message.mode, {
-            visualCapture: resolveFullModeVisualCapture(message),
-            profileId: typeof message.profileId === "string" ? message.profileId : undefined
+            visualCapture: message.visualCapture,
+            profileId: message.profileId
           }),
         reload: deps.sessionCommands.reloadRecordingTab,
         stop: deps.sessionCommands.stopSession
@@ -408,11 +460,7 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
       const tabId = senderTabId ?? port?.sender?.tab?.id;
       const frame = normalizeContentFrameId(senderFrameId ?? port?.sender?.frameId);
 
-      if (
-        typeof tabId !== "number" ||
-        !Array.isArray(message.events) ||
-        message.events.length === 0
-      ) {
+      if (typeof tabId !== "number" || message.events.length === 0) {
         return;
       }
 
@@ -618,36 +666,6 @@ export function createInboundRouter(deps: InboundRouterDeps): InboundRouter {
     relayMarkerCommand,
     notifyOffscreenPipelineStatus
   };
-}
-
-function resolveFullModeVisualCapture(
-  message: ExtensionInboundMessage
-): FullModeVisualCapture | undefined {
-  if (message.kind !== "ui.start") {
-    return undefined;
-  }
-
-  // Kept for a Lite request too: when the profile needs the Full engine the start runs in Full,
-  // and an explicit choice (e.g. "none") must hold there. A Lite session ignores it.
-  return isFullModeVisualCapture(message.visualCapture) ? message.visualCapture : undefined;
-}
-
-function isFullModeVisualCapture(value: unknown): value is FullModeVisualCapture {
-  return value === "screenshots" || value === "recording" || value === "both" || value === "none";
-}
-
-function parseInboundMessage(message: unknown): ExtensionInboundMessage | null {
-  if (message === null || typeof message !== "object" || Array.isArray(message)) {
-    return null;
-  }
-
-  const kind = (message as { kind?: unknown }).kind;
-
-  if (typeof kind !== "string") {
-    return null;
-  }
-
-  return message as ExtensionInboundMessage;
 }
 
 function normalizeContentFrameId(value: unknown): string | undefined {

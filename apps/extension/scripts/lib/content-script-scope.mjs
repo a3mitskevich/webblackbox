@@ -8,15 +8,16 @@ import { basename } from "node:path";
 export const CLASSIC_SCRIPT_CHUNKS = Object.freeze(["content.js", "injected.js"]);
 
 // The prefix takes a line of its own, so the bundle keeps its columns (minified, almost all of it
-// is on its first line) and its source map only moves down by that line.
-const WRAPPER_PREFIX = "(() => {\n";
+// is on its first line) and its source map only moves down by that line. Strict mode: an
+// assignment to an undeclared name throws instead of creating a global of the page.
+const WRAPPER_PREFIX = '(() => {"use strict";\n';
 const WRAPPER_SUFFIX = "\n})();\n";
 // tsup appends the source map comment after `renderChunk`, i.e. after the wrapper.
 const TRAILING_SOURCE_MAP_COMMENT = /\/\/# sourceMappingURL=\S+\s*$/;
 
 /**
- * Wraps a classic-script bundle in its own function scope. Without it every top-level `var`,
- * `function` and `class` of the bundle becomes a global of the world it runs in:
+ * Wraps a classic-script bundle in its own strict-mode function scope. Without it every top-level
+ * `var`, `function` and `class` of the bundle becomes a global of the world it runs in:
  * - in the isolated world a second run of the same file (the registered copy plus one injected on
  *   Start or after a navigation) re-initializes the running copy's state before the script's own
  *   guard can stop it;
