@@ -708,11 +708,17 @@ export class LiteCaptureAgent {
     }
 
     this.domRecorderPolicy = policyKey;
-    this.domRecorder = factory({
-      policy: this.capturePolicy,
-      mode: this.mode === "full" ? "full" : "lite",
-      emit: (payload, mono) => this.queueEvent(RRWEB_RAW_TYPE, payload, mono)
-    });
+
+    try {
+      this.domRecorder = factory({
+        policy: this.capturePolicy,
+        mode: this.mode === "full" ? "full" : "lite",
+        emit: (payload, mono) => this.queueEvent(RRWEB_RAW_TYPE, payload, mono)
+      });
+    } catch {
+      // A recorder that fails to start leaves the agent's own DOM capture in charge.
+      this.domRecorder = null;
+    }
   }
 
   private stopDomRecorder(): void {

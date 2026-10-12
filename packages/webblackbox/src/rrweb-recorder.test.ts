@@ -13,6 +13,7 @@ import type { RawRecorderEvent } from "@webblackbox/recorder";
 
 import { LiteCaptureAgent } from "./lite-capture-agent.js";
 import { serializeRawDom } from "./raw-dom-snapshot.js";
+import { createRrwebEventMask } from "./rrweb-masking.js";
 import {
   buildRrwebRecordOptions,
   createRrwebDomRecorder,
@@ -191,7 +192,7 @@ describe("createRrwebDomRecorder", () => {
     expect(findNode(root, byId("name"))?.attributes?.value).toBe("*****");
   });
 
-  it("masks what the raw DOM masks: attributes, credentials, editors, hidden fields", async () => {
+  it("masks what the raw DOM masks: attributes, credentials, editors, field values", async () => {
     document.head.innerHTML = '<meta name="csrf-token" content="csrf-secret-1">';
     document.body.innerHTML = `
       <p id="tip" title="alice@example.com" aria-label="Alice Smith" data-token="dt-secret-2">x</p>
@@ -202,13 +203,21 @@ describe("createRrwebDomRecorder", () => {
       <input id="nonce" type="hidden" value="hidden-secret-6" />
       <select><option value="option-secret-7">o</option></select>
       <span onclick="send('handler-secret-8')" style="background:url(/bg.png?sig=css-secret-9)">z</span>
-      <iframe srcdoc="<p>srcdoc-secret-10</p>"></iframe>`;
+      <iframe srcdoc="<p>srcdoc-secret-10</p>"></iframe>
+      <input type="radio" name="choice" value="radio-secret-14" />
+      <input id="cleared" value="default-secret-15" />
+      <textarea id="notes">textarea-secret-16</textarea>`;
+    // Cleared by the user: rrweb then records the default value as it is.
+    (document.querySelector("#cleared") as HTMLInputElement).value = "";
+    (document.querySelector("#notes") as HTMLTextAreaElement).value = "";
     const secrets = /[a-z]+-secret-\d+|eyJhbGciOi/g;
-    const leaked = (policy: CapturePolicy): string[] => {
+    const recorded = (policy: CapturePolicy): string => {
       const { recorder, batches } = startRecorder(policy);
       recorder?.stop();
-      return [...new Set(JSON.stringify(batches).match(secrets) ?? [])].sort();
+      return JSON.stringify(batches);
     };
+    const leaked = (policy: CapturePolicy): string[] =>
+      [...new Set(recorded(policy).match(secrets) ?? [])].sort();
     const rawDom = (policy: CapturePolicy): string[] => {
       const snapshot = serializeRawDom(document, {
         blockedSelectors: policy.redaction.blockedSelectors,
@@ -221,10 +230,7 @@ describe("createRrwebDomRecorder", () => {
 
     // Default: the current path records no raw DOM at all, so nothing may leak.
     expect(leaked(DEFAULT_CAPTURE_POLICY)).toEqual([]);
-    expect(JSON.stringify(startRecorder(DEFAULT_CAPTURE_POLICY).batches)).not.toMatch(
-      /alice@example\.com|Alice Smith/
-    );
-    running = null;
+    expect(recorded(DEFAULT_CAPTURE_POLICY)).not.toMatch(/alice@example\.com|Alice Smith/);
 
     // `dom: allow`: exactly what the raw DOM snapshot keeps for the same policy (nothing here).
     const allow = policyWith({ dom: "allow" });
@@ -246,6 +252,26 @@ describe("createRrwebDomRecorder", () => {
 
     expect(batches.length).toBeGreaterThan(before);
     expect(JSON.stringify(batches.slice(before))).not.toMatch(secrets);
+  });
+
+  it("strips URL queries from CSS written through the CSSOM (insertRule, setProperty, adopted)", () => {
+    // jsdom does not drive rrweb's CSSOM hooks: the events are built as rrweb 2.1.7 emits them.
+    const mask = createRrwebEventMask(policyWith({ dom: "allow" }), () => null);
+    const url = "url(/late.png?sig=cssom-secret-1)";
+    const events = [
+      { source: 8, id: 5, adds: [{ rule: `.late { background: ${url}; }`, index: 0 }] },
+      { source: 8, styleId: 2, replace: `.a { background: ${url}; }` },
+      { source: 13, id: 5, index: [0], set: { property: "background", value: url } },
+      {
+        source: 15,
+        id: 1,
+        styleIds: [2],
+        styles: [{ styleId: 2, rules: [{ rule: `.b{mask:${url}}` }] }]
+      }
+    ].map((data) => mask({ type: 3, timestamp: 1, data }));
+
+    expect(JSON.stringify(events)).not.toContain("cssom-secret");
+    expect(JSON.stringify(events)).toContain("/late.png");
   });
 
   it("batches incremental events and stamps each batch with its first event's time", async () => {
@@ -334,6 +360,32 @@ describe("LiteCaptureAgent with a DOM recorder", () => {
     expect(rawTypes).not.toContain("mutation");
     expect(rawTypes).not.toContain("rrweb");
     expect(rawTypes).not.toContain("snapshot");
+    agent.dispose();
+  });
+
+  it("falls back to its own DOM capture when the recorder fails to start", async () => {
+    document.body.innerHTML = `<div id="list"></div>`;
+    const emitBatch = vi.fn<(events: RawRecorderEvent[]) => void>();
+    const agent = new LiteCaptureAgent({
+      emitBatch,
+      showIndicator: false,
+      frameScope: "top",
+      domRecorder: () => {
+        throw new Error("rrweb failed");
+      }
+    });
+
+    expect(() =>
+      agent.setRecordingStatus({ active: true, sid: "S-throw", mode: "lite" })
+    ).not.toThrow();
+    document.querySelector("#list")!.append(document.createElement("p"));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    agent.flush();
+
+    const rawTypes = emitBatch.mock.calls.flatMap(([events]) =>
+      events.map((event) => event.rawType)
+    );
+    expect(rawTypes).toContain("mutation");
     agent.dispose();
   });
 

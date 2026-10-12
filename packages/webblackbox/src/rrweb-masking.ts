@@ -24,6 +24,10 @@ import {
 
 /** rrweb `IncrementalSource.Input`: a field value change. */
 const INPUT_SOURCE = 5;
+/** rrweb `IncrementalSource` values that carry CSS text written through the CSSOM. */
+const STYLE_SHEET_RULE_SOURCE = 8;
+const STYLE_DECLARATION_SOURCE = 13;
+const ADOPTED_STYLE_SHEET_SOURCE = 15;
 /** rrweb-snapshot `NodeType` values. */
 const ELEMENT_NODE = 2;
 const TEXT_NODE = 3;
@@ -79,10 +83,15 @@ function contextOf(policy: CapturePolicy): MaskContext {
   };
 }
 
-function isInEditor(element: HTMLElement | null): boolean {
+/**
+ * Text that is a field value: a rich editor's, or a `<textarea>`'s default text (rrweb writes it
+ * as a text node when the field is empty, without `maskInputFn`).
+ */
+function isFieldText(element: HTMLElement | null): boolean {
   return (
     element !== null &&
-    (element.closest(EDITOR_SELECTOR) !== null || element.ownerDocument.designMode === "on")
+    (element.closest(`${EDITOR_SELECTOR}, textarea`) !== null ||
+      element.ownerDocument.designMode === "on")
   );
 }
 
@@ -111,7 +120,7 @@ export function buildRrwebTextMask(policy: CapturePolicy): RrwebTextMask | null 
       return context.heuristics ? sanitizeCss(text) : text;
     }
 
-    if (context.masksAllText || (context.masksFieldValues && isInEditor(element))) {
+    if (context.masksAllText || (context.masksFieldValues && isFieldText(element))) {
       return maskAll(text);
     }
 
@@ -192,6 +201,13 @@ function maskAttributes(
           (context.masksFieldValues && VALUE_ATTRIBUTE_TAGS.has(tag)))
       ) {
         return [];
+      }
+
+      // rrweb masks a field's live value only when it is not empty and the field is typed text:
+      // a cleared field keeps its default `value`, radios, checkboxes and buttons keep theirs.
+      // Masking is idempotent on what rrweb already masked.
+      if (key === "value" && context.masksFieldValues && (tag === "input" || tag === "textarea")) {
+        return [[name, maskAll(value)]];
       }
 
       return [[name, maskAttributeValue(key, value, context)]];
@@ -308,12 +324,57 @@ export function createRrwebEventMask(
       return { ...event, data: maskMutation(data, lookup, context) };
     }
 
+    if (CSSOM_SOURCES.has(data.source as number)) {
+      return context.heuristics ? { ...event, data: maskCssomChange(data) } : event;
+    }
+
     const field = data.source === INPUT_SOURCE ? elementOf(lookup, data.id) : null;
 
     // rrweb's `maskAllInputs` leaves hidden fields out; their value is form state, never typed.
     return field && isHiddenInput(field.localName, (name) => field.getAttribute(name))
       ? { ...event, data: { ...data, text: "" } }
       : event;
+  };
+}
+
+const CSSOM_SOURCES = new Set([
+  STYLE_SHEET_RULE_SOURCE,
+  STYLE_DECLARATION_SOURCE,
+  ADOPTED_STYLE_SHEET_SOURCE
+]);
+
+const sanitizeCssField = (value: unknown): unknown =>
+  typeof value === "string" ? sanitizeCss(value) : value;
+
+function maskRules(rules: unknown): unknown {
+  return Array.isArray(rules)
+    ? rules.map((entry) => {
+        const record = asRecord(entry);
+        return record ? { ...record, rule: sanitizeCssField(record.rule) } : entry;
+      })
+    : rules;
+}
+
+/**
+ * CSS written through the CSSOM (`insertRule`, `replace`, `style.setProperty`, adopted sheets),
+ * under the built-in heuristics like the style text of the snapshot.
+ */
+function maskCssomChange(data: Attributes): Attributes {
+  const set = asRecord(data.set);
+  const styles = Array.isArray(data.styles)
+    ? data.styles.map((style) => {
+        const record = asRecord(style);
+        return record ? { ...record, rules: maskRules(record.rules) } : style;
+      })
+    : data.styles;
+
+  return {
+    ...data,
+    ...(data.adds !== undefined ? { adds: maskRules(data.adds) } : {}),
+    ...(data.replace !== undefined ? { replace: sanitizeCssField(data.replace) } : {}),
+    ...(data.replaceSync !== undefined ? { replaceSync: sanitizeCssField(data.replaceSync) } : {}),
+    ...(set ? { set: { ...set, value: sanitizeCssField(set.value) } } : {}),
+    ...(styles !== undefined ? { styles } : {})
   };
 }
 
