@@ -7,10 +7,9 @@ import type { LiteCaptureAgentOptions } from "webblackbox/types";
 import { clampBodyCaptureMaxBytes } from "../shared/body-capture-limits.js";
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { PORT_NAMES, type ExtensionOutboundMessage } from "../shared/messages.js";
+import { readContentAgent, type ContentAgentApi } from "./content-agent-api.js";
 import { CONTENT_EVENT_FLUSH_CHUNK, resolveContentEventFlushDelay } from "./flush-policy.js";
 import { claimContentScriptSlot } from "./script-guard.js";
-
-type ContentAgentModule = typeof import("./content-agent.js");
 
 const chromeApi = getChromeApi();
 let contentPort: PortLike | null = null;
@@ -18,6 +17,7 @@ let reconnectTimer = 0;
 let reconnectAttempts = 0;
 let captureAgent: LiteCaptureAgent | null = null;
 let captureAgentPromise: Promise<LiteCaptureAgent> | null = null;
+let contentAgentRequest: Promise<ContentAgentApi> | null = null;
 
 let recordingActive = false;
 let recordingStatusVersion = 0;
@@ -367,10 +367,37 @@ async function ensureCaptureAgent(): Promise<LiteCaptureAgent> {
   return captureAgentPromise;
 }
 
-/** The capture agent bundle also carries the UI dictionaries; the module map loads it once. */
-function loadContentAgentModule(): Promise<ContentAgentModule> {
-  const moduleUrl = chromeApi?.runtime?.getURL?.("content-agent.js") ?? "./content-agent.js";
-  return import(moduleUrl) as Promise<ContentAgentModule>;
+/**
+ * The capture agent (`content-agent.js`, with snapdom) is not parsed in a frame until it records:
+ * the service worker injects it into this frame on request, once per document.
+ */
+function loadContentAgentModule(): Promise<ContentAgentApi> {
+  const loaded = readContentAgent(globalThis);
+
+  if (loaded) {
+    return Promise.resolve(loaded);
+  }
+
+  contentAgentRequest ??= requestContentAgent().finally(() => {
+    contentAgentRequest = null;
+  });
+  return contentAgentRequest;
+}
+
+async function requestContentAgent(): Promise<ContentAgentApi> {
+  const response: unknown = await chromeApi?.runtime?.sendMessage?.({
+    kind: "content.agent-request"
+  });
+  const agent = readContentAgent(globalThis);
+
+  if (!agent) {
+    const error = (response as { error?: unknown } | undefined)?.error;
+    throw new Error(
+      `The capture agent was not injected into this frame${typeof error === "string" ? `: ${error}` : "."}`
+    );
+  }
+
+  return agent;
 }
 
 async function emitKeyboardMarker(): Promise<void> {

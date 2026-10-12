@@ -5,6 +5,7 @@ import { BODY_REDACTION_TOKEN } from "@webblackbox/protocol";
 import { PIPELINE_DB_NAME } from "../shared/at-rest.js";
 import { getChromeApi, type PortLike } from "../shared/chrome-api.js";
 import { CONTENT_INJECTION_STORAGE_KEY } from "../shared/content-injection.js";
+import { EXTENSION_FILES } from "../shared/extension-files.js";
 import { OFFSCREEN_CONNECT_REQUEST_KIND } from "../shared/offscreen-messages.js";
 import {
   normalizePerformanceBudget,
@@ -62,7 +63,7 @@ const chromeApi = getChromeApi();
 
 const sessionRegistry = createSessionRegistry();
 
-const OFFSCREEN_PATH = "offscreen.html";
+const OFFSCREEN_PATH = EXTENSION_FILES.offscreenPage;
 const SERVICE_WORKER_BOOTED_AT = Date.now();
 const BEST_EFFORT_QUEUE_MAX_PENDING = 80;
 /** Shortest gap between session-list pushes driven by recorded events (counters, errors). */

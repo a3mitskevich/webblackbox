@@ -1,5 +1,3 @@
-import { resolve } from "node:path";
-
 import type { PluginOption } from "vite";
 import { defineConfig, type EntrypointGroup } from "wxt";
 
@@ -11,9 +9,6 @@ import {
 } from "./scripts/lib/extension-build.mjs";
 import { mergedLocalesPlugin } from "./scripts/lib/locale-fragments.mjs";
 import { createManagedStorageSchema, MANAGED_SCHEMA_FILE } from "./scripts/lib/managed-schema.mjs";
-
-/** `content-agent.js` stays an ES module: `content.js` imports its exports at runtime. */
-const CONTENT_AGENT_SOURCE = resolve(import.meta.dirname, "src/content/content-agent.ts");
 
 /**
  * Output names WXT cannot derive from the entrypoint name: WXT names the service worker
@@ -81,16 +76,6 @@ export default defineConfig({
 
       if (!output || Array.isArray(output)) {
         throw new Error(`Unexpected WXT output options for ${entrypoint.name}.`);
-      }
-
-      if (entrypoint.name === "content-agent") {
-        config.build = {
-          ...config.build,
-          lib: { ...config.build?.lib, entry: CONTENT_AGENT_SOURCE, formats: ["es"] }
-        };
-        // Vite's library mode keeps the whitespace of ES bundles; this one is parsed per frame.
-        output.minify = true;
-        return;
       }
 
       const fileName = ENTRY_FILE_NAMES[entrypoint.name];

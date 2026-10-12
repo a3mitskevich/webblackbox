@@ -2,6 +2,7 @@ import { LiteCaptureAgent } from "webblackbox/lite-capture-agent";
 import type { LiteCaptureAgentOptions } from "webblackbox/types";
 
 import { loadExtensionLocale, type ExtensionLocale } from "../shared/i18n.js";
+import { publishContentAgent } from "./content-agent-api.js";
 
 export function createContentCaptureAgent(options: LiteCaptureAgentOptions): LiteCaptureAgent {
   return new LiteCaptureAgent(options);
@@ -21,4 +22,12 @@ export const KEYBOARD_MARKER_LABELS: Readonly<Record<ExtensionLocale, string>> =
 /** In the language chosen in Options (Chrome's language on Auto). */
 export async function loadKeyboardMarkerLabel(): Promise<string> {
   return KEYBOARD_MARKER_LABELS[await loadExtensionLocale()];
+}
+
+/**
+ * Runs when the service worker injects `content-agent.js` into a recording frame (see
+ * `content.agent-request`): hands the agent to the content script of the same isolated world.
+ */
+export function startContentAgent(): void {
+  publishContentAgent(globalThis, { createContentCaptureAgent, loadKeyboardMarkerLabel });
 }
