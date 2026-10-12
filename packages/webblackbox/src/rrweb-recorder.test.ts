@@ -315,6 +315,40 @@ describe("createRrwebDomRecorder", () => {
 });
 
 describe("LiteCaptureAgent with a DOM recorder", () => {
+  it("drains the DOM recorder on Stop after the final screenshot", async () => {
+    const order: string[] = [];
+    const agent = new LiteCaptureAgent({
+      emitBatch: vi.fn(),
+      showIndicator: false,
+      frameScope: "top",
+      domRecorder: () => ({
+        flush: vi.fn(),
+        stop: vi.fn(),
+        drain: async () => {
+          order.push("drain");
+        }
+      })
+    });
+    agent.setRecordingStatus({
+      active: true,
+      sid: "S-rrweb-stop",
+      tabId: 3,
+      mode: "lite",
+      capturePolicy: DEFAULT_CAPTURE_POLICY
+    });
+    vi.spyOn(
+      agent as unknown as { completeStopScreenshot: () => Promise<void> },
+      "completeStopScreenshot"
+    ).mockImplementation(async () => {
+      order.push("screenshot");
+    });
+
+    await agent.prepareStopCapture();
+
+    expect(order).toEqual(["screenshot", "drain"]);
+    agent.dispose();
+  });
+
   it("runs the recorder while recording and queues its batches as rrwebRecord events", () => {
     const emitBatch = vi.fn<(events: RawRecorderEvent[]) => void>();
     const stop = vi.fn();

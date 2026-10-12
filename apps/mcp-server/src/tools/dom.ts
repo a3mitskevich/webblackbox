@@ -599,7 +599,9 @@ export function domDiffFromPlayer(player: WebBlackboxPlayer, args: DomDiffArgs) 
     ["actionId", "fromMono"],
     ["actionId", "toMono"],
     ["eventId", "fromMono"],
-    ["eventId", "toMono"]
+    ["eventId", "toMono"],
+    ["windowMs", "fromMono"],
+    ["windowMs", "toMono"]
   ]);
   const events = player.events;
   const replay = RrwebDomReplay.fromEvents(events);

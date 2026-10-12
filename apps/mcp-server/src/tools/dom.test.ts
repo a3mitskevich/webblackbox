@@ -254,6 +254,9 @@ describe("dom_diff", () => {
     await expect(
       domDiff({ path: realisticPath, eventId: firstClick().id, fromMono: 1, toMono: 2 })
     ).rejects.toThrow(/only one of eventId, fromMono/);
+    await expect(
+      domDiff({ path: realisticPath, fromMono: 1, toMono: 2, windowMs: 100 })
+    ).rejects.toThrow(/only one of windowMs, fromMono/);
   });
 });
 

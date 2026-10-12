@@ -25,12 +25,21 @@ let recordingStatusVersion = 0;
 let pendingEvents: RawRecorderEvent[] = [];
 let pendingEventFlushTimer = 0;
 let pendingEventFlushDelayMs = Number.POSITIVE_INFINITY;
-const domCheckpointLatch = createDomCheckpointLatch(() => captureAgent?.requestDomCheckpoint());
 
 const PORT_RECONNECT_INITIAL_MS = 250;
 const PORT_RECONNECT_MAX_MS = 5_000;
 const PENDING_EVENT_MAX = 1_200;
+/** Queue length under which a full snapshot owed for dropped rrweb batches is taken. */
+const DOM_CHECKPOINT_QUEUE_LOW_WATER = PENDING_EVENT_MAX / 2;
 const DEFAULT_TAB_ID = -1;
+const domCheckpointLatch = createDomCheckpointLatch(() => {
+  if (!captureAgent) {
+    return false;
+  }
+
+  captureAgent.requestDomCheckpoint();
+  return true;
+}, DOM_CHECKPOINT_QUEUE_LOW_WATER);
 const PORT_DEBUG_LOG_FLAG = "__WEBBLACKBOX_DEBUG_PORT__";
 const INJECTED_CAPTURE_CONFIG_EVENT = "webblackbox:injected-config";
 
@@ -208,10 +217,7 @@ function flushPendingEventsChunk(): boolean {
     return false;
   }
 
-  if (pendingEvents.length === 0) {
-    domCheckpointLatch.queueDrained();
-  }
-
+  domCheckpointLatch.queueFlushed(pendingEvents.length);
   return true;
 }
 
