@@ -72,7 +72,12 @@ async function main() {
   const fallen = await waitFor(
     async () =>
       (await listSessions()).find(
-        (session) => session.sid === started.sid && session.active && session.captureFallback
+        (session) =>
+          session.sid === started.sid &&
+          session.active &&
+          session.captureFallback &&
+          // The fallback is recorded first; the switch to Light follows a moment later.
+          session.mode === "lite"
       ) ?? null,
     20_000,
     "The recording did not fall back to Light when the debugger left"
@@ -82,8 +87,11 @@ async function main() {
     "Unexpected fallback record",
     fallen
   );
-  const badge = await popup.evaluate(`chrome.action.getBadgeText({})`);
-  assert(badge === "LITE", "The badge does not show the Light fallback", { badge });
+  await waitFor(
+    async () => ((await popup.evaluate(`chrome.action.getBadgeText({})`)) === "LITE" ? true : null),
+    10_000,
+    "The badge does not show the Light fallback"
+  );
 
   // Back on the site: the recording goes on with page-side capture.
   await page.send("Page.navigate", { url: pageUrl });
