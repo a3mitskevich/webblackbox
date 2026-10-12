@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PrivacyDataCategory, SessionMetadata, WebBlackboxEvent } from "@webblackbox/protocol";
 
 import { createArchiveBlobSink } from "./archive-blob-sink.js";
+import { encodeArchiveJson } from "./archive-writer.js";
 import { readWebBlackboxArchive } from "./exporter.js";
 import { FlightRecorderPipeline } from "./pipeline.js";
 import { MemoryPipelineStorage, type PipelineStorage, type StoredBlob } from "./storage.js";
@@ -255,5 +256,196 @@ describe("streaming session export", () => {
       eventIds.filter((id) => Number(id.slice(2)) % 10 !== 0)
     );
     expect(exported.privacyManifest.totals?.blobs).toBe(bodyHashes.length);
+  });
+});
+
+const MINUTE_MS = 60_000;
+
+/** A console line every `stepMs`, a JSON body every 5th event: a long, sparse recording. */
+async function recordLongSession(
+  storage: PipelineStorage,
+  options: { events: number; stepMs: number; session?: SessionMetadata }
+): Promise<{ pipeline: FlightRecorderPipeline; eventIds: string[] }> {
+  const session = options.session ?? SESSION;
+  const pipeline = new FlightRecorderPipeline({
+    session,
+    storage,
+    maxChunkBytes: 4 * 1024,
+    chunkCodec: "gzip"
+  });
+  const eventIds: string[] = [];
+
+  await pipeline.start();
+
+  for (let index = 0; index < options.events; index += 1) {
+    const base =
+      index % 5 === 0
+        ? createEvent(index, "network.response", {
+            reqId: `R-${index}`,
+            status: 200,
+            bodyHash: await pipeline.putBlob(
+              "application/json",
+              new TextEncoder().encode(JSON.stringify({ index, text: sentence(index, 8) }))
+            )
+          })
+        : createEvent(index, "console.entry", { level: "log", text: sentence(index, 6) });
+    const event = {
+      ...base,
+      sid: session.sid,
+      t: T0 + index * options.stepMs,
+      mono: index * options.stepMs
+    };
+
+    eventIds.push(event.id);
+    await pipeline.ingest(event);
+  }
+
+  await pipeline.flush();
+  return { pipeline, eventIds };
+}
+
+describe("export completeness", () => {
+  it("exports a session longer than the old 20-minute window whole, chunk by chunk", async () => {
+    const storage = new CountingStorage();
+    // Two hours, one event every 10 s: six times the old default window.
+    const { pipeline, eventIds } = await recordLongSession(storage, {
+      events: 720,
+      stepMs: 10_000
+    });
+    const sink = createArchiveBlobSink(16 * 1024);
+    let largestPart = 0;
+    const exported = await pipeline.exportArchive(
+      (part) => {
+        largestPart = Math.max(largestPart, part.byteLength);
+        return sink.sink(part);
+      },
+      { passphrase: PASSPHRASE }
+    );
+    const parsed = await readWebBlackboxArchive(new Uint8Array(await sink.toBlob().arrayBuffer()), {
+      passphrase: PASSPHRASE
+    });
+    const storedChunks = (await storage.listChunkMetas(SESSION.sid)).length;
+
+    expect(parsed.events.map((event) => event.id)).toEqual(eventIds);
+    expect(parsed.manifest.stats.durationMs).toBe(719 * 10_000);
+    expect(parsed.manifest.completeness).toEqual({
+      storedEvents: 720,
+      storedChunks,
+      truncations: []
+    });
+    // The predicted size is exact, and nothing loads the session whole: chunks are read one at a
+    // time. The largest part written is an index, the only entry that grows with the session.
+    const largestIndex = Math.max(
+      encodeArchiveJson(parsed.requestIndex, "compact").byteLength,
+      encodeArchiveJson(parsed.invertedIndex, "compact").byteLength
+    );
+
+    expect(sink.size).toBe(exported.sizeBytes);
+    expect(storage.listChunksCalls).toBe(0);
+    expect(storage.listBlobsCalls).toBe(0);
+    expect(largestPart).toBeLessThanOrEqual(largestIndex + 1024);
+  });
+
+  it("records what a recent window leaves out", async () => {
+    const { pipeline } = await recordLongSession(new MemoryPipelineStorage(), {
+      events: 360,
+      stepMs: 10_000,
+      session: { ...SESSION, endedAt: T0 + 359 * 10_000 }
+    });
+    const exported = await pipeline.exportBundle({
+      passphrase: PASSPHRASE,
+      recentWindowMs: 30 * MINUTE_MS
+    });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: PASSPHRASE });
+    const completeness = parsed.manifest.completeness;
+    const cutoff = T0 + 359 * 10_000 - 30 * MINUTE_MS;
+    const olderEvents = 360 - parsed.events.length;
+
+    expect(parsed.events.every((event) => event.t >= cutoff)).toBe(true);
+    expect(olderEvents).toBe(Math.ceil((cutoff - T0) / 10_000));
+    expect(completeness?.storedEvents).toBe(360);
+    expect(completeness?.truncations).toHaveLength(1);
+    expect(completeness?.truncations[0]).toMatchObject({
+      reason: "recent-window",
+      events: olderEvents,
+      fromT: T0,
+      limit: 30 * MINUTE_MS
+    });
+    expect(completeness?.truncations[0]?.chunks).toBeGreaterThan(0);
+    expect(completeness?.truncations[0]?.toT).toBeLessThan(cutoff);
+  });
+
+  it("records what a size limit leaves out, adding up to the stored events", async () => {
+    const { pipeline, eventIds } = await recordSession(new MemoryPipelineStorage(), {
+      events: 240,
+      blobBytes: 3000,
+      words: 40
+    });
+    const full = await pipeline.exportBundle({ passphrase: PASSPHRASE, includeScreenshots: true });
+    const maxArchiveBytes = Math.floor(full.bytes.byteLength * 0.4);
+    const exported = await pipeline.exportBundle({
+      passphrase: PASSPHRASE,
+      includeScreenshots: true,
+      maxArchiveBytes
+    });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: PASSPHRASE });
+    const truncations = parsed.manifest.completeness?.truncations ?? [];
+    const firstKept = parsed.events[0];
+
+    expect(truncations.map((row) => row.reason)).toEqual(["size-limit"]);
+    expect(truncations[0]?.limit).toBe(maxArchiveBytes);
+    expect(parsed.events.length + (truncations[0]?.events ?? 0)).toBe(eventIds.length);
+    expect(truncations[0]?.toT).toBeLessThan(firstKept?.t ?? 0);
+  });
+
+  it("keeps the interruption of a recording that ended without Stop", async () => {
+    const interruption = {
+      reason: "service-worker-restart" as const,
+      detectedAt: T0 + 5 * MINUTE_MS,
+      lastSeenAt: T0 + 4 * MINUTE_MS
+    };
+    const { pipeline } = await recordLongSession(new MemoryPipelineStorage(), {
+      events: 20,
+      stepMs: 1_000,
+      session: { ...SESSION, interruption }
+    });
+    const exported = await pipeline.exportBundle({ passphrase: PASSPHRASE });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: PASSPHRASE });
+
+    expect(parsed.manifest.completeness?.interruption).toEqual(interruption);
+    expect(parsed.manifest.completeness?.truncations).toEqual([]);
+  });
+
+  it("records a stored chunk that cannot be read back", async () => {
+    class LosingStorage extends MemoryPipelineStorage {
+      public lostChunkId: string | null = null;
+
+      public override async getChunk(sid: string, chunkId: string) {
+        return chunkId === this.lostChunkId ? undefined : super.getChunk(sid, chunkId);
+      }
+    }
+
+    const storage = new LosingStorage();
+    const { pipeline, eventIds } = await recordLongSession(storage, {
+      events: 200,
+      stepMs: 1_000
+    });
+    const metas = await storage.listChunkMetas(SESSION.sid);
+    const lost = metas[1];
+
+    storage.lostChunkId = lost?.chunkId ?? null;
+    const exported = await pipeline.exportBundle({ passphrase: PASSPHRASE });
+    const parsed = await readWebBlackboxArchive(exported.bytes, { passphrase: PASSPHRASE });
+
+    expect(parsed.events).toHaveLength(eventIds.length - (lost?.eventCount ?? 0));
+    expect(parsed.manifest.completeness?.truncations).toEqual([
+      {
+        reason: "chunk-unreadable",
+        events: lost?.eventCount,
+        chunks: 1,
+        fromT: lost?.tStart,
+        toT: lost?.tEnd
+      }
+    ]);
   });
 });

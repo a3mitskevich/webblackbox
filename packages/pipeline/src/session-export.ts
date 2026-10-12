@@ -1,4 +1,6 @@
 import type {
+  ArchiveCompleteness,
+  ArchiveTruncationReason,
   CapturePolicy,
   ChunkCodec,
   ChunkTimeIndexEntry,
@@ -10,11 +12,7 @@ import type {
   SessionMetadata,
   WebBlackboxEvent
 } from "@webblackbox/protocol";
-import {
-  ARCHIVE_FORMAT_VERSION,
-  DEFAULT_EXPORT_POLICY,
-  sanitizeUrlForPrivacy
-} from "@webblackbox/protocol";
+import { ARCHIVE_FORMAT_VERSION, sanitizeUrlForPrivacy } from "@webblackbox/protocol";
 
 import { AES_GCM_TAG_BYTES } from "./archive-crypto.js";
 import {
@@ -33,6 +31,18 @@ import {
 import { collectBlobHashesFromEvents } from "./blob-hashes.js";
 import { computeChunkTimeBounds } from "./chunker.js";
 import { decodeChunkEvents, encodeChunkEvents } from "./codec.js";
+import {
+  buildExportTransferPolicy,
+  exclusionReason,
+  type ResolvedExportPolicy,
+  resolveExportPolicy
+} from "./export-policy.js";
+import {
+  chunkEntry,
+  largestReason,
+  tallyDroppedEvents,
+  TruncationLedger
+} from "./export-truncation.js";
 import { sha256Hex } from "./hash.js";
 import { EventIndexer } from "./indexer.js";
 import {
@@ -70,16 +80,6 @@ export type SessionExportContext = {
   capturePolicy?: CapturePolicy;
 };
 
-type ResolvedExportPolicy = {
-  includeScreenshots: boolean;
-  includeScreenRecordings: boolean;
-  maxArchiveBytes: number | null;
-  recentWindowMs: number | null;
-  cutoffTimestamp: number;
-  /** False when the policy keeps every event: chunks are exported exactly as stored. */
-  filtersEvents: boolean;
-};
-
 /** One stored chunk in an export: its stored meta, and the meta of what is exported. */
 type ChunkPlan = {
   meta: ChunkTimeIndexEntry;
@@ -101,9 +101,6 @@ type ExportPlan = {
   archiveBytes: number;
 };
 
-const SCREENSHOT_EVENT_TYPE: WebBlackboxEvent["type"] = "screen.screenshot";
-const SCREEN_RECORDING_EVENT_PREFIX = "screen.recording.";
-// Headroom for the manifests and privacy manifest; indexes are estimated per chunk.
 const EXPORT_OVERHEAD_RESERVE_BYTES = 512 * 1024;
 const EXPORT_OVERHEAD_RESERVE_RATIO = 0.1;
 // When a plan is over the limit, drop a little more than the estimate says: the inverted index
@@ -134,7 +131,7 @@ export async function exportSessionArchive(
     sessionStartedAt: session.startedAt,
     sessionEndedAt: session.endedAt
   });
-  const source = new SessionExportSource(context, policy);
+  const source = new SessionExportSource(context, policy, metas);
   let plan = await source.plan(await source.selectChunks(metas));
 
   while (
@@ -142,7 +139,11 @@ export async function exportSessionArchive(
     plan.archiveBytes > policy.maxArchiveBytes &&
     plan.chunks.length > 0
   ) {
-    plan = await source.plan(dropOldestChunks(plan, plan.archiveBytes - policy.maxArchiveBytes));
+    const kept = dropOldestChunks(plan, plan.archiveBytes - policy.maxArchiveBytes);
+
+    // Recorded before the replan, so the manifest it builds names the dropped chunks.
+    source.recordSizeLimitDrops(plan.chunks.slice(0, plan.chunks.length - kept.length));
+    plan = await source.plan(kept);
   }
 
   // A whole-session export also refreshes the stored indexes.
@@ -182,17 +183,39 @@ export async function buildSessionIndexes(
   return indexer.snapshot();
 }
 
-/** Reads one session's chunks and blobs for an export, caching what replanning reuses. */
+/**
+ * Reads one session's chunks and blobs for an export, caching what replanning reuses, and keeps
+ * the ledger of what the export leaves out (written into the manifest).
+ */
 class SessionExportSource {
   private readonly eventScans = new Map<string, PrivacyEventScan>();
   private readonly blobFindings = new Map<string, PrivacyScannerFinding[]>();
   private readonly blobInfo = new Map<string, StoredBlobInfo | null>();
   private blobInfoLoaded = false;
+  private readonly ledger: TruncationLedger;
+  private readonly stored: { events: number; chunks: number };
 
   public constructor(
     private readonly context: SessionExportContext,
-    private readonly policy: ResolvedExportPolicy
-  ) {}
+    private readonly policy: ResolvedExportPolicy,
+    storedMetas: readonly ChunkTimeIndexEntry[]
+  ) {
+    this.ledger = new TruncationLedger({
+      ...(policy.recentWindowMs !== null ? { "recent-window": policy.recentWindowMs } : {}),
+      ...(policy.maxArchiveBytes !== null ? { "size-limit": policy.maxArchiveBytes } : {})
+    });
+    this.stored = {
+      events: storedMetas.reduce((count, meta) => count + meta.eventCount, 0),
+      chunks: storedMetas.length
+    };
+  }
+
+  /** Chunks the size limit dropped after planning: what they would have exported. */
+  public recordSizeLimitDrops(chunks: readonly ChunkPlan[]): void {
+    for (const chunk of chunks) {
+      this.ledger.add("size-limit", chunkEntry(chunk.exportMeta));
+    }
+  }
 
   private get sid(): string {
     return this.context.session.sid;
@@ -209,8 +232,13 @@ class SessionExportSource {
     for (let index = metas.length - 1; index >= 0; index -= 1) {
       const meta = metas[index];
 
+      if (!meta) {
+        continue;
+      }
+
       // A chunk whose every event is older than the recent window is skipped unread.
-      if (!meta || Math.max(meta.tStart, meta.tEnd) < this.policy.cutoffTimestamp) {
+      if (this.isOlderThanWindow(meta)) {
+        this.ledger.add("recent-window", chunkEntry(meta));
         continue;
       }
 
@@ -232,6 +260,8 @@ class SessionExportSource {
           Math.ceil(indexBytesPerEvent * plan.exportMeta.eventCount);
 
         if (totalBytes + candidateBytes > budget && selected.length > 0) {
+          this.ledger.add("size-limit", chunkEntry(plan.exportMeta));
+          this.recordUnselected(metas.slice(0, index));
           break;
         }
 
@@ -246,6 +276,28 @@ class SessionExportSource {
     }
 
     return selected.reverse();
+  }
+
+  /** Older chunks the size budget never reached, counted from their stored metas. */
+  private recordUnselected(metas: readonly ChunkTimeIndexEntry[]): void {
+    for (const meta of metas) {
+      this.ledger.add(
+        this.isOlderThanWindow(meta) ? "recent-window" : "size-limit",
+        chunkEntry(meta)
+      );
+    }
+  }
+
+  private isOlderThanWindow(meta: ChunkTimeIndexEntry): boolean {
+    return Math.max(meta.tStart, meta.tEnd) < this.policy.cutoffTimestamp;
+  }
+
+  private completeness(): ArchiveCompleteness {
+    return this.ledger.toCompleteness({
+      storedEvents: this.stored.events,
+      storedChunks: this.stored.chunks,
+      interruption: this.context.session.interruption
+    });
   }
 
   /** Indexes, privacy manifest and manifest of a selection, and the exact archive size. */
@@ -293,7 +345,8 @@ class SessionExportSource {
     const manifest = buildManifest(
       this.context,
       chunks.map((chunk) => chunk.exportMeta),
-      blobs.length
+      blobs.length,
+      this.completeness()
     );
     const files: ArchiveFileSize[] = [
       ...chunks.map((chunk) => ({
@@ -388,18 +441,29 @@ class SessionExportSource {
     return bytes;
   }
 
-  /** The chunk's events kept by the policy, or null when it keeps none. */
+  /**
+   * The chunk's events kept by the policy, or null when it keeps none; what the policy leaves
+   * out is counted in the ledger (only here: each chunk is prepared once per export).
+   */
   private async prepareChunk(
     meta: ChunkTimeIndexEntry
   ): Promise<{ plan: ChunkPlan; events: WebBlackboxEvent[] } | null> {
     const chunk = await this.context.storage.getChunk(this.sid, meta.chunkId);
 
     if (!chunk) {
+      this.ledger.add("chunk-unreadable", chunkEntry(meta));
       return null;
     }
 
     const events = await decodeChunkEvents(chunk.bytes, chunk.meta.codec);
-    const kept = this.filterEvents(events);
+    const { kept, dropped } = this.partitionEvents(events);
+    const tally = tallyDroppedEvents(dropped);
+    // A chunk left out entirely is counted under the reason that dropped most of its events.
+    const chunkReason = kept.length === 0 ? largestReason(tally) : null;
+
+    for (const [reason, entry] of tally) {
+      this.ledger.add(reason, { ...entry, chunks: reason === chunkReason ? 1 : 0 });
+    }
 
     if (kept.length === 0) {
       return null;
@@ -436,8 +500,32 @@ class SessionExportSource {
 
   private filterEvents(events: WebBlackboxEvent[]): WebBlackboxEvent[] {
     return this.policy.filtersEvents
-      ? events.filter((event) => shouldIncludeEvent(event, this.policy))
+      ? events.filter((event) => exclusionReason(event, this.policy) === null)
       : events;
+  }
+
+  private partitionEvents(events: WebBlackboxEvent[]): {
+    kept: WebBlackboxEvent[];
+    dropped: Array<{ t: number; reason: ArchiveTruncationReason }>;
+  } {
+    if (!this.policy.filtersEvents) {
+      return { kept: events, dropped: [] };
+    }
+
+    const kept: WebBlackboxEvent[] = [];
+    const dropped: Array<{ t: number; reason: ArchiveTruncationReason }> = [];
+
+    for (const event of events) {
+      const reason = exclusionReason(event, this.policy);
+
+      if (reason === null) {
+        kept.push(event);
+      } else {
+        dropped.push({ t: event.t, reason });
+      }
+    }
+
+    return { kept, dropped };
   }
 
   private async readExportEvents(plan: ChunkPlan): Promise<WebBlackboxEvent[]> {
@@ -611,7 +699,8 @@ async function listChunkMetas(
 function buildManifest(
   context: SessionExportContext,
   chunks: ChunkTimeIndexEntry[],
-  blobCount: number
+  blobCount: number,
+  completeness: ArchiveCompleteness
 ): ExportManifest {
   const { session } = context;
   const first = chunks[0]?.tStart ?? session.startedAt;
@@ -633,7 +722,8 @@ function buildManifest(
       chunkCount: chunks.length,
       blobCount,
       durationMs: Math.max(0, last - first)
-    }
+    },
+    completeness
   };
 }
 
@@ -649,94 +739,4 @@ function toManifestRedactionProfile(profile: RedactionProfile | undefined): Reda
     blockedSelectors: [...(profile?.blockedSelectors ?? [])],
     hashSensitiveValues: profile?.hashSensitiveValues ?? true
   };
-}
-
-function resolveExportPolicy(
-  options: ExportBundleOptions,
-  context: {
-    latestEventTimestamp?: number;
-    sessionStartedAt: number;
-    sessionEndedAt?: number;
-  }
-): ResolvedExportPolicy {
-  const includeScreenshots =
-    typeof options.includeScreenshots === "boolean"
-      ? options.includeScreenshots
-      : DEFAULT_EXPORT_POLICY.includeScreenshots;
-  const includeScreenRecordings =
-    typeof options.includeScreenRecordings === "boolean"
-      ? options.includeScreenRecordings
-      : DEFAULT_EXPORT_POLICY.includeScreenRecordings;
-  const maxArchiveBytes =
-    options.maxArchiveBytes === null
-      ? null
-      : normalizeBoundedPositiveInt(
-          options.maxArchiveBytes ?? DEFAULT_EXPORT_POLICY.maxArchiveBytes
-        );
-  const recentWindowMs =
-    options.recentWindowMs === null
-      ? null
-      : normalizeBoundedPositiveInt(options.recentWindowMs ?? DEFAULT_EXPORT_POLICY.recentWindowMs);
-  const anchorTimestamp =
-    typeof context.sessionEndedAt === "number"
-      ? Math.max(
-          context.latestEventTimestamp ?? Number.NEGATIVE_INFINITY,
-          context.sessionEndedAt,
-          context.sessionStartedAt
-        )
-      : Math.max(
-          Date.now(),
-          context.latestEventTimestamp ?? Number.NEGATIVE_INFINITY,
-          context.sessionStartedAt
-        );
-  const cutoffTimestamp =
-    recentWindowMs === null
-      ? Number.NEGATIVE_INFINITY
-      : Math.max(0, anchorTimestamp - recentWindowMs);
-
-  return {
-    includeScreenshots,
-    includeScreenRecordings,
-    maxArchiveBytes,
-    recentWindowMs,
-    cutoffTimestamp,
-    filtersEvents: !includeScreenshots || !includeScreenRecordings || recentWindowMs !== null
-  };
-}
-
-function shouldIncludeEvent(event: WebBlackboxEvent, policy: ResolvedExportPolicy): boolean {
-  if (!policy.includeScreenshots && event.type === SCREENSHOT_EVENT_TYPE) {
-    return false;
-  }
-
-  if (!policy.includeScreenRecordings && event.type.startsWith(SCREEN_RECORDING_EVENT_PREFIX)) {
-    return false;
-  }
-
-  return event.t >= policy.cutoffTimestamp;
-}
-
-function buildExportTransferPolicy(
-  capturePolicy: CapturePolicy | undefined,
-  policy: ResolvedExportPolicy
-): NonNullable<PrivacyManifest["transfer"]> {
-  return {
-    destination: "local-download",
-    archiveKeyEnvelope: capturePolicy?.encryption.archiveKeyEnvelope ?? "passphrase",
-    encrypted: true,
-    includeScreenshots: policy.includeScreenshots,
-    includeScreenRecordings: policy.includeScreenRecordings,
-    maxArchiveBytes: policy.maxArchiveBytes,
-    recentWindowMs: policy.recentWindowMs,
-    shareEligible: true,
-    computedAt: new Date().toISOString()
-  };
-}
-
-function normalizeBoundedPositiveInt(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return null;
-  }
-
-  return Math.max(1, Math.round(value));
 }
